@@ -1,16 +1,51 @@
-﻿name: ci
+name: ci
 on: [push, pull_request]
 jobs:
   ci:
     runs-on: ubuntu-latest
+    services:
+      # Les contraintes de la base (exclusion anti-double-réservation, RLS) ne
+      # sont vérifiables que par un vrai moteur : src/modules/**/**.db.test.ts
+      # applique les migrations puis les met à l'épreuve.
+      # Version alignée sur Neon (18.x) : la 0000 s'appuie sur des comportements
+      # de Postgres 18, tester sur une version antérieure ne prouverait rien.
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: centre_affaires_test
+          TZ: UTC
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Propriétaire : migrations, TRUNCATE, création d'un second centre.
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/centre_affaires_test
+      TEST_OWNER_DATABASE_URL: postgres://postgres:postgres@localhost:5432/centre_affaires_test
+      # Rôle applicatif : sans BYPASSRLS, donc soumis aux politiques. C'est sa
+      # vue que les tests contrôlent. `postgres` est superutilisateur et
+      # contournerait la RLS : le test « RLS fermée par défaut » passerait à côté.
+      # Mot de passe en clair assumé : le conteneur est jetable et n'est
+      # joignable que depuis ce job.
+      APP_DB_PASSWORD: ci
+      TEST_DATABASE_URL: postgres://app_centre:ci@localhost:5432/centre_affaires_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - run: npm ci
       - run: npm run build
       - run: npx tsc --noEmit
       - run: npm run lint
+      # Les migrations passent par le propriétaire, puis le rôle applicatif
+      # reçoit son mot de passe : il est créé sans, par la migration 0004.
+      - run: npx drizzle-kit migrate
+      - run: node infra/provision-role-applicatif.mjs
       - run: npm test --if-present

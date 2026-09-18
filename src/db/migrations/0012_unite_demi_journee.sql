@@ -1,0 +1,1 @@
+ALTER TYPE "public"."rate_unit" ADD VALUE 'half_day' BEFORE 'day';
