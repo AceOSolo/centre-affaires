@@ -1,10 +1,10 @@
 import { cache } from 'react'
 
-import { and, eq, isNull } from 'drizzle-orm'
 import { redirect } from 'next/navigation'
 
 import { withTenant } from '../../db/index.ts'
-import { staffMembers, type StaffMember } from '../../db/staff.ts'
+import type { StaffMember } from '../../db/staff.ts'
+import { resolveStaffMember, type AuthenticatedUser } from './membre.ts'
 import { currentTenantId } from '../tenant.ts'
 import { auth } from './server.ts'
 
@@ -16,12 +16,6 @@ import { auth } from './server.ts'
  * `/api/auth` expose l'inscription, donc l'existence d'un compte ne prouve
  * rien.
  */
-export type AuthenticatedUser = {
-  id: string
-  email: string
-  name: string | null
-}
-
 export type StaffAccess =
   | { status: 'anonyme' }
   | { status: 'refuse'; user: AuthenticatedUser }
@@ -45,46 +39,13 @@ export const staffAccess = cache(async (): Promise<StaffAccess> => {
     name: sessionUser.name ?? null,
   }
 
-  const member = await withTenant(currentTenantId(), async (tx) => {
-    const [linked] = await tx
-      .select()
-      .from(staffMembers)
-      .where(and(eq(staffMembers.authUserId, user.id), isNull(staffMembers.deletedAt)))
-      .limit(1)
-    if (linked) return linked
-
-    // Premier accès : le membre a été inscrit par son adresse, le compte lui est
-    // rattaché maintenant.
-    //
-    // Le rattachement se fait sur l'adresse, donc quiconque contrôle cette
-    // adresse prend la place. C'est le modèle habituel de l'invitation, et il
-    // suppose que l'adresse ait été vérifiée : si le service dit explicitement
-    // qu'elle ne l'est pas, on ne rattache rien.
-    if (sessionUser.emailVerified === false) return undefined
-
-    const [invited] = await tx
-      .select()
-      .from(staffMembers)
-      .where(
-        and(
-          eq(staffMembers.email, user.email),
-          isNull(staffMembers.authUserId),
-          isNull(staffMembers.deletedAt),
-        ),
-      )
-      .limit(1)
-    if (!invited) return undefined
-
-    const [claimed] = await tx
-      .update(staffMembers)
-      .set({ authUserId: user.id, fullName: invited.fullName ?? user.name })
-      .where(and(eq(staffMembers.id, invited.id), isNull(staffMembers.authUserId)))
-      .returning()
-    return claimed
-  })
+  const member = await withTenant(currentTenantId(), (tx) =>
+    resolveStaffMember(tx, user, { emailVerified: sessionUser.emailVerified }),
+  )
 
   return member ? { status: 'membre', user, member } : { status: 'refuse', user }
 })
+
 
 /**
  * Porte d'entrée du back-office : à appeler dans chaque page et **dans chaque
@@ -110,3 +71,5 @@ export async function requireAdmin() {
   if (staff.member.role !== 'admin') redirect('/auth/acces-refuse')
   return staff
 }
+
+export { resolveStaffMember, type AuthenticatedUser }

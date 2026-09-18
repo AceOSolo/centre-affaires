@@ -134,3 +134,64 @@ h4 {
     scroll-behavior: auto !important;
   }
 }
+
+/*
+  Apparition au défilement.
+  -------------------------------------------------------------------------
+  La charte veut des animations sobres : 150–250 ms, `ease-out`, aucun rebond.
+  Un déplacement de 12 px suffit à donner le rythme sans faire bouger la page.
+
+  L'état masqué est posé en CSS, pas par le script : sinon le contenu serait
+  peint puis caché, ce qui clignote. En contrepartie il faut le relever quand
+  JavaScript ne tourne pas — d'où la règle `<noscript>` de la coque publique.
+*/
+.reveal {
+  opacity: 0;
+  transform: translateY(12px);
+  transition:
+    opacity 240ms ease-out,
+    transform 240ms ease-out;
+  transition-delay: var(--reveal-delay, 0ms);
+}
+
+.reveal[data-visible='true'] {
+  opacity: 1;
+  transform: none;
+}
+
+/* Défilement doux pour les ancres de navigation. */
+html {
+  scroll-behavior: smooth;
+}
+
+/*
+  Élévation de l'en-tête une fois la page défilée. `data-scrolled` est posé sur
+  la racine, ce qui évite de rendre la coque entière côté client pour un ombrage.
+*/
+html[data-scrolled='true'] header {
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+    Le bloc générique plus haut ramène les durées à zéro, ce qui ne suffit pas
+    ici : sans cette règle, un contenu resterait à `opacity: 0` pour toujours.
+  */
+  .reveal {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+  Retour au clic : un enfoncement de 2 %, 150 ms. Assez pour que le geste soit
+  confirmé, trop peu pour qu'on le remarque — la charte refuse le rebond.
+  Le bloc `prefers-reduced-motion` plus haut ramène la durée à zéro.
+*/
+.press {
+  transition: transform 150ms ease-out;
+}
+
+.press:active {
+  transform: scale(0.98);
+}

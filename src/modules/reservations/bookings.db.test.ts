@@ -118,6 +118,47 @@ describe('contraintes de la table bookings', { skip: raison }, () => {
         )
       })
 
+      it('laisse une réservation glisser sur sa propre place', async () => {
+        // Le déplacement est un UPDATE, pas un INSERT. La contrainte
+        // d'exclusion s'y applique aussi, et elle compare la ligne modifiée aux
+        // autres — pas à elle-même. Sans quoi reculer une réunion d'une
+        // demi-heure se heurterait à son propre créneau.
+        await book('2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'À déplacer')
+        await withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) =>
+            tx.execute(sql`
+              update bookings
+                 set starts_at = '2026-10-01T09:30:00Z', ends_at = '2026-10-01T10:30:00Z'
+               where title = 'À déplacer'
+            `),
+          app.db,
+        )
+
+        assert.equal(await count(sql`starts_at = '2026-10-01T09:30:00Z'`), 1)
+      })
+
+      it('refuse un déplacement sur le créneau d’une autre réservation', async () => {
+        await book('2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'À déplacer')
+        await book('2026-10-01T14:00:00Z', '2026-10-01T15:00:00Z', 'Occupante')
+
+        assert.equal(
+          await errorCode(() =>
+            withTenant(
+              DEFAULT_TENANT_ID,
+              (tx) =>
+                tx.execute(sql`
+                  update bookings
+                     set starts_at = '2026-10-01T14:30:00Z', ends_at = '2026-10-01T15:30:00Z'
+                   where title = 'À déplacer'
+                `),
+              app.db,
+            ),
+          ),
+          PG_EXCLUSION_VIOLATION,
+        )
+      })
+
       it('libère le créneau après annulation', async () => {
         await book('2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z')
         await withTenant(

@@ -224,3 +224,60 @@ export function formatOpeningSummary(
     })
     .join(' · ')
 }
+
+/** Une plage d'ouverture sans sa ressource : ce qui se copie d'un porteur à l'autre. */
+export type OpeningRange = { weekday: number; opensAt: string; closesAt: string }
+
+/** Les horaires à poser sur une ressource qui n'en a pas encore. */
+export type CopiePlan = { resourceId: string; ranges: OpeningRange[] }
+
+/**
+ * Horaires du centre, débarrassés de leur porteur et dédoublonnés.
+ *
+ * Sert de modèle : ce sont ces plages que reçoit une ressource qui passe à ses
+ * horaires propres, ou qui vient d'être déclarée.
+ */
+export function centreRanges(rules: readonly OpeningRule[]): OpeningRange[] {
+  const vues = new Set<string>()
+  const ranges: OpeningRange[] = []
+
+  for (const rule of rules) {
+    if (rule.resourceId !== null) continue
+    // L'unicité en base porte sur (jour, heure d'ouverture) : le dédoublonnage
+    // suit la même clé, sinon la copie viole l'index au lieu d'échouer ici.
+    const cle = `${rule.weekday}@${rule.opensAt}`
+    if (vues.has(cle)) continue
+    vues.add(cle)
+    ranges.push({ weekday: rule.weekday, opensAt: rule.opensAt, closesAt: rule.closesAt })
+  }
+
+  return ranges.sort((a, b) => a.weekday - b.weekday || a.opensAt.localeCompare(b.opensAt))
+}
+
+/**
+ * Quelles ressources doivent recevoir une copie des horaires du centre.
+ *
+ * Une ressource qui a déjà ses propres plages n'est **jamais** touchée : ses
+ * horaires sont une saisie délibérée, les écraser reviendrait à annuler le
+ * travail de quelqu'un. La copie ne comble que le vide.
+ *
+ * Un centre sans horaires ne donne rien à copier. On préfère laisser la
+ * ressource sans règle — donc fermée, visiblement — plutôt qu'inventer une
+ * amplitude par défaut : c'est exactement le repli en dur que l'ADR 010 a
+ * retiré du code.
+ */
+export function planCopieHoraires(
+  rules: readonly OpeningRule[],
+  resourceIds: readonly string[],
+): CopiePlan[] {
+  const modele = centreRanges(rules)
+  if (modele.length === 0) return []
+
+  const deja = new Set(
+    rules.filter((rule) => rule.resourceId !== null).map((rule) => rule.resourceId as string),
+  )
+
+  return resourceIds
+    .filter((resourceId) => !deja.has(resourceId))
+    .map((resourceId) => ({ resourceId, ranges: modele }))
+}

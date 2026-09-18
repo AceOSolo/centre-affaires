@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { char, pgTable, text, uuid } from 'drizzle-orm/pg-core'
+import { char, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
 
@@ -47,8 +47,23 @@ export const tenants = pgTable('tenants', {
    * l'ADR 004 refuse déjà pour les polices.
    */
   logoPath: text('logo_path'),
+  /**
+   * Variante du logo pour fond sombre. La charte interdit de recolorer le logo :
+   * il faut donc le fichier prévu pour ça, pas un filtre CSS.
+   */
+  logoLightPath: text('logo_light_path'),
   /** Photo d'en-tête du site public, servie depuis notre domaine elle aussi. */
   heroImagePath: text('hero_image_path'),
+  /**
+   * Réseaux du centre : `[{ label, url }]`.
+   *
+   * En JSONB plutôt qu'une colonne par réseau — ils vont et viennent, et leur
+   * liste n'est jamais interrogée, seulement affichée.
+   */
+  socialLinks: jsonb('social_links')
+    .$type<{ label: string; url: string }[]>()
+    .notNull()
+    .default([]),
 
   ...timestamps(),
   deletedAt: deletedAt(),

@@ -51,14 +51,14 @@ const resources = [
 
 /** Réservations posées en heure murale de Paris sur les jours autour d'aujourd'hui. */
 const bookings = [
-  [0, 'S-101', '09:00', '12:00', 'Formation habilitation électrique', 'Café et viennoiseries commandés.'],
-  [0, 'S-101', '14:00', '17:30', 'Séminaire de rentrée — Delta Industries', null],
-  [0, 'S-102', '10:00', '11:00', 'Entretien de recrutement', null],
-  [0, 'S-102', '11:00', '12:00', 'Point hebdomadaire Dupont SARL', null],
+  [0, 'S-MB', '09:00', '12:00', 'Formation habilitation électrique', 'Café et viennoiseries commandés.'],
+  [0, 'S-MB', '14:00', '17:30', 'Séminaire de rentrée — Delta Industries', null],
+  [0, 'S-AE', '10:00', '11:00', 'Entretien de recrutement', null],
+  [0, 'S-AE', '11:00', '12:00', 'Point hebdomadaire Dupont SARL', null],
   [0, 'B-01', '08:00', '18:00', 'Bureau à la journée — Lefèvre Conseil', null],
-  [1, 'S-101', '09:30', '12:30', 'Présentation trimestrielle', null],
-  [1, 'S-102', '15:00', '16:00', 'Visite de locaux', null],
-  [-1, 'S-102', '09:00', '10:00', 'Réunion reportée', null],
+  [1, 'S-MB', '09:30', '12:30', 'Présentation trimestrielle', null],
+  [1, 'S-AE', '15:00', '16:00', 'Visite de locaux', null],
+  [-1, 'S-AE', '09:00', '10:00', 'Réunion reportée', null],
 ]
 
 /** Jour du centre, décalé de `days` jours. */

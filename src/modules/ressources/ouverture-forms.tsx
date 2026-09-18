@@ -5,6 +5,7 @@ import { useActionState } from 'react'
 import {
   addClosureAction,
   addOpeningHourAction,
+  copierHorairesDuCentreAction,
   setWeekdayHoursAction,
   type FormState,
 } from './ouverture-actions.ts'
@@ -250,6 +251,42 @@ export function ClosureForm({ resources }: { resources: Resource[] }) {
       <button type="submit" disabled={pending} className={`${buttonClass} self-start`}>
         {pending ? 'Ajout…' : 'Ajouter la fermeture'}
       </button>
+    </form>
+  )
+}
+
+/**
+ * Reprise des ressources déclarées avant l'ADR 012.
+ *
+ * Bouton et non case à cocher : c'est une opération ponctuelle, pas un réglage.
+ * Elle est rejouable sans risque — une ressource qui a déjà ses horaires n'est
+ * jamais écrasée — et le message de retour dit ce qui s'est passé.
+ */
+export function CopierHorairesForm({ aReprendre }: { aReprendre: number }) {
+  const [state, formAction, pending] = useActionState<FormState, FormData>(
+    copierHorairesDuCentreAction,
+    null,
+  )
+
+  return (
+    <form action={formAction} className="flex flex-col gap-3">
+      {state?.error && (
+        <p role="alert" className={errorClass}>
+          {state.error}
+        </p>
+      )}
+
+      <p className="text-xs text-muted-foreground">
+        {aReprendre === 0
+          ? 'Chaque ressource en service a déjà ses propres horaires. Rien à reprendre.'
+          : `${aReprendre} ressource${aReprendre > 1 ? 's suivent' : ' suit'} encore les horaires du centre.`}
+      </p>
+
+      <div>
+        <button type="submit" className={buttonClass} disabled={pending || aReprendre === 0}>
+          {pending ? 'Reprise en cours…' : 'Donner à chaque ressource ses propres horaires'}
+        </button>
+      </div>
     </form>
   )
 }

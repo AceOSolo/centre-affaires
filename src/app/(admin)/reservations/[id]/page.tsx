@@ -76,6 +76,17 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         )}
       </dl>
 
+      {!cancelled && (
+        <div>
+          <Link
+            href={`/reservations/${booking.id}/modifier`}
+            className="inline-block rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted"
+          >
+            Déplacer la réservation
+          </Link>
+        </div>
+      )}
+
       {/* Pas de suppression : la réservation reste consultable, l'annulation est
           sa suppression logique (décision 6). */}
       {!cancelled && (

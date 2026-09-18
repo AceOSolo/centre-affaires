@@ -2,7 +2,7 @@ import { and, asc, eq, gte, isNull, lte } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import type { ClosurePeriod, OpeningRule } from './ouverture.ts'
+import { planCopieHoraires, type ClosurePeriod, type OpeningRule } from './ouverture.ts'
 import {
   closures,
   openingHours,
@@ -152,4 +152,38 @@ export function closureApplies(closure: Closure, resourceId: string): boolean {
 /** Utilisé par l'écran de gestion pour n'afficher que ce qui vaut encore. */
 export function closureIsPast(closure: Closure, today: string): boolean {
   return closure.endsOn < today
+}
+
+/**
+ * Bascule les ressources sans horaires propres sur une copie de ceux du centre
+ * (ADR 012).
+ *
+ * Rejouable : une ressource déjà dotée de ses plages est laissée telle quelle,
+ * jamais écrasée. Rend le nombre de ressources effectivement dotées.
+ */
+export async function copierHorairesDuCentre(
+  resourceIds: readonly string[],
+): Promise<number> {
+  if (resourceIds.length === 0) return 0
+
+  return withTenant(currentTenantId(), async (tx) => {
+    // Lecture et écriture dans la même transaction : entre les deux, une saisie
+    // concurrente pourrait donner ses horaires à une ressource du plan, et la
+    // copie les doublerait.
+    const rules = await tx.select().from(openingHours)
+    const plan = planCopieHoraires(rules, resourceIds)
+    if (plan.length === 0) return 0
+
+    await tx.insert(openingHours).values(
+      plan.flatMap((entree) =>
+        entree.ranges.map((range) => ({
+          resourceId: entree.resourceId,
+          weekday: range.weekday,
+          opensAt: range.opensAt,
+          closesAt: range.closesAt,
+        })),
+      ),
+    )
+    return plan.length
+  })
 }

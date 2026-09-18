@@ -1,11 +1,16 @@
 'use client'
 
-import { useActionState, useState } from 'react'
+import { useActionState, useMemo, useState } from 'react'
 
-import { CheckIcon } from '../../components/ui/icons.tsx'
+import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
+import { formatLongDate, formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
 import type { Resource } from '../ressources/schema.ts'
+import type { TimeRange } from './availability.ts'
 import { requestBookingAction, type PublicFormState } from './public-actions.ts'
+import { rangeMinutes } from './selection.ts'
+import { formatMinutes } from '../../lib/dates.ts'
+import { WeekCalendar, type CalendarDay } from './week-calendar.tsx'
 
 const fieldClass =
   'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30'
@@ -21,27 +26,63 @@ function addMinutes(time: string, minutes: number): string {
 /**
  * Formulaire public de demande de créneau.
  *
- * Il ne vérifie rien de métier : la recevabilité est décidée côté serveur par
- * `rejectRequest`, et la disponibilité par la contrainte d'exclusion. Ce qui est
- * fait ici — la fin qui suit le début — n'est qu'un confort de saisie.
+ * Le calendrier et les trois champs de date et d'heure décrivent le même
+ * créneau : les champs restent la seule vérité, le calendrier les écrit et les
+ * relit. Une sélection faite à la souris se corrige donc au clavier dans les
+ * champs, et l'inverse se voit aussitôt dans la grille.
+ *
+ * Rien n'est vérifié ici : la recevabilité est décidée côté serveur par
+ * `rejectRequest` et la disponibilité par la contrainte d'exclusion. La grille
+ * ne fait qu'éviter de demander un créneau déjà pris.
  */
 export function PublicBookingForm({
-  resources,
+  resource,
+  days,
+  timeZone,
+  today,
   defaultDate,
   minDate,
   maxDate,
+  defaultStartTime,
+  defaultEndTime,
 }: {
-  resources: Resource[]
+  /** L'espace est choisi au-dessus de la grille : ici il est acquis. */
+  resource: Resource
+  days: CalendarDay[]
+  timeZone: string
+  today: string
   defaultDate: string
   minDate: string
   maxDate: string
+  defaultStartTime?: string
+  defaultEndTime?: string
 }) {
   const [state, formAction, pending] = useActionState<PublicFormState, FormData>(
     requestBookingAction,
     { status: 'idle' },
   )
-  const [startTime, setStartTime] = useState('09:00')
-  const [endTime, setEndTime] = useState('10:00')
+  const [date, setDate] = useState(defaultDate)
+  const [startTime, setStartTime] = useState(defaultStartTime ?? '09:00')
+  const [endTime, setEndTime] = useState(
+    defaultEndTime ?? addMinutes(defaultStartTime ?? '09:00', 60),
+  )
+
+  // La sélection affichée dans la grille est déduite des champs, jamais tenue à
+  // part : deux états parallèles finiraient par se contredire.
+  const selection = useMemo<TimeRange | undefined>(() => {
+    if (!date || !startTime || !endTime || endTime <= startTime) return undefined
+    return {
+      startsAt: wallClockToUtc(`${date}T${startTime}`, timeZone),
+      endsAt: wallClockToUtc(`${date}T${endTime}`, timeZone),
+    }
+  }, [date, startTime, endTime, timeZone])
+
+  function onSelect(range: TimeRange | undefined) {
+    if (!range) return
+    setDate(toIsoDate(range.startsAt, timeZone))
+    setStartTime(formatTime(range.startsAt, timeZone))
+    setEndTime(formatTime(range.endsAt, timeZone))
+  }
 
   if (state.status === 'sent') {
     return (
@@ -49,10 +90,8 @@ export function PublicBookingForm({
         <div className="flex size-11 items-center justify-center rounded-full bg-primary text-primary-foreground">
           <CheckIcon size={24} />
         </div>
-        <h3 className="mt-4 text-xl font-semibold text-secondary">Demande envoyée</h3>
-        <p className="mt-2 text-muted-foreground">
-          Nous avons bien reçu votre demande pour&nbsp;:
-        </p>
+        <h3 className="mt-4 text-xl font-semibold text-primary">Demande envoyée</h3>
+        <p className="mt-2 text-muted-foreground">Nous avons bien reçu votre demande pour&nbsp;:</p>
         <p className="mt-1 font-medium">{state.summary}</p>
         <p className="mt-4 text-sm text-muted-foreground">
           Le créneau est réservé provisoirement à votre nom. Notre équipe le confirme par
@@ -63,7 +102,7 @@ export function PublicBookingForm({
   }
 
   return (
-    <form action={formAction} className="flex flex-col gap-5">
+    <form action={formAction} className="flex flex-col gap-6">
       {state.status === 'error' && (
         <p
           role="alert"
@@ -73,27 +112,23 @@ export function PublicBookingForm({
         </p>
       )}
 
-      <div className="grid gap-5 sm:grid-cols-2">
-        <div className="sm:col-span-2">
-          <label className={labelClass} htmlFor="resourceId">
-            Espace souhaité
-          </label>
-          <select
-            id="resourceId"
-            name="resourceId"
-            required
-            defaultValue={resources[0]?.id ?? ''}
-            className={`${fieldClass} mt-1.5`}
-          >
-            {resources.map((resource) => (
-              <option key={resource.id} value={resource.id}>
-                {resource.name} — {resourceTypeLabels[resource.resourceType]}
-                {resource.capacity ? ` (${resource.capacity} pers.)` : ''}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* L'espace est fixé par la grille affichée : le renvoyer en clair ici
+          éviterait que le formulaire et le calendrier parlent de deux salles. */}
+      <input type="hidden" name="resourceId" value={resource.id} />
 
+      <div className="flex flex-col gap-3">
+        <WeekCalendar
+          days={days}
+          timeZone={timeZone}
+          today={today}
+          selection={selection}
+          onSelect={onSelect}
+          label={`Disponibilités de ${resource.name}`}
+        />
+        <SelectionSummary selection={selection} timeZone={timeZone} resource={resource} />
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-2">
         <div>
           <label className={labelClass} htmlFor="date">
             Jour
@@ -105,7 +140,8 @@ export function PublicBookingForm({
             required
             min={minDate}
             max={maxDate}
-            defaultValue={defaultDate}
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
             className={`${fieldClass} mt-1.5`}
           />
         </div>
@@ -204,8 +240,7 @@ export function PublicBookingForm({
 
         <div className="sm:col-span-2">
           <label className={labelClass} htmlFor="notes">
-            Précisions{' '}
-            <span className="font-normal text-muted-foreground">(facultatif)</span>
+            Précisions <span className="font-normal text-muted-foreground">(facultatif)</span>
           </label>
           <textarea id="notes" name="notes" rows={3} className={`${fieldClass} mt-1.5`} />
         </div>
@@ -214,7 +249,7 @@ export function PublicBookingForm({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <button
           type="submit"
-          disabled={pending || resources.length === 0}
+          disabled={pending}
           className="rounded-md bg-primary px-5 py-3 font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
         >
           {pending ? 'Envoi…' : 'Envoyer la demande'}
@@ -224,5 +259,49 @@ export function PublicBookingForm({
         </p>
       </div>
     </form>
+  )
+}
+
+/**
+ * Rappel de ce qui est demandé, en toutes lettres.
+ *
+ * La grille surligne les cases choisies, mais un surlignage ne se lit pas au
+ * lecteur d'écran et ne dit pas la durée. `aria-live` annonce le changement à
+ * chaque clic sans déplacer le focus.
+ */
+function SelectionSummary({
+  selection,
+  timeZone,
+  resource,
+}: {
+  selection: TimeRange | undefined
+  timeZone: string
+  resource: Resource
+}) {
+  return (
+    <p
+      aria-live="polite"
+      className="flex flex-wrap items-center gap-2 rounded-sm bg-muted px-4 py-3 text-sm"
+    >
+      <ClockIcon size={20} className="text-primary" />
+      {selection ? (
+        <span>
+          <span className="font-medium text-primary">{resource.name}</span>
+          {' — '}
+          <span className="capitalize">
+            {formatLongDate(toIsoDate(selection.startsAt, timeZone), timeZone)}
+          </span>{' '}
+          de <span className="tabular">{formatTime(selection.startsAt, timeZone)}</span> à{' '}
+          <span className="tabular">{formatTime(selection.endsAt, timeZone)}</span>
+          {' · '}
+          {formatMinutes(rangeMinutes(selection))}
+        </span>
+      ) : (
+        <span className="text-muted-foreground">
+          Cliquez l’heure de début puis l’heure de fin dans le calendrier, ou saisissez-les
+          ci-dessous. {resourceTypeLabels[resource.resourceType]} : {resource.name}.
+        </span>
+      )}
+    </p>
   )
 }

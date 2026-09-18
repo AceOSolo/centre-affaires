@@ -39,18 +39,27 @@ export function SignInForm() {
     const password = String(form.get('password') ?? '')
     const name = String(form.get('name') ?? '').trim()
 
-    const { error: authError } =
+    const repli =
       mode === 'creation'
-        ? await authClient.signUp.email({ email, password, name })
-        : await authClient.signIn.email({ email, password })
+        ? 'La création du compte a échoué.'
+        : 'Adresse ou mot de passe incorrect.'
 
-    if (authError) {
-      setError(
-        authError.message ??
-          (mode === 'creation'
-            ? 'La création du compte a échoué.'
-            : 'Adresse ou mot de passe incorrect.'),
-      )
+    // Le client d'authentification signale ses refus de deux façons selon le
+    // cas : un `error` dans la réponse, ou une exception (`AuthApiError`) —
+    // « User already exists », par exemple. Les deux doivent finir dans le
+    // `role="alert"` du formulaire, jamais dans l'overlay d'erreur.
+    try {
+      const { error: authError } =
+        mode === 'creation'
+          ? await authClient.signUp.email({ email, password, name })
+          : await authClient.signIn.email({ email, password })
+
+      if (authError) {
+        setError(authError.message ?? repli)
+        return
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : repli)
       return
     }
 
@@ -65,7 +74,7 @@ export function SignInForm() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-secondary">
+        <h1 className="text-xl font-semibold text-primary">
           {mode === 'creation' ? 'Créer votre accès' : 'Connexion à l’espace équipe'}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">

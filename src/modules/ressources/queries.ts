@@ -3,7 +3,9 @@ import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 import { withTenant } from '../../db/index.ts'
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { centreRanges } from './ouverture.ts'
 import {
+  openingHours,
   resources,
   type Resource,
   type ResourceAttributes,
@@ -71,10 +73,21 @@ export class DuplicateResourceCodeError extends Error {
   }
 }
 
+/**
+ * Déclare une ressource, et lui pose aussitôt ses horaires propres (ADR 012).
+ *
+ * Les deux écritures tiennent dans la même transaction : une ressource ne doit
+ * jamais exister sans ses horaires, sinon elle hériterait de ceux du centre le
+ * temps d'une requête — exactement l'héritage que l'ADR 012 supprime.
+ *
+ * Le modèle copié est celui du centre au moment de la création. Un centre sans
+ * horaires n'en donne aucun : la ressource naît fermée, visiblement, et c'est
+ * préférable à une amplitude inventée.
+ */
 export async function createResource(input: CreateResourceInput): Promise<Resource> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
+    const created = await withTenant(currentTenantId(), async (tx) => {
+      const [resource] = await tx
         .insert(resources)
         .values({
           resourceType: input.resourceType,
@@ -85,8 +98,27 @@ export async function createResource(input: CreateResourceInput): Promise<Resour
           status: input.status ?? 'active',
           attributes: input.attributes ?? {},
         })
-        .returning(),
-    )
+        .returning()
+
+      const modele = centreRanges(
+        await tx
+          .select()
+          .from(openingHours)
+          .where(isNull(openingHours.resourceId)),
+      )
+      if (modele.length > 0) {
+        await tx.insert(openingHours).values(
+          modele.map((range) => ({
+            resourceId: resource.id,
+            weekday: range.weekday,
+            opensAt: range.opensAt,
+            closesAt: range.closesAt,
+          })),
+        )
+      }
+
+      return resource
+    })
     return created
   } catch (error) {
     // L'unicité du code est tenue par un index partiel : la vérifier en amont

@@ -9,10 +9,12 @@ import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import {
   BookingConflictError,
+  BookingNotMovableError,
   InvalidRangeError,
   cancelBooking,
   confirmBooking,
   createBooking,
+  moveBooking,
   refuseBooking,
 } from './queries.ts'
 
@@ -20,6 +22,29 @@ export type FormState = { error?: string } | null
 
 function text(formData: FormData, key: string): string {
   return String(formData.get(key) ?? '').trim()
+}
+
+/**
+ * Message rendu au staff pour les erreurs métier d'une réservation.
+ *
+ * Partagé par la création et le déplacement : les deux se heurtent à la même
+ * contrainte d'exclusion et doivent nommer le créneau qui bloque de la même
+ * façon. `undefined` signale une erreur qui n'est pas de ce ressort et qui doit
+ * remonter.
+ */
+function describeBookingError(error: unknown, timeZone: string): string | undefined {
+  if (error instanceof InvalidRangeError) return error.message
+  if (error instanceof BookingNotMovableError) return error.message
+  if (error instanceof BookingConflictError) {
+    const occupied = error.conflicts
+      .map(
+        (conflict) =>
+          `« ${conflict.title} » de ${formatTime(conflict.startsAt, timeZone)} à ${formatTime(conflict.endsAt, timeZone)}`,
+      )
+      .join(', ')
+    return occupied ? `Créneau déjà pris sur cette ressource : ${occupied}.` : error.message
+  }
+  return undefined
 }
 
 export async function createBookingAction(
@@ -58,26 +83,56 @@ export async function createBookingAction(
       notes: text(formData, 'notes') || null,
     })
   } catch (error) {
-    if (error instanceof InvalidRangeError) return { error: error.message }
-    if (error instanceof BookingConflictError) {
-      const occupied = error.conflicts
-        .map(
-          (conflict) =>
-            `« ${conflict.title} » de ${formatTime(conflict.startsAt, timeZone)} à ${formatTime(conflict.endsAt, timeZone)}`,
-        )
-        .join(', ')
-      return {
-        error: occupied
-          ? `Créneau déjà pris sur cette ressource : ${occupied}.`
-          : error.message,
-      }
-    }
+    const message = describeBookingError(error, timeZone)
+    if (message) return { error: message }
     throw error
   }
 
   const day = toIsoDate(startsAt, timeZone)
   revalidatePath('/reservations')
   redirect(`/reservations?date=${day}`)
+}
+
+/**
+ * Déplacement d'une réservation existante.
+ *
+ * Même contrôle d'accès et même traduction des erreurs que la création : une
+ * action serveur s'invoque par son identifiant depuis n'importe quel chemin
+ * (ADR 008).
+ */
+export async function moveBookingAction(
+  _previous: FormState,
+  formData: FormData,
+): Promise<FormState> {
+  await requireStaff()
+  const timeZone = await currentTimeZone()
+  const id = text(formData, 'id')
+  const resourceId = text(formData, 'resourceId')
+  const date = text(formData, 'date')
+
+  if (!id) return { error: 'Réservation inconnue.' }
+  if (!resourceId) return { error: 'Choisir une ressource.' }
+
+  let startsAt: Date
+  let endsAt: Date
+  try {
+    startsAt = wallClockToUtc(`${date}T${text(formData, 'startTime')}`, timeZone)
+    endsAt = wallClockToUtc(`${date}T${text(formData, 'endTime')}`, timeZone)
+  } catch {
+    return { error: 'Date ou horaires illisibles.' }
+  }
+
+  try {
+    await moveBooking({ id, resourceId, startsAt, endsAt })
+  } catch (error) {
+    const message = describeBookingError(error, timeZone)
+    if (message) return { error: message }
+    throw error
+  }
+
+  revalidatePath('/reservations')
+  revalidatePath(`/reservations/${id}`)
+  redirect(`/reservations/${id}`)
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {

@@ -1,16 +1,26 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
+import { ArrowRightIcon, ClockIcon, MapPinIcon, PhoneIcon } from '../../components/ui/icons.tsx'
+import { ScrollState } from '../../components/ui/scroll-state.tsx'
 import { currentTenant } from '../../lib/tenant.ts'
 import { formatOpeningSummary } from '../../modules/ressources/ouverture.ts'
 import { listOpeningHours } from '../../modules/ressources/ouverture-queries.ts'
+import { SectionNav } from './section-nav.tsx'
+
+/** Ancres de la page d'accueil. Absolues : elles valent depuis n'importe où. */
+const sections = [
+  { href: '/#espaces', label: 'Nos espaces' },
+  { href: '/#disponibilites', label: 'Disponibilités' },
+  { href: '/#services', label: 'Services' },
+]
 
 /**
  * Coque du site public.
  *
- * Tout ce qui identifie le centre — nom, signature, logo, adresse, téléphone —
- * vient de la table `tenants` et non du code : c'est ce qui change d'un centre
- * à l'autre (décision 1). Voir `infra/configurer-centre.mjs`.
+ * Tout ce qui identifie le centre — nom, signature, logo, adresse, téléphone,
+ * réseaux — vient de la table `tenants` et non du code : c'est ce qui change
+ * d'un centre à l'autre (décision 1). Voir `infra/configurer-centre.mjs`.
  */
 export default async function PortailLayout({ children }: { children: React.ReactNode }) {
   const [tenant, regles] = await Promise.all([currentTenant(), listOpeningHours()])
@@ -20,95 +30,219 @@ export default async function PortailLayout({ children }: { children: React.Reac
 
   const adresse = [tenant.addressLine1, tenant.addressLine2].filter(Boolean).join(', ')
   const ville = [tenant.postalCode, tenant.city].filter(Boolean).join(' ')
+  const telHref = tenant.phone ? `tel:${tenant.phone.replace(/\s/g, '')}` : undefined
+  // Un lien vers une carte, jamais une carte encastrée : un iframe Google
+  // appellerait ses serveurs depuis notre page, à l'insu du visiteur.
+  const planUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(
+    [tenant.name, adresse, ville].filter(Boolean).join(', '),
+  )}`
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-10 border-b border-border bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-[1200px] items-center justify-between gap-4 px-5 py-4 sm:px-8">
-          <Link href="/" className="flex items-center gap-3">
+      <ScrollState />
+      {/* Sans JavaScript, rien ne viendra révéler les blocs : ils doivent
+          s'afficher d'emblée plutôt que rester invisibles. */}
+      <noscript>
+        <style>{'.reveal{opacity:1;transform:none}'}</style>
+      </noscript>
+      {/* Bandeau de service : ce qu'on cherche avant même de lire la page. */}
+      <div className="hidden border-b border-white/10 bg-primary text-white/90 lg:block">
+        <div className="mx-auto flex max-w-[1200px] items-center gap-6 px-8 py-2 text-xs">
+          <a
+            href={planUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1.5 transition-colors hover:text-white"
+          >
+            <MapPinIcon size={16} />
+            {[adresse, ville].filter(Boolean).join(' — ')}
+          </a>
+          {ouverture && (
+            <span className="flex items-center gap-1.5">
+              <ClockIcon size={16} />
+              {ouverture}
+            </span>
+          )}
+          {tenant.phone && telHref && (
+            <a
+              href={telHref}
+              className="ml-auto flex items-center gap-1.5 font-medium transition-colors hover:text-white"
+            >
+              <PhoneIcon size={16} />
+              {tenant.phone}
+            </a>
+          )}
+        </div>
+      </div>
+
+      <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
+        <div className="mx-auto flex max-w-[1200px] items-center gap-6 px-5 py-3 sm:px-8">
+          {/* Le logo garde son air autour de lui : la charte demande au moins la
+              hauteur du « S » de clear space. */}
+          <Link href="/" className="shrink-0 py-1 pr-2" aria-label={`${tenant.name} — accueil`}>
             {tenant.logoPath ? (
-              // Servi depuis notre domaine : une image appelée chez le site
-              // vitrine livrerait l'IP de chaque visiteur à un tiers (ADR 004).
               <Image
                 src={tenant.logoPath}
                 alt={tenant.name}
                 width={600}
                 height={191}
                 priority
-                className="h-9 w-auto"
+                className="h-9 w-auto sm:h-10"
               />
             ) : (
-              <span className="text-lg font-semibold tracking-tight text-secondary">
+              <span className="text-lg font-semibold tracking-tight text-primary">
                 {tenant.name}
               </span>
             )}
           </Link>
 
-          <div className="flex items-center gap-2">
-            {tenant.phone && (
+          <SectionNav
+            sections={sections}
+            className="ml-auto hidden items-center gap-1 lg:flex"
+            linkClassName="rounded-md px-3 py-2 text-sm font-medium text-primary transition-colors hover:bg-muted"
+            activeClassName="bg-muted"
+          />
+
+          <div className="ml-auto flex items-center gap-2 lg:ml-0">
+            {tenant.phone && telHref && (
               <a
-                href={`tel:${tenant.phone.replace(/\s/g, '')}`}
-                className="hidden rounded-md px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-muted sm:block"
+                href={telHref}
+                aria-label={`Appeler le ${tenant.phone}`}
+                className="rounded-md border border-border p-2.5 text-primary transition-colors hover:bg-muted lg:hidden"
               >
-                {tenant.phone}
+                <PhoneIcon size={20} />
               </a>
             )}
             <Link
-              href="#disponibilites"
-              className="hidden rounded-md px-3 py-2 text-sm font-medium text-secondary transition-colors hover:bg-muted sm:block"
-            >
-              Disponibilités
-            </Link>
-            <Link
-              href="#demande"
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+              href="/#demande"
+              className="press rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             >
               Réserver
             </Link>
           </div>
         </div>
+
+        {/* Sur petit écran la navigation passe sous le logo, en bande qui défile
+            plutôt qu'en menu déroulant : trois liens ne valent pas un panneau. */}
+        <SectionNav
+          sections={sections}
+          className="flex gap-1 overflow-x-auto border-t border-border px-5 py-2 lg:hidden"
+          linkClassName="whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+          activeClassName="bg-muted text-primary"
+        />
       </header>
 
       <main className="flex-1">{children}</main>
 
-      <footer className="border-t border-border bg-muted">
-        <div className="mx-auto grid max-w-[1200px] gap-8 px-5 py-12 sm:grid-cols-2 sm:px-8 lg:grid-cols-4">
-          <div className="sm:col-span-2 lg:col-span-1">
-            <p className="text-lg font-semibold text-secondary">{tenant.name}</p>
-            {tenant.tagline && (
-              <p className="mt-1 text-sm text-muted-foreground">{tenant.tagline}</p>
+      <footer className="bg-primary text-white">
+        {/* Dernier appel : posé ici plutôt qu'en fin de page, pour qu'il vaille
+            sur toute page publique et qu'on n'empile pas deux blocs sombres. */}
+        <div className="border-b border-white/15">
+          <div className="mx-auto flex max-w-[1200px] flex-col items-start gap-6 px-5 py-14 sm:px-8 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">
+                Une question avant de réserver&nbsp;?
+              </h2>
+              <p className="mt-2 max-w-xl text-white/80">
+                Un besoin particulier, un événement, une domiciliation : appelez-nous, nous
+                organisons le reste.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row">
+              {tenant.phone && telHref && (
+                <a
+                  href={telHref}
+                  className="press inline-flex items-center justify-center gap-2 rounded-md bg-white px-6 py-3.5 font-medium text-primary transition-colors hover:bg-white/90"
+                >
+                  <PhoneIcon size={20} />
+                  {tenant.phone}
+                </a>
+              )}
+              <Link
+                href="/#demande"
+                className="press inline-flex items-center justify-center gap-2 rounded-md border border-white/40 px-6 py-3.5 font-medium transition-colors hover:bg-white/10"
+              >
+                Demander un créneau
+                <ArrowRightIcon size={20} />
+              </Link>
+            </div>
+          </div>
+        </div>
+
+        <div className="mx-auto grid max-w-[1200px] gap-10 px-5 py-14 sm:px-8 lg:grid-cols-4">
+          <div className="lg:col-span-1">
+            {/* Version blanche du logo : la charte interdit de recolorer
+                l'original pour le poser sur un fond sombre. */}
+            {tenant.logoLightPath ? (
+              <Image
+                src={tenant.logoLightPath}
+                alt={tenant.name}
+                width={600}
+                height={191}
+                className="h-10 w-auto"
+              />
+            ) : (
+              <p className="text-xl font-semibold">{tenant.name}</p>
+            )}
+            {tenant.tagline && <p className="mt-4 text-sm text-white/70">{tenant.tagline}</p>}
+
+            {tenant.socialLinks.length > 0 && (
+              <ul className="mt-6 flex flex-wrap gap-2">
+                {tenant.socialLinks.map((lien) => (
+                  <li key={lien.url}>
+                    <a
+                      href={lien.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-block rounded-md border border-white/25 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-white/10"
+                    >
+                      {lien.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
           <div className="text-sm">
-            <p className="font-medium text-secondary">Nous trouver</p>
-            <address className="mt-2 not-italic text-muted-foreground">
+            <p className="font-semibold">Le centre</p>
+            <address className="mt-3 not-italic text-white/70">
               {adresse && <span className="block">{adresse}</span>}
               {ville && <span className="block">{ville}</span>}
             </address>
+            <a
+              href={planUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="mt-3 inline-flex items-center gap-1.5 text-white/90 underline-offset-4 hover:underline"
+            >
+              <MapPinIcon size={18} />
+              Voir sur la carte
+            </a>
           </div>
 
           <div className="text-sm">
-            <p className="font-medium text-secondary">Nous joindre</p>
-            <div className="mt-2 flex flex-col gap-1 text-muted-foreground">
-              {tenant.phone && (
-                <a
-                  href={`tel:${tenant.phone.replace(/\s/g, '')}`}
-                  className="underline-offset-2 hover:underline"
-                >
+            <p className="font-semibold">Nous joindre</p>
+            <div className="mt-3 flex flex-col gap-2 text-white/70">
+              {tenant.phone && telHref && (
+                <a href={telHref} className="underline-offset-4 hover:underline hover:text-white">
                   {tenant.phone}
                 </a>
               )}
               {tenant.email && (
-                <a href={`mailto:${tenant.email}`} className="underline-offset-2 hover:underline">
+                <a
+                  href={`mailto:${tenant.email}`}
+                  className="underline-offset-4 hover:underline hover:text-white"
+                >
                   {tenant.email}
                 </a>
               )}
               {tenant.websiteUrl && (
                 <a
                   href={tenant.websiteUrl}
-                  className="underline-offset-2 hover:underline"
+                  target="_blank"
                   rel="noreferrer"
+                  className="underline-offset-4 hover:underline hover:text-white"
                 >
                   {tenant.websiteUrl.replace(/^https?:\/\//, '')}
                 </a>
@@ -117,26 +251,26 @@ export default async function PortailLayout({ children }: { children: React.Reac
           </div>
 
           <div className="text-sm">
-            <p className="font-medium text-secondary">Horaires</p>
-            <p className="mt-2 text-muted-foreground">
+            <p className="font-semibold">Horaires</p>
+            <p className="mt-3 text-white/70">
               {ouverture ?? 'Nous contacter pour connaître les horaires.'}
             </p>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-3 text-xs text-white/50">
               Heures affichées en {tenant.timezone}.
             </p>
           </div>
         </div>
 
-        <div className="border-t border-border">
-          <div className="mx-auto max-w-[1200px] px-5 py-5 text-xs text-muted-foreground sm:px-8">
-            {tenant.legalName && (
-              <p>
-                {tenant.name} est exploité par {tenant.legalName}.
-              </p>
-            )}
+        <div className="border-t border-white/15">
+          <div className="mx-auto flex max-w-[1200px] flex-col gap-2 px-5 py-5 text-xs text-white/60 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+            <p>
+              {tenant.legalName
+                ? `${tenant.name} est exploité par ${tenant.legalName}.`
+                : tenant.name}
+            </p>
             {/* Espace client et mentions légales arrivent avec le portail
                 authentifié ; l'accès équipe existe déjà. */}
-            <Link href="/auth/connexion" className="underline-offset-2 hover:underline">
+            <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
               Accès équipe
             </Link>
           </div>

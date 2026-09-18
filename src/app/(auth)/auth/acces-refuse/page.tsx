@@ -13,7 +13,7 @@ export const metadata = { title: 'Accès refusé' }
 export default function AccesRefusePage() {
   return (
     <div className="flex flex-col gap-4">
-      <h1 className="text-xl font-semibold text-secondary">Accès refusé</h1>
+      <h1 className="text-xl font-semibold text-primary">Accès refusé</h1>
       <p className="text-sm text-muted-foreground">
         Votre compte est bien connecté, mais il n&rsquo;a pas accès à l&rsquo;espace de gestion du
         centre. Si vous pensez qu&rsquo;il s&rsquo;agit d&rsquo;une erreur, contactez

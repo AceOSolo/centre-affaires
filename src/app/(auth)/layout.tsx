@@ -23,7 +23,7 @@ export default async function AuthLayout({ children }: { children: React.ReactNo
               className="h-10 w-auto"
             />
           ) : (
-            <p className="text-lg font-semibold tracking-tight text-secondary">{tenant.name}</p>
+            <p className="text-lg font-semibold tracking-tight text-primary">{tenant.name}</p>
           )}
         </div>
         <div className="mt-6 rounded-lg border border-border bg-background p-6 sm:p-8">

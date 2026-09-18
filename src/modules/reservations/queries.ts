@@ -158,6 +158,59 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
   }
 }
 
+/** Déplacement demandé sur une réservation qui ne s'y prête pas. */
+export class BookingNotMovableError extends Error {
+  constructor() {
+    super("Cette réservation n'existe pas ou a été annulée : elle ne peut pas être déplacée.")
+    this.name = 'BookingNotMovableError'
+  }
+}
+
+export type MoveBookingInput = {
+  id: string
+  resourceId: string
+  startsAt: Date
+  endsAt: Date
+}
+
+/**
+ * Déplacement d'une réservation : d'autres heures, une autre ressource, ou les
+ * deux. L'objet et les notes ne bougent pas — les changer relève d'une autre
+ * intention que « la salle était trop petite ».
+ *
+ * Une réservation annulée ne se déplace pas : son créneau est libéré et sa
+ * ligne ne subsiste que pour l'historique (décision 6). La ressusciter en la
+ * déplaçant ferait réapparaître un créneau que la contrainte croyait libre.
+ *
+ * Le conflit s'évalue en excluant la réservation elle-même : sans cela, la
+ * reculer d'un quart d'heure la ferait entrer en conflit avec sa propre place.
+ */
+export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
+  if (!isValidRange(input)) throw new InvalidRangeError()
+
+  try {
+    const [moved] = await withTenant(currentTenantId(), (tx) =>
+      tx
+        .update(bookings)
+        .set({
+          resourceId: input.resourceId,
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+        })
+        .where(and(eq(bookings.id, input.id), ne(bookings.status, 'cancelled')))
+        .returning(),
+    )
+    if (!moved) throw new BookingNotMovableError()
+    return moved
+  } catch (error) {
+    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
+    const conflicts = await withTenant(currentTenantId(), (tx) =>
+      selectConflicts(tx, input, input.id),
+    )
+    throw new BookingConflictError(conflicts)
+  }
+}
+
 /**
  * Annulation : la ligne est conservée, le créneau est libéré. `cancelled_at` est
  * posé dans le même ordre que la contrainte `bookings_cancelled_at_consistent`

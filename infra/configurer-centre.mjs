@@ -33,7 +33,12 @@ const CENTRE = {
   email: null,
   websiteUrl: 'https://www.handfield.fr',
   logoPath: '/handfield-logo.png',
+  logoLightPath: '/handfield-logo-blanc.png',
   heroImagePath: '/photos/batiment.jpg',
+  socialLinks: [
+    { label: 'LinkedIn', url: 'https://www.linkedin.com/company/handfield/' },
+    { label: 'Facebook', url: 'https://www.facebook.com/Handfield-105320951354193' },
+  ],
   timezone: 'Europe/Paris',
   currency: 'EUR',
 }
@@ -73,7 +78,9 @@ try {
         email          = ${CENTRE.email},
         website_url    = ${CENTRE.websiteUrl},
         logo_path      = ${CENTRE.logoPath},
+        logo_light_path = ${CENTRE.logoLightPath},
         hero_image_path = ${CENTRE.heroImagePath},
+        social_links    = ${sql.json(CENTRE.socialLinks)},
         timezone       = ${CENTRE.timezone},
         currency       = ${CENTRE.currency}
       where id = ${DEFAULT_TENANT_ID}

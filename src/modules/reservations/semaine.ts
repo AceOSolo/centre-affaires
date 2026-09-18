@@ -85,7 +85,24 @@ export function weekColumns(
   extent: { openHour: number; closeHour: number },
   openingByDay: Record<string, TimeRange[]>,
 ): WeekColumn[] {
-  return weekDays(isoDate).map((day) => ({
+  return columnsForDays(weekDays(isoDate), timeZone, extent, openingByDay)
+}
+
+/**
+ * Mêmes colonnes, pour une suite de jours quelconque.
+ *
+ * Le back-office raisonne en semaine calendaire — le staff dit « mardi
+ * prochain ». Le portail, lui, n'a aucune raison d'afficher les quatre jours
+ * révolus quand on y arrive un vendredi : sept jours glissants à partir
+ * d'aujourd'hui remplissent la grille de créneaux réservables.
+ */
+export function columnsForDays(
+  days: readonly string[],
+  timeZone: string,
+  extent: { openHour: number; closeHour: number },
+  openingByDay: Record<string, TimeRange[]>,
+): WeekColumn[] {
+  return days.map((day) => ({
     isoDate: day,
     weekday: isoWeekday(day),
     closed: (openingByDay[day] ?? []).length === 0,

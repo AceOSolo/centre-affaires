@@ -5,9 +5,11 @@ import { revalidatePath } from 'next/cache'
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { requireStaff } from '../../lib/auth/staff.ts'
 
+import { listBookableResources } from './queries.ts'
 import {
   addClosure,
   addOpeningHour,
+  copierHorairesDuCentre,
   removeClosure,
   removeOpeningHour,
   replaceOpeningHours,
@@ -143,4 +145,28 @@ export async function removeClosureAction(formData: FormData): Promise<void> {
   if (!id) return
   await removeClosure(id)
   revalidateAvailability()
+}
+
+/**
+ * Bascule toutes les ressources en service sur leurs horaires propres (ADR 012).
+ *
+ * Reprise des ressources déclarées avant cette décision : celles créées depuis
+ * reçoivent leurs horaires dès la déclaration. L'action est rejouable et
+ * n'écrase jamais une saisie existante.
+ */
+export async function copierHorairesDuCentreAction(): Promise<FormState> {
+  await requireStaff()
+
+  const resources = await listBookableResources()
+  if (resources.length === 0) {
+    return { error: 'Aucune ressource en service à basculer.' }
+  }
+
+  const dotees = await copierHorairesDuCentre(resources.map((resource) => resource.id))
+  if (dotees === 0) {
+    return { error: 'Rien à reprendre : chaque ressource a déjà ses horaires.' }
+  }
+
+  revalidateAvailability()
+  return null
 }

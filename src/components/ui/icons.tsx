@@ -91,3 +91,38 @@ export function BuildingIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function PhoneIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M7.5 4h-2A1.5 1.5 0 0 0 4 5.5C4 13 11 20 18.5 20a1.5 1.5 0 0 0 1.5-1.5v-2l-4-1.5-1.8 1.8a12.6 12.6 0 0 1-5-5L11 10z" />
+    </Svg>
+  )
+}
+
+export function MapPinIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 21s7-5.6 7-11a7 7 0 1 0-14 0c0 5.4 7 11 7 11Z" />
+      <circle cx="12" cy="10" r="2.5" />
+    </Svg>
+  )
+}
+
+export function CarIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4.5 16v2.5M19.5 16v2.5" />
+      <path d="M3.5 16v-3.2L5.4 8a2 2 0 0 1 1.9-1.3h9.4A2 2 0 0 1 18.6 8l1.9 4.8V16z" />
+      <path d="M3.5 12.8h17M7.5 14.4h1M15.5 14.4h1" />
+    </Svg>
+  )
+}
+
+export function SparkleIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3.5 13.8 9l5.7 1.8-5.7 1.8L12 18.2l-1.8-5.6L4.5 10.8 10.2 9z" />
+    </Svg>
+  )
+}
