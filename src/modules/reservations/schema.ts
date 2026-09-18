@@ -10,9 +10,9 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core'
 
-import { primaryKeyId, timestamps } from '@/db/columns'
-import { tenantId } from '@/db/tenants'
-import { resources } from '@/modules/ressources/schema'
+import { primaryKeyId, timestamps } from '../../db/columns.ts'
+import { tenantId } from '../../db/tenants.ts'
+import { resources } from '../ressources/schema.ts'
 
 /**
  * `pending` : demande à valider (portail client, tranche 4).

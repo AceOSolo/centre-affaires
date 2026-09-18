@@ -29,6 +29,13 @@
       "when": 1789731541121,
       "tag": "0003_row_level_security",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789732115438,
+      "tag": "0004_role_applicatif",
+      "breakpoints": true
     }
   ]
 }

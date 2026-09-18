@@ -10,8 +10,8 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '@/db/columns'
-import { tenantId } from '@/db/tenants'
+import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { tenantId } from '../../db/tenants.ts'
 
 /**
  * Une seule table pour tous les types de ressources (décision 2). Le calendrier,

@@ -1,0 +1,33 @@
+/**
+ * Lecture des erreurs Postgres remontées par Drizzle.
+ *
+ * Le code métier doit distinguer un conflit de créneau — cas normal, à
+ * expliquer à l'utilisateur — d'une panne, qui doit remonter. Cette distinction
+ * repose sur le SQLSTATE, pas sur le message, qui dépend de la locale du
+ * serveur.
+ */
+
+/**
+ * Drizzle enveloppe les erreurs du driver dans une `DrizzleQueryError` depuis la
+ * 0.44 : le code d'origine est enfoui dans la chaîne des `cause`. Sans ce
+ * déroulage, toutes les erreurs de base se ressemblent.
+ */
+export function pgErrorCode(error: unknown): string | undefined {
+  // La borne coupe une chaîne de `cause` circulaire, qu'aucun driver ne produit
+  // aujourd'hui mais qui bloquerait le rendu de la page entière.
+  for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
+    const code = (cause as { code?: unknown }).code
+    if (typeof code === 'string' && /^[0-9A-Z]{5}$/.test(code)) return code
+    cause = (cause as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
+/** Contrainte d'exclusion : deux réservations se chevauchent (décision 3). */
+export const PG_EXCLUSION_VIOLATION = '23P01'
+/** Index unique : un code de ressource déjà pris dans le centre. */
+export const PG_UNIQUE_VIOLATION = '23505'
+/** Contrainte `check` : intervalle vide, annulation incohérente. */
+export const PG_CHECK_VIOLATION = '23514'
+/** Clé étrangère : ressource absente, ou appartenant à un autre centre. */
+export const PG_FOREIGN_KEY_VIOLATION = '23503'

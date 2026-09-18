@@ -1,4 +1,4 @@
-import type { BookingStatus } from './schema'
+import type { BookingStatus } from './schema.ts'
 
 /**
  * Règles de disponibilité côté code.
