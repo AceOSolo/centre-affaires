@@ -11,10 +11,11 @@ export const clientStatusLabels: Record<ClientStatus, string> = {
   inactive: 'Inactif',
 }
 
+/** Même progression que les contrats et les réservations (ADR 004). */
 export const clientStatusStyles: Record<ClientStatus, string> = {
-  prospect: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
-  active: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  inactive: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+  prospect: 'bg-accent/15 text-primary',
+  active: 'bg-primary text-primary-foreground',
+  inactive: 'bg-muted text-muted-foreground',
 }
 
 /** « 12 rue de la Paix, 75002 Paris » — adresse sur une ligne, sans trous. */

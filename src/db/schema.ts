@@ -3,6 +3,7 @@
  * Chaque domaine définit ses tables dans son module, ce fichier les rassemble.
  */
 export * from './tenants.ts'
+export * from './staff.ts'
 export * from '../modules/ressources/schema.ts'
 export * from '../modules/reservations/schema.ts'
 export * from '../modules/clients/schema.ts'

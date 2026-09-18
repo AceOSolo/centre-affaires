@@ -13,10 +13,11 @@ export const contractStatusLabels: Record<ContractStatus, string> = {
   terminated: 'Résilié',
 }
 
+/** Même progression que les réservations : provisoire, en vigueur, éteint. */
 export const contractStatusStyles: Record<ContractStatus, string> = {
-  draft: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  active: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  terminated: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+  draft: 'bg-accent/15 text-primary',
+  active: 'bg-primary text-primary-foreground',
+  terminated: 'bg-muted text-muted-foreground',
 }
 
 export const billingPeriodLabels: Record<BillingPeriod, string> = {

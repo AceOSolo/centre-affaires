@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { formatTime, toWallClock } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
+import type { TimeRange } from '../ressources/ouverture.ts'
 import type { Resource } from '../ressources/schema.ts'
 import { bookingBlockStyles, bookingStatusLabels } from './labels.ts'
 import { blockGeometry, hourTicks, planningHeightPx, planningWindow } from './planning.ts'
@@ -19,20 +20,30 @@ const COLUMN_WIDTH = 'w-56'
  *
  * Les positions viennent de `planning.ts`, calculées sur des instants : le jour
  * d'un changement d'heure, la journée ne fait pas 24 heures (décision 4).
+ *
+ * Les heures de fermeture sont grisées colonne par colonne : une salle ouverte
+ * le samedi dans un centre fermé le samedi doit se voir du premier coup d'œil,
+ * et un créneau hors ouverture ne doit pas ressembler à un créneau libre.
  */
 export function DayPlanning({
   isoDate,
   timeZone,
   resources,
   bookings,
+  opening,
 }: {
   isoDate: string
   timeZone: string
   resources: Resource[]
   bookings: BookingWithResource[]
+  /** Plages d'ouverture du jour, par identifiant de ressource. */
+  opening: Record<string, TimeRange[]>
 }) {
   const occupying = bookings.filter((booking) => booking.status !== 'cancelled')
-  const window = planningWindow(isoDate, timeZone, occupying)
+  // L'amplitude couvre toutes les colonnes : sans l'union, une ressource
+  // ouverte plus tard que les autres sortirait de la grille.
+  const toutesLesPlages = resources.flatMap((resource) => opening[resource.id] ?? [])
+  const window = planningWindow(isoDate, timeZone, occupying, toutesLesPlages)
   const ticks = hourTicks(window)
   const height = planningHeightPx(window)
 
@@ -63,10 +74,28 @@ export function DayPlanning({
               <div className="truncate text-sm font-medium">{resource.name}</div>
               <div className="truncate text-xs text-muted-foreground">
                 {resource.code} · {resourceTypeLabels[resource.resourceType]}
+                {(opening[resource.id] ?? []).length === 0 && (
+                  <span className="ml-1 font-medium">· fermé</span>
+                )}
               </div>
             </div>
 
             <div className="relative" style={{ height }}>
+              {/* Fond fermé par défaut ; les plages d'ouverture le percent. */}
+              <div aria-hidden className="absolute inset-0 bg-muted/40" />
+              {(opening[resource.id] ?? []).map((plage) => {
+                const geometry = blockGeometry(plage, window)
+                if (!geometry) return null
+                return (
+                  <div
+                    key={plage.startsAt.toISOString()}
+                    aria-hidden
+                    className="absolute inset-x-0 bg-white"
+                    style={{ top: `${geometry.topPercent}%`, height: `${geometry.heightPercent}%` }}
+                  />
+                )
+              })}
+
               {ticks.map((tick, index) => (
                 <div
                   key={tick.instant.toISOString()}

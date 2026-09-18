@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { requireStaff } from '../../lib/auth/staff.ts'
+
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import {
@@ -24,6 +26,10 @@ export async function createBookingAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
+  // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
+  // la protège pas (ADR 008).
+  await requireStaff()
   const timeZone = await currentTimeZone()
   const resourceId = text(formData, 'resourceId')
   const date = text(formData, 'date')
@@ -75,6 +81,7 @@ export async function createBookingAction(
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
+  await requireStaff()
   const id = text(formData, 'id')
   if (!id) return
   await cancelBooking(id, text(formData, 'reason') || null)
@@ -88,6 +95,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
  * le dépôt : confirmer ne peut pas échouer sur un conflit.
  */
 export async function confirmBookingAction(formData: FormData): Promise<void> {
+  await requireStaff()
   const id = text(formData, 'id')
   if (!id) return
   await confirmBooking(id)
@@ -97,6 +105,7 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
 
 /** Refus d'une demande : annulation motivée, le créneau redevient libre. */
 export async function refuseBookingAction(formData: FormData): Promise<void> {
+  await requireStaff()
   const id = text(formData, 'id')
   if (!id) return
   await refuseBooking(id, text(formData, 'reason') || null)

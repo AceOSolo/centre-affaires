@@ -19,10 +19,15 @@ export const resourceStatusLabels: Record<ResourceStatus, string> = {
   retired: 'Retirée du parc',
 }
 
+/**
+ * La maintenance est le seul état qui sort des bleus : une ressource
+ * indisponible est une alerte de fonctionnement, cas que la charte autorise
+ * pour l'UI state. Retirée et en service restent sur la palette.
+ */
 export const resourceStatusStyles: Record<ResourceStatus, string> = {
-  active: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300',
-  maintenance: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  retired: 'bg-zinc-200 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-400',
+  active: 'bg-primary text-primary-foreground',
+  maintenance: 'bg-warning/15 text-warning-foreground',
+  retired: 'bg-muted text-muted-foreground',
 }
 
 /** Rend les champs JSONB lisibles sans connaître le type à l'avance. */
@@ -42,4 +47,22 @@ export function describeAttributes(attributes: Record<string, unknown>): string 
     .filter(([, value]) => !(Array.isArray(value) && value.length === 0))
     .map(([key, value]) => labels[key]?.(value) ?? `${key} : ${String(value)}`)
     .join(' · ')
+}
+
+/** Jours de la semaine, en numérotation ISO : 1 = lundi … 7 = dimanche. */
+export const weekdayLabels: Record<number, string> = {
+  1: 'Lundi',
+  2: 'Mardi',
+  3: 'Mercredi',
+  4: 'Jeudi',
+  5: 'Vendredi',
+  6: 'Samedi',
+  7: 'Dimanche',
+}
+
+export const weekdays = [1, 2, 3, 4, 5, 6, 7] as const
+
+/** « 09:00 » — les heures sont stockées en `time`, donc « 09:00:00 ». */
+export function formatWallTime(time: string): string {
+  return time.slice(0, 5)
 }

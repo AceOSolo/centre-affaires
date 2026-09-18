@@ -58,8 +58,14 @@ export const ratePlans = pgTable(
   ],
 )
 
-/** Unité facturée. `unit` couvre le forfait : un casier au mois, une prestation. */
-export const rateUnits = ['hour', 'day', 'month', 'unit'] as const
+/**
+ * Unité facturée. `unit` couvre le forfait : un casier au mois, une prestation.
+ *
+ * `half_day` n'est pas une demi-`day` : le centre vend la demi-journée 90 € et
+ * la journée 130 €, pas 180 €. Une unité qui ne se déduit pas d'une autre par
+ * un calcul doit exister par elle-même (ADR 009).
+ */
+export const rateUnits = ['hour', 'half_day', 'day', 'month', 'unit'] as const
 export type RateUnit = (typeof rateUnits)[number]
 export const rateUnitEnum = pgEnum('rate_unit', rateUnits)
 

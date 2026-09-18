@@ -12,14 +12,20 @@ export const bookingStatusLabels: Record<BookingStatus, string> = {
   cancelled: 'Annulée',
 }
 
+/**
+ * Progression du provisoire vers l'acquis, portée par les deux bleus de marque
+ * (ADR 004) : aplat clair tant que la réservation n'engage pas, bleu foncé
+ * plein une fois confirmée, gris quand elle ne compte plus. Pas de vert ni de
+ * rouge — une réservation n'est ni un succès ni une erreur.
+ */
 export const bookingStatusBadgeStyles: Record<BookingStatus, string> = {
-  pending: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300',
-  confirmed: 'bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300',
-  cancelled: 'bg-zinc-200 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400',
+  pending: 'bg-accent/15 text-primary',
+  confirmed: 'bg-primary text-primary-foreground',
+  cancelled: 'bg-muted text-muted-foreground',
 }
 
 /** Bloc posé sur le planning. Seules les réservations qui occupent y figurent. */
 export const bookingBlockStyles: Record<Exclude<BookingStatus, 'cancelled'>, string> = {
-  pending: 'border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/60 dark:text-amber-200',
-  confirmed: 'border-sky-500 bg-sky-50 text-sky-900 dark:bg-sky-950/60 dark:text-sky-200',
+  pending: 'border-accent bg-accent/10 text-foreground',
+  confirmed: 'border-primary bg-primary/10 text-foreground',
 }

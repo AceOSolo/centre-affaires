@@ -29,7 +29,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
             </Link>
             <Link
               href="#demande"
-              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-[#1a97c9]"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             >
               Réserver
             </Link>

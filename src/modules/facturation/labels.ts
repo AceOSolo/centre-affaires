@@ -2,6 +2,7 @@ import type { RateUnit } from './schema.ts'
 
 export const rateUnitLabels: Record<RateUnit, string> = {
   hour: "À l'heure",
+  half_day: 'À la demi-journée',
   day: 'À la journée',
   month: 'Au mois',
   unit: 'Au forfait',
@@ -10,6 +11,7 @@ export const rateUnitLabels: Record<RateUnit, string> = {
 /** Suffixe accolé à un prix : « 25,00 € / h ». */
 export const rateUnitSuffixes: Record<RateUnit, string> = {
   hour: '/ h',
+  half_day: '/ demi-journée',
   day: '/ jour',
   month: '/ mois',
   unit: '/ prestation',

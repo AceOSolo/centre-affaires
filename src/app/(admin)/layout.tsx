@@ -1,7 +1,9 @@
 import Link from 'next/link'
 
+import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
+import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { Nav } from './nav.tsx'
 
 /**
@@ -20,6 +22,10 @@ export const dynamic = 'force-dynamic'
  * fil des tranches ; seuls ceux qui ont un écran y figurent.
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
+  // Premier verrou du back-office : sans membre d'équipe, on ne rend rien.
+  // Les actions serveur rappellent `requireStaff()` de leur côté — elles ne
+  // passent pas par cette coque (ADR 008).
+  const { member } = await requireStaff()
   const [tenant, pending] = await Promise.all([currentTenant(), listPendingBookings()])
 
   return (
@@ -30,11 +36,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
             {tenant.name}
           </Link>
           <Nav pendingCount={pending.length} />
-          <span className="ml-auto text-xs text-muted-foreground">
-            {/* Le fuseau est affiché : toutes les heures de l'écran sont les
-                siennes, alors que la base est en UTC (décision 4). */}
-            Heures affichées en {tenant.timezone}
-          </span>
+          <div className="ml-auto flex items-center gap-4">
+            <span className="hidden text-xs text-muted-foreground sm:block">
+              {/* Le fuseau est affiché : toutes les heures de l'écran sont les
+                  siennes, alors que la base est en UTC (décision 4). */}
+              Heures affichées en {tenant.timezone}
+            </span>
+            <span className="text-xs text-muted-foreground">
+              {member.fullName ?? member.email}
+            </span>
+            <SignOutButton className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted" />
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-8">{children}</main>

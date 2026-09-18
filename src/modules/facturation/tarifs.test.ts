@@ -82,6 +82,26 @@ describe('billableQuantity', () => {
     assert.equal(billableQuantity('hour', at('2026-10-01T09:00:00Z'), at('2026-10-01T10:30:00Z')), 2)
   })
 
+  it('facture une demi-journée pour un créneau de quatre heures', () => {
+    assert.equal(
+      billableQuantity('half_day', at('2026-10-01T08:00:00Z'), at('2026-10-01T12:00:00Z')),
+      1,
+    )
+  })
+
+  it('facture toute demi-journée entamée', () => {
+    assert.equal(
+      billableQuantity('half_day', at('2026-10-01T08:00:00Z'), at('2026-10-01T12:30:00Z')),
+      2,
+    )
+    // Une journée de bureau couvre trois demi-journées entamées : c'est bien
+    // pour cela qu'une ressource vendue à la journée porte une ligne `day`.
+    assert.equal(
+      billableQuantity('half_day', at('2026-10-01T09:00:00Z'), at('2026-10-01T18:00:00Z')),
+      3,
+    )
+  })
+
   it('facture les journées entamées', () => {
     assert.equal(billableQuantity('day', at('2026-10-01T08:00:00Z'), at('2026-10-01T18:00:00Z')), 1)
     assert.equal(billableQuantity('day', at('2026-10-01T08:00:00Z'), at('2026-10-02T09:00:00Z')), 2)
@@ -94,6 +114,21 @@ describe('billableQuantity', () => {
 
   it('ne facture rien pour un intervalle vide', () => {
     assert.equal(billableQuantity('hour', at('2026-10-01T09:00:00Z'), at('2026-10-01T09:00:00Z')), 0)
+    assert.equal(
+      billableQuantity('half_day', at('2026-10-01T09:00:00Z'), at('2026-10-01T09:00:00Z')),
+      0,
+    )
+  })
+
+  it("la demi-journée n'est pas la moitié de la journée", () => {
+    // Le tarif du centre le dit : 90 € la demi-journée, 130 € la journée. Si
+    // l'une se déduisait de l'autre, la grille n'aurait besoin que d'une ligne.
+    const demiJournee = ligne({ unit: 'half_day', amountCents: 9_000 })
+    const journee = ligne({ unit: 'day', amountCents: 13_000 })
+    const matin = [at('2026-10-01T08:00:00Z'), at('2026-10-01T12:00:00Z')] as const
+
+    assert.equal(priceCents(demiJournee, ...matin), 9_000)
+    assert.notEqual(priceCents(demiJournee, ...matin) * 2, journee.amountCents)
   })
 })
 

@@ -1,4 +1,5 @@
 import { dayRangeUtc, toWallClock, wallClockToUtc } from '../../lib/dates.ts'
+import { openingExtent } from '../ressources/ouverture.ts'
 import type { TimeRange } from './availability.ts'
 
 /**
@@ -13,8 +14,16 @@ import type { TimeRange } from './availability.ts'
 /** Fenêtre affichée, bornes `[)` comme les réservations. */
 export type PlanningWindow = { startsAt: Date; endsAt: Date }
 
-/** Heures d'ouverture par défaut du centre, en heure murale. */
-export const DEFAULT_OPENING = { openHour: 7, closeHour: 20 }
+/**
+ * Amplitude affichée quand rien d'autre ne la fixe : un jour de fermeture sans
+ * la moindre réservation.
+ *
+ * Ce n'était pas un défaut mais la règle unique jusqu'ici, sept jours sur sept.
+ * Les vraies heures d'ouverture viennent maintenant de `opening_hours` et sont
+ * passées en argument ; cette constante ne sert plus qu'à ne pas rendre une
+ * grille de hauteur nulle.
+ */
+export const FALLBACK_EXTENT = { openHour: 8, closeHour: 19 }
 
 const HOUR_MS = 3_600_000
 
@@ -50,21 +59,18 @@ export function planningWindow(
   isoDate: string,
   timeZone: string,
   bookings: readonly TimeRange[] = [],
-  opening = DEFAULT_OPENING,
+  opening: readonly TimeRange[] = [],
 ): PlanningWindow {
   const day = dayRangeUtc(isoDate, timeZone)
-  let startsAt = clamp(
-    wallClockToUtc(`${isoDate}T${pad(opening.openHour)}:00`, timeZone),
-    day.startsAt,
-    day.endsAt,
-  )
-  let endsAt = clamp(
-    opening.closeHour >= 24
-      ? day.endsAt
-      : wallClockToUtc(`${isoDate}T${pad(opening.closeHour)}:00`, timeZone),
-    startsAt,
-    day.endsAt,
-  )
+  // L'amplitude part des heures d'ouverture réelles. Un jour fermé retombe sur
+  // la constante, sinon la grille n'aurait pas de hauteur — le staff doit
+  // pouvoir poser une réservation exceptionnelle un jour férié.
+  const base = openingExtent(opening) ?? {
+    startsAt: wallClockToUtc(`${isoDate}T${pad(FALLBACK_EXTENT.openHour)}:00`, timeZone),
+    endsAt: wallClockToUtc(`${isoDate}T${pad(FALLBACK_EXTENT.closeHour)}:00`, timeZone),
+  }
+  let startsAt = clamp(base.startsAt, day.startsAt, day.endsAt)
+  let endsAt = clamp(base.endsAt, startsAt, day.endsAt)
 
   for (const booking of bookings) {
     if (booking.startsAt < startsAt) {

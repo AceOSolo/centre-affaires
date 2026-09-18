@@ -57,6 +57,41 @@
       "when": 1789734945175,
       "tag": "0007_demandes_publiques",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789735821030,
+      "tag": "0008_table_staff",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789735833697,
+      "tag": "0009_rls_staff",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789736098759,
+      "tag": "0010_horaires_et_fermetures",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789736118056,
+      "tag": "0011_rls_horaires_et_ouverture_par_defaut",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1789736372976,
+      "tag": "0012_unite_demi_journee",
+      "breakpoints": true
     }
   ]
 }

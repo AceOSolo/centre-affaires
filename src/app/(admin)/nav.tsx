@@ -9,6 +9,7 @@ const sections = [
   // traitées (ADR 005) : leur nombre est affiché en permanence.
   { href: '/demandes', label: 'Demandes' },
   { href: '/ressources', label: 'Ressources' },
+  { href: '/disponibilites', label: 'Disponibilités' },
   { href: '/clients', label: 'Clients' },
   { href: '/contrats', label: 'Contrats' },
   { href: '/tarifs', label: 'Tarifs' },

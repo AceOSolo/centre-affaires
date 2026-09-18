@@ -14,6 +14,8 @@ import {
   bookingStatusLabels,
 } from '../../../modules/reservations/labels.ts'
 import { listBookingsForDay } from '../../../modules/reservations/queries.ts'
+import { loadOpeningContext } from '../../../modules/ressources/ouverture-queries.ts'
+import { openingWindows, type TimeRange } from '../../../modules/ressources/ouverture.ts'
 import { listBookableResources } from '../../../modules/ressources/queries.ts'
 import type { Resource } from '../../../modules/ressources/schema.ts'
 
@@ -32,9 +34,10 @@ export default async function PlanningPage({
   const today = todayIsoDate(timeZone)
   const isoDate = date && ISO_DATE.test(date) ? date : today
 
-  const [bookings, bookable] = await Promise.all([
+  const [bookings, bookable, contexte] = await Promise.all([
     listBookingsForDay(isoDate, timeZone),
     listBookableResources(),
+    loadOpeningContext(isoDate, isoDate),
   ])
 
   // Une salle mise en maintenance après coup garde ses réservations : sa colonne
@@ -42,6 +45,20 @@ export default async function PlanningPage({
   const columns = mergeColumns(bookable, bookings.map((booking) => booking.resource))
   const occupying = bookings.filter((booking) => booking.status !== 'cancelled')
   const cancelled = bookings.filter((booking) => booking.status === 'cancelled')
+
+  // Les heures d'ouverture sont résolues par ressource : une salle peut avoir
+  // les siennes, et une fermeture exceptionnelle peut ne viser qu'elle.
+  const opening: Record<string, TimeRange[]> = Object.fromEntries(
+    columns.map((resource) => [
+      resource.id,
+      openingWindows(isoDate, timeZone, {
+        rules: contexte.rules,
+        closures: contexte.closures,
+        resourceId: resource.id,
+      }),
+    ]),
+  )
+  const fermePartout = columns.length > 0 && columns.every((r) => opening[r.id].length === 0)
 
   return (
     <div className="flex flex-col gap-6">
@@ -88,12 +105,24 @@ export default async function PlanningPage({
       {columns.length === 0 ? (
         <EmptyState />
       ) : (
-        <DayPlanning
-          isoDate={isoDate}
-          timeZone={timeZone}
-          resources={columns}
-          bookings={bookings}
-        />
+        <>
+          {fermePartout && (
+            <p className="rounded-md border border-border bg-muted px-4 py-3 text-sm text-muted-foreground">
+              Centre fermé ce jour-là. Une réservation reste possible, elle sera
+              simplement hors des heures d’ouverture.{' '}
+              <Link href="/disponibilites" className="underline underline-offset-2">
+                Modifier les horaires
+              </Link>
+            </p>
+          )}
+          <DayPlanning
+            isoDate={isoDate}
+            timeZone={timeZone}
+            resources={columns}
+            bookings={bookings}
+            opening={opening}
+          />
+        </>
       )}
 
       <section className="flex flex-col gap-3">

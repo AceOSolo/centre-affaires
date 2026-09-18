@@ -48,6 +48,17 @@ export function resolveRate<T extends RateCandidate>(
 const MS_PER_MINUTE = 60_000
 
 /**
+ * Durée d'une demi-journée réservable.
+ *
+ * Le centre ouvre du lundi au samedi de 8h à 22h, mais une demi-journée n'est
+ * pas la moitié de l'amplitude : c'est le créneau vendu, matin ou après-midi.
+ * Quatre heures est l'usage des centres d'affaires. C'est une convention de
+ * gestion, comme l'unité entamée — elle est nommée ici pour se changer en un
+ * endroit (ADR 009).
+ */
+export const MINUTES_PER_HALF_DAY = 4 * 60
+
+/**
  * Quantité facturée pour une durée.
  *
  * Toute unité entamée est due : une réunion d'une heure et dix minutes coûte
@@ -57,11 +68,16 @@ const MS_PER_MINUTE = 60_000
  * `month` et `unit` sont des forfaits : la prestation est due une fois, quelle
  * que soit sa durée. Un tarif au mois se pose sur un contrat, pas sur une
  * réservation.
+ *
+ * Choisir l'unité reste le travail de la grille : une réservation de 9h à 18h
+ * facturée à la demi-journée coûte trois demi-journées, pas une journée. C'est
+ * au centre de poser une ligne `day` sur les ressources vendues à la journée.
  */
 export function billableQuantity(unit: RateUnit, startsAt: Date, endsAt: Date): number {
   const minutes = (endsAt.getTime() - startsAt.getTime()) / MS_PER_MINUTE
   if (minutes <= 0) return 0
   if (unit === 'hour') return Math.ceil(minutes / 60)
+  if (unit === 'half_day') return Math.ceil(minutes / MINUTES_PER_HALF_DAY)
   if (unit === 'day') return Math.ceil(minutes / (60 * 24))
   return 1
 }

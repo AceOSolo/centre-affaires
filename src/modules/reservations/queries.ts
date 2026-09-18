@@ -4,10 +4,11 @@ import { withTenant, type Transaction } from '../../db/index.ts'
 import { PG_EXCLUSION_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { openingWindows } from '../ressources/ouverture.ts'
+import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange, occupiesResource, type TimeRange } from './availability.ts'
-import { planningWindow } from './planning.ts'
 import { freeMinutes, freeRanges } from './slots.ts'
 import { bookings, type Booking } from './schema.ts'
 
@@ -160,33 +161,45 @@ export type ResourceAvailability = {
   resource: Resource
   free: TimeRange[]
   freeMinutes: number
+  /** Fermé ce jour-là : aucune plage d'ouverture, ou fermeture exceptionnelle. */
+  closed: boolean
 }
 
 /**
  * Disponibilités du jour, ressource par ressource.
  *
  * Ne remonte que les ressources `active` : une salle en maintenance n'est pas
- * proposée au public. La fenêtre est celle des heures d'ouverture, pas la
- * journée entière — personne ne réserve une salle à 3 h du matin.
+ * proposée au public.
+ *
+ * Les trous sont cherchés à l'intérieur des vraies plages d'ouverture, une par
+ * une : un centre qui ferme entre 12h et 14h ne doit pas proposer la pause
+ * déjeuner sous prétexte qu'aucune réservation ne l'occupe. « Fermé » et
+ * « complet » sont deux réponses différentes, et l'écran doit pouvoir les
+ * distinguer.
  */
 export async function listDayAvailability(
   isoDate: string,
   timeZone: string,
 ): Promise<ResourceAvailability[]> {
-  const [bookable, bookings] = await Promise.all([
+  const [bookable, bookings, opening] = await Promise.all([
     listBookableResources(),
     listBookingsForDay(isoDate, timeZone),
+    loadOpeningContext(isoDate, isoDate),
   ])
-  const window = planningWindow(isoDate, timeZone, [])
 
   return bookable.map((resource) => {
+    const windows = openingWindows(isoDate, timeZone, {
+      rules: opening.rules,
+      closures: opening.closures,
+      resourceId: resource.id,
+    })
     // Les annulées libèrent leur créneau ; les `pending` l'occupent, une demande
     // en attente ne doit pas être proposée deux fois (ADR 005).
     const busy = bookings.filter(
       (booking) => booking.resourceId === resource.id && occupiesResource(booking.status),
     )
-    const free = freeRanges(window, busy)
-    return { resource, free, freeMinutes: freeMinutes(free) }
+    const free = windows.flatMap((window) => freeRanges(window, busy))
+    return { resource, free, freeMinutes: freeMinutes(free), closed: windows.length === 0 }
   })
 }
 

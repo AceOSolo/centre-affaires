@@ -67,7 +67,7 @@ export default async function PortailPage({
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
                 href="#demande"
-                className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-6 py-3.5 font-medium text-primary-foreground transition-colors hover:bg-[#1a97c9]"
+                className="inline-flex items-center justify-center gap-2 rounded-md bg-primary px-6 py-3.5 font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
               >
                 Demander un créneau
                 <ArrowRightIcon size={20} />
@@ -185,7 +185,7 @@ export default async function PortailPage({
           </div>
 
           <div className="mt-8 flex flex-col gap-4">
-            {availability.map(({ resource, free, freeMinutes }) => (
+            {availability.map(({ resource, free, freeMinutes, closed }) => (
               <div
                 key={resource.id}
                 className="flex flex-col gap-4 rounded-lg border border-border bg-card p-5 sm:flex-row sm:items-center sm:justify-between"
@@ -199,10 +199,12 @@ export default async function PortailPage({
                 </div>
 
                 {free.length === 0 ? (
-                  // La couleur ne porte jamais l'information seule : le mot
-                  // « Complet » est là, pas seulement un fond gris.
+                  // La couleur ne porte jamais l'information seule : le mot est
+                  // là, pas seulement un fond gris. Et « fermé » n'est pas
+                  // « complet » — proposer de rappeler n'a de sens que dans un
+                  // seul des deux cas.
                   <p className="rounded-sm bg-muted px-3 py-2 text-sm font-medium text-muted-foreground">
-                    Complet ce jour-là
+                    {closed ? 'Fermé ce jour-là' : 'Complet ce jour-là'}
                   </p>
                 ) : (
                   <div className="flex flex-1 flex-wrap items-center gap-2">

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { formatTime } from '../../lib/dates.ts'
+import { isoWeekday, openingWindows } from '../ressources/ouverture.ts'
 import {
   blockGeometry,
   hourTicks,
@@ -14,59 +15,93 @@ const PARIS = 'Europe/Paris'
 const at = (iso: string) => new Date(iso)
 const range = (start: string, end: string) => ({ startsAt: at(start), endsAt: at(end) })
 
+/**
+ * Heures d'ouverture d'une journée, telles que les écrans les fournissent
+ * désormais. Les tests de géométrie ne dépendent plus d'une constante : ils
+ * disent l'ouverture qu'ils supposent.
+ */
+const ouverture = (isoDate: string, opensAt: string, closesAt: string) =>
+  openingWindows(isoDate, PARIS, {
+    rules: [{ resourceId: null, weekday: isoWeekday(isoDate), opensAt, closesAt }],
+    resourceId: 'resource',
+  })
+
+/** Ouverture large, celle que l'application supposait avant les horaires saisis. */
+const large = (isoDate: string) => ouverture(isoDate, '07:00:00', '20:00:00')
+
 /** Durée de la fenêtre en heures, arrondie au centième. */
 const hours = (window: PlanningWindow) =>
   Math.round(((window.endsAt.getTime() - window.startsAt.getTime()) / 3_600_000) * 100) / 100
 
 describe('planningWindow', () => {
   it("s'en tient aux heures d'ouverture quand rien n'en déborde", () => {
-    const window = planningWindow('2026-07-15', PARIS, [
-      range('2026-07-15T08:00:00Z', '2026-07-15T09:00:00Z'), // 10h-11h à Paris
-    ])
+    const window = planningWindow(
+      '2026-07-15',
+      PARIS,
+      [
+        range('2026-07-15T08:00:00Z', '2026-07-15T09:00:00Z'), // 10h-11h à Paris
+      ],
+      large('2026-07-15'),
+    )
     assert.equal(formatTime(window.startsAt, PARIS), '07:00')
     assert.equal(formatTime(window.endsAt, PARIS), '20:00')
   })
 
   it("s'élargit à l'heure pleine pour une réservation matinale", () => {
     // 06h15 à Paris, avant l'ouverture affichée.
-    const window = planningWindow('2026-07-15', PARIS, [
-      range('2026-07-15T04:15:00Z', '2026-07-15T05:00:00Z'),
-    ])
+    const window = planningWindow(
+      '2026-07-15',
+      PARIS,
+      [
+        range('2026-07-15T04:15:00Z', '2026-07-15T05:00:00Z'),
+      ],
+      large('2026-07-15'),
+    )
     assert.equal(formatTime(window.startsAt, PARIS), '06:00')
   })
 
   it("s'élargit pour une réservation qui finit tard", () => {
     // 21h00-22h30 à Paris.
-    const window = planningWindow('2026-07-15', PARIS, [
-      range('2026-07-15T19:00:00Z', '2026-07-15T20:30:00Z'),
-    ])
+    const window = planningWindow(
+      '2026-07-15',
+      PARIS,
+      [
+        range('2026-07-15T19:00:00Z', '2026-07-15T20:30:00Z'),
+      ],
+      large('2026-07-15'),
+    )
     assert.equal(formatTime(window.endsAt, PARIS), '23:00')
   })
 
   it('ne déborde jamais sur le jour suivant', () => {
     // Une réservation qui court jusqu'au lendemain matin : la fenêtre s'arrête
     // à minuit, le reste s'affiche le jour d'après.
-    const window = planningWindow('2026-07-15', PARIS, [
-      range('2026-07-15T20:00:00Z', '2026-07-16T06:00:00Z'),
-    ])
+    const window = planningWindow(
+      '2026-07-15',
+      PARIS,
+      [
+        range('2026-07-15T20:00:00Z', '2026-07-16T06:00:00Z'),
+      ],
+      large('2026-07-15'),
+    )
     assert.equal(window.endsAt.toISOString(), '2026-07-15T22:00:00.000Z')
   })
 
   it('couvre 25 heures au retour à l’heure d’hiver', () => {
     // Nuit du 25 octobre 2026 : 03h00 CEST revient à 02h00 CET.
-    const window = planningWindow('2026-10-25', PARIS, [], { openHour: 0, closeHour: 24 })
+    const window = planningWindow('2026-10-25', PARIS, [], ouverture('2026-10-25', '00:00:00', '24:00:00'))
     assert.equal(hours(window), 25)
   })
 
   it('couvre 23 heures au passage à l’heure d’été', () => {
     // Nuit du 29 mars 2026 : 02h00 CET saute à 03h00 CEST.
-    const window = planningWindow('2026-03-29', PARIS, [], { openHour: 0, closeHour: 24 })
+    const window = planningWindow('2026-03-29', PARIS, [], ouverture('2026-03-29', '00:00:00', '24:00:00'))
     assert.equal(hours(window), 23)
   })
 })
 
 describe('blockGeometry', () => {
-  const window = planningWindow('2026-07-15', PARIS) // 07h-20h, 13 heures
+  const window = planningWindow('2026-07-15', PARIS, [], large('2026-07-15')) // 13 heures
 
   it('place une réservation au prorata de la fenêtre', () => {
     // 08h00-09h00 à Paris : une heure sur treize, après une heure écoulée.
@@ -108,7 +143,7 @@ describe('blockGeometry', () => {
 
 describe('hourTicks', () => {
   it('gradue chaque heure, bornes comprises', () => {
-    const window = planningWindow('2026-07-15', PARIS)
+    const window = planningWindow('2026-07-15', PARIS, [], large('2026-07-15'))
     const ticks = hourTicks(window)
     assert.equal(ticks.length, 14) // 07h à 20h inclus
     assert.equal(formatTime(ticks[0].instant, PARIS), '07:00')
@@ -118,7 +153,7 @@ describe('hourTicks', () => {
   })
 
   it('affiche deux fois 02:00 le jour du retour à l’heure d’hiver', () => {
-    const window = planningWindow('2026-10-25', PARIS, [], { openHour: 0, closeHour: 24 })
+    const window = planningWindow('2026-10-25', PARIS, [], ouverture('2026-10-25', '00:00:00', '24:00:00'))
     const labels = hourTicks(window).map((tick) => formatTime(tick.instant, PARIS))
     assert.equal(labels.filter((label) => label === '02:00').length, 2)
   })
@@ -126,6 +161,6 @@ describe('hourTicks', () => {
 
 describe('planningHeightPx', () => {
   it('donne la place d’une heure par graduation', () => {
-    assert.equal(planningHeightPx(planningWindow('2026-07-15', PARIS), 56), 13 * 56)
+    assert.equal(planningHeightPx(planningWindow('2026-07-15', PARIS, [], large('2026-07-15')), 56), 13 * 56)
   })
 })

@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { requireStaff } from '../../lib/auth/staff.ts'
+
 import { resourceTypes, type ResourceType } from '../ressources/schema.ts'
 import {
   DefaultRatePlanConflictError,
@@ -27,6 +29,10 @@ export async function createRatePlanAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
+  // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
+  // la protège pas (ADR 008).
+  await requireStaff()
   const name = text(formData, 'name')
   if (!name) return { error: 'Nommer la grille.' }
 
@@ -61,6 +67,7 @@ export async function addRatePlanItemAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
+  await requireStaff()
   const ratePlanId = text(formData, 'ratePlanId')
   const resourceType = text(formData, 'resourceType')
   const unit = text(formData, 'unit')
@@ -92,6 +99,7 @@ export async function addRatePlanItemAction(
 }
 
 export async function removeRatePlanItemAction(formData: FormData): Promise<void> {
+  await requireStaff()
   const id = text(formData, 'id')
   const ratePlanId = text(formData, 'ratePlanId')
   if (!id) return
@@ -103,6 +111,7 @@ export async function removeRatePlanItemAction(formData: FormData): Promise<void
 }
 
 export async function archiveRatePlanAction(formData: FormData): Promise<void> {
+  await requireStaff()
   const id = text(formData, 'id')
   if (!id) return
   await archiveRatePlan(id)

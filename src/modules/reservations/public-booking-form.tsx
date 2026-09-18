@@ -215,7 +215,7 @@ export function PublicBookingForm({
         <button
           type="submit"
           disabled={pending || resources.length === 0}
-          className="rounded-md bg-primary px-5 py-3 font-medium text-primary-foreground transition-colors hover:bg-[#1a97c9] disabled:opacity-60"
+          className="rounded-md bg-primary px-5 py-3 font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
         >
           {pending ? 'Envoi…' : 'Envoyer la demande'}
         </button>
