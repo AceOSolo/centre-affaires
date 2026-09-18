@@ -92,6 +92,34 @@
       "when": 1789736372976,
       "tag": "0012_unite_demi_journee",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1789736854661,
+      "tag": "0013_identite_du_centre",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1789736924500,
+      "tag": "0014_annonces",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1789736936582,
+      "tag": "0015_rls_annonces",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1789737445626,
+      "tag": "0016_photos",
+      "breakpoints": true
     }
   ]
 }

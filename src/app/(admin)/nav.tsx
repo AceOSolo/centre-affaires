@@ -10,6 +10,7 @@ const sections = [
   { href: '/demandes', label: 'Demandes' },
   { href: '/ressources', label: 'Ressources' },
   { href: '/disponibilites', label: 'Disponibilités' },
+  { href: '/ressources/annonces', label: 'Annonces' },
   { href: '/clients', label: 'Clients' },
   { href: '/contrats', label: 'Contrats' },
   { href: '/tarifs', label: 'Tarifs' },
@@ -22,10 +23,18 @@ const sections = [
 export function Nav({ pendingCount = 0 }: { pendingCount?: number }) {
   const pathname = usePathname()
 
+  // Le plus long chemin qui correspond l'emporte : `/ressources/annonces` ne
+  // doit pas allumer aussi l'onglet `/ressources`.
+  const actif = sections
+    .filter(
+      (section) => pathname === section.href || pathname.startsWith(`${section.href}/`),
+    )
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href
+
   return (
     <nav className="flex gap-1">
       {sections.map((section) => {
-        const active = pathname.startsWith(section.href)
+        const active = section.href === actif
         return (
           <Link
             key={section.href}

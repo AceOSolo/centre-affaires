@@ -151,3 +151,76 @@ export function isWithinOpeningHours(
       range.endsAt.getTime() <= window.endsAt.getTime(),
   )
 }
+
+const JOURS = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+
+/** « 08:00:00 » → « 8h00 », « 12:30:00 » → « 12h30 ». */
+function heureLisible(time: string): string {
+  const [heures, minutes] = time.split(':')
+  return `${Number(heures)}h${minutes}`
+}
+
+/**
+ * Horaires d'ouverture en une phrase : « Du lundi au vendredi, 8h00 – 18h00 ».
+ *
+ * Écrit pour que le site public cesse de répéter les horaires en dur : les
+ * afficher depuis les mêmes lignes que celles qui décident des créneaux libres
+ * évite qu'une page annonce une ouverture que le calendrier refuse.
+ *
+ * Les jours consécutifs aux mêmes horaires sont regroupés ; un jour fermé est
+ * simplement absent. Renvoie `undefined` quand aucune règle n'existe — au
+ * lecteur de décider quoi afficher, pas à cette fonction d'inventer des
+ * horaires.
+ */
+export function formatOpeningSummary(
+  rules: readonly OpeningRule[],
+  resourceId: string | null = null,
+): string | undefined {
+  const applicable = resourceId
+    ? rulesForResource(rules, resourceId)
+    : rules.filter((rule) => rule.resourceId === null)
+  if (applicable.length === 0) return undefined
+
+  // Un jour peut porter plusieurs plages — une journée coupée à midi.
+  const parJour = new Map<number, { opensAt: string; texte: string }[]>()
+  for (const rule of applicable) {
+    const plages = parJour.get(rule.weekday) ?? []
+    plages.push({
+      opensAt: rule.opensAt,
+      texte: `${heureLisible(rule.opensAt)} – ${heureLisible(rule.closesAt)}`,
+    })
+    parJour.set(rule.weekday, plages)
+  }
+
+  const jours = [...parJour.entries()]
+    .map(([weekday, plages]) => ({
+      weekday,
+      // Tri sur l'heure brute, jamais sur le texte affiché : « 14h00 »
+      // précéderait « 8h00 » dans l'ordre alphabétique.
+      horaires: [...plages]
+        .sort((a, b) => a.opensAt.localeCompare(b.opensAt))
+        .map((plage) => plage.texte)
+        .join(' et '),
+    }))
+    .sort((a, b) => a.weekday - b.weekday)
+
+  // Regroupement des jours consécutifs qui partagent les mêmes horaires.
+  const groupes: { premier: number; dernier: number; horaires: string }[] = []
+  for (const jour of jours) {
+    const courant = groupes[groupes.length - 1]
+    if (courant && courant.horaires === jour.horaires && courant.dernier === jour.weekday - 1) {
+      courant.dernier = jour.weekday
+      continue
+    }
+    groupes.push({ premier: jour.weekday, dernier: jour.weekday, horaires: jour.horaires })
+  }
+
+  return groupes
+    .map(({ premier, dernier, horaires }) => {
+      const nom = (weekday: number) => JOURS[weekday - 1]
+      if (premier === dernier) return `Le ${nom(premier)}, ${horaires}`
+      if (dernier === premier + 1) return `Le ${nom(premier)} et le ${nom(dernier)}, ${horaires}`
+      return `Du ${nom(premier)} au ${nom(dernier)}, ${horaires}`
+    })
+    .join(' · ')
+}

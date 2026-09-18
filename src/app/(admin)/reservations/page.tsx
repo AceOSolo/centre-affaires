@@ -81,6 +81,12 @@ export default async function PlanningPage({
         <DayLink date={addDaysToIsoDate(isoDate, -1)} label="← Veille" />
         <DayLink date={today} label="Aujourd’hui" active={isoDate === today} />
         <DayLink date={addDaysToIsoDate(isoDate, 1)} label="Lendemain →" />
+        <Link
+          href={`/reservations/semaine?date=${isoDate}`}
+          className="rounded-md border border-border px-3 py-1 text-sm text-muted-foreground hover:bg-muted"
+        >
+          Vue semaine
+        </Link>
         {/* Formulaire GET : le saut à une date précise marche sans JavaScript. */}
         <form className="ml-auto flex items-center gap-2">
           <label htmlFor="date" className="text-xs text-muted-foreground">

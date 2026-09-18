@@ -4,6 +4,7 @@ import {
   ArrowRightIcon,
   BuildingIcon,
   CalendarIcon,
+  CheckIcon,
   ClockIcon,
   UsersIcon,
 } from '../../components/ui/icons.tsx'
@@ -15,8 +16,12 @@ import {
   todayIsoDate,
 } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
+import { findDefaultRatePlan } from '../../modules/facturation/queries.ts'
+import { formatCents, resolveRate } from '../../modules/facturation/tarifs.ts'
 import { PublicBookingForm } from '../../modules/reservations/public-booking-form.tsx'
 import { listDayAvailability } from '../../modules/reservations/queries.ts'
+import { formatOpeningSummary } from '../../modules/ressources/ouverture.ts'
+import { listOpeningHours } from '../../modules/ressources/ouverture-queries.ts'
 import { MAX_DAYS_AHEAD } from '../../modules/reservations/requests.ts'
 import { describeAttributes, resourceTypeLabels } from '../../modules/ressources/labels.ts'
 
@@ -43,7 +48,14 @@ export default async function PortailPage({
   // survit à la journée pour laquelle elle a été copiée.
   const isoDate = date && ISO_DATE.test(date) && date >= today && date <= maxDate ? date : today
 
-  const availability = await listDayAvailability(isoDate, timeZone)
+  const [availability, tarifs, regles] = await Promise.all([
+    listDayAvailability(isoDate, timeZone),
+    // Les prix affichés viennent de la grille par défaut : la page vitrine et la
+    // facturation ne peuvent pas diverger.
+    findDefaultRatePlan(),
+    listOpeningHours(),
+  ])
+  const ouverture = formatOpeningSummary(regles)
   const resources = availability.map((entry) => entry.resource)
   const grandeCapacite = Math.max(0, ...resources.map((resource) => resource.capacity ?? 0))
 
@@ -53,16 +65,18 @@ export default async function PortailPage({
       <section className="border-b border-border bg-gradient-to-b from-muted to-background">
         <div className="mx-auto max-w-[1200px] px-5 py-16 sm:px-8 sm:py-24">
           <div className="max-w-2xl">
-            <p className="text-sm font-medium uppercase tracking-wide text-primary">
-              {tenant.name}
-            </p>
+            {tenant.tagline && (
+              <p className="text-sm font-medium uppercase tracking-wide text-primary">
+                {tenant.tagline}
+              </p>
+            )}
             <h1 className="mt-3 text-4xl font-bold tracking-tight text-secondary sm:text-5xl">
               Une salle de réunion, quand vous en avez besoin.
             </h1>
             <p className="mt-5 text-lg text-muted-foreground">
-              Salles équipées, bureaux fermés et espaces de travail au cœur du centre
-              d&rsquo;affaires. Réservez à l&rsquo;heure, à la demi-journée ou à la journée, sans
-              abonnement.
+              Salles équipées, bureaux fermés et domiciliation à
+              {tenant.city ? ` ${tenant.city}` : ''}. Réservez à la demi-journée ou à la
+              journée, sans abonnement.
             </p>
             <div className="mt-8 flex flex-col gap-3 sm:flex-row">
               <Link
@@ -98,6 +112,25 @@ export default async function PortailPage({
               label="durée minimale de réservation"
             />
           </dl>
+        </div>
+      </section>
+
+      {/* Services -------------------------------------------------------- */}
+      <section className="border-b border-border">
+        <div className="mx-auto max-w-[1200px] px-5 py-12 sm:px-8">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
+            {[
+              ['Location de salles', 'Réunion, formation, séminaire — à la demi-journée ou à la journée.'],
+              ['Location de bureaux', 'Bureaux fermés, au mois, prêts à l’emploi.'],
+              ['Domiciliation', 'Adresse commerciale et réception de votre courrier.'],
+              ['Événementiel', 'Espaces modulables et services sur mesure pour vos temps forts.'],
+            ].map(([titre, texte]) => (
+              <div key={titre}>
+                <h2 className="font-semibold text-secondary">{titre}</h2>
+                <p className="mt-1 text-sm text-muted-foreground">{texte}</p>
+              </div>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -137,6 +170,32 @@ export default async function PortailPage({
                   {details && (
                     <p className="mt-2 text-sm text-muted-foreground">{details}</p>
                   )}
+                  {(() => {
+                    const demiJournee = tarifs
+                      ? resolveRate(tarifs.items, {
+                          resourceId: resource.id,
+                          resourceType: resource.resourceType,
+                          unit: 'half_day',
+                        })
+                      : undefined
+                    const journee = tarifs
+                      ? resolveRate(tarifs.items, {
+                          resourceId: resource.id,
+                          resourceType: resource.resourceType,
+                          unit: 'day',
+                        })
+                      : undefined
+                    if (!demiJournee && !journee) return null
+                    return (
+                      <p className="mt-4 border-t border-border pt-3 text-sm font-medium text-secondary">
+                        {demiJournee &&
+                          `${formatCents(demiJournee.amountCents, tarifs?.currency)} HT la demi-journée`}
+                        {demiJournee && journee && ' · '}
+                        {journee &&
+                          `${formatCents(journee.amountCents, tarifs?.currency)} HT la journée`}
+                      </p>
+                    )
+                  })()}
                 </article>
               )
             })}
@@ -224,6 +283,68 @@ export default async function PortailPage({
                 )}
               </div>
             ))}
+          </div>
+        </div>
+      </section>
+
+      {/* Sur place ------------------------------------------------------- */}
+      <section className="mx-auto max-w-[1200px] px-5 py-16 sm:px-8">
+        <div className="grid gap-10 lg:grid-cols-2">
+          <div>
+            <h2 className="text-3xl font-semibold tracking-tight text-secondary">
+              Services sur place
+            </h2>
+            <p className="mt-2 text-muted-foreground">
+              À ajouter à votre réservation, sur demande.
+            </p>
+            <ul className="mt-6 grid gap-3 sm:grid-cols-2">
+              {[
+                'Wifi gratuit',
+                'Écran tactile',
+                'Purificateur d’air',
+                'Petit-déjeuner et déjeuner',
+                'Rafraîchissements',
+                'Paperboard',
+              ].map((service) => (
+                <li key={service} className="flex items-center gap-2 text-sm">
+                  <CheckIcon size={20} className="shrink-0 text-primary" />
+                  {service}
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <div className="rounded-lg border border-border bg-muted p-6 sm:p-8">
+            <h2 className="text-xl font-semibold text-secondary">Nous trouver</h2>
+            <address className="mt-4 flex flex-col gap-1 not-italic text-muted-foreground">
+              {tenant.addressLine1 && <span>{tenant.addressLine1}</span>}
+              {tenant.addressLine2 && <span>{tenant.addressLine2}</span>}
+              <span>
+                {[tenant.postalCode, tenant.city].filter(Boolean).join(' ')}
+              </span>
+            </address>
+
+            <dl className="mt-6 flex flex-col gap-3 text-sm">
+              {tenant.phone && (
+                <div className="flex items-center gap-2">
+                  <dt className="text-muted-foreground">Téléphone</dt>
+                  <dd>
+                    <a
+                      href={`tel:${tenant.phone.replace(/\s/g, '')}`}
+                      className="font-medium text-secondary underline-offset-2 hover:underline"
+                    >
+                      {tenant.phone}
+                    </a>
+                  </dd>
+                </div>
+              )}
+              <div className="flex items-start gap-2">
+                <dt className="text-muted-foreground">Ouverture</dt>
+                <dd className="font-medium text-secondary">
+                  {ouverture ?? 'Nous consulter'}
+                </dd>
+              </div>
+            </dl>
           </div>
         </div>
       </section>

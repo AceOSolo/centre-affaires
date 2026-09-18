@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import Link from 'next/link'
 
 import { requireStaff } from '../../lib/auth/staff.ts'
@@ -32,8 +33,19 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     <div className="flex min-h-screen flex-col bg-muted font-sans text-foreground">
       <header className="border-b border-border bg-white">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-6 gap-y-3 px-6 py-3">
-          <Link href="/reservations" className="text-sm font-semibold tracking-tight">
-            {tenant.name}
+          <Link href="/reservations" className="flex items-center">
+            {tenant.logoPath ? (
+              <Image
+                src={tenant.logoPath}
+                alt={tenant.name}
+                width={600}
+                height={191}
+                priority
+                className="h-7 w-auto"
+              />
+            ) : (
+              <span className="text-sm font-semibold tracking-tight">{tenant.name}</span>
+            )}
           </Link>
           <Nav pendingCount={pending.length} />
           <div className="ml-auto flex items-center gap-4">

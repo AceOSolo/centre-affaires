@@ -11,6 +11,7 @@ import {
   smallint,
   text,
   time,
+  timestamp,
   unique,
   uniqueIndex,
   uuid,
@@ -64,6 +65,15 @@ export const resources = pgTable(
     /** Nombre de personnes ; nul pour un casier ou une boîte aux lettres. */
     capacity: integer('capacity'),
     status: resourceStatusEnum('status').notNull().default('active'),
+    /**
+     * Photo de l'espace, servie par l'application — jamais une URL externe, pour
+     * la même raison que le logo du centre (ADR 004).
+     *
+     * Colonne et non `attributes` : une photo n'est pas un champ propre à un
+     * type, tous les types en ont une. `attributes` est réservé à ce qui ne vaut
+     * que pour un type (décision 2).
+     */
+    photoPath: text('photo_path'),
     attributes: jsonb('attributes')
       .$type<ResourceAttributes[ResourceType]>()
       .notNull()
@@ -102,7 +112,7 @@ export type NewResource = typeof resources.$inferInsert
  *
  * Les heures sont en `time`, pas en `timestamptz` : « ouvre à 9h00 » est une
  * heure murale qui ne bouge pas aux changements d'heure, contrairement à
- * l'instant qu'elle désigne (décision 4, voir aussi ADR 009).
+ * l'instant qu'elle désigne (décision 4, voir aussi ADR 010).
  */
 export const openingHours = pgTable(
   'opening_hours',
@@ -170,3 +180,52 @@ export type OpeningHour = typeof openingHours.$inferSelect
 export type NewOpeningHour = typeof openingHours.$inferInsert
 export type Closure = typeof closures.$inferSelect
 export type NewClosure = typeof closures.$inferInsert
+
+/**
+ * Annonces : la face publique d'une ressource.
+ *
+ * Table séparée et non colonnes sur `resources`, parce que les deux objets
+ * changent à des rythmes différents et par des mains différentes — la capacité
+ * et le statut relèvent de l'exploitation, le titre et le texte de la vitrine.
+ * Toutes les ressources ne sont pas annoncées : un casier ne l'est jamais.
+ *
+ * Le `slug` est stocké et non calculé : il paraît dans l'URL publique et dans
+ * les moteurs de recherche, il doit survivre à un renommage de la ressource.
+ */
+export const listings = pgTable(
+  'listings',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    resourceId: uuid('resource_id').notNull(),
+    slug: text('slug').notNull(),
+    /** Titre de l'annonce, distinct du nom interne de la ressource. */
+    headline: text('headline').notNull(),
+    description: text('description'),
+    /** Points forts, affichés en liste courte. */
+    highlights: jsonb('highlights').$type<string[]>().notNull().default([]),
+    /** Clés de stockage des photos, dans l'ordre d'affichage. */
+    photos: jsonb('photos').$type<string[]>().notNull().default([]),
+    /** Nul : brouillon, invisible du public. */
+    publishedAt: timestamp('published_at', { withTimezone: true }),
+    ...timestamps(),
+    deletedAt: deletedAt(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'listings_resource_fk',
+      columns: [table.tenantId, table.resourceId],
+      foreignColumns: [resources.tenantId, resources.id],
+    }).onDelete('cascade'),
+    // Une annonce par ressource : deux vitrines pour la même salle donneraient
+    // deux disponibilités à tenir d'accord.
+    unique('listings_tenant_resource_key').on(table.tenantId, table.resourceId),
+    uniqueIndex('listings_tenant_slug_key')
+      .on(table.tenantId, table.slug)
+      .where(sql`deleted_at is null`),
+    index('listings_tenant_published_idx').on(table.tenantId, table.publishedAt),
+  ],
+)
+
+export type Listing = typeof listings.$inferSelect
+export type NewListing = typeof listings.$inferInsert

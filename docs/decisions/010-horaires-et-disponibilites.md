@@ -1,4 +1,4 @@
-# ADR 009 — Horaires d'ouverture et disponibilités
+# ADR 010 — Horaires d'ouverture et disponibilités
 
 **Date** : 2026-09-18
 **Statut** : accepté

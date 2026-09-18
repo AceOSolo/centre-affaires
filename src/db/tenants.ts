@@ -18,6 +18,38 @@ export const tenants = pgTable('tenants', {
   timezone: text('timezone').notNull().default('Europe/Paris'),
   /** ISO 4217, accompagne les montants stockés en centimes. */
   currency: char('currency', { length: 3 }).notNull().default('EUR'),
+
+  /*
+   * Identité publique du centre.
+   *
+   * En base et non en dur dans la page : c'est ce qui change d'un centre à
+   * l'autre, et la décision 1 veut que le passage au multi-centres ne demande
+   * pas de reprise. Un second centre aura son nom, son adresse et son logo sans
+   * qu'on touche au code.
+   */
+  /** Signature affichée sous le nom — « Cultivateur de relations ». */
+  tagline: text('tagline'),
+  /** Personne morale qui exploite le centre, pour les mentions légales. */
+  legalName: text('legal_name'),
+  addressLine1: text('address_line1'),
+  /** Complément : bâtiment, pavillon, étage. */
+  addressLine2: text('address_line2'),
+  postalCode: text('postal_code'),
+  city: text('city'),
+  /** ISO 3166-1 alpha-2, comme sur `clients`. */
+  country: char('country', { length: 2 }).notNull().default('FR'),
+  phone: text('phone'),
+  email: text('email'),
+  websiteUrl: text('website_url'),
+  /**
+   * Chemin du logo servi par l'application, jamais une URL externe : une image
+   * appelée chez un tiers lui livrerait l'adresse IP de chaque visiteur, ce que
+   * l'ADR 004 refuse déjà pour les polices.
+   */
+  logoPath: text('logo_path'),
+  /** Photo d'en-tête du site public, servie depuis notre domaine elle aussi. */
+  heroImagePath: text('hero_image_path'),
+
   ...timestamps(),
   deletedAt: deletedAt(),
 })

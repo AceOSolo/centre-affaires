@@ -41,27 +41,23 @@ const inTenant = (run) =>
   })
 
 const resources = [
-  ['salle', 'S-101', 'Salle Europe', 'Grande salle de réunion, vue sur cour.', 12, { superficieM2: 34, equipements: ['visio', 'tableau blanc', 'écran 55"'] }],
-  ['salle', 'S-102', 'Salle Amérique', 'Salle de réunion intermédiaire.', 8, { superficieM2: 22, equipements: ['visio', 'tableau blanc'] }],
-  ['salle', 'S-103', 'Salle Asie', 'Petite salle, entretiens et points rapides.', 4, { superficieM2: 11, equipements: ['écran 32"'] }],
-  ['bureau', 'B-201', 'Bureau 201', 'Bureau fermé, deuxième étage.', 3, { superficieM2: 16, postes: 3 }],
-  ['bureau', 'B-202', 'Bureau 202', 'Bureau fermé, deuxième étage.', 2, { superficieM2: 12, postes: 2 }],
-  ['vehicule', 'VH-1', 'Utilitaire Kangoo', 'Réservable à la demi-journée.', 3, { immatriculation: 'AB-123-CD', kilometrage: 48250, places: 3 }],
-  ['casier', 'C-12', 'Casier 12', null, null, { taille: 'M' }],
-  ['boite_aux_lettres', 'BAL-07', 'Boîte aux lettres 07', 'Domiciliation.', null, {}],
+  ['salle', 'S-MB', 'Salle Mont Blanc', 'Espace modulable : formation, séminaire, réunion.', 14, { superficieM2: 30, equipements: ['écran tactile', 'paperboard', 'wifi'] }, '/photos/salle-mont-blanc.jpg'],
+  ['salle', 'S-AE', 'Salle Albert Einstein', 'Espace flexible : réunion, formation, séminaire, activité sportive.', 16, { equipements: ['wifi', 'purificateur d’air'] }, '/photos/salle-albert-einstein.jpg'],
+  ['bureau', 'B-01', 'Bureau 1', 'Bureau fermé, location au mois.', 3, { postes: 3 }, '/photos/accueil.jpg'],
+  ['bureau', 'B-02', 'Bureau 2', 'Bureau fermé, location au mois.', 2, { postes: 2 }, '/photos/accueil.jpg'],
+  ['boite_aux_lettres', 'DOM-01', 'Domiciliation 01', 'Adresse commerciale et réception du courrier.', null, {}, null],
+  ['boite_aux_lettres', 'DOM-02', 'Domiciliation 02', 'Adresse commerciale et réception du courrier.', null, {}, null],
 ]
 
 /** Réservations posées en heure murale de Paris sur les jours autour d'aujourd'hui. */
 const bookings = [
-  [0, 'S-101', '09:00', '10:30', 'Comité de direction', 'Café et viennoiseries commandés.'],
-  [0, 'S-101', '14:00', '16:00', 'Formation sécurité', null],
-  [0, 'S-102', '10:00', '11:00', 'Entretien candidat — poste comptable', null],
+  [0, 'S-101', '09:00', '12:00', 'Formation habilitation électrique', 'Café et viennoiseries commandés.'],
+  [0, 'S-101', '14:00', '17:30', 'Séminaire de rentrée — Delta Industries', null],
+  [0, 'S-102', '10:00', '11:00', 'Entretien de recrutement', null],
   [0, 'S-102', '11:00', '12:00', 'Point hebdomadaire Dupont SARL', null],
-  [0, 'S-103', '08:30', '09:00', 'Appel client Martin & Fils', null],
-  [0, 'B-201', '09:00', '18:00', 'Bureau à la journée — Lefèvre Conseil', null],
-  [0, 'VH-1', '13:30', '17:30', 'Livraison salon professionnel', 'Retour avant 18h.'],
-  [1, 'S-101', '09:30', '11:00', 'Présentation trimestrielle', null],
-  [1, 'S-103', '15:00', '16:00', 'Visite de locaux', null],
+  [0, 'B-01', '08:00', '18:00', 'Bureau à la journée — Lefèvre Conseil', null],
+  [1, 'S-101', '09:30', '12:30', 'Présentation trimestrielle', null],
+  [1, 'S-102', '15:00', '16:00', 'Visite de locaux', null],
   [-1, 'S-102', '09:00', '10:00', 'Réunion reportée', null],
 ]
 
@@ -71,8 +67,31 @@ const isoDate = (days) => addDaysToIsoDate(todayIsoDate(TIME_ZONE), days)
 if (process.argv.includes('--vider')) {
   // Suppression physique assumée : ces lignes sont fictives et n'ont aucune
   // valeur légale, contrairement aux données que la décision 6 protège.
+  //
+  // Encore faut-il qu'elles le soient. `infra/catalogue.mjs` écrit le parc réel
+  // du centre dans les mêmes tables : effacer sans regarder détruirait une
+  // configuration, pas un jeu d'essai — et `--vider` s'exécute avant le
+  // garde-fou de la suite, donc plus rien ne l'arrêterait. Le script refuse dès
+  // qu'il trouve une ressource qui ne vient pas d'ici.
+  const codesDemo = resources.map(([, code]) => code)
+  const intruses = await inTenant(
+    (tx) => tx`select code from resources where not (code = any(${codesDemo})) order by code`,
+  )
+  if (intruses.length > 0) {
+    const apercu = intruses.slice(0, 5).map(({ code }) => code)
+    console.error(
+      `La base contient ${intruses.length} ressource(s) étrangères au jeu de démonstration ` +
+        `(${apercu.join(', ')}${intruses.length > apercu.length ? ', …' : ''}) : ` +
+        "rien n'a été effacé. C'est probablement le catalogue réel du centre " +
+        '(infra/catalogue.mjs) : le vider se décide à la main, pas par un script de démo.',
+    )
+    process.exit(1)
+  }
+
   await inTenant(async (tx) => {
     await tx`delete from bookings`
+    await tx`delete from rate_plan_items`
+    await tx`delete from rate_plans`
     await tx`delete from resources`
   })
   console.log('Jeu de démonstration effacé.')
@@ -99,10 +118,10 @@ try {
   const codeToId = new Map()
 
   await inTenant(async (tx) => {
-    for (const [type, code, name, description, capacity, attributes] of resources) {
+    for (const [type, code, name, description, capacity, attributes, photo] of resources) {
       const [row] = await tx`
-        insert into resources (resource_type, code, name, description, capacity, attributes)
-        values (${type}, ${code}, ${name}, ${description}, ${capacity}, ${tx.json(attributes)})
+        insert into resources (resource_type, code, name, description, capacity, attributes, photo_path)
+        values (${type}, ${code}, ${name}, ${description}, ${capacity}, ${tx.json(attributes)}, ${photo})
         returning id`
       codeToId.set(code, row.id)
     }
@@ -120,6 +139,24 @@ try {
           ${title},
           ${notes}
         )`
+    }
+  })
+
+  // Grille d'essai, montants inventés. Les tarifs réels du centre vivent dans
+  // `infra/catalogue.mjs` (ADR 009) : les répéter ici en ferait une seconde
+  // vérité à corriger à chaque révision de prix.
+  await inTenant(async (tx) => {
+    const [grille] = await tx`
+      insert into rate_plans (name, currency, is_default)
+      values ('Grille de démonstration', 'EUR', true)
+      returning id`
+    for (const [unit, amount] of [
+      ['half_day', 7_500],
+      ['day', 11_000],
+    ]) {
+      await tx`
+        insert into rate_plan_items (rate_plan_id, resource_type, unit, amount_cents)
+        values (${grille.id}, 'salle', ${unit}, ${amount})`
     }
   })
 

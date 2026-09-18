@@ -21,6 +21,7 @@ export const config = {
   matcher: [
     '/reservations/:path*',
     '/ressources/:path*',
+    '/disponibilites/:path*',
     '/demandes/:path*',
     '/clients/:path*',
     '/contrats/:path*',

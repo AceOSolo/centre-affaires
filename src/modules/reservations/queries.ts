@@ -38,6 +38,31 @@ export async function listBookingsForDay(
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))
 }
 
+/**
+ * Réservations d'une période, pour la vue semaine.
+ *
+ * Mêmes bornes que la vue jour, étendues du premier au dernier jour : une
+ * réservation à cheval sur deux jours doit apparaître dans les deux colonnes,
+ * et la géométrie la rogne sur chacune.
+ */
+export async function listBookingsBetween(
+  fromIsoDate: string,
+  toIsoDate: string,
+  timeZone: string,
+): Promise<BookingWithResource[]> {
+  const from = dayRangeUtc(fromIsoDate, timeZone)
+  const to = dayRangeUtc(toIsoDate, timeZone)
+  const rows = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .select({ booking: bookings, resource: resources })
+      .from(bookings)
+      .innerJoin(resources, eq(resources.id, bookings.resourceId))
+      .where(and(lt(bookings.startsAt, to.endsAt), gt(bookings.endsAt, from.startsAt)))
+      .orderBy(asc(bookings.startsAt)),
+  )
+  return rows.map(({ booking, resource }) => ({ ...booking, resource }))
+}
+
 export async function findBooking(id: string): Promise<BookingWithResource | undefined> {
   const [row] = await withTenant(currentTenantId(), (tx) =>
     tx
