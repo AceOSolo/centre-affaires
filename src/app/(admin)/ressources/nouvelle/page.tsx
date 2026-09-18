@@ -10,7 +10,7 @@ export default function NewResourcePage() {
       <div>
         <Link
           href="/ressources"
-          className="text-sm text-zinc-500 hover:underline dark:text-zinc-400"
+          className="text-sm text-muted-foreground hover:underline"
         >
           ← Ressources
         </Link>

@@ -48,13 +48,13 @@ export default async function PlanningPage({
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Planning</h1>
-          <p className="mt-1 text-sm capitalize text-zinc-500 dark:text-zinc-400">
+          <p className="mt-1 text-sm capitalize text-muted-foreground">
             {formatLongDate(isoDate, timeZone)}
           </p>
         </div>
         <Link
           href={`/reservations/nouvelle?date=${isoDate}`}
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
         >
           Nouvelle réservation
         </Link>
@@ -66,7 +66,7 @@ export default async function PlanningPage({
         <DayLink date={addDaysToIsoDate(isoDate, 1)} label="Lendemain →" />
         {/* Formulaire GET : le saut à une date précise marche sans JavaScript. */}
         <form className="ml-auto flex items-center gap-2">
-          <label htmlFor="date" className="text-xs text-zinc-500 dark:text-zinc-400">
+          <label htmlFor="date" className="text-xs text-muted-foreground">
             Aller au
           </label>
           <input
@@ -74,11 +74,11 @@ export default async function PlanningPage({
             name="date"
             type="date"
             defaultValue={isoDate}
-            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-sm dark:border-zinc-700 dark:bg-zinc-950"
+            className="rounded-md border border-border bg-white px-2 py-1 text-sm"
           />
           <button
             type="submit"
-            className="rounded-md border border-zinc-300 px-3 py-1 text-sm hover:bg-zinc-100 dark:border-zinc-700 dark:hover:bg-zinc-800"
+            className="rounded-md border border-border px-3 py-1 text-sm hover:bg-muted"
           >
             Afficher
           </button>
@@ -99,19 +99,19 @@ export default async function PlanningPage({
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">
           Réservations du jour{' '}
-          <span className="font-normal text-zinc-500 dark:text-zinc-400">
+          <span className="font-normal text-muted-foreground">
             ({occupying.length})
           </span>
         </h2>
 
         {bookings.length === 0 ? (
-          <p className="text-sm text-zinc-500 dark:text-zinc-400">
+          <p className="text-sm text-muted-foreground">
             Rien de réservé ce jour-là.
           </p>
         ) : (
-          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+          <div className="overflow-hidden rounded-lg border border-border bg-white">
             <table className="w-full text-left text-sm">
-              <thead className="border-b border-zinc-200 text-xs uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+              <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                 <tr>
                   <th className="px-4 py-3 font-medium">Horaire</th>
                   <th className="px-4 py-3 font-medium">Ressource</th>
@@ -120,17 +120,17 @@ export default async function PlanningPage({
                   <th className="px-4 py-3 font-medium sr-only">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800">
+              <tbody className="divide-y divide-border">
                 {[...occupying, ...cancelled].map((booking) => (
                   <tr key={booking.id} className={booking.status === 'cancelled' ? 'opacity-60' : ''}>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums">
                       {formatTime(booking.startsAt, timeZone)} –{' '}
                       {formatTime(booking.endsAt, timeZone)}
-                      <span className="ml-2 text-xs text-zinc-500 dark:text-zinc-400">
+                      <span className="ml-2 text-xs text-muted-foreground">
                         {formatDuration(booking.startsAt, booking.endsAt)}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-zinc-600 dark:text-zinc-400">
+                    <td className="px-4 py-3 text-muted-foreground">
                       <span className="font-mono text-xs">{booking.resource.code}</span>{' '}
                       {booking.resource.name}
                     </td>
@@ -142,12 +142,12 @@ export default async function PlanningPage({
                         {booking.title}
                       </Link>
                       {booking.notes && (
-                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                        <div className="text-xs text-muted-foreground">
                           {booking.notes}
                         </div>
                       )}
                       {booking.cancellationReason && (
-                        <div className="text-xs text-zinc-500 dark:text-zinc-400">
+                        <div className="text-xs text-muted-foreground">
                           Motif : {booking.cancellationReason}
                         </div>
                       )}
@@ -164,7 +164,7 @@ export default async function PlanningPage({
                           un seul endroit pour libérer un créneau. */}
                       <Link
                         href={`/reservations/${booking.id}`}
-                        className="text-xs text-zinc-500 underline-offset-2 hover:underline dark:text-zinc-400"
+                        className="text-xs text-muted-foreground underline-offset-2 hover:underline"
                       >
                         Détail
                       </Link>
@@ -197,10 +197,10 @@ function DayLink({ date, label, active }: { date: string; label: string; active?
       href={`/reservations?date=${date}`}
       aria-current={active ? 'date' : undefined}
       className={`rounded-md border px-3 py-1 text-sm ${
-        active
-          ? 'border-zinc-900 bg-zinc-900 text-white dark:border-zinc-100 dark:bg-zinc-100 dark:text-zinc-900'
-          : 'border-zinc-300 text-zinc-600 hover:bg-zinc-100 dark:border-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-800'
-      }`}
+ active
+ ? 'border-primary bg-primary text-white'
+ : 'border-border text-muted-foreground hover:bg-muted'
+ }`}
     >
       {label}
     </Link>
@@ -209,13 +209,13 @@ function DayLink({ date, label, active }: { date: string; label: string; active?
 
 function EmptyState() {
   return (
-    <div className="rounded-lg border border-dashed border-zinc-300 bg-white px-6 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900">
-      <p className="text-sm text-zinc-600 dark:text-zinc-400">
+    <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
+      <p className="text-sm text-muted-foreground">
         Aucune ressource en service : le planning n’a rien à afficher.
       </p>
       <Link
         href="/ressources/nouvelle"
-        className="mt-4 inline-block rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 dark:bg-zinc-100 dark:text-zinc-900"
+        className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
       >
         Déclarer une ressource
       </Link>

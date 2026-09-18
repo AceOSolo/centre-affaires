@@ -31,7 +31,7 @@ export default async function NewBookingPage({
       <div>
         <Link
           href={`/reservations?date=${defaultDate}`}
-          className="text-sm text-zinc-500 hover:underline dark:text-zinc-400"
+          className="text-sm text-muted-foreground hover:underline"
         >
           ← Planning
         </Link>

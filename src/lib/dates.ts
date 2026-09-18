@@ -148,7 +148,11 @@ export function formatLongDate(isoDate: string, timeZone: string): string {
 
 /** « 1 h 30 », « 45 min » — durée lisible d'une réservation. */
 export function formatDuration(startsAt: Date, endsAt: Date): string {
-  const minutes = Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000)
+  return formatMinutes(Math.round((endsAt.getTime() - startsAt.getTime()) / 60_000))
+}
+
+/** Même mise en forme, à partir d'un nombre de minutes déjà calculé. */
+export function formatMinutes(minutes: number): string {
   const hours = Math.floor(minutes / 60)
   const rest = minutes % 60
   if (hours === 0) return `${rest} min`

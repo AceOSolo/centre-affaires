@@ -9,8 +9,8 @@ import type { Resource } from '../ressources/schema.ts'
 import { createBookingAction, type FormState } from './actions.ts'
 
 const fieldClass =
-  'w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:focus:border-zinc-100'
-const labelClass = 'block text-sm font-medium text-zinc-700 dark:text-zinc-300'
+  'w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40'
+const labelClass = 'block text-sm font-medium text-foreground'
 
 /** Ajoute des minutes à une heure murale « 09:00 », sans quitter la journée. */
 function addMinutes(time: string, minutes: number): string {
@@ -47,7 +47,7 @@ export function BookingForm({
 
   if (resources.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed border-zinc-300 bg-white px-6 py-12 text-center text-sm text-zinc-600 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+      <p className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
         Aucune ressource en service.{' '}
         <Link href="/ressources/nouvelle" className="underline underline-offset-2">
           Déclarer une ressource
@@ -62,7 +62,7 @@ export function BookingForm({
       {state?.error && (
         <p
           role="alert"
-          className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950 dark:text-red-300"
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
         >
           {state.error}
         </p>
@@ -136,7 +136,7 @@ export function BookingForm({
             onChange={(event) => setEndTime(event.target.value)}
             className={`${fieldClass} mt-1 tabular-nums`}
           />
-          <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+          <p className="mt-1 text-xs text-muted-foreground">
             Fin exclue : une réservation qui finit à 10h00 laisse le créneau de
             10h00 libre.
           </p>
@@ -159,7 +159,7 @@ export function BookingForm({
 
       <div>
         <label className={labelClass} htmlFor="notes">
-          Notes <span className="font-normal text-zinc-500">(facultatif)</span>
+          Notes <span className="font-normal text-muted-foreground">(facultatif)</span>
         </label>
         <textarea id="notes" name="notes" rows={3} className={`${fieldClass} mt-1`} />
       </div>
@@ -168,13 +168,13 @@ export function BookingForm({
         <button
           type="submit"
           disabled={pending}
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-zinc-300"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
         >
           {pending ? 'Enregistrement…' : 'Réserver'}
         </button>
         <Link
           href={`/reservations?date=${defaultDate}`}
-          className="text-sm text-zinc-500 hover:underline dark:text-zinc-400"
+          className="text-sm text-muted-foreground hover:underline"
         >
           Annuler
         </Link>

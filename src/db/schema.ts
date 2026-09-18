@@ -5,3 +5,6 @@
 export * from './tenants.ts'
 export * from '../modules/ressources/schema.ts'
 export * from '../modules/reservations/schema.ts'
+export * from '../modules/clients/schema.ts'
+export * from '../modules/facturation/schema.ts'
+export * from '../modules/contrats/schema.ts'

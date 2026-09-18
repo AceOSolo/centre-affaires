@@ -83,7 +83,10 @@ describe('contraintes de la table bookings', { skip: raison }, () => {
     })
 
     beforeEach(async () => {
-      await owner.client`truncate table bookings, resources`
+      // Les tables sont liées entre elles : les vider ensemble, et la même
+      // liste dans les deux suites de base — sinon l'une laisse des lignes qui
+      // bloquent le TRUNCATE de l'autre.
+      await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
       await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
       await withTenant(
         DEFAULT_TENANT_ID,

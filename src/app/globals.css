@@ -1,25 +1,133 @@
 @import "tailwindcss";
 
+/*
+  La charte ne définit pas de thème sombre. Par défaut, `dark:` se déclenche sur
+  prefers-color-scheme : les écrans existants en portent 232, qui s'activeraient
+  sans jeu de jetons sombre en face, donnant des blocs zinc-950 sur fond blanc.
+  On rattache donc la variante à une classe `.dark` que rien n'ajoute : les
+  classes existantes deviennent inertes au lieu de se déclencher à moitié, et
+  restent en place pour être nettoyées au fil de la migration à la charte.
+*/
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+  Jetons de la charte Secutop (voir .claude/skills/secutop-brand/SKILL.md).
+  Les noms suivent la convention shadcn/ui pour que les composants générés par
+  sa CLI soient à la charte sans retouche. Les valeurs, elles, viennent de la
+  charte et d'elle seule.
+*/
 :root {
+  /* Couleurs de marque. Bleu clair, bleu foncé, blanc. Rien d'autre. */
+  --brand-clair: #1fabe3;
+  --brand-fonce: #00487b;
+
+  /*
+    Rôles dans l'UI. Le bleu clair ne porte jamais de texte : blanc dessus
+    donne 2,63:1 et lui-même en texte sur blanc donne 2,63:1, sous le seuil
+    de 4,5:1 posé dans CLAUDE.md. Il tient donc les anneaux de focus, les
+    bordures actives, les aplats à texte foncé et les séries de graphiques.
+    Le bleu foncé porte les actions et les liens : 9,49:1 sur blanc.
+  */
   --background: #ffffff;
-  --foreground: #171717;
+  --foreground: #1a1a1a;
+  --primary: var(--brand-fonce);
+  --primary-foreground: #ffffff;
+  --primary-hover: #004271;
+  --accent: var(--brand-clair);
+  --accent-foreground: #1a1a1a;
+
+  /* Gris neutres autorisés */
+  --muted: #f7f9fb;
+  --muted-foreground: #6b7280;
+  --border: #e5e9ee;
+  --input: #e5e9ee;
+  --ring: var(--brand-clair);
+  --card: #ffffff;
+  --card-foreground: #1a1a1a;
+
+  /* Alertes : fonctionnelles, désaturées, réservées aux états de l'UI. */
+  --success: #16a34a;
+  --destructive: #dc2626;
+  --warning: #d97706;
+
+  /*
+    États de réservation. Portés par les bleus de marque plutôt que par un
+    code vert/rouge : la charte interdit la couleur hors palette en décoration.
+    Le rouge est gardé pour le seul cas réellement anormal, le conflit.
+    Rappel : la couleur ne suffit jamais, chaque état porte aussi un libellé.
+  */
+  --statut-disponible: #ffffff;
+  --statut-reserve: var(--brand-clair);
+  --statut-confirme: var(--brand-fonce);
+  --statut-annule: #f7f9fb;
+  --statut-conflit: #dc2626;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
+  --color-brand-clair: var(--brand-clair);
+  --color-brand-fonce: var(--brand-fonce);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-hover: var(--primary-hover);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-success: var(--success);
+  --color-destructive: var(--destructive);
+  --color-warning: var(--warning);
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-statut-disponible: var(--statut-disponible);
+  --color-statut-reserve: var(--statut-reserve);
+  --color-statut-confirme: var(--statut-confirme);
+  --color-statut-annule: var(--statut-annule);
+  --color-statut-conflit: var(--statut-conflit);
+
+  --font-sans: var(--font-rubik);
+
+  /*
+    Rayons généreux : signal fort de la marque, jamais de coins carrés vifs.
+    Écrase l'échelle Tailwind par défaut, donc `rounded-md` vaut bien 12px.
+  */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
+  line-height: 1.5;
+}
+
+/* Titres plus serrés que le corps, comme le veut la charte. */
+h1,
+h2,
+h3,
+h4 {
+  line-height: 1.2;
+}
+
+/* Chiffres alignés dans les colonnes de montants et d'horaires. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

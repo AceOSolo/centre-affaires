@@ -9,7 +9,9 @@ import {
   BookingConflictError,
   InvalidRangeError,
   cancelBooking,
+  confirmBooking,
   createBooking,
+  refuseBooking,
 } from './queries.ts'
 
 export type FormState = { error?: string } | null
@@ -78,5 +80,26 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   await cancelBooking(id, text(formData, 'reason') || null)
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
   // deux repartir de la base, pas du cache de rendu.
+  revalidatePath('/reservations', 'layout')
+}
+
+/**
+ * Validation d'une demande publique (ADR 005). Le créneau était bloqué depuis
+ * le dépôt : confirmer ne peut pas échouer sur un conflit.
+ */
+export async function confirmBookingAction(formData: FormData): Promise<void> {
+  const id = text(formData, 'id')
+  if (!id) return
+  await confirmBooking(id)
+  revalidatePath('/demandes')
+  revalidatePath('/reservations', 'layout')
+}
+
+/** Refus d'une demande : annulation motivée, le créneau redevient libre. */
+export async function refuseBookingAction(formData: FormData): Promise<void> {
+  const id = text(formData, 'id')
+  if (!id) return
+  await refuseBooking(id, text(formData, 'reason') || null)
+  revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }

@@ -42,6 +42,15 @@ export const bookings = pgTable(
     /** Objet de la réservation, affiché dans le calendrier. */
     title: text('title').notNull(),
     notes: text('notes'),
+    /**
+     * Identité du demandeur d'une réservation déposée depuis la page publique
+     * (ADR 005). Nulle pour une réservation posée par le staff, qui n'a pas de
+     * demandeur externe. Ce sont les premières données personnelles du produit :
+     * elles appellent une durée de conservation, pas un stockage indéfini.
+     */
+    requesterName: text('requester_name'),
+    requesterEmail: text('requester_email'),
+    requesterPhone: text('requester_phone'),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancellationReason: text('cancellation_reason'),
     ...timestamps(),
@@ -60,6 +69,11 @@ export const bookings = pgTable(
     // Chargement du calendrier : les réservations d'une ressource sur une période.
     index('bookings_resource_starts_at_idx').on(table.resourceId, table.startsAt),
     index('bookings_tenant_starts_at_idx').on(table.tenantId, table.startsAt),
+    // File d'attente de validation (ADR 005) : peu de lignes en `pending` parmi
+    // beaucoup, un index partiel les trouve sans parcourir la table.
+    index('bookings_pending_idx')
+      .on(table.tenantId, table.startsAt)
+      .where(sql`status = 'pending'`),
   ],
 )
 

@@ -1,0 +1,93 @@
+'use client'
+
+import { useActionState } from 'react'
+
+import { terminateContractAction, type FormState } from './actions.ts'
+
+const fieldClass =
+  'w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40'
+
+/**
+ * Résiliation d'un contrat.
+ *
+ * La date proposée est celle du préavis, calculée côté serveur. Elle reste
+ * modifiable : une résiliation d'un commun accord s'affranchit du préavis, et
+ * c'est au staff de trancher, pas au formulaire.
+ */
+export function TerminateForm({
+  contractId,
+  defaultTerminatedOn,
+  noticeDays,
+}: {
+  contractId: string
+  defaultTerminatedOn: string
+  noticeDays: number
+}) {
+  const [state, formAction, pending] = useActionState<FormState, FormData>(
+    terminateContractAction,
+    null,
+  )
+
+  return (
+    <form
+      action={formAction}
+      className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4"
+    >
+      <input type="hidden" name="id" value={contractId} />
+
+      <p className="text-sm font-medium text-foreground">Résilier le contrat</p>
+      {/* Pas de suppression : le contrat reste consultable (décision 6). */}
+      <p className="text-xs text-muted-foreground">
+        Le contrat reste consultable. L’échéancier s’arrête à la date retenue.
+      </p>
+
+      {state?.error && (
+        <p
+          role="alert"
+          className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
+        >
+          {state.error}
+        </p>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div>
+          <label
+            className="block text-sm font-medium text-foreground"
+            htmlFor="terminatedOn"
+          >
+            Dernier jour
+          </label>
+          <input
+            id="terminatedOn"
+            name="terminatedOn"
+            type="date"
+            defaultValue={defaultTerminatedOn}
+            aria-describedby="terminatedOn-hint"
+            className={`${fieldClass} mt-1`}
+          />
+          <p id="terminatedOn-hint" className="mt-1 text-xs text-muted-foreground">
+            Préavis de {noticeDays} jours à compter d’aujourd’hui.
+          </p>
+        </div>
+        <div>
+          <label
+            className="block text-sm font-medium text-foreground"
+            htmlFor="reason"
+          >
+            Motif <span className="font-normal text-muted-foreground">(facultatif)</span>
+          </label>
+          <input id="reason" name="reason" className={`${fieldClass} mt-1`} />
+        </div>
+      </div>
+
+      <button
+        type="submit"
+        disabled={pending}
+        className="self-start rounded-md border border-destructive/30 px-4 py-2 text-sm font-medium text-destructive hover:bg-destructive/5 disabled:opacity-50"
+      >
+        {pending ? 'Résiliation…' : 'Résilier'}
+      </button>
+    </form>
+  )
+}

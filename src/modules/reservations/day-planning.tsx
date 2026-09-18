@@ -37,15 +37,15 @@ export function DayPlanning({
   const height = planningHeightPx(window)
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <div className="overflow-x-auto rounded-lg border border-border bg-white">
       <div className="flex min-w-max">
-        <div className="sticky left-0 z-20 w-16 shrink-0 border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="h-12 border-b border-zinc-200 dark:border-zinc-800" />
+        <div className="sticky left-0 z-20 w-16 shrink-0 border-r border-border bg-white">
+          <div className="h-12 border-b border-border" />
           <div className="relative" style={{ height }}>
             {ticks.slice(0, -1).map((tick) => (
               <div
                 key={tick.instant.toISOString()}
-                className="absolute right-2 -translate-y-1/2 text-xs tabular-nums text-zinc-400 dark:text-zinc-500"
+                className="absolute right-2 -translate-y-1/2 text-xs tabular-nums text-muted-foreground"
                 style={{ top: `${tick.offsetPercent}%` }}
               >
                 {formatTime(tick.instant, timeZone)}
@@ -57,11 +57,11 @@ export function DayPlanning({
         {resources.map((resource) => (
           <div
             key={resource.id}
-            className={`${COLUMN_WIDTH} shrink-0 border-r border-zinc-200 last:border-r-0 dark:border-zinc-800`}
+            className={`${COLUMN_WIDTH} shrink-0 border-r border-border last:border-r-0`}
           >
-            <div className="h-12 truncate border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+            <div className="h-12 truncate border-b border-border px-3 py-2">
               <div className="truncate text-sm font-medium">{resource.name}</div>
-              <div className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+              <div className="truncate text-xs text-muted-foreground">
                 {resource.code} · {resourceTypeLabels[resource.resourceType]}
               </div>
             </div>
@@ -71,7 +71,7 @@ export function DayPlanning({
                 <div
                   key={tick.instant.toISOString()}
                   aria-hidden
-                  className="absolute inset-x-0 border-t border-zinc-100 dark:border-zinc-800/70"
+                  className="absolute inset-x-0 border-t border-border"
                   style={{ top: `${tick.offsetPercent}%` }}
                   data-last={index === ticks.length - 1 || undefined}
                 />
@@ -86,7 +86,7 @@ export function DayPlanning({
                     key={tick.instant.toISOString()}
                     href={`/reservations/nouvelle?date=${isoDate}&resourceId=${resource.id}&start=${startTime}`}
                     aria-label={`Réserver ${resource.name} à ${formatTime(tick.instant, timeZone)}`}
-                    className="absolute inset-x-0 hover:bg-zinc-100/70 dark:hover:bg-zinc-800/50"
+                    className="absolute inset-x-0 hover:bg-muted/70"
                     style={{
                       top: `${tick.offsetPercent}%`,
                       height: `${ticks[index + 1].offsetPercent - tick.offsetPercent}%`,
