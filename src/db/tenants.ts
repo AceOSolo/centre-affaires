@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { char, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core'
+import { char, check, integer, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
 
@@ -18,6 +18,8 @@ export const tenants = pgTable('tenants', {
   timezone: text('timezone').notNull().default('Europe/Paris'),
   /** ISO 4217, accompagne les montants stockés en centimes. */
   currency: char('currency', { length: 3 }).notNull().default('EUR'),
+  bookingLeadHours: integer('booking_lead_hours').notNull().default(0),
+  bookingHorizonDays: integer('booking_horizon_days').notNull().default(90),
 
   /*
    * Identité publique du centre.
@@ -67,7 +69,9 @@ export const tenants = pgTable('tenants', {
 
   ...timestamps(),
   deletedAt: deletedAt(),
-})
+}, (table) => [
+  check('tenants_booking_delays_valid', sql`${table.bookingLeadHours} >= 0 and ${table.bookingHorizonDays} between 1 and 365 and ${table.bookingLeadHours} < ${table.bookingHorizonDays} * 24`),
+])
 
 /**
  * Colonne `tenant_id` de toutes les tables métier.

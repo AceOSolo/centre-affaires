@@ -2,16 +2,41 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { formatLongDate, formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
-import { currentTimeZone } from '../../lib/tenant.ts'
+import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
+import { currentTenant } from '../../lib/tenant.ts'
 import { findResource } from '../ressources/queries.ts'
 import {
   BookingConflictError,
   InvalidRangeError,
   countRecentRequestsByEmail,
   createBookingRequest,
+  listDayAvailability,
 } from './queries.ts'
 import { RATE_WINDOW_HOURS, rejectRequest, rejectionMessages } from './requests.ts'
+import { requestableRanges, requestBounds, requestPolicyMessage } from './request-policy.ts'
+import { fitsFreeRange, publicSelection } from './public-selection.ts'
+import type { TimeRange } from './availability.ts'
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+export type PublicDayAvailability =
+  | { status: 'ready'; free: TimeRange[]; closed: boolean; latestStart: Date }
+  | { status: 'error'; message: string }
+
+/** Ne renvoie que les plages libres, jamais l'identité des occupants. */
+export async function loadPublicDayAction(resourceId: string, date: string): Promise<PublicDayAvailability> {
+  if (!UUID.test(resourceId)) return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
+  const tenant = await currentTenant()
+  const timeZone = tenant.timezone
+  const now = new Date()
+  const { earliest, latest } = requestBounds(tenant, now)
+  if (!publicSelection(date, '09:00', '10:00', timeZone) || date < toIsoDate(earliest, timeZone) || date > toIsoDate(latest, timeZone)) {
+    return { status: 'error', message: requestPolicyMessage(tenant) }
+  }
+  const availability = (await listDayAvailability(date, timeZone)).find(({ resource }) => resource.id === resourceId)
+  if (!availability) return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
+  return { status: 'ready', free: requestableRanges(availability.free, tenant, now), closed: availability.closed, latestStart: latest }
+}
 
 /**
  * Dépôt d'une demande depuis la page publique (ADR 005).
@@ -22,7 +47,7 @@ import { RATE_WINDOW_HOURS, rejectRequest, rejectionMessages } from './requests.
  */
 export type PublicFormState =
   | { status: 'idle' }
-  | { status: 'error'; message: string }
+  | { status: 'error'; message: string; step?: 1 | 2 | 3 | 4 }
   | { status: 'sent'; summary: string }
 
 function text(formData: FormData, key: string): string {
@@ -33,20 +58,21 @@ export async function requestBookingAction(
   _previous: PublicFormState,
   formData: FormData,
 ): Promise<PublicFormState> {
-  const timeZone = await currentTimeZone()
+  // Aucun débit ni réservation ne doit être simulé avant le raccordement CB.
+  if (text(formData, 'paymentMethod') !== 'quote') {
+    return { status: 'error', step: 4, message: 'Le paiement en ligne n’est pas encore disponible. Choisissez « Recevoir un devis ».' }
+  }
+  const tenant = await currentTenant()
+  const timeZone = tenant.timezone
 
   const resourceId = text(formData, 'resourceId')
   const date = text(formData, 'date')
   const email = text(formData, 'email')
 
-  let startsAt: Date
-  let endsAt: Date
-  try {
-    startsAt = wallClockToUtc(`${date}T${text(formData, 'startTime')}`, timeZone)
-    endsAt = wallClockToUtc(`${date}T${text(formData, 'endTime')}`, timeZone)
-  } catch {
-    return { status: 'error', message: rejectionMessages['creneau-illisible'] }
-  }
+  if (!UUID.test(resourceId)) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
+  const selection = publicSelection(date, text(formData, 'startTime'), text(formData, 'endTime'), timeZone)
+  if (!selection) return { status: 'error', step: 2, message: rejectionMessages['creneau-illisible'] }
+  const { startsAt, endsAt } = selection
 
   // La ressource est relue en base : l'identifiant vient d'un `<select>` que
   // n'importe qui peut réécrire avant l'envoi.
@@ -66,8 +92,17 @@ export async function requestBookingAction(
     range: { startsAt, endsAt },
     resourceIsBookable: bookable,
     recentRequestCount,
-  })
-  if (rejection) return { status: 'error', message: rejectionMessages[rejection] }
+  }, new Date(), tenant)
+  if (rejection) {
+    const contactError = ['nom-manquant', 'email-invalide', 'telephone-manquant', 'objet-manquant'].includes(rejection)
+    return { status: 'error', step: contactError ? 3 : 2, message: rejection === 'preavis-insuffisant' || rejection === 'creneau-trop-lointain' ? requestPolicyMessage(tenant) : rejectionMessages[rejection] }
+  }
+
+  const availability = await loadPublicDayAction(resourceId, date)
+  if (availability.status === 'error') return { ...availability, step: 2 }
+  if (!fitsFreeRange(selection, availability.free)) {
+    return { status: 'error', step: 2, message: 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.' }
+  }
 
   try {
     await createBookingRequest({
@@ -75,7 +110,7 @@ export async function requestBookingAction(
       startsAt,
       endsAt,
       title: text(formData, 'title'),
-      notes: text(formData, 'notes') || null,
+      notes: ['Demande de devis à envoyer par courriel.', text(formData, 'notes')].filter(Boolean).join('\n\n'),
       requesterName: text(formData, 'name'),
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
@@ -90,6 +125,7 @@ export async function requestBookingAction(
       // libres, il suffit de l'y renvoyer.
       return {
         status: 'error',
+        step: 2,
         message: 'Ce créneau vient d’être pris. Choisissez-en un autre parmi les créneaux libres.',
       }
     }
@@ -99,6 +135,7 @@ export async function requestBookingAction(
   // Le planning du staff doit montrer la demande sans attendre.
   revalidatePath('/reservations')
   revalidatePath('/demandes')
+  revalidatePath('/')
 
   const jour = formatLongDate(toIsoDate(startsAt, timeZone), timeZone)
   return {

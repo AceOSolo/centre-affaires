@@ -127,6 +127,13 @@
       "when": 1789737893814,
       "tag": "0017_identite_complements",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789996905322,
+      "tag": "0018_regles_et_series_reservations",
+      "breakpoints": true
     }
   ]
 }

@@ -89,7 +89,8 @@ export async function createBookingAction(
   }
 
   const day = toIsoDate(startsAt, timeZone)
-  revalidatePath('/reservations')
+  revalidatePath('/reservations', 'layout')
+  revalidatePath('/')
   redirect(`/reservations?date=${day}`)
 }
 
@@ -130,7 +131,8 @@ export async function moveBookingAction(
     throw error
   }
 
-  revalidatePath('/reservations')
+  revalidatePath('/reservations', 'layout')
+  revalidatePath('/')
   revalidatePath(`/reservations/${id}`)
   redirect(`/reservations/${id}`)
 }
@@ -140,6 +142,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   await cancelBooking(id, text(formData, 'reason') || null)
+  revalidatePath('/')
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
   // deux repartir de la base, pas du cache de rendu.
   revalidatePath('/reservations', 'layout')
@@ -164,6 +167,7 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   await refuseBooking(id, text(formData, 'reason') || null)
+  revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }

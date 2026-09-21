@@ -1,4 +1,5 @@
 import type { TimeRange } from './availability.ts'
+import { DEFAULT_REQUEST_POLICY, requestTimingRejection, type RequestPolicy } from './request-policy.ts'
 
 /**
  * Règles de recevabilité d'une demande déposée depuis la page publique
@@ -13,7 +14,7 @@ import type { TimeRange } from './availability.ts'
 export const MIN_REQUEST_MINUTES = 30
 export const MAX_REQUEST_MINUTES = 8 * 60
 
-/** Au-delà, la demande n'est plus une réservation mais une location à discuter. */
+/** Horizon par défaut ; le réglage du centre est appliqué aux demandes réelles. */
 export const MAX_DAYS_AHEAD = 90
 
 /** Nombre de demandes acceptées depuis la même adresse sur une fenêtre glissante. */
@@ -27,6 +28,7 @@ export type RequestRejection =
   | 'objet-manquant'
   | 'creneau-illisible'
   | 'creneau-passe'
+  | 'preavis-insuffisant'
   | 'creneau-trop-lointain'
   | 'duree-trop-courte'
   | 'duree-trop-longue'
@@ -40,6 +42,7 @@ export const rejectionMessages: Record<RequestRejection, string> = {
   'objet-manquant': "Indiquez l'objet de la réunion.",
   'creneau-illisible': 'Date ou horaires illisibles.',
   'creneau-passe': 'Ce créneau est déjà passé.',
+  'preavis-insuffisant': 'Ce créneau ne respecte pas le préavis minimum de réservation.',
   'creneau-trop-lointain': `Les demandes sont ouvertes jusqu'à ${MAX_DAYS_AHEAD} jours à l'avance. Au-delà, contactez-nous directement.`,
   'duree-trop-courte': `La durée minimale est de ${MIN_REQUEST_MINUTES} minutes.`,
   'duree-trop-longue': `Au-delà de ${MAX_REQUEST_MINUTES / 60} heures, contactez-nous pour une location à la journée.`,
@@ -73,6 +76,7 @@ export type RequestInput = {
 export function rejectRequest(
   input: RequestInput,
   now: Date = new Date(),
+  policy: RequestPolicy = DEFAULT_REQUEST_POLICY,
 ): RequestRejection | undefined {
   if (!input.name.trim()) return 'nom-manquant'
   if (!EMAIL.test(input.email.trim())) return 'email-invalide'
@@ -90,10 +94,8 @@ export function rejectRequest(
 
   // Le créneau doit commencer dans le futur. La contrainte d'exclusion, elle,
   // laisserait très bien réserver l'année dernière.
-  if (startsAt.getTime() <= now.getTime()) return 'creneau-passe'
-  if (startsAt.getTime() - now.getTime() > MAX_DAYS_AHEAD * 86_400_000) {
-    return 'creneau-trop-lointain'
-  }
+  const timingRejection = requestTimingRejection(startsAt, policy, now)
+  if (timingRejection) return timingRejection
 
   if (!input.resourceIsBookable) return 'ressource-indisponible'
   if (input.recentRequestCount >= MAX_REQUESTS_PER_EMAIL) return 'trop-de-demandes'

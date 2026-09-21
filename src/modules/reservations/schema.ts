@@ -34,6 +34,9 @@ export const bookings = pgTable(
     id: primaryKeyId(),
     tenantId: tenantId(),
     resourceId: uuid('resource_id').notNull(),
+    /** Occurrences créées ensemble ; chacune reste déplaçable et annulable. */
+    seriesId: uuid('series_id'),
+    kind: text('kind').$type<'booking' | 'unavailability'>().notNull().default('booking'),
     /** Bornes `[)` : une réservation qui finit à 10h00 n'entre pas en conflit
      * avec une qui commence à 10h00. */
     startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
@@ -62,6 +65,8 @@ export const bookings = pgTable(
       foreignColumns: [resources.tenantId, resources.id],
     }).onDelete('restrict'),
     check('bookings_range_not_empty', sql`${table.endsAt} > ${table.startsAt}`),
+    check('bookings_kind_valid', sql`${table.kind} in ('booking', 'unavailability')`),
+    index('bookings_series_idx').on(table.tenantId, table.seriesId),
     check(
       'bookings_cancelled_at_consistent',
       sql`(${table.status} = 'cancelled') = (${table.cancelledAt} is not null)`,
