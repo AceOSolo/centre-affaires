@@ -112,13 +112,23 @@ serveur, dans `/home/deploy/centre-affaires`, `docker compose ps` doit montrer
 
 ## 6. DNS chez OVH
 
-Web Cloud → Noms de domaine → `handfield.fr` → Zone DNS. Faire pointer le
-domaine nu et `www` sur le serveur, avec les mêmes enregistrements A (et AAAA
-s'il y en a) que les autres domaines déjà hébergés dessus.
+Web Cloud → Noms de domaine → `handfield.fr` → onglet « Zone DNS ». Seules les
+lignes dont le sous-domaine est vide ou `www`, de type A, AAAA ou CNAME, sont
+concernées.
 
-Supprimer les anciens enregistrements A, AAAA et CNAME de ces deux noms (ancien
-hébergement, GitHub Pages) et vérifier l'onglet « Redirection ». **Ne pas
-toucher aux MX, SPF et DKIM** : ils portent les e-mails du domaine.
+| Sous-domaine | Type | Cible |
+| --- | --- | --- |
+| *(vide)* | A | IPv4 du serveur, une seule ligne |
+| `www` | CNAME | `handfield.fr.` (point final compris) |
+
+Supprimer toutes les autres lignes A, AAAA et CNAME de ces deux noms (ancien
+hébergement, GitHub Pages). Un AAAA oublié envoie les visiteurs en IPv6 vers
+l'ancien site. `www` suit le domaine nu : un seul endroit à changer. Vérifier
+aussi l'onglet « Redirection ». **Ne pas toucher aux MX, SPF, DKIM et DMARC** :
+ils portent les e-mails du domaine.
+
+L'IPv4 du serveur figure dans l'espace client OVH (Bare Metal Cloud → VPS), ou
+dans la zone DNS d'un autre domaine déjà hébergé dessus.
 
 ## 7. Apache et certificat
 
