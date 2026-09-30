@@ -1,4 +1,4 @@
-import { createNeonAuth } from '@neondatabase/auth/next/server'
+import { createNeonAuth, type NeonAuth } from '@neondatabase/auth/next/server'
 
 /**
  * Authentification : Neon Auth, c'est-à-dire Better Auth managé (ADR 008).
@@ -23,7 +23,15 @@ function required(name: string): string {
   return value
 }
 
-export const auth = createNeonAuth({
-  baseUrl: required('NEON_AUTH_BASE_URL'),
-  cookies: { secret: required('NEON_AUTH_COOKIE_SECRET') },
-})
+// Création paresseuse, comme le pool de `src/db/index.ts` : `next build` évalue
+// ce module pour collecter la configuration des pages et ne doit pas exiger les
+// secrets d'exécution. Leur absence se signale à la première requête.
+let instance: NeonAuth | undefined
+
+export function getAuth(): NeonAuth {
+  instance ??= createNeonAuth({
+    baseUrl: required('NEON_AUTH_BASE_URL'),
+    cookies: { secret: required('NEON_AUTH_COOKIE_SECRET') },
+  })
+  return instance
+}

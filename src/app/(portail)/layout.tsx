@@ -16,6 +16,16 @@ const sections = [
 ]
 
 /**
+ * Rien n'est prérendu au build sur le site public, comme dans le back-office.
+ *
+ * Chaque page affiche des disponibilités et des horaires qui changent hors
+ * déploiement — une réservation posée en back-office ne passe pas par elles.
+ * Prérendues, elles serviraient l'état du jour de compilation, et le build
+ * exigerait une base joignable.
+ */
+export const dynamic = 'force-dynamic'
+
+/**
  * Coque du site public.
  *
  * Tout ce qui identifie le centre — nom, signature, logo, adresse, téléphone,
