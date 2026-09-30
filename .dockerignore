@@ -1,0 +1,12 @@
+# Le contexte de build ne reçoit que le code : ni dépendances ni build locaux,
+# qui écraseraient ceux de l'image, ni secrets.
+.git
+.next
+node_modules
+.env*
+!.env.example
+*.tsbuildinfo
+.dev-log.txt
+.claude
+coverage
+infra/serveur

@@ -1,7 +1,7 @@
 # ADR 001 — Choix de la stack
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — hébergement applicatif remplacé par l'ADR 013
 
 ## Contexte
 

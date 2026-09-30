@@ -1,4 +1,11 @@
-import { auth } from './src/lib/auth/server.ts'
+import type { NeonAuth } from '@neondatabase/auth/next/server'
+import type { NextRequest } from 'next/server'
+
+import { getAuth } from './src/lib/auth/server.ts'
+
+// Construit à la première requête : importer ce fichier au build ne doit pas
+// exiger les secrets de Neon Auth (voir `getAuth`).
+let middleware: ReturnType<NeonAuth['middleware']> | undefined
 
 /**
  * Filtre d'accès au back-office (ADR 008).
@@ -11,7 +18,10 @@ import { auth } from './src/lib/auth/server.ts'
  * que `matcher` laisse volontairement passer. Le contrôle qui compte est
  * `requireStaff()`, appelé dans les pages et dans chaque action qui écrit.
  */
-export default auth.middleware({ loginUrl: '/auth/connexion' })
+export default function proxy(request: NextRequest) {
+  middleware ??= getAuth().middleware({ loginUrl: '/auth/connexion' })
+  return middleware(request)
+}
 
 export const config = {
   // Uniquement les écrans du back-office. Le site public, les pages
