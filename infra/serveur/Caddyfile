@@ -1,0 +1,15 @@
+# HTTPS devant l'application (ADR 013).
+#
+# Caddy obtient et renouvelle seul les certificats Let's Encrypt, dès que le DNS
+# des deux domaines pointe sur ce serveur. Il redirige aussi HTTP vers HTTPS :
+# Neon Auth pose des cookies `Secure`, la connexion ne marche qu'en HTTPS.
+
+{$DOMAINE} {
+	encode zstd gzip
+	reverse_proxy app:3000
+}
+
+# Une seule adresse canonique : l'autre y renvoie, chemin compris.
+{$DOMAINE_SECONDAIRE} {
+	redir https://{$DOMAINE}{uri} permanent
+}

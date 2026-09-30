@@ -1,0 +1,49 @@
+# Production sur le serveur OVH (ADR 013).
+#
+# Ce fichier et le Caddyfile sont recopiés sur le serveur à chaque déploiement
+# par la CI : la configuration du serveur suit le dépôt. Les secrets, eux,
+# vivent dans le `.env` posé à côté, jamais dans le dépôt (modèle :
+# `.env.example`).
+name: centre-affaires
+
+services:
+  app:
+    # La CI fixe IMAGE_TAG au commit déployé. Sans lui, la dernière image de main.
+    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: .env
+    # Aucun port publié : seul Caddy parle à l'application.
+    expose:
+      - "3000"
+    healthcheck:
+      # Un fichier statique plutôt qu'une page : vérifie le serveur Node sans
+      # réveiller la base Neon toutes les 30 secondes.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/favicon.ico"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAINE: ${DOMAINE:?DOMAINE manquant dans .env}
+      DOMAINE_SECONDAIRE: ${DOMAINE_SECONDAIRE:?DOMAINE_SECONDAIRE manquant dans .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificats Let's Encrypt : à conserver, sinon chaque redémarrage en
+      # redemande et finit par buter sur les limites d'émission.
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:
