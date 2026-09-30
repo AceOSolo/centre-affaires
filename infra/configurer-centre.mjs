@@ -42,8 +42,8 @@ const CENTRE = {
   timezone: 'Europe/Paris',
   currency: 'EUR',
   // Conservation du courrier numérisé et du journal d'accès, en mois (RGPD,
-  // ADR 015). Valeurs par défaut du produit, à aligner sur le contrat de
-  // domiciliation.
+  // ADR 015). Validées par le centre le 2026-09-30 ; à reporter au contrat
+  // de domiciliation.
   mailScanRetentionMonths: 12,
   mailAccessLogRetentionMonths: 12,
 }

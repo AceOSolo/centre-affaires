@@ -123,10 +123,18 @@ quoi. La durée est affichée au client dans sa boîte aux lettres.
 
 À l'arrivée d'un pli, à sa numérisation, à l'inscription d'une personne, et —
 vers l'adresse du centre — à chaque demande d'ouverture. Ni le document ni
-l'expéditeur n'y figurent. Envoi par SMTP (`SMTP_URL`, `MAIL_FROM`), après la
-réponse (`after()`) : un courriel qui échoue est journalisé et ne fait jamais
-échouer l'enregistrement. Sans SMTP configuré, rien ne part — c'est le cas du
+l'expéditeur n'y figurent. Envoi par le SMTP de **Brevo** (`SMTP_HOST`,
+`SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `MAIL_FROM`), toujours chiffré
+(STARTTLS exigé, ou TLS sur le port 465), après la réponse (`after()`) : un
+courriel qui échoue est journalisé et ne fait jamais échouer
+l'enregistrement. Sans configuration complète, rien ne part — c'est le cas du
 développement.
+
+Brevo, choisi par le centre, est un prestataire français qui héberge ses
+données en Europe. Il est sous-traitant des adresses des clients : son accord
+de traitement est à inscrire au registre, et le suivi des ouvertures et des
+clics est désactivé — il ajouterait un pixel aux messages et ferait transiter
+les liens vers l'espace client par son domaine.
 
 ## Justification
 
@@ -159,7 +167,7 @@ Neon. Le client de présignature n'est pas ajouté : aucune URL signée n'est
 émise. Écrire la signature SigV4 à la main aurait évité la dépendance au prix
 d'un code de sécurité maison. `nodemailer` : SMTP standard, sans
 dépendance, maintenu depuis quinze ans. Le fournisseur de courriel reste un
-choix de configuration ; une API HTTP propriétaire l'aurait figé dans le code.
+choix de configuration ; l'API HTTP de Brevo l'aurait figé dans le code.
 
 ## Conséquences
 
@@ -167,16 +175,17 @@ choix de configuration ; une API HTTP propriétaire l'aurait figé dans le code.
 tranche n'ont pas de `client_id` ; l'équipe les rattache une à une depuis leur
 fiche si elle veut les voir dans l'espace client.
 
-**Un SMTP est à choisir.** Sans lui, l'application fonctionne mais ne prévient
-personne, et l'écran d'inscription le dit. Le choix d'un fournisseur hébergé en
-Europe, et l'enregistrement SPF/DKIM du domaine expéditeur, sont des prérequis
-de mise en production.
+**Le domaine expéditeur est à authentifier chez Brevo.** Sans les
+enregistrements DKIM, DMARC et SPF dans la zone OVH, les messages finissent en
+indésirables. Procédure : `infra/serveur/README.md`, étape 8. Tant que la clé
+SMTP n'est pas posée, l'application fonctionne mais ne prévient personne, et
+l'écran d'inscription le dit.
 
-**Les douze mois sont une valeur par défaut, pas une décision juridique.** Le
-centre doit confirmer les durées de conservation — elles figurent dans son
-contrat de domiciliation — et les régler dans `infra/configurer-centre.mjs`.
-La tâche nocturne doit être posée sur le serveur (`infra/serveur/README.md`),
-sans quoi rien n'est purgé.
+**Douze mois, validés par le centre le 2026-09-30**, pour les numérisations
+comme pour le journal d'accès. Ils se règlent dans
+`infra/configurer-centre.mjs` et doivent figurer au contrat de
+domiciliation. La tâche nocturne doit être posée sur le serveur
+(`infra/serveur/README.md`), sans quoi rien n'est purgé.
 
 **Le relevé compte, il ne tarife pas.** La facturation est hors V1
 (`CLAUDE.md`) : le prix d'une ouverture n'est porté nulle part, le relevé et son

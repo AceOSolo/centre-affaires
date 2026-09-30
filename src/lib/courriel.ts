@@ -1,22 +1,47 @@
 import nodemailer, { type Transporter } from 'nodemailer'
+import type SMTPTransport from 'nodemailer/lib/smtp-transport'
 
 /**
- * Envoi de courriels par SMTP (ADR 015).
+ * Envoi de courriels par SMTP, chez Brevo (ADR 015).
  *
- * `SMTP_URL` désigne le serveur — `smtps://utilisateur:motdepasse@smtp.exemple.eu:465`
- * — et `MAIL_FROM` l'expéditeur. Le fournisseur est un choix de configuration,
- * pas de code : un SMTP hébergé en Europe convient, comme l'exige `CLAUDE.md`.
+ * Brevo est un prestataire français qui héberge ses données en Europe, comme
+ * l'exige `CLAUDE.md`. Il reste un choix de configuration, pas de code : tout
+ * SMTP authentifié convient.
  *
- * Sans `SMTP_URL`, rien ne part : l'envoi est journalisé sans destinataire et
- * l'application continue. C'est le cas du développement, où aucune adresse
- * réelle ne doit recevoir de message.
+ * Variables séparées plutôt qu'une URL : l'identifiant SMTP de Brevo contient
+ * un `@`, qu'une URL obligerait à encoder — l'oubli ferait échouer l'envoi
+ * sans message clair.
+ *
+ * Sans configuration complète, rien ne part : l'envoi est journalisé sans
+ * destinataire et l'application continue. C'est le cas du développement, où
+ * aucune adresse réelle ne doit recevoir de message.
  */
+type Env = Record<string, string | undefined>
+
+/**
+ * Réglages du transport, ou `undefined` s'il en manque un.
+ *
+ * Jamais de courriel en clair : 465 chiffre d'emblée, tout autre port exige
+ * STARTTLS — sans lui, la connexion est refusée plutôt que de continuer en
+ * clair. Brevo accepte les deux ; 587 est son port recommandé.
+ */
+export function smtpSettings(env: Env): SMTPTransport.Options | undefined {
+  const host = env.SMTP_HOST?.trim()
+  const user = env.SMTP_USER?.trim()
+  const pass = env.SMTP_PASSWORD
+  if (!host || !user || !pass || !env.MAIL_FROM?.trim()) return undefined
+
+  const port = Number(env.SMTP_PORT || 587)
+  if (!Number.isInteger(port) || port <= 0) return undefined
+  return { host, port, secure: port === 465, requireTLS: port !== 465, auth: { user, pass } }
+}
+
 let transporter: Transporter | undefined
 
 function transport(): Transporter | undefined {
-  const url = process.env.SMTP_URL
-  if (!url) return undefined
-  transporter ??= nodemailer.createTransport(url)
+  const settings = smtpSettings(process.env)
+  if (!settings) return undefined
+  transporter ??= nodemailer.createTransport(settings)
   return transporter
 }
 
@@ -34,8 +59,8 @@ export async function sendMessage(message: Message): Promise<void> {
   if (recipients.length === 0) return
 
   const smtp = transport()
-  const from = process.env.MAIL_FROM
-  if (!smtp || !from) {
+  const from = process.env.MAIL_FROM as string
+  if (!smtp) {
     console.info(`Courriel non envoyé (SMTP non configuré) : « ${message.subject} »`)
     return
   }
@@ -54,7 +79,7 @@ export async function sendMessage(message: Message): Promise<void> {
 
 /** Vrai quand les courriels partent réellement : les écrans ne promettent rien d'autre. */
 export function emailEnabled(): boolean {
-  return Boolean(process.env.SMTP_URL && process.env.MAIL_FROM)
+  return smtpSettings(process.env) !== undefined
 }
 
 /** Adresse publique de l'application, pour les liens des courriels. */
