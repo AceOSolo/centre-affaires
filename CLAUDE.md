@@ -21,8 +21,8 @@ ressources, réservations, clients, contrats, facturation, courrier,
 - Tailwind CSS
 - PostgreSQL 17 + Drizzle ORM
 - better-auth
-- Hébergement : serveur OVH en France, image Docker déployée depuis GitHub
-  (app, ADR 013) + Neon (base), **région EU obligatoire**
+- Hébergement : VPS de production (Debian, Apache), image Docker déployée
+  depuis GitHub (app, ADR 013) + Neon (base), **région EU obligatoire**
 - Stockage fichiers : S3 européen (scans de courrier, photos d'états des lieux)
 
 ## Structure

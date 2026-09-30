@@ -54,7 +54,7 @@ jobs:
       - run: node infra/provision-role-applicatif.mjs
       - run: npm test --if-present
 
-  # Déploiement sur le serveur OVH (ADR 013), après une CI verte sur main.
+  # Déploiement sur le VPS de production (ADR 013), après une CI verte sur main.
   # Inactif tant que la variable de dépôt VPS_HOST n'existe pas : main ne doit
   # pas passer au rouge avant que le serveur soit prêt (infra/serveur/README.md).
   deploy:
@@ -75,6 +75,7 @@ jobs:
     env:
       VPS_HOST: ${{ vars.VPS_HOST }}
       VPS_USER: ${{ vars.VPS_USER }}
+      VPS_PORT: ${{ vars.VPS_PORT || '22' }}
     steps:
       - uses: actions/checkout@v4
       # GHCR n'accepte que des noms en minuscules ; le dépôt s'appelle AceOSolo/…
@@ -110,10 +111,12 @@ jobs:
           printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
           printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
-          printf 'Host serveur\n  HostName %s\n  User %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n' \
-            "$VPS_HOST" "$VPS_USER" > ~/.ssh/config
-      # La configuration du serveur suit le dépôt ; le `.env`, lui, n'y est jamais.
-      - run: scp infra/serveur/compose.yml infra/serveur/Caddyfile serveur:centre-affaires/
+          printf 'Host serveur\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n' \
+            "$VPS_HOST" "$VPS_PORT" "$VPS_USER" > ~/.ssh/config
+      # La configuration suit le dépôt ; le `.env`, lui, n'y est jamais. Le
+      # fichier Apache est déposé à côté mais s'installe à la main, en root
+      # (infra/serveur/README.md) : le compte de déploiement n'y touche pas.
+      - run: scp infra/serveur/compose.yml infra/serveur/apache-handfield.conf serveur:centre-affaires/
       - name: Mise en service
         env:
           GHCR_USER: ${{ github.actor }}

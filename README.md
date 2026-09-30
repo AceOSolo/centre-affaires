@@ -31,6 +31,7 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 
 ## Déploiement
 
-Chaque push sur `main` dont la CI est verte est déployé sur le serveur OVH.
-Choix et raisons : `docs/decisions/013-hebergement-serveur-ovh.md`. Installation
-et exploitation du serveur : `infra/serveur/README.md`.
+Chaque push sur `main` dont la CI est verte est déployé sur le VPS de
+production. Choix et raisons :
+`docs/decisions/013-hebergement-vps-de-production.md`. Installation et
+exploitation du serveur : `infra/serveur/README.md`.

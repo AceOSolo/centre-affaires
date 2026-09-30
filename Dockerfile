@@ -1,4 +1,4 @@
-# Image de production, servie sur le serveur OVH (ADR 013).
+# Image de production, servie sur le VPS de production (ADR 013).
 #
 # Construite par la CI, jamais sur le serveur : `next build` demande plus de
 # mémoire qu'un petit VPS n'en a. Le build n'exige aucun secret ; les
