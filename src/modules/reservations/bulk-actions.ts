@@ -2,10 +2,12 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { formatTime, toIsoDate } from '../../lib/dates.ts'
 import { withTenant } from '../../db/index.ts'
+import { syncBookingsToGoogleCalendar, syncSeriesToGoogleCalendar } from './agenda-google-queries.ts'
 import { cancelFutureSeries, createBookingSeries } from './bulk-queries.ts'
 import { BookingConflictError } from './queries.ts'
 import { RecurrenceError, type WeeklySlot } from './recurrence.ts'
@@ -39,6 +41,8 @@ export async function createBookingSeriesAction(_previous: BulkFormState, formDa
     }
     throw error
   }
+  // Jusqu'à 500 écritures chez Google, une à une, après la réponse (ADR 014).
+  after(() => syncSeriesToGoogleCalendar(seriesId))
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')
   redirect(`/reservations/series/${seriesId}`)
@@ -48,7 +52,8 @@ export async function cancelBookingSeriesAction(formData: FormData): Promise<voi
   await requireStaff()
   const seriesId = String(formData.get('seriesId') ?? '')
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seriesId)) return
-  await withTenant(currentTenantId(), (tx) => cancelFutureSeries(tx, seriesId))
+  const cancelled = await withTenant(currentTenantId(), (tx) => cancelFutureSeries(tx, seriesId))
+  after(() => syncBookingsToGoogleCalendar(cancelled.map((booking) => booking.id)))
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')
 }

@@ -11,6 +11,7 @@ const sections = [
   { href: '/ressources', label: 'Ressources' },
   { href: '/disponibilites', label: 'Disponibilités' },
   { href: '/ressources/annonces', label: 'Annonces' },
+  { href: '/ressources/agendas', label: 'Agendas Google' },
   { href: '/clients', label: 'Clients' },
   { href: '/contrats', label: 'Contrats' },
   { href: '/tarifs', label: 'Tarifs' },
