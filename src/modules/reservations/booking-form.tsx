@@ -50,10 +50,13 @@ export function BookingForm({
   today,
   defaultDate,
   defaultStartTime,
+  clients = [],
 }: {
   /** Ressource affichée par le calendrier ; le choix se fait au-dessus. */
   resource: Resource
   resources: Resource[]
+  /** Entreprises clientes, pour rattacher la réservation (ADR 015). */
+  clients?: { id: string; name: string }[]
   days: CalendarDay[]
   /** Réservations de cette ressource, pour nommer le créneau qui bloque. */
   busy: BusyBooking[]
@@ -191,6 +194,31 @@ export function BookingForm({
             className={`${fieldClass} mt-1`}
           />
         </div>
+
+        {clients.length > 0 && (
+          <div>
+            <label className={labelClass} htmlFor="clientId">
+              Client <span className="font-normal text-muted-foreground">(facultatif)</span>
+            </label>
+            <select
+              id="clientId"
+              name="clientId"
+              defaultValue=""
+              aria-describedby="clientId-hint"
+              className={`${fieldClass} mt-1`}
+            >
+              <option value="">Aucun</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
+            <p id="clientId-hint" className="mt-1 text-xs text-muted-foreground">
+              La réservation apparaît dans l’espace de ce client.
+            </p>
+          </div>
+        )}
 
         <div>
           <label className={labelClass} htmlFor="notes">

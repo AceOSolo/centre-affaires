@@ -13,6 +13,8 @@ const sections = [
   { href: '/#espaces', label: 'Nos espaces' },
   { href: '/#disponibilites', label: 'Disponibilités' },
   { href: '/#services', label: 'Services' },
+  // Pas une ancre : l'accès des entreprises clientes à leur courrier (ADR 015).
+  { href: '/compte', label: 'Espace client' },
 ]
 
 /**
@@ -279,11 +281,15 @@ export default async function PortailLayout({ children }: { children: React.Reac
                 ? `${tenant.name} est exploité par ${tenant.legalName}.`
                 : tenant.name}
             </p>
-            {/* Espace client et mentions légales arrivent avec le portail
-                authentifié ; l'accès équipe existe déjà. */}
-            <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
-              Accès équipe
-            </Link>
+            {/* Les mentions légales restent à écrire. */}
+            <div className="flex gap-4">
+              <Link href="/compte" className="underline-offset-4 hover:underline">
+                Espace client
+              </Link>
+              <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
+                Accès équipe
+              </Link>
+            </div>
           </div>
         </div>
       </footer>

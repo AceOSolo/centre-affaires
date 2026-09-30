@@ -3,7 +3,12 @@ import { describe, it } from 'node:test'
 
 import {
   addDaysToIsoDate,
+  addMonthsToIsoMonth,
   dayRangeUtc,
+  formatDateTime,
+  formatIsoMonth,
+  isIsoMonth,
+  monthRangeUtc,
   formatDuration,
   formatTime,
   toIsoDate,
@@ -103,5 +108,42 @@ describe('affichage', () => {
     assert.equal(duration('2026-07-15T09:00:00Z', '2026-07-15T09:45:00Z'), '45 min')
     assert.equal(duration('2026-07-15T09:00:00Z', '2026-07-15T11:00:00Z'), '2 h')
     assert.equal(duration('2026-07-15T09:00:00Z', '2026-07-15T10:30:00Z'), '1 h 30')
+  })
+})
+
+describe('mois du centre', () => {
+  it('commence à minuit dans le centre, pas à minuit UTC', () => {
+    // 1er octobre 0h00 à Paris = 30 septembre 22h00 UTC (CEST, +2).
+    const { startsAt, endsAt } = monthRangeUtc('2026-10', PARIS)
+    assert.equal(startsAt.toISOString(), '2026-09-30T22:00:00.000Z')
+    // Le mois se termine après le retour à l'heure d'hiver : +1 le 1er novembre.
+    assert.equal(endsAt.toISOString(), '2026-10-31T23:00:00.000Z')
+  })
+
+  it('suit le fuseau du centre', () => {
+    const { startsAt } = monthRangeUtc('2026-10', MONTREAL)
+    assert.equal(startsAt.toISOString(), '2026-10-01T04:00:00.000Z')
+  })
+
+  it('franchit la fin d’année', () => {
+    assert.equal(addMonthsToIsoMonth('2026-12', 1), '2027-01')
+    assert.equal(addMonthsToIsoMonth('2026-01', -1), '2025-12')
+    assert.equal(monthRangeUtc('2026-12', PARIS).endsAt.toISOString(), '2026-12-31T23:00:00.000Z')
+  })
+
+  it('refuse un mois illisible plutôt que d’inventer une période', () => {
+    assert.equal(isIsoMonth('2026-13'), false)
+    assert.equal(isIsoMonth('2026-9'), false)
+    assert.equal(isIsoMonth(undefined), false)
+    assert.throws(() => monthRangeUtc('septembre', PARIS))
+  })
+
+  it('date et heure du centre, jointes par « à »', () => {
+    // 30 septembre 22h30 UTC = 1er octobre 0h30 à Paris.
+    assert.equal(formatDateTime(new Date('2026-09-30T22:30:00Z'), PARIS), '1 oct. 2026 à 00:30')
+  })
+
+  it('nomme le mois en français', () => {
+    assert.equal(formatIsoMonth('2026-09'), 'septembre 2026')
   })
 })

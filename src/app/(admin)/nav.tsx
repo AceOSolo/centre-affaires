@@ -14,13 +14,22 @@ const sections = [
   { href: '/clients', label: 'Clients' },
   { href: '/contrats', label: 'Contrats' },
   { href: '/tarifs', label: 'Tarifs' },
+  // Les plis dont le client attend l'ouverture sont comptés, comme les
+  // demandes : c'est une file d'attente, pas une liste de consultation.
+  { href: '/courrier', label: 'Courrier' },
 ]
 
 /**
  * Navigation du back-office. Client parce que l'onglet actif dépend de l'URL
  * courante ; le reste de la coque reste rendu sur le serveur.
  */
-export function Nav({ pendingCount = 0 }: { pendingCount?: number }) {
+export function Nav({
+  pendingCount = 0,
+  mailRequestCount = 0,
+}: {
+  pendingCount?: number
+  mailRequestCount?: number
+}) {
   const pathname = usePathname()
 
   // Le plus long chemin qui correspond l'emporte : `/ressources/annonces` ne
@@ -53,6 +62,14 @@ export function Nav({ pendingCount = 0 }: { pendingCount?: number }) {
                 aria-label={`${pendingCount} demande${pendingCount > 1 ? 's' : ''} en attente`}
               >
                 {pendingCount}
+              </span>
+            )}
+            {section.href === '/courrier' && mailRequestCount > 0 && (
+              <span
+                className="ml-1.5 inline-block rounded-full bg-primary px-1.5 text-xs font-semibold text-white tabular"
+                aria-label={`${mailRequestCount} courrier${mailRequestCount > 1 ? 's' : ''} à ouvrir`}
+              >
+                {mailRequestCount}
               </span>
             )}
           </Link>

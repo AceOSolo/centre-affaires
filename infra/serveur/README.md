@@ -173,5 +173,24 @@ docker compose logs -f app    # journaux de l'application
 
 Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
 
+## Conservation du courrier
+
+Les numérisations de courrier et le journal de leurs consultations ne se
+gardent que le temps fixé par le centre (12 mois par défaut, colonnes
+`mail_*_retention_months` de `tenants`, voir `infra/configurer-centre.mjs`).
+La purge est une route de l'application, appelée chaque nuit ; elle exige
+`MAINTENANCE_TOKEN` dans le `.env` du serveur.
+
+Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
+
+```cron
+# Purge du courrier échu, chaque nuit à 3 h 15 (ADR 015).
+15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
+```
+
+La commande tourne dans le conteneur, qui a déjà le jeton dans son
+environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
+affiche le nombre de numérisations et de consultations purgées.
+
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
 version précédente.

@@ -130,6 +130,8 @@ export type CreateBookingInput = {
   endsAt: Date
   title: string
   notes?: string | null
+  /** Entreprise cliente pour qui la ressource est réservée (ADR 015). */
+  clientId?: string | null
 }
 
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
@@ -145,6 +147,7 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
           endsAt: input.endsAt,
           title: input.title,
           notes: input.notes ?? null,
+          clientId: input.clientId ?? null,
         })
         .returning(),
     )
@@ -334,6 +337,7 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
           requesterName: input.requesterName.trim(),
           requesterEmail: input.requesterEmail.trim().toLowerCase(),
           requesterPhone: input.requesterPhone.trim(),
+          clientId: input.clientId ?? null,
         })
         .returning(),
     )
@@ -385,5 +389,15 @@ export async function refuseBooking(id: string, reason?: string | null): Promise
         cancellationReason: reason?.trim() || 'Demande refusée',
       })
       .where(and(eq(bookings.id, id), eq(bookings.status, 'pending'))),
+  )
+}
+
+/**
+ * Rattache une réservation à une entreprise cliente, ou l'en détache (ADR 015).
+ * Elle apparaît alors — ou disparaît — dans l'espace de ce client.
+ */
+export async function assignBookingClient(id: string, clientId: string | null): Promise<void> {
+  await withTenant(currentTenantId(), (tx) =>
+    tx.update(bookings).set({ clientId }).where(eq(bookings.id, id)),
   )
 }

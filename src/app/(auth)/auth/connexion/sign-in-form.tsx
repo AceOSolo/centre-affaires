@@ -13,12 +13,13 @@ const labelClass = 'block text-sm font-medium text-foreground'
 type Mode = 'connexion' | 'creation'
 
 /**
- * Connexion de l'équipe du centre.
+ * Connexion de l'équipe du centre et des clients : un seul écran, un seul
+ * compte Neon Auth, et `/auth/suite` oriente chacun vers son espace.
  *
- * Créer un compte ne donne aucun droit : l'accès au back-office dépend de la
- * table `staff_members` (ADR 008). Un compte inconnu est renvoyé vers
- * `/auth/acces-refuse`, ce qui est volontaire — l'écran de connexion ne doit pas
- * révéler quelles adresses font partie de l'équipe.
+ * Créer un compte ne donne aucun droit : l'accès dépend de `staff_members`
+ * (ADR 008) ou de `client_members` (ADR 015). Un compte inconnu est renvoyé
+ * vers `/auth/acces-refuse`, ce qui est volontaire — l'écran de connexion ne
+ * doit pas révéler quelles adresses sont inscrites.
  */
 export function SignInForm() {
   const router = useRouter()
@@ -28,7 +29,8 @@ export function SignInForm() {
   const [pending, startTransition] = useTransition()
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
-  const redirectTo = searchParams.get('redirect') ?? '/reservations'
+  // Sans chemin, l'aiguillage choisit entre back-office et espace client.
+  const redirectTo = searchParams.get('redirect') ?? '/auth/suite'
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -75,12 +77,12 @@ export function SignInForm() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-primary">
-          {mode === 'creation' ? 'Créer votre accès' : 'Connexion à l’espace équipe'}
+          {mode === 'creation' ? 'Créer votre accès' : 'Connexion'}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === 'creation'
             ? 'Utilisez l’adresse professionnelle avec laquelle le centre vous a inscrit.'
-            : 'Réservé à l’équipe du centre.'}
+            : 'Espace client et équipe du centre.'}
         </p>
       </div>
 

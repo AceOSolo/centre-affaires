@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
+import { clientAccess } from '../clients/session.ts'
 import { findResource } from '../ressources/queries.ts'
 import {
   BookingConflictError,
@@ -52,6 +53,19 @@ export type PublicFormState =
 
 function text(formData: FormData, key: string): string {
   return String(formData.get(key) ?? '').trim()
+}
+
+/**
+ * Entreprise du visiteur connecté à son espace client (ADR 015) : sa demande y
+ * apparaîtra. Seulement quand il n'en représente qu'une — pour une personne qui
+ * gère plusieurs sociétés, deviner laquelle réserve serait attribuer la
+ * facture au hasard ; le centre la rattache à la validation.
+ */
+async function requesterClientId(): Promise<string | null> {
+  const access = await clientAccess()
+  return access.status === 'client' && access.accounts.length === 1
+    ? access.accounts[0].clientId
+    : null
 }
 
 export async function requestBookingAction(
@@ -114,6 +128,7 @@ export async function requestBookingAction(
       requesterName: text(formData, 'name'),
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
+      clientId: await requesterClientId(),
     })
   } catch (error) {
     if (error instanceof InvalidRangeError) {

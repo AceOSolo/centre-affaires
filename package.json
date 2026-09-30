@@ -10,11 +10,13 @@
     "test": "node --test --test-concurrency=1 \"src/**/*.test.ts\""
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1143.0",
     "@neon/config": "^1.7.2",
     "@neon/env": "^1.4.3",
     "@neondatabase/auth": "^0.5.0-beta",
     "drizzle-orm": "^0.45.2",
     "next": "16.3.5",
+    "nodemailer": "^10.0.13",
     "postgres": "^3.4.9",
     "react": "19.2.8",
     "react-dom": "19.2.8"
@@ -22,6 +24,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/nodemailer": "^8.0.2",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "drizzle-kit": "^0.31.10",

@@ -159,3 +159,56 @@ export function formatMinutes(minutes: number): string {
   if (rest === 0) return `${hours} h`
   return `${hours} h ${String(rest).padStart(2, '0')}`
 }
+
+/**
+ * « 30 sept. 2026 à 10:12 » dans le fuseau du centre. Assemblé à la main :
+ * `Intl` sépare la date et l'heure par une virgule, moins naturelle en français.
+ */
+export function formatDateTime(instant: Date, timeZone: string): string {
+  const date = new Intl.DateTimeFormat('fr-FR', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(instant)
+  return `${date} à ${formatTime(instant, timeZone)}`
+}
+
+const ISO_MONTH = /^(\d{4})-(0[1-9]|1[0-2])$/
+
+/** Mois au format « 2026-09 », celui d'un `<input type="month">`. */
+export function isIsoMonth(value: string | undefined): value is string {
+  return value !== undefined && ISO_MONTH.test(value)
+}
+
+/** Décale un mois ISO : « 2026-12 » + 1 = « 2027-01 ». */
+export function addMonthsToIsoMonth(isoMonth: string, months: number): string {
+  const [year, month] = isoMonth.split('-').map(Number)
+  const shifted = new Date(Date.UTC(year, month - 1 + months, 1))
+  return shifted.toISOString().slice(0, 7)
+}
+
+/**
+ * Bornes UTC d'un mois du centre, en `[)`.
+ *
+ * Même raisonnement que `dayRangeUtc` : le mois commence à minuit dans le
+ * centre, pas à minuit UTC. Un pli ouvert le 1er octobre à 0h30 à Paris est un
+ * pli d'octobre, même s'il est encore le 30 septembre en UTC — et c'est sur ces
+ * bornes que le relevé de facturation compte.
+ */
+export function monthRangeUtc(isoMonth: string, timeZone: string): { startsAt: Date; endsAt: Date } {
+  if (!isIsoMonth(isoMonth)) throw new Error(`Mois illisible : « ${isoMonth} »`)
+  return {
+    startsAt: wallClockToUtc(`${isoMonth}-01T00:00`, timeZone),
+    endsAt: wallClockToUtc(`${addMonthsToIsoMonth(isoMonth, 1)}-01T00:00`, timeZone),
+  }
+}
+
+/** « septembre 2026 ». */
+export function formatIsoMonth(isoMonth: string): string {
+  const [year, month] = isoMonth.split('-').map(Number)
+  // Midi UTC le 15 : aucun fuseau ne fait changer de mois à cette heure-là.
+  return new Intl.DateTimeFormat('fr-FR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(
+    new Date(Date.UTC(year, month - 1, 15, 12)),
+  )
+}

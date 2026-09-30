@@ -3,6 +3,7 @@ import Link from 'next/link'
 
 import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
+import { countOpeningRequests } from '../../modules/courrier/queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { Nav } from './nav.tsx'
@@ -27,7 +28,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // Les actions serveur rappellent `requireStaff()` de leur côté — elles ne
   // passent pas par cette coque (ADR 008).
   const { member } = await requireStaff()
-  const [tenant, pending] = await Promise.all([currentTenant(), listPendingBookings()])
+  const [tenant, pending, mailRequests] = await Promise.all([
+    currentTenant(),
+    listPendingBookings(),
+    countOpeningRequests(),
+  ])
 
   return (
     <div className="flex min-h-screen flex-col bg-muted font-sans text-foreground">
@@ -47,7 +52,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               <span className="text-sm font-semibold tracking-tight">{tenant.name}</span>
             )}
           </Link>
-          <Nav pendingCount={pending.length} />
+          <Nav pendingCount={pending.length} mailRequestCount={mailRequests} />
           <div className="ml-auto flex items-center gap-4">
             <span className="hidden text-xs text-muted-foreground sm:block">
               {/* Le fuseau est affiché : toutes les heures de l'écran sont les

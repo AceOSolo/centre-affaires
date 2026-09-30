@@ -7,10 +7,12 @@ import { requireStaff } from '../../lib/auth/staff.ts'
 
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
+import { isUuid } from '../../lib/uuid.ts'
 import {
   BookingConflictError,
   BookingNotMovableError,
   InvalidRangeError,
+  assignBookingClient,
   cancelBooking,
   confirmBooking,
   createBooking,
@@ -81,6 +83,8 @@ export async function createBookingAction(
       endsAt,
       title,
       notes: text(formData, 'notes') || null,
+      // Facultatif : la réservation apparaît alors dans l'espace du client.
+      clientId: isUuid(text(formData, 'clientId')) ? text(formData, 'clientId') : null,
     })
   } catch (error) {
     const message = describeBookingError(error, timeZone)
@@ -170,4 +174,20 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
+}
+
+/**
+ * Rattache une réservation à un client, ou l'en détache (ADR 015) : c'est ce
+ * qui la fait apparaître dans son espace. Utile pour une demande déposée par
+ * une personne qui gère plusieurs entreprises, et pour l'historique d'avant
+ * l'espace client.
+ */
+export async function assignBookingClientAction(formData: FormData): Promise<void> {
+  await requireStaff()
+  const id = text(formData, 'id')
+  if (!isUuid(id)) return
+  const clientId = text(formData, 'clientId')
+  await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  revalidatePath(`/reservations/${id}`)
+  revalidatePath('/compte/reservations')
 }
