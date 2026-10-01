@@ -47,8 +47,8 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R26 | Moteur de notifications | ◐ | Envoi SMTP en place (`src/lib/courriel.ts`) ; modèles éditables et historique des envois absents ; déclencheurs limités au courrier | M–L | 3 |
 | R27 | Rôles exploitant / accueil / client | ◐ | Exploitant et accueil non distingués ; pas de matrice des droits | M | 1 |
 | R28 | Comptes isolés, second facteur staff | ◐ | Isolation entre clients applicative seulement. Second facteur écarté (ADR 016) | M | 1 |
-| R29 | Registre RGPD, durées de conservation | ○ | Registre, bases légales, durées par type de donnée | S | 0 |
-| R30 | Sauvegardes, restauration, reprise | ○ | PITR Neon, copie du stockage, sauvegarde des secrets, procédure testée | M | 0 |
+| R29 | Registre RGPD, durées de conservation | ◐ | Registre et tableau des durées écrits (`docs/rgpd/`). Restent : valider les durées proposées, archiver les DPA, évaluer l'AIPD du courrier, construire l'anonymisation des clients, contacts et comptes | S | 0 |
+| R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Restent : installation sur le VPS (rôle `sauvegarde`, destination, clés), premier exercice sur Neon | S | 0 |
 | R31 | Indicateurs (occupation, revenu) | ○ | Tableau de bord ; le revenu dépend de la facturation | M–L | 2 |
 | R32 | Une seule API métier | ✅ | — | — | — |
 | R33 | Stockage documentaire | ◐ | Compression, purge, contrôle de la région UE au démarrage | M | 0 / 4 |
@@ -77,12 +77,16 @@ se trouve en annexe.
   - Reste à faire : planifier la purge, puis fixer les durées des contacts des
     demandes publiques (ADR 005) et des comptes `neon_auth`.
 - **B5. Écarts de gouvernance.**
-  - Numéros d'ADR en double (deux 010, deux 013) et pas d'ADR 007.
-  - `rate_plan_items` est supprimé physiquement (`facturation/queries.ts:122-126`),
-    contre la décision 6.
-  - Le commentaire `neon.ts:9` annonce des URL signées, que l'ADR 015 écarte.
+  - ~~Numéros d'ADR en double (deux 010, deux 013) et pas d'ADR 007.~~ Signalés
+    par l'index `docs/decisions/README.md`, sans renuméroter.
+  - ~~`rate_plan_items` est supprimé physiquement (`facturation/queries.ts:122-126`),
+    contre la décision 6.~~ Retrait logique depuis le schéma de la vague 1.
+  - ~~Le commentaire `neon.ts:9` annonce des URL signées, que l'ADR 015 écarte.~~
   - `CLAUDE.md` indique PostgreSQL 17, alors que l'ADR 003 et la CI utilisent 18.
-  - `README.md` est encore celui de create-next-app.
+    Reste à corriger par le responsable du dépôt.
+  - ~~`README.md` est encore celui de create-next-app.~~
+  - ~~`docker-compose.yml` monte le volume à l'emplacement que l'image 18 refuse.~~
+    Volume neuf sur `/var/lib/postgresql` (README).
 
 ## Décisions (tranchées le 01/10/2026 — ADR 016)
 
@@ -154,7 +158,7 @@ R06 (D8) et le reste de R33 (compression, purge des photos).
 
 - Vérifier `git status`, `ls src/db/migrations docs/decisions` et `ListAgents`
   avant de générer une migration ou de numéroter un ADR. Prochain ADR libre :
-  016.
+  voir l'index `docs/decisions/README.md`.
 - Chaque règle métier listée ici (devis, remises, engagement, prorata, purge,
   droits) arrive avec son test.
 - Mettre à jour le statut de l'exigence dans le tableau de synthèse en fin de
