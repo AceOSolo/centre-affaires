@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { resourceTypeLabels } from '../../../../../modules/ressources/labels.ts'
 import { findResource } from '../../../../../modules/ressources/queries.ts'
 import { ResourceForm } from '../../../../../modules/ressources/resource-form.tsx'
@@ -14,6 +15,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
  * propres au type et description. Une ressource archivée ne se modifie plus.
  */
 export default async function EditResourcePage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('ressources.gerer')
   const { id } = await params
   if (!UUID.test(id)) notFound()
   const resource = await findResource(id)

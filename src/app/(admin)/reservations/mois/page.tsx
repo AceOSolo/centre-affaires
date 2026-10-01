@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addMonthsToIsoMonth, formatIsoMonth, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
@@ -29,6 +30,7 @@ export default async function MonthPage({
 }: {
   searchParams: Promise<{ date?: SearchParam; type?: SearchParam; client?: SearchParam }>
 }) {
+  await requirePermission('reservations.gerer')
   const params = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)

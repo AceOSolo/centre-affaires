@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { ContactForm } from '../../../../../../modules/clients/contact-form.tsx'
 import { removeClientContactAction } from '../../../../../../modules/clients/contacts-actions.ts'
@@ -17,6 +18,7 @@ export default async function EditContactPage({
 }: {
   params: Promise<{ id: string; contactId: string }>
 }) {
+  await requirePermission('clients.gerer')
   const { id, contactId } = await params
   if (!isUuid(id) || !isUuid(contactId)) notFound()
   const [client, contact] = await Promise.all([findClient(id), findClientContact(id, contactId)])

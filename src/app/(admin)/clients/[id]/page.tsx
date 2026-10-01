@@ -374,7 +374,7 @@ export default async function ClientPage({
           </h2>
           {!client.deletedAt && (
             <Link
-              href="/reservations/nouvelle"
+              href={`/reservations/nouvelle?clientId=${client.id}`}
               className="text-sm text-muted-foreground underline-offset-2 hover:underline"
             >
               Nouvelle réservation

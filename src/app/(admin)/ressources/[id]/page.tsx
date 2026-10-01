@@ -3,6 +3,7 @@ import { Fragment } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import {
@@ -46,6 +47,7 @@ const HORIZON_DAYS = 14
  * modifie plus.
  */
 export default async function ResourcePage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('ressources.gerer')
   const { id } = await params
   // Un identifiant mal formé ferait échouer la requête en 22P02 : c'est une
   // page introuvable, pas une erreur serveur.

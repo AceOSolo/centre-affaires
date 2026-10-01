@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { ContactForm } from '../../../../../../modules/clients/contact-form.tsx'
 import { listClientContacts } from '../../../../../../modules/clients/contacts-queries.ts'
@@ -9,6 +10,7 @@ import { findClient } from '../../../../../../modules/clients/queries.ts'
 export const metadata = { title: 'Nouveau contact' }
 
 export default async function NewContactPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('clients.gerer')
   const { id } = await params
   if (!isUuid(id)) notFound()
   const client = await findClient(id)

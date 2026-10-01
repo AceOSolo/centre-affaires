@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import {
   ContactClientUnavailableError,
@@ -32,7 +32,7 @@ export async function saveClientContactAction(
   formData: FormData,
 ): Promise<ContactFormState> {
   // Contrôle d'accès dans l'action elle-même (ADR 008).
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const clientId = String(formData.get('clientId') ?? '')
   const id = String(formData.get('id') ?? '') || null
   if (!isUuid(clientId) || (id !== null && !isUuid(id))) {
@@ -67,7 +67,7 @@ export async function saveClientContactAction(
 
 /** Retrait logique d'un contact (décision 6). */
 export async function removeClientContactAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const clientId = String(formData.get('clientId') ?? '')
   const id = String(formData.get('id') ?? '')
   if (!isUuid(clientId) || !isUuid(id)) return

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../../modules/clients/queries.ts'
 import { ContractForm } from '../../../../../modules/contrats/contract-form.tsx'
@@ -18,6 +19,7 @@ export const metadata = { title: 'Modifier le brouillon' }
  * ici : il engage le centre et le client.
  */
 export default async function EditContractPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('contrats.creer')
   const { id } = await params
   if (!isUuid(id)) notFound()
   const contract = await findContract(id)
