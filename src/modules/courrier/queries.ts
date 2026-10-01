@@ -5,6 +5,7 @@ import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 import { withTenant } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
+import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
@@ -35,12 +36,16 @@ const displayName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
 /* Stockage                                                                   */
 /* -------------------------------------------------------------------------- */
 
-type StoredScan = { side: MailScanSide; key: string; scan: ScanFile }
+type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
 
 /**
  * Dépose les fichiers avant d'écrire en base : une ligne ne doit jamais
  * désigner un fichier absent. L'inverse — un fichier sans ligne, si l'écriture
  * échoue ensuite — est rattrapé par `discard`.
+ *
+ * Chaque fichier est chiffré avant de partir (R22, ADR 020) : le stockage ne
+ * reçoit jamais le document en clair. Sans clé configurée, le dépôt échoue
+ * avant le premier envoi.
  */
 async function store(
   tenantId: string,
@@ -53,8 +58,10 @@ async function store(
     // Clé sans rien de lisible : ni client ni expéditeur n'apparaissent dans
     // le stockage, seulement dans la base, derrière la RLS.
     const key = `courrier/${tenantId}/${randomUUID()}.${scanExtensions[scan.contentType]}`
-    await putObject(key, scan.bytes, scan.contentType)
-    stored.push({ side, key, scan })
+    const sealed = sealDocument(scan.bytes, key)
+    // Le type réel est en base ; l'objet, lui, n'est que du chiffré.
+    await putObject(key, sealed.bytes, 'application/octet-stream')
+    stored.push({ side, key, scan, encryptionKeyVersion: sealed.keyVersion })
   }
   return stored
 }
@@ -64,12 +71,14 @@ async function discard(stored: StoredScan[]): Promise<void> {
 }
 
 const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
-  stored.map(({ side, key, scan }) => ({
+  stored.map(({ side, key, scan, encryptionKeyVersion }) => ({
     mailItemId,
     side,
     storageKey: key,
+    // Le document en clair, celui que la lecture rend (ADR 020).
     contentType: scan.contentType,
     byteSize: scan.bytes.byteLength,
+    encryptionKeyVersion,
     uploadedBy,
   }))
 
@@ -451,7 +460,10 @@ export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]
 /* Consultation des numérisations                                             */
 /* -------------------------------------------------------------------------- */
 
-export type ScanToServe = Pick<MailScan, 'id' | 'side' | 'storageKey' | 'contentType'> & {
+export type ScanToServe = Pick<
+  MailScan,
+  'id' | 'side' | 'storageKey' | 'contentType' | 'encryptionKeyVersion'
+> & {
   receivedAt: Date
   clientId: string
 }
@@ -461,6 +473,7 @@ const scanToServe = {
   side: mailScans.side,
   storageKey: mailScans.storageKey,
   contentType: mailScans.contentType,
+  encryptionKeyVersion: mailScans.encryptionKeyVersion,
   receivedAt: mailItems.receivedAt,
   clientId: mailItems.clientId,
 }
