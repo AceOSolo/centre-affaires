@@ -23,14 +23,14 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R02 | Calendrier par ressource, interne et client | ✅ | Les ressources occupées par contrat (bureau, boîte) paraissent libres — voir D6 | M | 1 |
 | R03 | Planning back-office | ◐ | Semaine toutes ressources (contre ADR 011), vue mois, filtre par type, filtre par client | L | 1 |
 | R04 | Anti-chevauchement | ✅ | Tests de charge ; aucune exclusion sur `contracts.resource_id` | S–M | 1 |
-| R05 | Réservation : créneau, statut, canal, client, contrat | ◐ | Colonne canal, `contract_id` (`client_id` migré en 0023) | M | 1 |
+| R05 | Réservation : créneau, statut, canal, client, contrat | ✅ | — (canal posé par chaque chemin et affiché sur la fiche ; rattachement à un contrat actif du même client qui couvre le créneau, vérifié à l'écriture) | — | — |
 | R06 | États des lieux configurables avec photos | ○ | Tout : modèles de champs en base, inspections, photos compressées | L | 4 |
 | R07 | CRM : fiche, contacts, historique | ◐ | Contacts CRM (≠ accès portail), réservations et services sur la fiche | M | 1 |
 | R08 | Grilles jour / semaine / mois | ◐ | Unité `week` ; dates de validité ignorées | S–M | 2 |
 | R09 | Offres groupées ressources + services | ○ | Catalogue de services, offres, lignes d'offre | L | 2 |
 | R10 | Remises, engagement, prorata paramétrables | ◐ | Prorata fait mais codé en dur ; remises et engagement absents | L | 2 |
 | R11 | Moteur tarifaire unique | ◐ | Aucun total calculé (`priceCents` n'est appelé que par les tests) ; grille du contrat ignorée au portail | M | 2 |
-| R12 | Contrat généré, PDF, avenants | ◐ | Saisie manuelle, ni modification ni archivage, pas de PDF ni d'avenant | L | 1–2 |
+| R12 | Contrat généré, PDF, avenants | ◐ | Numérotation, modification d'un brouillon et archivage faits (vague 1). Reste : contrat généré depuis une offre, PDF, avenants | L | 2 |
 | R13 | Facturation intégrée | ○ | Factures, numérotation, TVA, génération périodique — voir D1 | L | 2 |
 | R14 | Actes à l'acte sur la facture | ◐ | Ouvertures comptées (CSV), pas valorisées ni facturées | M | 2 |
 | R15 | Facture = location + forfaits + actes | ○ | Lignes typées reliées à leur source | M | 2 |
