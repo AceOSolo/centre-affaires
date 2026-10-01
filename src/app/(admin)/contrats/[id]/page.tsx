@@ -23,6 +23,7 @@ import {
   contractTypeLabels,
 } from '../../../../modules/contrats/labels.ts'
 import {
+  canChangeContractResource,
   contractOccupiesResource,
   formatCalendarDate,
   formatContractDays,
@@ -66,10 +67,14 @@ export default async function ContractPage({
   if (!contract) notFound()
 
   const archived = contract.deletedAt !== null
-  const resources = contract.status === 'active' && !archived ? await listResources() : []
-
   // Le jour du centre, pas celui du serveur (décision 4).
   const today = todayIsoDate(timeZone)
+  // La ressource ne change qu'avant le début du contrat (ADR 018) : après, son
+  // occupation serait réécrite depuis le premier jour.
+  const canManageOccupation = !archived && can(member.role, 'contrats.activer')
+  const canChangeResource = canManageOccupation && canChangeContractResource(contract, today)
+  const resources = canChangeResource ? await listResources() : []
+
   // Douze mois d'horizon : assez pour lire l'engagement en cours sans dérouler
   // une durée indéterminée jusqu'à la fin des temps.
   const horizon = addDays(today, 365)
@@ -215,13 +220,24 @@ export default async function ContractPage({
           occupation={occupation}
           resourceLabel={resourceLabel}
           timeZone={timeZone}
+          canChangeResource={canChangeResource}
         />
-        {!archived && contract.status === 'active' && can(member.role, 'contrats.activer') && (
+        {canChangeResource ? (
           <ResourceForm
             contractId={contract.id}
             resourceId={contract.resourceId}
             resources={resources}
           />
+        ) : (
+          canManageOccupation &&
+          contract.status === 'active' && (
+            <p className="text-xs text-muted-foreground">
+              Ce contrat a commencé le{' '}
+              <span className="tabular">{formatCalendarDate(contract.startsOn)}</span> : sa
+              ressource ne change plus. Pour passer sur une autre ressource, résiliez-le, puis
+              créez un nouveau contrat sur celle-ci.
+            </p>
+          )
         )}
       </section>
 
@@ -234,7 +250,8 @@ export default async function ContractPage({
         <EcheancierTable contract={contract} until={horizon} currency={contract.currency} />
       </section>
 
-      {!archived && contract.status !== 'terminated' && can(member.role, 'contrats.resilier') && (
+      {/* Seul un contrat en cours se résilie : un brouillon abandonné s'archive. */}
+      {!archived && contract.status === 'active' && can(member.role, 'contrats.resilier') && (
         <TerminateForm
           contractId={contract.id}
           defaultTerminatedOn={noticeEndsOn(today, contract.noticeDays)}
@@ -273,11 +290,14 @@ function OccupationSummary({
   occupation,
   resourceLabel,
   timeZone,
+  canChangeResource,
 }: {
   contract: NonNullable<Awaited<ReturnType<typeof findContract>>>
   occupation: Awaited<ReturnType<typeof findContractOccupation>>
   resourceLabel: string | null
   timeZone: string
+  /** Le formulaire de changement de ressource est affiché sous ce résumé. */
+  canChangeResource: boolean
 }) {
   const box = 'rounded-lg border border-border bg-white px-5 py-4 text-sm'
 
@@ -336,8 +356,10 @@ function OccupationSummary({
       <p className={`${box} border-statut-conflit/40`}>
         <strong className="font-medium text-statut-conflit">Conflit à résoudre</strong> —{' '}
         {resourceLabel} était déjà occupée lors de la reprise des contrats : ce contrat ne
-        l’occupe pas. Changez de ressource ci-dessous, ou libérez celle-ci (annulez la
-        réservation en trop, archivez le contrat en double).
+        l’occupe pas.{' '}
+        {canChangeResource
+          ? 'Changez de ressource ci-dessous, ou libérez celle-ci (annulez la réservation en trop, archivez le contrat en double).'
+          : 'Libérez-la : annulez la réservation en trop, ou archivez le contrat en double.'}
       </p>
     )
   }

@@ -54,6 +54,24 @@ export function contractOccupiesResource(
 }
 
 /**
+ * La ressource d'un contrat en cours peut-elle encore changer ? Seulement s'il
+ * n'a pas commencé : son premier jour vient après `today`, jour du centre.
+ *
+ * L'occupation couvre toute la période du contrat (ADR 018). Changer de
+ * ressource après le début la réécrirait depuis le premier jour : l'ancienne
+ * ressource perdrait la période écoulée, et la nouvelle serait refusée dès
+ * qu'elle a été occupée depuis, même dans le passé. En attendant les avenants
+ * (R12), on résilie puis on crée un nouveau contrat. Un brouillon, lui, se
+ * modifie en entier ; un contrat résilié ou archivé ne change plus.
+ */
+export function canChangeContractResource(
+  contract: { status: ContractStatus; deletedAt: Date | null; startsOn: string },
+  today: string,
+): boolean {
+  return contract.status === 'active' && contract.deletedAt === null && contract.startsOn > today
+}
+
+/**
  * Bornes `[)` de la période d'un contrat, en instants : du premier jour à
  * minuit, heure du centre, au lendemain du dernier jour à minuit. Un contrat
  * sans terme court jusqu'à `OPEN_ENDED_BOOKING_END`, comme en base.

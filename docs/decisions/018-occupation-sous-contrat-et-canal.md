@@ -68,13 +68,37 @@ Le dernier jour est le plus proche de `ends_on` et `terminated_on`.
 |---|---|
 | Brouillon (`draft`) | Aucune occupation : un brouillon n'engage rien. |
 | Activation | L'occupation est créée. Un chevauchement fait échouer l'activation elle-même (SQLSTATE `23P01`) : le contrat reste en brouillon. |
-| Résiliation | L'occupation s'arrête au soir de `terminated_on`. La ressource est libre le lendemain, et la période passée reste occupée dans l'historique. |
+| Résiliation (contrat actif seulement) | L'occupation s'arrête au soir de `terminated_on`. La ressource est libre le lendemain, et la période passée reste occupée dans l'historique. |
 | Résiliation antérieure au début, archivage, retrait de la ressource | L'occupation est annulée (`cancelled`, avec un motif). La ligne reste. |
 | Désarchivage | L'occupation est rétablie. |
-| Changement de ressource, de dates ou de client | L'occupation suit, sur toute la période. |
+| Changement de ressource d'un contrat qui n'a pas commencé | L'occupation suit, sur toute la période. |
+| Changement de dates ou de client (brouillon seulement) | Rien à suivre : un brouillon n'occupe rien. |
 
-Un changement de bureau en cours de contrat qui doit garder la trace de l'ancien
-bureau relève d'un avenant (vague 2, R12).
+**Seul un contrat actif se résilie.** Le prédicat d'occupation retient
+`terminated` : un brouillon résilié occuperait sa ressource de son premier jour
+à la date de résiliation, alors qu'il n'a engagé personne. Un brouillon abandonné
+s'archive ; un contrat archivé ou déjà résilié ne se résilie pas.
+`terminateContract` filtre sur `status = 'active'` et `deleted_at` nul, et la
+fiche n'offre la résiliation qu'à un contrat actif.
+
+### Limite : la ressource ne change qu'avant le début du contrat
+
+L'occupation couvre toute la période du contrat, depuis `starts_on`. Changer la
+ressource d'un contrat commencé la réécrirait depuis le premier jour :
+
+- l'ancienne ressource perdrait la période écoulée (planning passé faux,
+  indicateurs R31 faussés) ;
+- la nouvelle serait refusée (`23P01`) dès qu'elle a porté une réservation ou un
+  contrat depuis ce premier jour, même passés, avec un message qui cite cette
+  occupation ancienne.
+
+En attendant les avenants (vague 2, R12), **le changement de ressource, retrait
+compris, n'est accepté que pour un contrat actif dont le premier jour vient
+après aujourd'hui, jour du centre** (`canChangeContractResource`, filtre de
+`changeContractResource`, qui lève `ContractAlreadyStartedError`). Pour un
+contrat commencé, la fiche ne propose pas le changement : on résilie le contrat,
+puis on en crée un nouveau sur l'autre ressource. L'avenant permettra de changer
+de bureau en cours de contrat en gardant la trace de l'ancien.
 
 ### Des jours civils du centre aux instants
 
@@ -147,14 +171,15 @@ Pour résoudre un conflit, l'équipe peut :
 
 - annuler la réservation en trop ;
 - archiver le contrat en double ;
-- ou faire passer le contrat sur une autre ressource.
+- ou, si le contrat n'a pas encore commencé, le faire passer sur une autre
+  ressource (voir la limite plus haut).
 
 Le propriétaire de la base relance ensuite `SELECT backfill_contract_occupations();`,
 qui rend le nombre de contrats encore en conflit. Tant qu'un conflit n'est pas
 résolu, toute écriture du contrat concerné échoue (`23P01`) : l'occupation est
 recalculée à chaque écriture, et la base refuse d'enregistrer la contradiction.
 Les seules écritures qui passent sont celles qui suppriment l'occupation,
-comme l'archivage ou le retrait de la ressource.
+comme l'archivage ou, avant le début du contrat, le retrait de la ressource.
 
 ### Le canal de la réservation (R05)
 

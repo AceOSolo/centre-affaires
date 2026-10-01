@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import { OPEN_ENDED_BOOKING_END } from '../reservations/schema.ts'
 import {
+  canChangeContractResource,
   contractOccupiesResource,
   contractRange,
   formatCalendarDate,
@@ -86,6 +87,39 @@ describe('le contrat occupe-t-il sa ressource', () => {
       contractOccupiesResource(contrat({ status: 'terminated', terminatedOn: '2026-03-01' })),
       true,
     )
+  })
+})
+
+describe('changement de ressource d’un contrat en cours', () => {
+  // Contrat du 1er mars au 30 juin 2026.
+  it('possible tant que le contrat n’a pas commencé', () => {
+    assert.equal(canChangeContractResource(contrat(), '2026-02-28'), true)
+  })
+
+  it('refusé le jour même du début : l’occupation a commencé', () => {
+    assert.equal(canChangeContractResource(contrat(), '2026-03-01'), false)
+  })
+
+  it('refusé en cours de contrat : l’ancienne ressource perdrait son historique', () => {
+    assert.equal(canChangeContractResource(contrat(), '2026-04-15'), false)
+  })
+
+  it('refusé pour un brouillon : il se modifie en entier', () => {
+    assert.equal(canChangeContractResource(contrat({ status: 'draft' }), '2026-02-01'), false)
+  })
+
+  it('refusé pour un contrat résilié', () => {
+    assert.equal(
+      canChangeContractResource(
+        contrat({ status: 'terminated', terminatedOn: '2026-05-31' }),
+        '2026-02-01',
+      ),
+      false,
+    )
+  })
+
+  it('refusé pour un contrat archivé', () => {
+    assert.equal(canChangeContractResource(contrat({ deletedAt: new Date() }), '2026-02-01'), false)
   })
 })
 

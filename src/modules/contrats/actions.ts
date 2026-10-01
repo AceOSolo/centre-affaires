@@ -13,6 +13,7 @@ import { occupationConflictMessage } from './conflits.ts'
 import { noticeEndsOn } from './echeancier.ts'
 import { isCalendarDate, readContractForm, type ContractField } from './formulaire.ts'
 import {
+  ContractAlreadyStartedError,
   ContractOccupationConflictError,
   DuplicateReferenceError,
   activateContract,
@@ -151,9 +152,11 @@ export async function activateContractAction(
 }
 
 /**
- * Changement de ressource d'un contrat en cours : l'occupation suit (ADR 018).
- * Vers une ressource déjà occupée, la base refuse ; l'erreur revient sous le
- * champ.
+ * Changement de ressource d'un contrat en cours qui n'a pas commencé :
+ * l'occupation suit (ADR 018). Vers une ressource déjà occupée, la base
+ * refuse ; l'erreur revient sous le champ. Un contrat commencé ne change pas de
+ * ressource : le message oriente vers la résiliation suivie d'un nouveau
+ * contrat.
  */
 export async function changeContractResourceAction(
   _previous: FormState,
@@ -178,6 +181,9 @@ export async function changeContractResourceAction(
   } catch (error) {
     if (error instanceof ContractOccupationConflictError) {
       return { fieldErrors: { resourceId: await conflictMessage(error) }, values }
+    }
+    if (error instanceof ContractAlreadyStartedError) {
+      return { error: error.message, values }
     }
     throw error
   }
@@ -236,9 +242,22 @@ export async function restoreContractAction(
 }
 
 /**
- * Résiliation. La date de fin proposée par défaut est celle du préavis ; le
- * staff peut la remplacer — une résiliation d'un commun accord s'affranchit du
- * préavis.
+ * Pourquoi ce contrat ne se résilie pas, ou `undefined` s'il le peut : seul un
+ * contrat en cours, non archivé, se résilie (`terminateContract`).
+ */
+function terminationRefusal(contract: { status: string; deletedAt: Date | null }) {
+  if (contract.deletedAt !== null) return 'Ce contrat est archivé : il ne se résilie plus.'
+  if (contract.status === 'draft') {
+    return 'Un brouillon ne se résilie pas : il n’a engagé personne. S’il est abandonné, archivez-le.'
+  }
+  if (contract.status === 'terminated') return 'Ce contrat est déjà résilié.'
+  return undefined
+}
+
+/**
+ * Résiliation d'un contrat en cours. La date de fin proposée par défaut est
+ * celle du préavis ; le staff peut la remplacer — une résiliation d'un commun
+ * accord s'affranchit du préavis.
  */
 export async function terminateContractAction(
   _previous: FormState,
@@ -250,6 +269,8 @@ export async function terminateContractAction(
 
   const contract = await findContract(id)
   if (!contract) return { error: 'Contrat introuvable.' }
+  const refusal = terminationRefusal(contract)
+  if (refusal) return { error: refusal }
 
   const requested = text(formData, 'terminatedOn')
   const terminatedOn = isCalendarDate(requested)
@@ -261,7 +282,11 @@ export async function terminateContractAction(
   }
 
   try {
-    await terminateContract(id, terminatedOn, text(formData, 'reason') || null)
+    // Le filtre de la requête tranche : le contrat a pu changer depuis la
+    // lecture ci-dessus.
+    if (!(await terminateContract(id, terminatedOn, text(formData, 'reason') || null))) {
+      return { error: 'Ce contrat n’est plus en cours : il ne peut pas être résilié.' }
+    }
   } catch (error) {
     if (error instanceof ContractOccupationConflictError) {
       return { error: await conflictMessage(error) }

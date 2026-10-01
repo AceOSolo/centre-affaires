@@ -3,12 +3,13 @@ import { and, asc, desc, eq, gt, isNotNull, isNull, lt, ne, not, sql } from 'dri
 import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { tenants } from '../../db/tenants.ts'
+import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients, type Client } from '../clients/schema.ts'
 import { ratePlans, type RatePlan } from '../facturation/schema.ts'
 import { bookings, type Booking } from '../reservations/schema.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
-import { contractRange, type ContractPeriod } from './occupation.ts'
+import { contractRange, formatCalendarDate, type ContractPeriod } from './occupation.ts'
 import {
   contracts,
   type BillingPeriod,
@@ -206,6 +207,15 @@ export class ContractOccupationConflictError extends Error {
   }
 }
 
+/** Fuseau du centre, lu dans la transaction : les dates d'un contrat en sont des jours. */
+async function centreTimeZone(tx: Transaction): Promise<string | undefined> {
+  const [tenant] = await tx
+    .select({ timezone: tenants.timezone })
+    .from(tenants)
+    .where(eq(tenants.id, currentTenantId()))
+  return tenant?.timezone
+}
+
 /**
  * Ce qui occupe déjà `resourceId` sur la période du contrat, hors sa propre
  * occupation. Reproduit le prédicat de `bookings_no_overlap` : bornes `[)`,
@@ -217,12 +227,9 @@ async function selectOccupationConflicts(
   contractId: string,
   candidate: ContractPeriod & { resourceId: string },
 ): Promise<Booking[]> {
-  const [tenant] = await tx
-    .select({ timezone: tenants.timezone })
-    .from(tenants)
-    .where(eq(tenants.id, currentTenantId()))
-  if (!tenant) return []
-  const range = contractRange(candidate, tenant.timezone)
+  const timeZone = await centreTimeZone(tx)
+  if (!timeZone) return []
+  const range = contractRange(candidate, timeZone)
   return tx
     .select()
     .from(bookings)
@@ -309,31 +316,79 @@ export async function activateContract(id: string): Promise<boolean> {
 }
 
 /**
- * Changement de la ressource d'un contrat en cours : l'occupation suit, sur
- * toute la période (ADR 018). `null` retire la ressource et libère l'ancienne.
+ * Levée quand on veut changer la ressource d'un contrat déjà commencé : son
+ * occupation serait réécrite depuis le premier jour (ADR 018). Le message dit
+ * quoi faire à la place.
+ */
+export class ContractAlreadyStartedError extends Error {
+  readonly startsOn: string
+
+  constructor(startsOn: string) {
+    super(
+      `Ce contrat a commencé le ${formatCalendarDate(startsOn)} : sa ressource ne change plus. ` +
+        'Pour passer sur une autre ressource, résiliez-le, puis créez un nouveau contrat sur celle-ci.',
+    )
+    this.name = 'ContractAlreadyStartedError'
+    this.startsOn = startsOn
+  }
+}
+
+/**
+ * Changement de la ressource d'un contrat en cours qui n'a pas encore
+ * commencé : l'occupation suit (ADR 018). `null` retire la ressource et libère
+ * l'ancienne.
  *
  * Réservé aux contrats actifs : un brouillon se modifie en entier, et un
- * contrat résilié garde la trace de ce qu'il a occupé.
+ * contrat résilié garde la trace de ce qu'il a occupé. Rend `false` si le
+ * contrat n'est pas (ou plus) en cours.
  *
+ * Un contrat commencé ne change pas de ressource (`canChangeContractResource`) :
+ * l'occupation, réécrite depuis le premier jour, effacerait la période écoulée
+ * sur l'ancienne ressource, et la nouvelle serait refusée pour une réservation
+ * passée. Le filtre est dans la requête ; la relecture ne sert qu'à le dire.
+ *
+ * @throws ContractAlreadyStartedError si le contrat a déjà commencé.
  * @throws ContractOccupationConflictError si la nouvelle ressource est occupée.
  */
 export async function changeContractResource(
   id: string,
   resourceId: string | null,
 ): Promise<boolean> {
-  const changed = await writeContract(
+  return writeContract(
     id,
-    (tx) =>
-      tx
+    async (tx) => {
+      const timeZone = await centreTimeZone(tx)
+      if (!timeZone) return false
+      const changed = await tx
         .update(contracts)
         .set({ resourceId })
         .where(
-          and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
+          and(
+            eq(contracts.id, id),
+            eq(contracts.status, 'active'),
+            isNull(contracts.deletedAt),
+            // Le jour du centre, pas celui du serveur (décision 4).
+            gt(contracts.startsOn, todayIsoDate(timeZone)),
+          ),
         )
-        .returning({ id: contracts.id }),
+        .returning({ id: contracts.id })
+      if (changed.length > 0) return true
+
+      const [current] = await tx
+        .select({
+          status: contracts.status,
+          deletedAt: contracts.deletedAt,
+          startsOn: contracts.startsOn,
+        })
+        .from(contracts)
+        .where(eq(contracts.id, id))
+      if (current?.status === 'active' && current.deletedAt === null) {
+        throw new ContractAlreadyStartedError(current.startsOn)
+      }
+      return false
+    },
     { resourceId },
   )
-  return changed.length > 0
 }
 
 /**
@@ -380,8 +435,14 @@ export async function restoreContract(id: string): Promise<boolean> {
 }
 
 /**
- * Résiliation. La ligne est conservée et la date de fin effective est posée :
- * l'échéancier s'arrête là, même si le terme prévu était plus tard.
+ * Résiliation d'un contrat en cours. La ligne est conservée et la date de fin
+ * effective est posée : l'échéancier s'arrête là, même si le terme prévu était
+ * plus tard.
+ *
+ * Seul un contrat actif et non archivé se résilie. Un brouillon n'a engagé
+ * personne : le résilier le ferait occuper sa ressource jusqu'à la date de
+ * résiliation (le prédicat d'occupation retient `terminated`, ADR 018) ; il
+ * s'archive. Rend `false` pour tout autre contrat, sans rien écrire.
  *
  * `terminatedOn` et le statut sont écrits ensemble, comme l'exige la contrainte
  * `contracts_terminated_on_consistent`.
@@ -390,11 +451,11 @@ export async function terminateContract(
   id: string,
   terminatedOn: string,
   reason?: string | null,
-): Promise<void> {
+): Promise<boolean> {
   // Une résiliation ne fait que raccourcir l'occupation. Elle n'échoue en
   // conflit que pour un contrat laissé sans occupation à la reprise (ADR 018) :
   // `writeContract` nomme alors ce qui bloque au lieu d'une erreur brute.
-  await writeContract(
+  const terminated = await writeContract(
     id,
     (tx) =>
       tx
@@ -404,7 +465,11 @@ export async function terminateContract(
           terminatedOn,
           terminationReason: reason?.trim() || null,
         })
-        .where(and(eq(contracts.id, id), sql`${contracts.status} <> 'terminated'`)),
+        .where(
+          and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
+        )
+        .returning({ id: contracts.id }),
     { terminatedOn },
   )
+  return terminated.length > 0
 }

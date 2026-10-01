@@ -6,7 +6,9 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import { createDatabase, withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import {
+  ContractAlreadyStartedError,
   ContractOccupationConflictError,
   DuplicateReferenceError,
   activateContract,
@@ -38,6 +40,9 @@ const raison = !appUrl
   : !ownerUrl
     ? 'TEST_OWNER_DATABASE_URL non défini'
     : false
+
+/** Jour du centre (Paris), décalé de `days` : les règles datées s'y mesurent. */
+const jour = (days: number) => addDaysToIsoDate(todayIsoDate('Europe/Paris'), days)
 
 /** Année civile du centre (Paris) : celle que porte le numéro. */
 const ANNEE = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year: 'numeric' }).format(
@@ -71,10 +76,26 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   })
 
   /** Contrat actif posé directement en base, comme une reprise. */
-  const contratActif = async (reference: string, resourceId = BUREAU) => {
-    const created = await createContract(saisie({ reference, resourceId }))
+  const contratActif = async (
+    reference: string,
+    resourceId = BUREAU,
+    overrides: Partial<ContractInput> = {},
+  ) => {
+    const created = await createContract(saisie({ reference, resourceId, ...overrides }))
     assert.ok(await activateContract(created.id))
     return created.id
+  }
+
+  /** Contrat actif qui commence dans un mois : sa ressource peut encore changer. */
+  const contratAVenir = (reference: string, resourceId = BUREAU) =>
+    contratActif(reference, resourceId, { startsOn: jour(30), endsOn: jour(120) })
+
+  /** Occupations de contrat en base, toutes, annulées comprises. */
+  const occupationsDeContrat = async (contractId: string): Promise<number> => {
+    const [row] = await owner.client`
+      select count(*)::int as n from bookings
+       where contract_id = ${contractId} and kind = 'contract'`
+    return row.n
   }
 
   const rejects = async <E>(run: () => Promise<unknown>, type: new (...args: never[]) => E) => {
@@ -227,15 +248,15 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   })
 
   describe('changement de ressource', () => {
-    it('déplace l’occupation sur la nouvelle ressource', async () => {
-      const id = await contratActif('BUR-A')
+    it('déplace l’occupation d’un contrat qui n’a pas commencé', async () => {
+      const id = await contratAVenir('BUR-A')
       assert.equal(await changeContractResource(id, AUTRE_BUREAU), true)
       assert.equal((await findContractOccupation(id))?.resourceId, AUTRE_BUREAU)
     })
 
     it('nomme ce qui occupe la ressource demandée, et ne change rien', async () => {
-      const id = await contratActif('BUR-A')
-      await contratActif('BUR-B', AUTRE_BUREAU)
+      const id = await contratAVenir('BUR-A')
+      await contratAVenir('BUR-B', AUTRE_BUREAU)
 
       const error = await rejects(
         () => changeContractResource(id, AUTRE_BUREAU),
@@ -251,17 +272,69 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
     })
 
     it('libère la ressource quand on la retire', async () => {
-      const id = await contratActif('BUR-A')
+      const id = await contratAVenir('BUR-A')
       assert.equal(await changeContractResource(id, null), true)
       const occupation = await findContractOccupation(id)
       assert.equal(occupation?.status, 'cancelled')
       assert.equal(occupation?.cancellationReason, 'Ressource retirée du contrat')
     })
 
+    it('refuse un contrat commencé, même vers une ressource occupée seulement dans le passé', async () => {
+      // Le bureau 2 a servi il y a cent jours : réécrire l'occupation depuis le
+      // début du contrat heurterait ce rendez-vous. Le refus le dit avant la
+      // base, sans citer une réservation ancienne.
+      const passe = jour(-100)
+      await asTenant((tx) =>
+        tx.execute(sql`
+          insert into bookings (resource_id, channel, starts_at, ends_at, title)
+          values (${AUTRE_BUREAU}, 'staff', ${`${passe}T07:00:00Z`}::timestamptz,
+                  ${`${passe}T08:00:00Z`}::timestamptz, 'Rendez-vous passé')`),
+      )
+      const id = await contratActif('BUR-A', BUREAU, { startsOn: jour(-200), endsOn: null })
+      const avant = await findContractOccupation(id)
+
+      const error = await rejects(
+        () => changeContractResource(id, AUTRE_BUREAU),
+        ContractAlreadyStartedError,
+      )
+      assert.equal(error.startsOn, jour(-200))
+      assert.match(
+        error.message,
+        /^Ce contrat a commencé le \d{2}\/\d{2}\/\d{4} : sa ressource ne change plus\./,
+      )
+      assert.match(error.message, /résiliez-le, puis créez un nouveau contrat/)
+      assert.doesNotMatch(error.message, /Rendez-vous passé/)
+
+      // Rien n'a bougé : ni le contrat, ni son occupation depuis le premier jour.
+      assert.equal((await findContract(id))?.resourceId, BUREAU)
+      const apres = await findContractOccupation(id)
+      assert.equal(apres?.resourceId, BUREAU)
+      assert.equal(apres?.status, 'confirmed')
+      assert.equal(apres?.startsAt.getTime(), avant?.startsAt.getTime())
+    })
+
+    it('refuse aussi de retirer la ressource d’un contrat commencé', async () => {
+      const id = await contratActif('BUR-A', BUREAU, { startsOn: jour(-10), endsOn: jour(50) })
+      await rejects(() => changeContractResource(id, null), ContractAlreadyStartedError)
+      assert.equal((await findContractOccupation(id))?.status, 'confirmed')
+    })
+
+    it('refuse le jour même du début, jour du centre', async () => {
+      const id = await contratActif('BUR-A', BUREAU, { startsOn: jour(0), endsOn: jour(60) })
+      await rejects(() => changeContractResource(id, AUTRE_BUREAU), ContractAlreadyStartedError)
+    })
+
     it('ne change pas la ressource d’un brouillon par ce chemin', async () => {
-      const { id } = await createContract(saisie())
+      const { id } = await createContract(saisie({ startsOn: jour(30), endsOn: jour(120) }))
       assert.equal(await changeContractResource(id, AUTRE_BUREAU), false)
       assert.equal((await findContract(id))?.resourceId, BUREAU)
+    })
+
+    it('ne change pas la ressource d’un contrat résilié', async () => {
+      const id = await contratAVenir('BUR-A')
+      assert.equal(await terminateContract(id, jour(60)), true)
+      assert.equal(await changeContractResource(id, AUTRE_BUREAU), false)
+      assert.equal((await findContractOccupation(id))?.resourceId, BUREAU)
     })
   })
 
@@ -348,9 +421,42 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   describe('résiliation', () => {
     it('tronque l’occupation au soir du dernier jour', async () => {
       const id = await contratActif('BUR-A')
-      await terminateContract(id, '2026-04-15', 'Départ')
+      assert.equal(await terminateContract(id, '2026-04-15', 'Départ'), true)
       const occupation = await findContractOccupation(id)
       assert.equal(occupation?.endsAt.toISOString(), '2026-04-15T22:00:00.000Z')
+    })
+
+    it('refuse un brouillon, qui n’occupe alors rien', async () => {
+      // Un brouillon résilié remplirait le prédicat d'occupation (`terminated`)
+      // et bloquerait le bureau jusqu'à la date de résiliation (ADR 018).
+      const { id } = await createContract(saisie({ startsOn: jour(-30), endsOn: null }))
+      assert.equal(await terminateContract(id, jour(90), 'Abandon'), false)
+
+      const contrat = await findContract(id)
+      assert.equal(contrat?.status, 'draft')
+      assert.equal(contrat?.terminatedOn, null)
+      assert.equal(await occupationsDeContrat(id), 0)
+
+      // Le bureau reste libre : un autre contrat s'y active sur la même période.
+      await contratActif('BUR-B', BUREAU, { startsOn: jour(-30), endsOn: null })
+    })
+
+    it('refuse un contrat archivé, sans rétablir son occupation', async () => {
+      const id = await contratActif('BUR-A')
+      await archiveContract(id)
+      assert.equal(await terminateContract(id, '2026-04-15'), false)
+
+      const contrat = await findContract(id)
+      assert.equal(contrat?.status, 'active')
+      assert.equal(contrat?.terminatedOn, null)
+      assert.equal((await findContractOccupation(id))?.status, 'cancelled')
+    })
+
+    it('ne résilie pas deux fois', async () => {
+      const id = await contratActif('BUR-A')
+      assert.equal(await terminateContract(id, '2026-04-15'), true)
+      assert.equal(await terminateContract(id, '2026-05-15'), false)
+      assert.equal((await findContract(id))?.terminatedOn, '2026-04-15')
     })
   })
 })
