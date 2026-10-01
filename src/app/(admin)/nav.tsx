@@ -19,6 +19,9 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
   { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
+  // Règlements et export comptable (R16, ADR 028) : l'accueil consulte, l'exploitant pointe.
+  { href: '/paiements', label: 'Règlements', permission: 'facturation.consulter' },
+  { href: '/comptabilite', label: 'Comptabilité', permission: 'comptabilite.exporter' },
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
