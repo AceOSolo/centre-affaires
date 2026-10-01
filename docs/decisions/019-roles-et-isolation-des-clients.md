@@ -222,6 +222,13 @@ utiliser sont masqués : activer ou résilier un contrat, nouveau contrat,
 archiver un client, relevé des ouvertures. Le serveur refuse de toute façon :
 masquer est un confort, pas la protection.
 
+Les écrans et actions livrés par les autres tranches de la vague 1 suivent la
+même matrice : modifier un brouillon de contrat (`contrats.creer`), changer la
+ressource d'un contrat en cours (`contrats.activer`, puisque c'est déplacer son
+occupation), archiver et désarchiver un contrat (`contrats.archiver`), contacts
+de la fiche client (`clients.gerer`), fiche et modification d'une ressource
+(`ressources.gerer`), vue mois du planning (`reservations.gerer`).
+
 L'en-tête affiche le libellé du rôle à côté du nom.
 
 ### L'écran Équipe

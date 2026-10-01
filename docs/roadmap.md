@@ -15,14 +15,15 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 
 ## Synthèse
 
-**5** exigences couvertes, **18** partielles, **10** absentes, sur 33.
+**11** exigences couvertes, **14** partielles, **8** absentes, sur 33 (après
+la vague 1, intégrée le 01/10/2026 ; l'audit du 30/09 en comptait 5, 18 et 10).
 
 | Réf. | Exigence | Statut | Ce qui manque | Effort | Phase |
 |---|---|---|---|---|---|
 | R01 | Catalogue multi-types, attributs, capacité | ✅ | Fiche et modification livrées, attributs validés par type, numéro de casier. Reste : index unique du numéro de casier (vérifié en code) | S | 1 |
-| R02 | Calendrier par ressource, interne et client | ✅ | Les ressources occupées par contrat (bureau, boîte) paraissent libres — voir D6 | M | 1 |
+| R02 | Calendrier par ressource, interne et client | ✅ | — (l'occupation par contrat apparaît au planning, sur la fiche ressource et sur la page publique : D6, ADR 018) | — | 1 |
 | R03 | Planning back-office | ✅ | Semaine toutes ressources, vue mois en taux, filtres par type et par client, bascule jour / semaine / mois (ADR 017) | L | 1 |
-| R04 | Anti-chevauchement | ✅ | Tests de charge ; aucune exclusion sur `contracts.resource_id` | S–M | 1 |
+| R04 | Anti-chevauchement | ✅ | Tests de charge. L'occupation par contrat est protégée par la même contrainte d'exclusion (ADR 018) ; un conflit à l'activation est nommé à l'écran | S | 1 |
 | R05 | Réservation : créneau, statut, canal, client, contrat | ✅ | — (canal posé par chaque chemin et affiché sur la fiche ; rattachement à un contrat actif du même client qui couvre le créneau, vérifié à l'écriture) | — | — |
 | R06 | États des lieux configurables avec photos | ○ | Tout : modèles de champs en base, inspections, photos compressées | L | 4 |
 | R07 | CRM : fiche, contacts, historique | ◐ | Services souscrits sur la fiche, avec R18 (place réservée). Faits en vague 1 : contacts CRM distincts des accès, historique des réservations, recherche par SIRET ou contact | S | 2 |

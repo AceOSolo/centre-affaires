@@ -134,7 +134,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Destinataires | Équipe du centre. Le client voit ses propres réservations. Le public ne voit que des créneaux occupés, sans identité. |
 | Sous-traitants | Neon, OVHcloud. Google, pour l'objet et le créneau des réservations confirmées des salles reliées (T8). |
 | Transferts hors UE | Voir T8. |
-| Conservation | Coordonnées du demandeur : 12 mois après la fin du créneau ou l'annulation, puis anonymisation (ADR 020). Durée **à valider** ; appel nocturne à brancher. Le créneau est conservé (historique, statistiques). |
+| Conservation | Coordonnées du demandeur : 12 mois après la fin du créneau ou l'annulation, puis anonymisation par la tâche nocturne (ADR 020). Durée **à valider**. Le créneau est conservé (historique, statistiques). |
 | Mesures propres | Au plus 5 demandes par adresse sur 24 heures. Préavis, horizon et durée maximale contrôlés côté serveur. Aucune identité exposée au public. |
 | Code | `src/modules/reservations/`, ADR 005, 013 (séries), 018, 020 |
 

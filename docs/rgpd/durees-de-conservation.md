@@ -32,7 +32,7 @@ champs personnels. La ligne reste, pour l'historique et la facturation.
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
 |---|---|---|---|---|---|
-| Coordonnées d'un demandeur (`bookings.requester_*`) | **12 mois** | fin du créneau, ou annulation si elle est antérieure | coordonnées effacées, `requester_anonymized_at` posé. Sans client rattaché, notes effacées et objet remplacé par « Demande publique anonymisée ». La réservation reste. | M2, réglage M3 (`public_request_retention_months`) | à valider (B4) ; appel nocturne à brancher |
+| Coordonnées d'un demandeur (`bookings.requester_*`) | **12 mois** | fin du créneau, ou annulation si elle est antérieure | coordonnées effacées, `requester_anonymized_at` posé. Sans client rattaché, notes effacées et objet remplacé par « Demande publique anonymisée ». La réservation reste. | M2, réglage M3 (`public_request_retention_months`) | à valider (B4) |
 | Réservations : créneau, ressource, statut, canal, client, contrat | historique conservé | — | — | aucun | à valider |
 | Objet et notes d'une réservation, saisis librement | comme la réservation | — | — | aucun | à valider ; consigne de saisie ci-dessous |
 | Événements des agendas Google (objet, créneau, lien) | tant que l'agenda existe dans le compte Google du centre | écriture | une annulation retire l'événement ; les événements passés restent chez Google | aucun côté application | à valider avec l'ADR 014 |
@@ -102,10 +102,12 @@ Si le centre veut raccourcir cette survie, il réduit
 - Ce qu'elle fait : `anonymize_expired_public_requests()` (migration 0026,
   `SECURITY DEFINER`) traite le centre courant et rend le nombre de demandes
   anonymisées.
+- Quand : chaque nuit, par la route de M1, qui l'appelle avant la purge du
+  courrier et dans sa propre transaction (`src/modules/reservations/conservation.ts`).
+  La réponse de la route en donne le nombre (`publicRequests`).
 - Preuve : testée par
-  `src/modules/reservations/conservation-demandes.db.test.ts`.
-- Reste à faire : **son appel n'est pas encore branché** dans la route M1
-  (ADR 020). Tant qu'il ne l'est pas, rien n'est anonymisé.
+  `src/modules/reservations/conservation-demandes.db.test.ts`, et par la route
+  elle-même dans `src/app/api/maintenance/conservation/conservation.db.test.ts`.
 
 **M3. Durées par centre.**
 
@@ -137,9 +139,8 @@ déploiement recrée le conteneur.
    ensuite au contrat et dans l'information des personnes.
 2. **Fixer** les durées des comptes `neon_auth`, des accès clients et des
    membres retirés (B4).
-3. **Brancher** `anonymize_expired_public_requests()` dans la route nocturne.
-4. **Construire** les mécanismes d'anonymisation des fiches clients, contacts,
+3. **Construire** les mécanismes d'anonymisation des fiches clients, contacts,
    contrats et plis, une fois les durées validées : une fonction
    `SECURITY DEFINER` par type, sur le modèle de M2, avec son test.
-5. **Vérifier** sur le serveur la rotation Apache et, chez Brevo, la durée
+4. **Vérifier** sur le serveur la rotation Apache et, chez Brevo, la durée
    des journaux d'envoi.

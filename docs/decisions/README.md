@@ -24,17 +24,17 @@ renuméroter casserait ces renvois sans rien gagner.
 | 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté |
 | 010 | [Calendrier de sélection d'un créneau](010-calendrier-de-selection.md) | 2026-09-18 | accepté — **numéro en double** |
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
-| 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté |
+| 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté ; vue semaine amendée par l'ADR 017 |
 | 012 | [Les horaires sont portés par la ressource](012-horaires-portes-par-la-ressource.md) | 2026-09-18 | accepté |
 | 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** |
 | 013 | [Séries et délais de réservation](013-series-et-delais-de-reservation.md) | 2026-09-21 | accepté — **numéro en double** |
 | 014 | [Un agenda Google par ressource](014-agendas-google-par-ressource.md) | 2026-09-30 | **proposé** : le compromis RGPD est à valider |
 | 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté |
 | 016 | [Tout le cahier des charges DOMOTOP entre dans le périmètre](016-perimetre-du-cahier-des-charges.md) | 2026-10-01 | accepté |
-| 017 | *réservé* : en cours de rédaction dans la vague 1 | — | — |
+| 017 | [Planning : semaine toutes ressources, vue mois et filtres](017-planning-toutes-ressources-et-vue-mois.md) | 2026-10-01 | accepté ; amende l'ADR 011 |
 | 018 | [Occupation des ressources sous contrat, canal et contrat des réservations](018-occupation-sous-contrat-et-canal.md) | 2026-10-01 | accepté |
 | 019 | [Rôles de l'équipe et isolation des clients entre eux](019-roles-et-isolation-des-clients.md) | 2026-10-01 | accepté |
-| 020 | [Chiffrement et conservation des documents](020-chiffrement-et-conservation-des-documents.md) | 2026-10-01 | accepté pour la partie données ; la mise en œuvre du chiffrement reste à y ajouter |
+| 020 | [Chiffrement et conservation des documents](020-chiffrement-et-conservation-des-documents.md) | 2026-10-01 | accepté ; mise en œuvre du chiffrement, du contrôle de région et de la purge ajoutée |
 | 021 | [Numérotation des documents](021-numerotation-des-documents.md) | 2026-10-01 | accepté |
 | 022 | [Sauvegardes et plan de reprise](022-sauvegardes-et-plan-de-reprise.md) | 2026-10-01 | accepté |
 
