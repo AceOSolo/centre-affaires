@@ -12,8 +12,8 @@ import {
   assignBookingClientAction,
   cancelBookingAction,
 } from '../../../../modules/reservations/actions.ts'
+import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
-import { bookingDisplayTitle } from '../../../../modules/reservations/occupation.ts'
 import { findBooking } from '../../../../modules/reservations/queries.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 
@@ -47,7 +47,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         >
           ← Planning
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bookingDisplayTitle(booking)}</h1>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bookingLabel(booking)}</h1>
         {booking.seriesId && <Link href={`/reservations/series/${booking.seriesId}`} className="mt-2 inline-block text-sm text-primary underline underline-offset-2">Voir la série et gérer les occurrences à venir</Link>}
         {cancelled && (
           <p className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">

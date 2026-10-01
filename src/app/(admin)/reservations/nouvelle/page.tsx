@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
@@ -32,7 +33,7 @@ export default async function NewBookingPage({
 }: {
   searchParams: Promise<{ date?: string; resourceId?: string; start?: string; clientId?: string }>
 }) {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const { date, resourceId, start, clientId } = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)
@@ -47,10 +48,17 @@ export default async function NewBookingPage({
         <h1 className="text-2xl font-semibold tracking-tight">Nouvelle réservation</h1>
         <p className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
           Aucune ressource en service.{' '}
-          <Link href="/ressources/nouvelle" className="underline underline-offset-2">
-            Déclarer une ressource
-          </Link>{' '}
-          avant de réserver.
+          {/* L'accueil voit le planning, pas les fiches ressources (ADR 019). */}
+          {can(member.role, 'ressources.gerer') ? (
+            <>
+              <Link href="/ressources/nouvelle" className="underline underline-offset-2">
+                Déclarer une ressource
+              </Link>{' '}
+              avant de réserver.
+            </>
+          ) : (
+            'Demandez à l’exploitant d’en déclarer une.'
+          )}
         </p>
       </div>
     )

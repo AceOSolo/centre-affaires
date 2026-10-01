@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
@@ -47,7 +48,7 @@ export default async function WeekPage({
     ressource?: SearchParam
   }>
 }) {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const params = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)
@@ -142,12 +143,17 @@ export default async function WeekPage({
               ? 'Aucune ressource de ce type en service : choisissez un autre type, ou déclarez-en une.'
               : 'Aucune ressource en service : il n’y a pas de semaine à afficher.'}
           </p>
-          <Link
-            href="/ressources/nouvelle"
-            className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-          >
-            Déclarer une ressource
-          </Link>
+          {/* L'accueil voit le planning, pas les fiches ressources (ADR 019). */}
+          {can(member.role, 'ressources.gerer') ? (
+            <Link
+              href="/ressources/nouvelle"
+              className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+            >
+              Déclarer une ressource
+            </Link>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">Demandez à l’exploitant d’en déclarer une.</p>
+          )}
         </div>
       </div>
     )

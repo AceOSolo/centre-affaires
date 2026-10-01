@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   addDaysToIsoDate,
@@ -40,7 +41,7 @@ export default async function PlanningPage({
 }: {
   searchParams: Promise<{ date?: SearchParam; type?: SearchParam; client?: SearchParam }>
 }) {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const params = await searchParams
   const timeZone = await currentTimeZone()
   // Le jour du centre, pas celui du serveur : Vercel tourne en UTC (décision 4).
@@ -126,7 +127,10 @@ export default async function PlanningPage({
       />
 
       {columns.length === 0 ? (
-        <EmptyState filtered={Boolean(filters.type)} />
+        <EmptyState
+          filtered={Boolean(filters.type)}
+          canManageResources={can(member.role, 'ressources.gerer')}
+        />
       ) : (
         <>
           {fermePartout && (
@@ -263,7 +267,14 @@ export default async function PlanningPage({
   )
 }
 
-function EmptyState({ filtered }: { filtered: boolean }) {
+function EmptyState({
+  filtered,
+  canManageResources,
+}: {
+  filtered: boolean
+  /** L'accueil voit le planning, pas les fiches ressources (ADR 019). */
+  canManageResources: boolean
+}) {
   return (
     <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
       <p className="text-sm text-muted-foreground">
@@ -271,12 +282,16 @@ function EmptyState({ filtered }: { filtered: boolean }) {
           ? 'Aucune ressource de ce type en service : choisissez un autre type, ou déclarez-en une.'
           : 'Aucune ressource en service : le planning n’a rien à afficher.'}
       </p>
-      <Link
-        href="/ressources/nouvelle"
-        className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-      >
-        Déclarer une ressource
-      </Link>
+      {canManageResources ? (
+        <Link
+          href="/ressources/nouvelle"
+          className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+        >
+          Déclarer une ressource
+        </Link>
+      ) : (
+        <p className="mt-2 text-sm text-muted-foreground">Demandez à l’exploitant d’en déclarer une.</p>
+      )}
     </div>
   )
 }

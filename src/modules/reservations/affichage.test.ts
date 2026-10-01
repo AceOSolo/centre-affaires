@@ -52,6 +52,16 @@ describe('libellés d’une occupation de contrat', () => {
     assert.equal(bookingStateLabel(occupation()), 'Sous contrat')
   })
 
+  it('garde une référence saisie à la main, telle que la base l’a titrée', () => {
+    const manuelle = occupation({ title: 'Contrat DOM 2024/12' })
+    assert.equal(contractReference(manuelle), 'DOM 2024/12')
+    assert.equal(bookingLabel(manuelle), 'Occupé — contrat DOM 2024/12')
+  })
+
+  it('ne lit pas de référence dans le titre d’une réservation ordinaire', () => {
+    assert.equal(bookingLabel(reservation({ title: 'Contrat à signer' })), 'Contrat à signer')
+  })
+
   it('donne la période en jours du centre, dernier jour compris', () => {
     assert.equal(occupationPeriodLabel(occupation(), PARIS), 'du 1 mars 2026 au 30 juin 2026')
   })

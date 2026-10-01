@@ -46,6 +46,7 @@ export function MonthPlanning({
   timeZone,
   filters,
   clientNames,
+  canManageResources,
 }: {
   rows: MonthRow<Resource>[]
   days: string[]
@@ -53,6 +54,11 @@ export function MonthPlanning({
   timeZone: string
   filters: PlanningFilters
   clientNames: Record<string, string>
+  /**
+   * Droit `ressources.gerer` : la fiche ressource lui est réservée. Sans lui,
+   * le nom n'est pas un lien, qui mènerait à « Accès réservé ».
+   */
+  canManageResources: boolean
 }) {
   const groups = groupByType(rows.map((row) => row.resource))
   const rowById = new Map(rows.map((row) => [row.resource.id, row]))
@@ -132,12 +138,18 @@ export function MonthPlanning({
                       scope="row"
                       className="sticky left-0 z-10 max-w-48 bg-white px-3 py-1.5 text-left font-normal"
                     >
-                      <Link
-                        href={`/ressources/${resource.id}`}
-                        className={`block truncate rounded-sm py-0.5 text-sm font-medium underline-offset-2 hover:underline ${focusRing}`}
-                      >
-                        {resource.name}
-                      </Link>
+                      {canManageResources ? (
+                        <Link
+                          href={`/ressources/${resource.id}`}
+                          className={`block truncate rounded-sm py-0.5 text-sm font-medium underline-offset-2 hover:underline ${focusRing}`}
+                        >
+                          {resource.name}
+                        </Link>
+                      ) : (
+                        <span className="block truncate py-0.5 text-sm font-medium">
+                          {resource.name}
+                        </span>
+                      )}
                       <span className="block truncate text-muted-foreground">{resource.code}</span>
                     </th>
                     {contractRuns(row.cells).map((run) =>

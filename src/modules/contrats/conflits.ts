@@ -1,4 +1,4 @@
-import { describeBusyBooking, type DisplayableBooking } from '../reservations/occupation.ts'
+import { describeBusyBooking, type BusyBooking } from '../reservations/occupation.ts'
 
 /**
  * Message rendu à l'équipe quand la base refuse l'occupation d'un contrat
@@ -8,7 +8,7 @@ import { describeBusyBooking, type DisplayableBooking } from '../reservations/oc
  */
 export function occupationConflictMessage(
   resource: { name: string; code: string } | undefined,
-  conflicts: readonly DisplayableBooking[],
+  conflicts: readonly BusyBooking[],
   timeZone: string,
 ): string {
   const name = resource ? `La ressource ${resource.name} (${resource.code})` : 'La ressource'
