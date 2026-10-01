@@ -291,11 +291,28 @@ export function centreSettingsValues(tenant: Tenant): Record<string, string> {
   }
 }
 
+const blank = (value: string | null) => !value || value.trim() === ''
+
+/**
+ * Identité du vendeur qu'`issue_invoice()` exige (ADR 026) : raison sociale,
+ * adresse, SIREN, TVA intracommunautaire. Une seule liste, lue par l'écran de
+ * configuration et par la fiche d'une facture brouillon (`missingForIssue`).
+ */
+export function missingSellerIdentity(
+  tenant: Pick<Tenant, 'legalName' | 'addressLine1' | 'postalCode' | 'city' | 'siren' | 'vatNumber'>,
+): string[] {
+  const missing: string[] = []
+  if (blank(tenant.legalName)) missing.push('raison sociale')
+  if (blank(tenant.addressLine1) || blank(tenant.postalCode) || blank(tenant.city)) missing.push('adresse')
+  if (blank(tenant.siren)) missing.push('SIREN')
+  if (blank(tenant.vatNumber)) missing.push('numéro de TVA intracommunautaire')
+  return missing
+}
+
 /**
  * Ce qui manque au centre pour émettre une facture — les contrôles du centre
- * dans `issue_invoice()` (ADR 026) : raison sociale, adresse, SIREN, TVA
- * intracommunautaire ; l'IBAN pour un paiement par virement, l'ICS pour un
- * prélèvement.
+ * dans `issue_invoice()` (ADR 026) : son identité (`missingSellerIdentity`) ;
+ * l'IBAN pour un paiement par virement, l'ICS pour un prélèvement.
  */
 export function missingInvoiceRequirements(
   tenant: Pick<
@@ -311,12 +328,7 @@ export function missingInvoiceRequirements(
     | 'defaultPaymentMethod'
   >,
 ): string[] {
-  const blank = (value: string | null) => !value || value.trim() === ''
-  const missing: string[] = []
-  if (blank(tenant.legalName)) missing.push('raison sociale')
-  if (blank(tenant.addressLine1) || blank(tenant.postalCode) || blank(tenant.city)) missing.push('adresse')
-  if (blank(tenant.siren)) missing.push('SIREN')
-  if (blank(tenant.vatNumber)) missing.push('numéro de TVA intracommunautaire')
+  const missing = missingSellerIdentity(tenant)
   if (blank(tenant.bankIban)) missing.push('IBAN (paiement par virement)')
   if (tenant.defaultPaymentMethod === 'direct_debit' && blank(tenant.sepaCreditorId)) {
     missing.push('identifiant créancier SEPA (prélèvement)')
