@@ -1,7 +1,7 @@
 import Link from 'next/link'
 
 import { clientStatusLabels, clientStatusStyles, formatSiret } from '../../../modules/clients/labels.ts'
-import { listClients } from '../../../modules/clients/queries.ts'
+import { searchClients } from '../../../modules/clients/recherche.ts'
 import { clientStatuses, type ClientStatus } from '../../../modules/clients/schema.ts'
 
 export const metadata = { title: 'Clients' }
@@ -15,7 +15,17 @@ export default async function ClientsPage({
   const status = clientStatuses.includes(statut as ClientStatus)
     ? (statut as ClientStatus)
     : undefined
-  const clients = await listClients({ status, search: q })
+  const search = q?.trim() ?? ''
+  const clients = await searchClients({ status, search })
+
+  /** Lien de filtre qui garde la recherche en cours : les deux se combinent. */
+  const filterHref = (value?: ClientStatus) => {
+    const query = new URLSearchParams()
+    if (value) query.set('statut', value)
+    if (search) query.set('q', search)
+    const encoded = query.toString()
+    return encoded ? `/clients?${encoded}` : '/clients'
+  }
 
   return (
     <div className="flex flex-col gap-6">
@@ -34,42 +44,67 @@ export default async function ClientsPage({
         </Link>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <FilterLink href="/clients" label="Tous" active={!status} />
-        {clientStatuses.map((value) => (
-          <FilterLink
-            key={value}
-            href={`/clients?statut=${value}`}
-            label={clientStatusLabels[value]}
-            active={status === value}
-          />
-        ))}
-        {/* Formulaire GET : la recherche marche sans JavaScript et reste dans l'URL. */}
-        <form className="ml-auto flex items-center gap-2">
-          <label htmlFor="q" className="sr-only">
-            Rechercher un client
-          </label>
-          <input
-            id="q"
-            name="q"
-            defaultValue={q ?? ''}
-            placeholder="Nom, SIRET, ville"
-            className="rounded-md border border-border bg-white px-3 py-1 text-sm"
-          />
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
+        <nav aria-label="Filtrer par statut" className="flex flex-wrap items-center gap-2">
+          <FilterLink href={filterHref()} label="Tous" active={!status} />
+          {clientStatuses.map((value) => (
+            <FilterLink
+              key={value}
+              href={filterHref(value)}
+              label={clientStatusLabels[value]}
+              active={status === value}
+            />
+          ))}
+        </nav>
+        {/* Formulaire GET : la recherche marche sans JavaScript et reste dans
+            l'URL. Le statut choisi y est repris, pour que chercher ne le perde pas. */}
+        <form role="search" className="ml-auto flex flex-wrap items-end gap-2">
+          {status && <input type="hidden" name="statut" value={status} />}
+          <div>
+            <label htmlFor="q" className="block text-xs font-medium text-foreground">
+              Rechercher
+            </label>
+            <input
+              id="q"
+              name="q"
+              type="search"
+              defaultValue={search}
+              aria-describedby="q-hint"
+              className="mt-1 w-64 rounded-sm border border-border bg-white px-3 py-1.5 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40"
+            />
+          </div>
           <button
             type="submit"
-            className="rounded-md border border-border px-3 py-1 text-sm hover:bg-muted"
+            className="rounded-md border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted"
           >
             Rechercher
           </button>
+          <p id="q-hint" className="basis-full text-right text-xs text-muted-foreground">
+            Raison sociale, SIRET, nom d’un contact ou ville.
+          </p>
         </form>
       </div>
+
+      {/* Annoncé après une recherche ou un filtre : la page se recharge, le
+          nombre de résultats dit ce qu'elle a trouvé. */}
+      {(search || status) && (
+        <p role="status" className="-mt-2 text-sm text-muted-foreground">
+          {clients.length === 0
+            ? 'Aucun client trouvé'
+            : `${clients.length} client${clients.length > 1 ? 's' : ''} trouvé${clients.length > 1 ? 's' : ''}`}
+          {search && <> pour « {search} »</>}
+          {status && <> parmi les fiches « {clientStatusLabels[status]} »</>}.{' '}
+          <Link href="/clients" className="text-primary underline underline-offset-2">
+            Tout afficher
+          </Link>
+        </p>
+      )}
 
       {clients.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            {q || status
-              ? 'Aucun client ne correspond à cette recherche.'
+            {search || status
+              ? 'Aucun client ne correspond à cette recherche. Vérifiez l’orthographe, cherchez le SIRET ou le nom d’un contact, ou créez la fiche.'
               : 'Aucun client pour l’instant. Les contrats s’appuient sur cette liste.'}
           </p>
           <Link
@@ -107,14 +142,35 @@ export default async function ClientsPage({
                       </span>
                     )}
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 font-mono text-xs text-muted-foreground">
+                  <td className="whitespace-nowrap px-4 py-3 tabular text-muted-foreground">
                     {formatSiret(client.siret)}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {client.city ?? '—'}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
-                    {client.email ?? client.phone ?? '—'}
+                    {client.primaryContact ? (
+                      <>
+                        <span className="text-foreground">{client.primaryContact.fullName}</span>
+                        {client.primaryContact.jobTitle && <>, {client.primaryContact.jobTitle}</>}
+                        <span className="block text-xs">
+                          {client.primaryContact.email ?? client.primaryContact.phone ?? client.email ?? client.phone}
+                        </span>
+                      </>
+                    ) : (
+                      (client.email ?? client.phone ?? '—')
+                    )}
+                    {/* Dit pourquoi la fiche est remontée quand c'est un contact
+                        qui correspond, et pas la raison sociale. */}
+                    {client.matchedContactNames &&
+                      client.matchedContactNames !== client.primaryContact?.fullName && (
+                        <span className="mt-1 block text-xs">
+                          Contact trouvé :{' '}
+                          <mark className="bg-accent/15 text-foreground">
+                            {client.matchedContactNames}
+                          </mark>
+                        </span>
+                      )}
                   </td>
                   <td className="px-4 py-3">
                     <span
