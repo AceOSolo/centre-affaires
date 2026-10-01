@@ -4,14 +4,14 @@ import { eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { withTenant } from '../../db/index.ts'
 import { tenants } from '../../db/tenants.ts'
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { validRequestPolicy } from './request-policy.ts'
 
 export type PolicyFormState = { error?: string; saved?: boolean } | null
 
 export async function saveRequestPolicyAction(_previous: PolicyFormState, formData: FormData): Promise<PolicyFormState> {
-  await requireStaff()
+  await requirePermission('centre.configurer')
   const lead = String(formData.get('bookingLeadHours') ?? '').trim()
   const horizon = String(formData.get('bookingHorizonDays') ?? '').trim()
   const policy = { bookingLeadHours: Number(lead), bookingHorizonDays: Number(horizon) }

@@ -1,10 +1,12 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { ResourceForm } from '../../../../modules/ressources/resource-form.tsx'
 
 export const metadata = { title: 'Nouvelle ressource' }
 
-export default function NewResourcePage() {
+export default async function NewResourcePage() {
+  await requirePermission('ressources.gerer')
   return (
     <div className="flex flex-col gap-6">
       <div>

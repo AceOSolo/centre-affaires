@@ -22,5 +22,10 @@ export async function GET(
   const account = accounts.find((candidate) => candidate.clientId === scan.clientId)
   if (!account) return new Response('Numérisation introuvable.', { status: 404 })
 
-  return serveScan(scan, { viewer: 'client', clientMemberId: account.memberId, authUserId: user.id })
+  return serveScan(scan, {
+    viewer: 'client',
+    clientMemberId: account.memberId,
+    authUserId: user.id,
+    clientId: account.clientId,
+  })
 }

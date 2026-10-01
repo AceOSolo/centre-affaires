@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
@@ -64,7 +64,7 @@ export async function createContractAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('contrats.creer')
   const read = readContractForm((key: ContractField) => text(formData, key), 'create')
   if (!read.ok) return { fieldErrors: read.fieldErrors, values: read.values }
 
@@ -92,7 +92,7 @@ export async function updateContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.creer')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 
@@ -131,7 +131,7 @@ export async function activateContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.activer')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 
@@ -159,7 +159,7 @@ export async function changeContractResourceAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.activer')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
   const resourceId = text(formData, 'resourceId')
@@ -194,7 +194,7 @@ export async function archiveContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.archiver')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 
@@ -211,7 +211,7 @@ export async function restoreContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.archiver')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 
@@ -244,7 +244,7 @@ export async function terminateContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('contrats.resilier')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 

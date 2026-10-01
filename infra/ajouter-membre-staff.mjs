@@ -11,6 +11,12 @@
  * s'exécute avec le rôle applicatif — donc sous les politiques d'isolation par
  * centre, comme le ferait l'application.
  *
+ * Une fois le premier exploitant (`--role admin`) inscrit, l'équipe se gère
+ * depuis l'écran Équipe du back-office (`/equipe`, ADR 019), qui applique ses
+ * règles : ni se retirer soi-même, ni retirer ou rétrograder le dernier
+ * exploitant. Le script reste pour l'amorçage et le dépannage, et ne les
+ * applique pas.
+ *
  * La personne inscrite n'a pas encore de compte : elle en crée un sur
  * /auth/connexion avec cette adresse, et le rattachement se fait à la première
  * connexion.

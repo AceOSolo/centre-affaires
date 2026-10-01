@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
@@ -19,6 +20,7 @@ import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 export const metadata = { title: 'Réservation' }
 
 export default async function BookingPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('reservations.gerer')
   const { id } = await params
   if (!isUuid(id)) notFound()
   const timeZone = await currentTimeZone()

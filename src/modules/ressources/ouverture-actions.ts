@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { listBookableResources } from './queries.ts'
 import {
@@ -38,7 +38,7 @@ export async function addOpeningHourAction(
 ): Promise<FormState> {
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque par
   // son identifiant depuis n'importe quel chemin (ADR 008).
-  await requireStaff()
+  await requirePermission('horaires.gerer')
 
   const weekday = Number(text(formData, 'weekday'))
   const opensAt = text(formData, 'opensAt')
@@ -75,7 +75,7 @@ export async function addOpeningHourAction(
 }
 
 export async function removeOpeningHourAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('horaires.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await removeOpeningHour(id)
@@ -92,7 +92,7 @@ export async function setWeekdayHoursAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('horaires.gerer')
 
   const opensAt = text(formData, 'opensAt')
   const closesAt = text(formData, 'closesAt')
@@ -120,7 +120,7 @@ export async function addClosureAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('horaires.gerer')
 
   const startsOn = text(formData, 'startsOn')
   const endsOn = text(formData, 'endsOn') || startsOn
@@ -140,7 +140,7 @@ export async function addClosureAction(
 }
 
 export async function removeClosureAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('horaires.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await removeClosure(id)
@@ -155,7 +155,7 @@ export async function removeClosureAction(formData: FormData): Promise<void> {
  * n'écrase jamais une saisie existante.
  */
 export async function copierHorairesDuCentreAction(): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('horaires.gerer')
 
   const resources = await listBookableResources()
   if (resources.length === 0) {

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { requireStaff } from '../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { BulkBookingForm } from '../../../../modules/reservations/bulk-form.tsx'
@@ -8,7 +8,7 @@ import { listBookableResources } from '../../../../modules/ressources/queries.ts
 export const metadata = { title: 'Réservations en masse' }
 
 export default async function BulkBookingPage({ searchParams }: { searchParams: Promise<{ type?: string }> }) {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const [timeZone, resources, params] = await Promise.all([currentTimeZone(), listBookableResources(), searchParams])
   return <div className="mx-auto flex max-w-3xl flex-col gap-6">
     <div>

@@ -4,6 +4,8 @@ import { notFound } from 'next/navigation'
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
+import { can } from '../../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { archiveClientAction } from '../../../../modules/clients/actions.ts'
 import { listClientContacts } from '../../../../modules/clients/contacts-queries.ts'
 import { phoneHref } from '../../../../modules/clients/contacts-regles.ts'
@@ -56,6 +58,7 @@ export default async function ClientPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ contact?: string }>
 }) {
+  const { member: staff } = await requirePermission('clients.gerer')
   const [{ id }, { contact: contactNotice }] = await Promise.all([params, searchParams])
   // Un identifiant illisible ferait lever Postgres (22P02) : c'est une fiche
   // introuvable, pas une panne.
@@ -112,12 +115,14 @@ export default async function ClientPage({
         >
           Modifier la fiche
         </Link>
-        <Link
-          href={`/contrats/nouveau?clientId=${client.id}`}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Nouveau contrat
-        </Link>
+        {can(staff.role, 'contrats.creer') && (
+          <Link
+            href={`/contrats/nouveau?clientId=${client.id}`}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Nouveau contrat
+          </Link>
+        )}
       </div>
 
       <dl className="grid grid-cols-[10rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
@@ -510,7 +515,7 @@ export default async function ClientPage({
         )}
       </section>
 
-      {!client.deletedAt && (
+      {!client.deletedAt && can(staff.role, 'clients.archiver') && (
         <form
           action={archiveClientAction}
           className="rounded-lg border border-border bg-white px-5 py-4"

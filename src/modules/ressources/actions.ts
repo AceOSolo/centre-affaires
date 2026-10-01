@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { parseResourceInput } from './attributs.ts'
 import {
@@ -59,7 +59,7 @@ export async function createResourceAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const values = submittedValues(formData)
   // Une ressource naît en service ou en maintenance ; « retirée » se décide
   // par l'archivage ou la modification, pas à la création.
@@ -92,7 +92,7 @@ export async function updateResourceAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   const values = submittedValues(formData)
   const existing = id ? await findResource(id) : undefined
@@ -121,7 +121,7 @@ export async function updateResourceAction(
 }
 
 export async function updateResourceStatusAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   const status = text(formData, 'status') as ResourceStatus
   if (!id || !resourceStatuses.includes(status)) return
@@ -131,7 +131,7 @@ export async function updateResourceStatusAction(formData: FormData): Promise<vo
 }
 
 export async function archiveResourceAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await archiveResource(id)

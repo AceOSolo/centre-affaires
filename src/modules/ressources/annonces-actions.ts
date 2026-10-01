@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import {
   DuplicateSlugError,
@@ -31,7 +31,7 @@ export async function saveListingAction(
 ): Promise<FormState> {
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque par
   // son identifiant depuis n'importe quel chemin (ADR 008).
-  await requireStaff()
+  await requirePermission('ressources.gerer')
 
   const resourceId = text(formData, 'resourceId')
   const headline = text(formData, 'headline')
@@ -64,7 +64,7 @@ export async function saveListingAction(
 }
 
 export async function publishListingAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await publishListing(id)
@@ -72,7 +72,7 @@ export async function publishListingAction(formData: FormData): Promise<void> {
 }
 
 export async function unpublishListingAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await unpublishListing(id)

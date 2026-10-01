@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import {
@@ -18,6 +19,7 @@ export const metadata = { title: 'Demandes' }
  * question de confort, c'est ce qui libère les salles que personne ne prendra.
  */
 export default async function DemandesPage() {
+  await requirePermission('demandes.traiter')
   const timeZone = await currentTimeZone()
   const pending = await listPendingBookings()
 

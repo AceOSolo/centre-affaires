@@ -1,10 +1,12 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import { listRatePlans } from '../../../modules/facturation/queries.ts'
 
 export const metadata = { title: 'Grilles tarifaires' }
 
 export default async function RatePlansPage() {
+  await requirePermission('tarifs.gerer')
   const plans = await listRatePlans()
 
   return (

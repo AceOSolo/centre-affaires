@@ -16,7 +16,8 @@ let middleware: ReturnType<NeonAuth['middleware']> | undefined
  * Ce filtre est une commodité, pas la protection : une action serveur s'invoque
  * par son identifiant depuis n'importe quel chemin, y compris la page publique
  * que `matcher` laisse volontairement passer. Le contrôle qui compte est
- * `requireStaff()`, appelé dans les pages et dans chaque action qui écrit.
+ * `requirePermission()`, appelé dans les pages et dans chaque action serveur
+ * (ADR 019).
  */
 export default function proxy(request: NextRequest) {
   middleware ??= getAuth().middleware({ loginUrl: '/auth/connexion' })
@@ -37,6 +38,8 @@ export const config = {
     '/contrats/:path*',
     '/tarifs/:path*',
     '/courrier/:path*',
+    '/equipe/:path*',
+    '/acces-reserve/:path*',
     // L'espace client : même commodité, même limite — les pages et les
     // actions revérifient le compte elles-mêmes (ADR 015).
     '/compte/:path*',

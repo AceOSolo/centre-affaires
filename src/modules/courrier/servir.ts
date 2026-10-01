@@ -11,7 +11,7 @@ import { logScanView, type ScanToServe } from './queries.ts'
 
 type Viewer =
   | { viewer: 'staff'; staffMemberId: string; authUserId: string }
-  | { viewer: 'client'; clientMemberId: string; authUserId: string }
+  | { viewer: 'client'; clientMemberId: string; authUserId: string; clientId: string }
 
 const refusalHeaders = {
   'Content-Type': 'text/plain; charset=utf-8',

@@ -161,3 +161,124 @@ en double, à tenir à jour par trigger, pour un gain de performance sans objet 
 ce volume.
 
 **Le second facteur pour l'équipe.** Écarté par le centre (ADR 016).
+
+## Mise en œuvre
+
+### La matrice des droits
+
+Elle est dans `src/lib/auth/permissions.ts`, un module pur éprouvé par
+`permissions.test.ts`. Un droit est une capacité du back-office, pas un écran :
+
+| Droit | Ce qu'il couvre | Accueil | Exploitant |
+|---|---|---|---|
+| `reservations.gerer` | Planning : créer, déplacer, annuler, rattacher à un client, séries et indisponibilités | oui | oui |
+| `demandes.traiter` | Valider ou refuser les demandes de réservation | oui | oui |
+| `clients.gerer` | Fiches clients, accès à l'espace client | oui | oui |
+| `courrier.gerer` | Enregistrer, ouvrir, retirer, consulter le courrier | oui | oui |
+| `contrats.consulter` | Lire les contrats | oui | oui |
+| `clients.archiver` | Archiver une fiche client | non | oui |
+| `courrier.releve` | Relevé mensuel des ouvertures et son export (source de la facturation) | non | oui |
+| `contrats.creer` | Créer un contrat, modifier un brouillon | non | oui |
+| `contrats.activer` | Activer un contrat | non | oui |
+| `contrats.resilier` | Résilier un contrat | non | oui |
+| `contrats.archiver` | Archiver un contrat | non | oui |
+| `tarifs.gerer` | Grilles tarifaires | non | oui |
+| `ressources.gerer` | Ressources et annonces du site public | non | oui |
+| `horaires.gerer` | Horaires d'ouverture et fermetures | non | oui |
+| `centre.configurer` | Configuration du centre : règles de réservation, conservation | non | oui |
+| `agenda-google.gerer` | Agendas Google | non | oui |
+| `equipe.gerer` | Équipe : inscrire, changer un rôle, retirer | non | oui |
+
+L'accueil tient l'opérationnel du quotidien. Ce qui engage le centre
+(prix, contrats, équipe, configuration, export vers la facturation) revient à
+l'exploitant. Le test refuse un droit ajouté sans décision explicite sur
+l'accueil : la répartition se tranche, elle ne s'hérite pas.
+
+### Une garde unique
+
+`requirePermission(droit)` (`src/lib/auth/staff.ts`) remplace `requireStaff()`
+et `requireAdmin()` en tête de chaque page, route et action serveur du
+back-office :
+
+- **Sans session ou sans membre** : même issue qu'avant, connexion ou accès
+  refusé.
+- **Membre dont le rôle ne suffit pas** : renvoi vers `/acces-reserve`, dans la
+  coque du back-office. La page dit quel droit manquait et à qui s'adresser.
+
+`requireStaff()` ne garde plus que la coque et `/acces-reserve`, ouverte à
+tout membre puisqu'elle explique le refus. `requireAdmin()` reste, dépréciée,
+comme alias de `requirePermission('equipe.gerer')`.
+
+`src/lib/auth/gardes.test.ts` relit les sources et échoue si une page, une
+route ou une action serveur du back-office n'appelle pas `requirePermission()`
+avec un droit de la matrice. Une page ajoutée sans garde ne passe pas la CI.
+
+### Navigation et boutons
+
+Chaque entrée de la navigation porte le droit de sa page ; la coque passe les
+droits du membre (`permissionsOf(role)`) et la navigation masque le reste.
+Dans les pages ouvertes aux deux rôles, les boutons qu'un rôle ne peut pas
+utiliser sont masqués : activer ou résilier un contrat, nouveau contrat,
+archiver un client, relevé des ouvertures. Le serveur refuse de toute façon :
+masquer est un confort, pas la protection.
+
+L'en-tête affiche le libellé du rôle à côté du nom.
+
+### L'écran Équipe
+
+`/equipe`, réservé à l'exploitant (`equipe.gerer`) :
+
+- il liste les membres actifs, leur rôle et l'état de leur compte ;
+- il inscrit un membre par son adresse et son rôle ;
+- il fait passer un membre de l'accueil à l'exploitant, et inversement ;
+- il retire un membre (`deleted_at`) : l'accès cesse, la ligne reste.
+
+Il reprend la matrice en tableau, pour que l'équipe sache ce que chaque rôle
+permet.
+
+**Règles**, dans `src/lib/auth/equipe.ts` :
+
+- on ne se retire pas soi-même ;
+- on ne change pas son propre rôle : un exploitant qui se rétrograde perdrait
+  l'écran d'où annuler son geste ;
+- on ne retire pas, et on ne rétrograde pas, le dernier exploitant actif.
+
+La règle s'exerce dans la transaction qui écrit. Les exploitants actifs et la
+cible sont verrouillés ensemble (`for update`, dans l'ordre des
+identifiants) : deux exploitants qui se rétrogradent l'un l'autre au même
+instant passent l'un après l'autre, et le second relit un exploitant de moins.
+`equipe.db.test.ts` éprouve les règles et ce cas concurrent contre la base.
+
+`infra/ajouter-membre-staff.mjs` reste pour l'amorçage (le premier exploitant)
+et le dépannage. Il n'applique pas ces règles.
+
+### L'espace client sous portée
+
+`inClientSpace(accounts, run)` (`src/modules/clients/comptes.ts`) appelle
+`withClientScope(currentTenantId(), accounts.map((a) => a.clientId), run)`.
+Toutes les lectures et écritures de l'espace client passent par elle, en plus
+de leurs filtres :
+
+- `listMailForAccounts`, `requestOpening`, `cancelOpeningRequest` et
+  `findScanForAccounts` (`courrier/queries.ts`) ;
+- `logScanView` pour une consultation par un client, sous la portée de
+  l'entreprise destinataire du pli ;
+- `listBookingsForAccounts` et `cancelRequestForAccounts`
+  (`reservations/compte-queries.ts`).
+
+Restent sous `withTenant()`, volontairement :
+
+- la résolution du compte (`resolveClientAccounts`) : c'est elle qui dit
+  quelle portée poser ;
+- la lecture du centre (`currentTenant`) : `tenants` ne relève d'aucun client ;
+- le courriel à l'équipe après une demande d'ouverture
+  (`notifyOpeningRequested`) : il est écrit pour le centre ;
+- la demande de réservation du site public (`requestBookingAction`), qui peut
+  venir d'un visiteur anonyme.
+
+`src/modules/clients/espace-client.db.test.ts` le prouve avec le code de
+l'espace lui-même. Une requête de l'espace écrite sans aucun filtre, ou avec un
+filtre sur l'entreprise voisine, ne rend que l'entreprise du compte. Les
+lectures et écritures du portail n'atteignent pas l'autre entreprise. Le
+journal refuse la consultation d'un pli qui n'est pas le sien. Le back-office,
+sans portée, voit toujours tout.

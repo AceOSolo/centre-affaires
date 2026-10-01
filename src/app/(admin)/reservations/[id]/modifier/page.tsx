@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatTime, todayIsoDate, toIsoDate } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
 import { occupiesResource } from '../../../../../modules/reservations/availability.ts'
@@ -29,6 +30,7 @@ export default async function MoveBookingPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ date?: string; resourceId?: string }>
 }) {
+  await requirePermission('reservations.gerer')
   const { id } = await params
   const { date, resourceId } = await searchParams
   const timeZone = await currentTimeZone()

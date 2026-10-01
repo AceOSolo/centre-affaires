@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
@@ -76,7 +76,7 @@ export async function createBookingAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const timeZone = await currentTimeZone()
   const values = Object.fromEntries(
     ['date', 'startTime', 'endTime', 'title', 'clientId', 'contractId', 'notes'].map((key) => [
@@ -158,7 +158,7 @@ export async function moveBookingAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const timeZone = await currentTimeZone()
   const id = text(formData, 'id')
   const resourceId = text(formData, 'resourceId')
@@ -195,7 +195,7 @@ export async function moveBookingAction(
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await cancelBooking(id, text(formData, 'reason') || null)
@@ -216,7 +216,7 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
  * validation est acquise en base, que Google réponde ou non.
  */
 export async function confirmBookingAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
   await confirmBooking(id)
@@ -227,7 +227,7 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
 
 /** Refus d'une demande : annulation motivée, le créneau redevient libre. */
 export async function refuseBookingAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
   await refuseBooking(id, text(formData, 'reason') || null)
@@ -243,7 +243,7 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
  * l'espace client.
  */
 export async function assignBookingClientAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
   if (!isUuid(id)) return
   const clientId = text(formData, 'clientId')

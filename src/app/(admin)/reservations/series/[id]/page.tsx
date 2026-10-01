@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { requireStaff } from '../../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { formatLongDate, formatTime, toIsoDate } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
 import { cancelBookingSeriesAction } from '../../../../../modules/reservations/bulk-actions.ts'
@@ -10,7 +10,7 @@ import { bookingStatusLabels } from '../../../../../modules/reservations/labels.
 export const metadata = { title: 'Série de réservations' }
 
 export default async function BookingSeriesPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const { id } = await params
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) notFound()
   const [bookings, timeZone] = await Promise.all([listBookingSeries(id), currentTimeZone()])

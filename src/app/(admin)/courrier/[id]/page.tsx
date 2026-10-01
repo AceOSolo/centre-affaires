@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
@@ -26,6 +27,7 @@ function formatBytes(bytes: number): string {
 }
 
 export default async function CourrierDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('courrier.gerer')
   const { id } = await params
   const [mail, timeZone] = await Promise.all([findMail(id), currentTimeZone()])
   if (!mail) notFound()

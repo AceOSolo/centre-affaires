@@ -74,6 +74,9 @@ node infra/configurer-centre.mjs
 node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
 ```
 
+Ce premier exploitant inscrit ensuite le reste de l'équipe depuis l'écran
+Équipe du back-office (`/equipe`).
+
 Par la suite, toute migration se joue de la même façon **avant** de fusionner
 sur `main` le code qui en dépend.
 

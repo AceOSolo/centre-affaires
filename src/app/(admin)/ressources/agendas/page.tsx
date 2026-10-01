@@ -1,4 +1,4 @@
-import { requireStaff } from '../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { googleConfig } from '../../../../modules/reservations/agenda-google.ts'
 import {
@@ -24,7 +24,7 @@ export default async function AgendasPage({
   searchParams: Promise<{ compte?: string; agendas?: string; n?: string; echecs?: string }>
 }) {
   const [{ member }, timeZone, status, links, params] = await Promise.all([
-    requireStaff(),
+    requirePermission('agenda-google.gerer'),
     currentTimeZone(),
     googleCalendarStatus(),
     listResourceCalendarLinks(),

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../lib/dates.ts'
 import { currentTenant } from '../../../lib/tenant.ts'
 import { RequestPolicyForm } from '../../../modules/reservations/policy-form.tsx'
@@ -28,6 +29,7 @@ import { listResources } from '../../../modules/ressources/queries.ts'
 export const metadata = { title: 'Disponibilités' }
 
 export default async function DisponibilitesPage() {
+  await requirePermission('horaires.gerer')
   const tenant = await currentTenant()
   const timeZone = tenant.timezone
   const today = todayIsoDate(timeZone)

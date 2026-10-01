@@ -1,5 +1,7 @@
 import Link from 'next/link'
 
+import { can } from '../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   billingPeriodSuffixes,
   contractStatusLabels,
@@ -18,6 +20,7 @@ export default async function ContractsPage({
 }: {
   searchParams: Promise<{ statut?: string; archives?: string }>
 }) {
+  const { member } = await requirePermission('contrats.consulter')
   const { statut, archives } = await searchParams
   const status = contractStatuses.includes(statut as ContractStatus)
     ? (statut as ContractStatus)
@@ -51,12 +54,14 @@ export default async function ContractsPage({
             Domiciliations, bureaux et prestations récurrentes.
           </p>
         </div>
-        <Link
-          href="/contrats/nouveau"
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-        >
-          Nouveau contrat
-        </Link>
+        {can(member.role, 'contrats.creer') && (
+          <Link
+            href="/contrats/nouveau"
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            Nouveau contrat
+          </Link>
+        )}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -108,13 +113,17 @@ export default async function ContractsPage({
             >
               Revenir aux contrats
             </Link>
-          ) : (
+          ) : can(member.role, 'contrats.creer') ? (
             <Link
               href="/contrats/nouveau"
               className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
             >
               Créer un contrat
             </Link>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">
+              La création des contrats est réservée à l’exploitant.
+            </p>
           )}
         </div>
       ) : (

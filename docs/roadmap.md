@@ -45,8 +45,8 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R24 | Traçabilité côté client | ◐ | Historique des demandes (une annulation efface la trace), documents | M | 3 |
 | R25 | Responsive | ◐ | Plusieurs cibles sous 44 px sur le portail | S | 3 |
 | R26 | Moteur de notifications | ◐ | Envoi SMTP en place (`src/lib/courriel.ts`) ; modèles éditables et historique des envois absents ; déclencheurs limités au courrier | M–L | 3 |
-| R27 | Rôles exploitant / accueil / client | ◐ | Exploitant et accueil non distingués ; pas de matrice des droits | M | 1 |
-| R28 | Comptes isolés, second facteur staff | ◐ | Isolation entre clients applicative seulement. Second facteur écarté (ADR 016) | M | 1 |
+| R27 | Rôles exploitant / accueil / client | ✅ | — (matrice des droits, garde par droit, écran Équipe : ADR 019) | — | 1 |
+| R28 | Comptes isolés, second facteur staff | ✅ | — (espace client sous portée client en RLS, ADR 019). Second facteur écarté (ADR 016) | — | 1 |
 | R29 | Registre RGPD, durées de conservation | ◐ | Registre et tableau des durées écrits (`docs/rgpd/`). Restent : valider les durées proposées, archiver les DPA, évaluer l'AIPD du courrier, construire l'anonymisation des clients, contacts et comptes | S | 0 |
 | R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Restent : installation sur le VPS (rôle `sauvegarde`, destination, clés), premier exercice sur Neon | S | 0 |
 | R31 | Indicateurs (occupation, revenu) | ○ | Tableau de bord ; le revenu dépend de la facturation | M–L | 2 |

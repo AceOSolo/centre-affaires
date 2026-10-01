@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import {
   archiveRatePlanAction,
   removeRatePlanItemAction,
@@ -15,6 +16,7 @@ import { listResources } from '../../../../modules/ressources/queries.ts'
 export const metadata = { title: 'Grille tarifaire' }
 
 export default async function RatePlanPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('tarifs.gerer')
   const { id } = await params
   const [plan, resources] = await Promise.all([findRatePlan(id), listResources()])
   if (!plan) notFound()

@@ -11,6 +11,8 @@ import {
   ResourceForm,
   RestoreForm,
 } from '../../../../modules/contrats/contract-actions.tsx'
+import { can } from '../../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDays, noticeEndsOn } from '../../../../modules/contrats/echeancier.ts'
 import { EcheancierTable } from '../../../../modules/contrats/echeancier-table.tsx'
 import {
@@ -52,6 +54,7 @@ export default async function ContractPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ fait?: string }>
 }) {
+  const { member } = await requirePermission('contrats.consulter')
   const { id } = await params
   const { fait } = await searchParams
   if (!isUuid(id)) notFound()
@@ -120,21 +123,27 @@ export default async function ContractPage({
             Contrat archivé — il ne figure plus dans les listes et n’occupe plus sa ressource. Il
             reste consultable, avec son numéro (décision 6).
           </p>
-          <RestoreForm contractId={contract.id} />
+          {can(member.role, 'contrats.archiver') && <RestoreForm contractId={contract.id} />}
         </div>
       )}
 
-      {!archived && contract.status === 'draft' && (
-        <div className="flex flex-col gap-3">
-          <ActivateForm contractId={contract.id} resourceLabel={resourceLabel} />
-          <Link
-            href={`/contrats/${contract.id}/modifier`}
-            className="self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            Modifier le brouillon
-          </Link>
-        </div>
-      )}
+      {!archived &&
+        contract.status === 'draft' &&
+        (can(member.role, 'contrats.activer') || can(member.role, 'contrats.creer')) && (
+          <div className="flex flex-col gap-3">
+            {can(member.role, 'contrats.activer') && (
+              <ActivateForm contractId={contract.id} resourceLabel={resourceLabel} />
+            )}
+            {can(member.role, 'contrats.creer') && (
+              <Link
+                href={`/contrats/${contract.id}/modifier`}
+                className="self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                Modifier le brouillon
+              </Link>
+            )}
+          </div>
+        )}
 
       <dl className="grid grid-cols-[10rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
         <dt className="text-muted-foreground">Montant</dt>
@@ -207,7 +216,7 @@ export default async function ContractPage({
           resourceLabel={resourceLabel}
           timeZone={timeZone}
         />
-        {!archived && contract.status === 'active' && (
+        {!archived && contract.status === 'active' && can(member.role, 'contrats.activer') && (
           <ResourceForm
             contractId={contract.id}
             resourceId={contract.resourceId}
@@ -225,7 +234,7 @@ export default async function ContractPage({
         <EcheancierTable contract={contract} until={horizon} currency={contract.currency} />
       </section>
 
-      {!archived && contract.status !== 'terminated' && (
+      {!archived && contract.status !== 'terminated' && can(member.role, 'contrats.resilier') && (
         <TerminateForm
           contractId={contract.id}
           defaultTerminatedOn={noticeEndsOn(today, contract.noticeDays)}
@@ -233,7 +242,7 @@ export default async function ContractPage({
         />
       )}
 
-      {!archived && (
+      {!archived && can(member.role, 'contrats.archiver') && (
         <div className="flex flex-col gap-2 rounded-lg border border-border bg-white px-5 py-4">
           <p className="text-sm font-medium text-foreground">Archiver le contrat</p>
           {/* Suppression logique : le contrat reste consultable, y compris
