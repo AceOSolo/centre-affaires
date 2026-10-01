@@ -3,8 +3,8 @@ import Link from 'next/link'
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
+import { listContracts } from '../../../../modules/contrats/queries.ts'
 import { occupiesResource } from '../../../../modules/reservations/availability.ts'
-import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
 import { BookingForm } from '../../../../modules/reservations/booking-form.tsx'
 import { newBookingHref } from '../../../../modules/reservations/filtres.ts'
 import { loadWeekCalendar } from '../../../../modules/reservations/calendar-data.ts'
@@ -55,10 +55,12 @@ export default async function NewBookingPage({
   }
 
   const jours = weekDays(defaultDate)
-  const [days, bookings, clients] = await Promise.all([
+  const [days, bookings, clients, activeContracts] = await Promise.all([
     loadWeekCalendar({ resourceId: resource.id, anchor: defaultDate, timeZone }),
     listBookingsBetween(jours[0], jours[6], timeZone),
     listClients(),
+    // Contrats proposés au rattachement (R05) : seuls les actifs le peuvent.
+    listContracts({ status: 'active' }),
   ])
 
   // Le détail des réservations ne sort pas du back-office : le portail public
@@ -67,8 +69,8 @@ export default async function NewBookingPage({
     .filter((booking) => booking.resourceId === resource.id && occupiesResource(booking.status))
     .map((booking) => ({
       id: booking.id,
-      // « Occupé — contrat CT-… » plutôt que le titre brut de l'occupation.
-      title: bookingLabel(booking),
+      title: booking.title,
+      kind: booking.kind,
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
     }))
@@ -154,6 +156,16 @@ export default async function NewBookingPage({
         defaultStartTime={start && WALL_TIME.test(start) ? start : undefined}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
         defaultClientId={defaultClientId}
+        contracts={activeContracts.map((contract) => ({
+          id: contract.id,
+          reference: contract.reference,
+          clientId: contract.clientId,
+          status: contract.status,
+          deletedAt: contract.deletedAt,
+          startsOn: contract.startsOn,
+          endsOn: contract.endsOn,
+          terminatedOn: contract.terminatedOn,
+        }))}
       />
     </div>
   )
