@@ -195,6 +195,98 @@ Vérifier : relancer l'application (`docker compose up -d`), puis sur la fiche
 d'un client de test, donner l'accès à sa propre adresse — le courriel
 d'invitation doit arriver.
 
+## 9. Sauvegardes
+
+Le choix et ses raisons : [ADR 022](../../docs/decisions/022-sauvegardes-et-plan-de-reprise.md).
+Restauration : [`docs/exploitation/restauration.md`](../../docs/exploitation/restauration.md).
+Plan de reprise : [`docs/exploitation/plan-de-reprise.md`](../../docs/exploitation/plan-de-reprise.md).
+
+Chaque nuit, `sauvegarde.sh` produit un lot : le dump de la base, la copie du
+bucket `uploads` et les fichiers de configuration du serveur. Le lot est
+chiffré sur le serveur pour des clés publiques, envoyé hors du serveur, puis
+relu. Sont gardés le dernier lot de chacun des 7 derniers jours, des 4
+dernières semaines et des 12 derniers mois. Le script est déposé par chaque
+déploiement, comme `compose.yml`.
+
+**1. Outils**, en root :
+
+```bash
+apt install age rclone
+```
+
+Docker, déjà présent, fournit `pg_dump` 18 (image `postgres:18-alpine`) :
+celui de Debian est trop ancien pour Neon.
+
+**2. Clés de chiffrement, sur un poste et non sur le serveur.** Chaque détenteur
+(deux au moins, plan de reprise) crée sa paire de clés :
+
+```bash
+age-keygen -o identite-sauvegarde-<prenom>.txt   # affiche la clé publique age1…
+```
+
+La clé privée va au coffre (plan de reprise, « Secrets »), jamais sur le
+serveur : le script refuse de tourner s'il en trouve une. Sur le serveur, les
+seules clés publiques, une par ligne :
+
+```bash
+sudo -u deploy nano /home/deploy/centre-affaires/sauvegarde-destinataires.txt
+```
+
+**3. Rôle de lecture sur la base `production`.** Avec le propriétaire, depuis un
+poste (console Neon → SQL Editor, ou `psql`) :
+
+```sql
+CREATE ROLE sauvegarde LOGIN BYPASSRLS PASSWORD '<openssl rand -base64 24>';
+GRANT pg_read_all_data TO sauvegarde;
+```
+
+`pg_read_all_data` donne la lecture de toutes les tables, sans aucune écriture.
+`BYPASSRLS` est nécessaire : sans lui, `pg_dump` refuse de lire des tables
+sous RLS plutôt que de produire un dump partiel. Ce couple a été éprouvé en
+local (restauration, « Exercice du 01/10/2026 ») ; reste à vérifier que Neon
+l'accepte. Si `pg_dump` ne peut pas lire le schéma `neon_auth`, géré par Neon,
+voir `SAUVEGARDE_PG_DUMP_OPTIONS` dans le modèle.
+
+**4. Destination hors du serveur.** Un bucket S3 privé, en UE, dans une autre
+région que le VPS (par exemple OVHcloud Object Storage), avec un utilisateur
+dont les clés ne servent qu'à lui.
+
+**5. Configuration**, d'après [`sauvegarde.env.example`](sauvegarde.env.example) :
+
+```bash
+sudo -u deploy nano /home/deploy/centre-affaires/sauvegarde.env
+sudo -u deploy chmod 600 /home/deploy/centre-affaires/sauvegarde.env
+```
+
+**6. Premier passage, à la main**, puis une restauration d'essai
+(`docs/exploitation/restauration.md`) : une sauvegarde jamais relue n'est pas
+une sauvegarde.
+
+```bash
+sudo -u deploy bash /home/deploy/centre-affaires/sauvegarde.sh
+tail /home/deploy/centre-affaires/sauvegardes.log
+```
+
+**7. Crontab du compte `deploy`**, à côté de la purge du courrier :
+
+```cron
+# Sauvegarde nocturne chiffrée, hors serveur (ADR 022). Après la purge de
+# 3 h 15 : un lot ne contient pas ce qui vient d'arriver à échéance.
+45 3 * * * /bin/bash /home/deploy/centre-affaires/sauvegarde.sh >/dev/null 2>&1
+```
+
+Le script écrit lui-même son journal, `~/centre-affaires/sauvegardes.log`
+(autre chemin : `SAUVEGARDE_JOURNAL` devant la commande). En cas d'échec, il
+sort avec un code non nul, écrit la cause au journal et dans syslog
+(`journalctl -t centre-affaires-sauvegarde`), et appelle
+`SAUVEGARDE_SIGNAL_URL` suivi de `/fail` s'il est réglé. Un lot à moitié
+envoyé est effacé, ou l'est au passage suivant.
+
+**Surveillance.** Lire la fin du journal chaque semaine. Faire un exercice de
+restauration chaque trimestre et le consigner dans `restauration.md`. Sans
+service de surveillance (`SAUVEGARDE_SIGNAL_URL`), une crontab effacée ou un
+serveur arrêté ne se voient qu'à la lecture du journal.
+
 ## Au quotidien
 
 Sur le serveur, dans `/home/deploy/centre-affaires` :
@@ -202,6 +294,7 @@ Sur le serveur, dans `/home/deploy/centre-affaires` :
 ```bash
 docker compose ps             # état de l'application
 docker compose logs -f app    # journaux de l'application
+tail sauvegardes.log          # dernières sauvegardes (section 9)
 ```
 
 Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
