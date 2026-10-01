@@ -53,6 +53,15 @@ de motif personnel ; on écrit « Réunion Alpha », pas « Entretien M. Dupont 
 | Factures (vague 2) | **10 ans** (art. L.123-22 du Code de commerce) | clôture de l'exercice | archivage | à construire avec la facturation | imposé par la loi |
 | Accès à l'espace client (`client_members`) | tant que l'accès est ouvert ; la ligne retirée reste, car elle signe des demandes d'ouverture | retrait | à fixer : anonymiser nom et adresse après un délai | aucun : à construire | à fixer |
 
+### Règlements (ADR 027, ADR 030)
+
+| Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
+|---|---|---|---|---|---|
+| Paiements pointés (`payments`) | **10 ans**, comme les pièces comptables (art. L.123-22 du Code de commerce) | clôture de l'exercice | archivage ; la ligne reste (décision 6) | aucun : à construire | imposé par la loi |
+| Mandats SEPA (`sepa_mandates` : titulaire, IBAN chiffré, BIC, RUM) | proposition : validité du mandat, puis 14 mois après le dernier prélèvement (un débiteur conteste un prélèvement non autorisé pendant 13 mois) | révocation, caducité ou dernier prélèvement | effacer l'IBAN chiffré et le titulaire ; la RUM reste, elle n'est jamais réattribuée | aucun : à construire | à valider |
+| Fichier de remise de prélèvements (IBAN en clair) | jamais stocké : reconstruit à chaque téléchargement | — | — | ADR 030 | fixé |
+| Relances | non conservées dans l'application (courriel parti par Brevo, lettre imprimée) | — | — | — | à revoir avec le journal des envois (R26) |
+
 ### Équipe et comptes (ADR 008, ADR 015)
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |

@@ -4,7 +4,7 @@ import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenants, type Tenant } from '../../db/tenants.ts'
-import { dayRangeUtc, formatTime, toIsoDate } from '../../lib/dates.ts'
+import { dayRangeUtc, formatTime, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { contractTypeLabels } from '../contrats/labels.ts'
@@ -13,10 +13,10 @@ import { mailItems } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { pgMessage } from './factures-erreurs.ts'
+import { invoicePaymentSetup } from './mandats.ts'
 import {
   computeRun,
   contractKey,
-  expectedPaymentFor,
   previewAmounts,
   type BillingContract,
   type ClientRun,
@@ -30,7 +30,6 @@ import {
   invoiceLines,
   invoiceRuns,
   invoices,
-  sepaMandates,
   subscribedServices,
   type InvoiceRun,
   type InvoiceRunResult,
@@ -67,7 +66,6 @@ type LoadedRun = {
   tenant: Tenant
   sources: RunSources
   clientNames: Map<string, string>
-  activeMandates: Map<string, string>
   existing: Map<string, ExistingRunInvoice>
   /** Clients en activité, pour compter ceux qui n'ont rien à facturer. */
   activeClientIds: string[]
@@ -428,10 +426,6 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
   const clientRows = await tx
     .select({ id: clients.id, name: clients.name, status: clients.status, deletedAt: clients.deletedAt })
     .from(clients)
-  const mandateRows = await tx
-    .select({ id: sepaMandates.id, clientId: sepaMandates.clientId })
-    .from(sepaMandates)
-    .where(and(eq(sepaMandates.status, 'active'), isNull(sepaMandates.deletedAt)))
   const existingRows = await tx
     .select({
       id: invoices.id,
@@ -463,7 +457,6 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
     activeClientIds: clientRows
       .filter((row) => row.status === 'active' && row.deletedAt === null)
       .map((row) => row.id),
-    activeMandates: new Map(mandateRows.map((row) => [row.clientId, row.id])),
     existing: new Map(
       existingRows.map((row) => [
         row.clientId,
@@ -663,9 +656,12 @@ export async function runInvoicing(
           await tx.transaction(async (savepoint) => {
             let invoiceId = existing?.id
             if (!invoiceId) {
-              const payment = expectedPaymentFor(
-                loaded.tenant.defaultPaymentMethod,
-                loaded.activeMandates.get(run.clientId) ?? null,
+              // Prélèvement sur le mandat actif et non caduc du client, sinon le
+              // mode du centre (ADR 027, `invoicePaymentSetup`).
+              const payment = await invoicePaymentSetup(
+                savepoint,
+                run.clientId,
+                todayIsoDate(loaded.tenant.timezone),
               )
               const [created] = await savepoint
                 .insert(invoices)
@@ -675,7 +671,7 @@ export async function runInvoicing(
                   periodStart: loaded.settings.windows.invoice.start,
                   periodEnd: loaded.settings.windows.invoice.end,
                   currency: loaded.settings.currency,
-                  expectedPaymentMethod: payment.method,
+                  expectedPaymentMethod: payment.expectedPaymentMethod,
                   sepaMandateId: payment.sepaMandateId,
                 })
                 .returning({ id: invoices.id })

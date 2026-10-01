@@ -5,7 +5,7 @@ import { ConfirmDialog } from '../../../../components/ui/confirm-dialog.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
-import { formatDateTime } from '../../../../lib/dates.ts'
+import { formatDateTime, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import {
@@ -33,8 +33,11 @@ import {
 import { findInvoice } from '../../../../modules/facturation/factures-queries.ts'
 import { maskIban } from '../../../../modules/facturation/iban.ts'
 import { dayLabel } from '../../../../modules/facturation/lot.ts'
+import { EInvoicingSection } from '../../../../modules/facturation/en16931-section.tsx'
 import { amountDueCents } from '../../../../modules/facturation/montants.ts'
 import { formatPeriod } from '../../../../modules/facturation/periodes.ts'
+import { SettlementSection } from '../../../../modules/facturation/reglement-section.tsx'
+import { findInvoiceSettlement } from '../../../../modules/facturation/reglements.ts'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 
 export const metadata = { title: 'Facture' }
@@ -70,7 +73,11 @@ export default async function InvoicePage({
   const { id } = await params
   const { fait } = await searchParams
   if (!isUuid(id)) notFound()
-  const [detail, tenant] = await Promise.all([findInvoice(id), currentTenant()])
+  const [detail, tenant, settlement] = await Promise.all([
+    findInvoice(id),
+    currentTenant(),
+    findInvoiceSettlement(id),
+  ])
   if (!detail || detail.invoice.deletedAt) notFound()
 
   const { invoice, client, lines } = detail
@@ -477,52 +484,23 @@ export default async function InvoicePage({
         </section>
       )}
 
-      {!isCreditNote && !isDraft && (
-        <section aria-labelledby="paiements-titre" className="flex flex-col gap-3">
-          <h2 id="paiements-titre" className="text-lg font-semibold tracking-tight">
-            Paiements
-          </h2>
-          {detail.payments.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border bg-white px-6 py-6 text-center text-sm text-muted-foreground">
-              Aucun paiement pointé sur cette facture.
-            </p>
-          ) : (
-            <div className="overflow-x-auto rounded-lg border border-border bg-white">
-              <table className="w-full text-left text-sm">
-                <caption className="sr-only">Paiements pointés sur la facture</caption>
-                <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-                  <tr>
-                    <th scope="col" className="px-4 py-3 font-medium">Date de valeur</th>
-                    <th scope="col" className="px-4 py-3 font-medium">Mode</th>
-                    <th scope="col" className="px-4 py-3 font-medium">Référence</th>
-                    <th scope="col" className="px-4 py-3 font-medium">Pointé par</th>
-                    <th scope="col" className="px-4 py-3 text-right font-medium">Montant</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {detail.payments.map((payment) => (
-                    <tr key={payment.id} className={payment.cancelledAt ? 'text-muted-foreground' : undefined}>
-                      <td className="px-4 py-3 tabular">{dayLabel(payment.paidOn)}</td>
-                      <td className="px-4 py-3">{paymentMethodLabels[payment.method]}</td>
-                      <td className="px-4 py-3">
-                        {payment.reference ?? '—'}
-                        {payment.cancelledAt && (
-                          <span className="block text-xs">
-                            Annulé{payment.cancellationReason ? ` : ${payment.cancellationReason}` : ''}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">{payment.recordedByName}</td>
-                      <td className="whitespace-nowrap px-4 py-3 text-right tabular">
-                        {payment.cancelledAt ? <s>{money(payment.amountCents)}</s> : money(payment.amountCents)}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
+      {/* Règlement et facturation électronique (R16, ADR 030) : les blocs de la
+          fiche de règlement, ici pour qu'une facture se lise en entier. */}
+      {!isDraft && settlement && (
+        <>
+          <SettlementSection
+            settlement={settlement}
+            canManage={can(member.role, 'paiements.gerer')}
+            today={todayIsoDate(tenant.timezone)}
+            timeZone={tenant.timezone}
+          />
+          <p className="-mt-4 text-sm">
+            <Link href={`/paiements/factures/${invoice.id}`} className={secondaryLink}>
+              Fiche de règlement
+            </Link>
+          </p>
+          {!isCreditNote && <EInvoicingSection settlement={settlement} />}
+        </>
       )}
     </div>
   )

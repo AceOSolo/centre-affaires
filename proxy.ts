@@ -37,8 +37,14 @@ export const config = {
     '/clients/:path*',
     '/contrats/:path*',
     '/tarifs/:path*',
+    '/services/:path*',
+    '/offres/:path*',
+    '/factures/:path*',
     '/courrier/:path*',
     '/equipe/:path*',
+    '/configuration/:path*',
+    '/paiements/:path*',
+    '/comptabilite/:path*',
     '/acces-reserve/:path*',
     // L'espace client : même commodité, même limite — les pages et les
     // actions revérifient le compte elles-mêmes (ADR 015).

@@ -19,6 +19,9 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
   { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
   { href: '/factures', label: 'Factures', permission: 'facturation.consulter' },
+  // Règlements et export comptable (R16, ADR 030) : l'accueil consulte, l'exploitant pointe.
+  { href: '/paiements', label: 'Règlements', permission: 'facturation.consulter' },
+  { href: '/comptabilite', label: 'Comptabilité', permission: 'comptabilite.exporter' },
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
   { href: '/services', label: 'Services', permission: 'services.gerer' },
   { href: '/offres', label: 'Offres', permission: 'services.gerer' },

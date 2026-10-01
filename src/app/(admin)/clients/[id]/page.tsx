@@ -33,6 +33,7 @@ import {
   contractTypeLabels,
 } from '../../../../modules/contrats/labels.ts'
 import { listContracts } from '../../../../modules/contrats/queries.ts'
+import { SepaMandatesSection } from '../../../../modules/facturation/mandats-section.tsx'
 import { ClientSubscriptionsSection } from '../../../../modules/facturation/souscriptions-section.tsx'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import {
@@ -509,6 +510,16 @@ export default async function ClientPage({
           </div>
         )}
       </section>
+
+      {/* Mandats SEPA (R16, ADR 027) : lus avec les factures, gérés avec les paiements. */}
+      {can(staff.role, 'facturation.consulter') && (
+        <SepaMandatesSection
+          clientId={client.id}
+          clientName={client.name}
+          archived={Boolean(client.deletedAt)}
+          canManage={can(staff.role, 'paiements.gerer')}
+        />
+      )}
 
       {!client.deletedAt && can(staff.role, 'clients.archiver') && (
         <form
