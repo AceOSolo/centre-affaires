@@ -16,6 +16,16 @@ services:
     # depuis l'extérieur. PORT_LOCAL si 3000 est déjà pris sur le serveur.
     ports:
       - "127.0.0.1:${PORT_LOCAL:-3000}:3000"
+    # Journaux bornés (registre RGPD, docs/rgpd/durees-de-conservation.md) :
+    # sans limite, Docker les garde jusqu'à saturer le disque. Ils peuvent
+    # citer une adresse électronique dans une erreur d'envoi. Cinq fichiers
+    # de 10 Mo au plus, effacés aussi à chaque déploiement, qui recrée le
+    # conteneur.
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
     healthcheck:
       # Un fichier statique plutôt qu'une page : vérifie le serveur Node sans
       # réveiller la base Neon toutes les 30 secondes.

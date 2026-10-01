@@ -48,6 +48,8 @@ jobs:
       - run: npm run build
       - run: npx tsc --noEmit
       - run: npm run lint
+      # Règle de rétention et refus du script de sauvegarde du serveur (ADR 022).
+      - run: bash infra/serveur/sauvegarde.test.sh
       # Les migrations passent par le propriétaire, puis le rôle applicatif
       # reçoit son mot de passe : il est créé sans, par la migration 0004.
       - run: npx drizzle-kit migrate
@@ -116,7 +118,9 @@ jobs:
       # La configuration suit le dépôt ; le `.env`, lui, n'y est jamais. Le
       # fichier Apache est déposé à côté mais s'installe à la main, en root
       # (infra/serveur/README.md) : le compte de déploiement n'y touche pas.
-      - run: scp infra/serveur/compose.yml infra/serveur/apache-handfield.conf serveur:centre-affaires/
+      # Le script de sauvegarde suit le dépôt de la même façon ; sa
+      # configuration (`sauvegarde.env`) reste sur le serveur (ADR 022).
+      - run: scp infra/serveur/compose.yml infra/serveur/apache-handfield.conf infra/serveur/sauvegarde.sh serveur:centre-affaires/
       - name: Mise en service
         env:
           GHCR_USER: ${{ github.actor }}

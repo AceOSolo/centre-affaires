@@ -6,7 +6,9 @@ export default defineConfig({
   auth: true,
 
   // Scans de courrier et photos d'états des lieux. Privé : ces documents ne
-  // sont jamais servis en accès direct, toujours via une URL signée côté app.
+  // sont jamais servis par une URL directe ni par une URL signée. L'application
+  // lit le fichier et le renvoie, après avoir vérifié le droit d'accès et
+  // inscrit la consultation au journal (ADR 015).
   buckets: {
     uploads: { access: "private" },
   },

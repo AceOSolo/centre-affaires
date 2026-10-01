@@ -15,7 +15,16 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - db-data:/var/lib/postgresql/data
+      # L'image 18 range les données sous /var/lib/postgresql/18/docker et
+      # attend le volume sur /var/lib/postgresql. Elle refuse de démarrer si un
+      # volume est encore monté sur l'ancien emplacement, /var/lib/postgresql/data.
+      #
+      # D'où un volume neuf : l'ancien, `db-data` (en pratique
+      # `centre-affaires_db-data`), n'est plus lu. Il ne contenait qu'une base de
+      # travail jetable (ADR 003). Pour en garder le contenu, le sauvegarder
+      # avec l'image qui l'a écrit avant de le supprimer :
+      # `docker volume rm centre-affaires_db-data`. Voir README.md.
+      - db-data-18:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d centre_affaires"]
       interval: 5s
@@ -23,4 +32,4 @@ services:
       retries: 10
 
 volumes:
-  db-data:
+  db-data-18:
