@@ -300,9 +300,10 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
       assert.equal(error.startsOn, jour(-200))
       assert.match(
         error.message,
-        /^Ce contrat a commencé le \d{2}\/\d{2}\/\d{4} : sa ressource ne change plus\./,
+        /^Ce contrat a commencé le \d{2}\/\d{2}\/\d{4} : sa ressource ne change plus ici\./,
       )
-      assert.match(error.message, /résiliez-le, puis créez un nouveau contrat/)
+      // Après le début, le changement passe par un avenant (ADR 025).
+      assert.match(error.message, /établissez un avenant de changement de ressource/)
       assert.doesNotMatch(error.message, /Rendez-vous passé/)
 
       // Rien n'a bougé : ni le contrat, ni son occupation depuis le premier jour.

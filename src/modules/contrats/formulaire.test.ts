@@ -25,6 +25,10 @@ const saisie = (overrides: Partial<Record<ContractField, string>> = {}) => {
     noticeDays: '',
     ratePlanId: '',
     notes: '',
+    vatRate: '',
+    commitmentMonths: '',
+    tacitRenewal: '',
+    renewalMonths: '',
     ...overrides,
   }
   return (key: ContractField) => values[key]
@@ -126,6 +130,48 @@ describe('erreurs rattachées à leur champ', () => {
     assert.ok(!result.ok)
     assert.deepEqual(Object.keys(result.fieldErrors).sort(), ['amount', 'clientId'])
     assert.equal(result.values.startsOn, '2026-03-01')
+  })
+})
+
+describe('engagement, reconduction et TVA (R10, ADR 023)', () => {
+  it('pose 20 % de TVA et aucun engagement par défaut', () => {
+    const result = readContractForm(saisie(), 'create')
+    assert.ok(result.ok)
+    assert.equal(result.input.vatRateBp, 2000)
+    assert.equal(result.input.commitmentMonths, null)
+    assert.equal(result.input.tacitRenewal, false)
+    assert.equal(result.input.renewalMonths, null)
+  })
+
+  it('lit un engagement, une reconduction et un taux réduit', () => {
+    const result = readContractForm(
+      saisie({ vatRate: '5,5', commitmentMonths: '12', tacitRenewal: 'on', renewalMonths: '12' }),
+      'create',
+    )
+    assert.ok(result.ok)
+    assert.equal(result.input.vatRateBp, 550)
+    assert.equal(result.input.commitmentMonths, 12)
+    assert.equal(result.input.tacitRenewal, true)
+    assert.equal(result.input.renewalMonths, 12)
+  })
+
+  it('ignore la durée de reconduction sans reconduction', () => {
+    const result = readContractForm(saisie({ renewalMonths: '12' }), 'create')
+    assert.ok(result.ok)
+    assert.equal(result.input.renewalMonths, null)
+  })
+
+  it('refuse un engagement hors de 1 à 120 mois, une reconduction sans durée, un taux illisible', () => {
+    const result = readContractForm(
+      saisie({ commitmentMonths: '0', tacitRenewal: 'on', renewalMonths: '', vatRate: '120' }),
+      'create',
+    )
+    assert.ok(!result.ok)
+    assert.deepEqual(Object.keys(result.fieldErrors).sort(), [
+      'commitmentMonths',
+      'renewalMonths',
+      'vatRate',
+    ])
   })
 })
 

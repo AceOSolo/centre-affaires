@@ -10,6 +10,9 @@ import {
 } from '../../../modules/contrats/labels.ts'
 import { formatContractDays, lastContractDay } from '../../../modules/contrats/occupation.ts'
 import { listContracts } from '../../../modules/contrats/queries.ts'
+import { listCurrentTerms } from '../../../modules/contrats/versions.ts'
+import { todayIsoDate } from '../../../lib/dates.ts'
+import { currentTimeZone } from '../../../lib/tenant.ts'
 import { contractStatuses, type ContractStatus } from '../../../modules/contrats/schema.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 
@@ -27,7 +30,20 @@ export default async function ContractsPage({
     : undefined
   // Les archivés sont exclus par défaut (décision 6) et s'affichent à part.
   const archived = archives === '1'
-  const contracts = await listContracts({ status, archived })
+  const [contracts, timeZone] = await Promise.all([
+    listContracts({ status, archived }),
+    currentTimeZone(),
+  ])
+  // Prix et ressource de la version en vigueur aujourd'hui, jour du centre :
+  // un avenant les a peut-être changés depuis la version initiale (ADR 025).
+  const current = await listCurrentTerms(
+    contracts.map((contract) => contract.id),
+    todayIsoDate(timeZone),
+  )
+  const amountOf = (contract: (typeof contracts)[number]) =>
+    current.get(contract.id)?.amountCents ?? contract.amountCents
+  const resourceCodeOf = (contract: (typeof contracts)[number]) =>
+    current.has(contract.id) ? current.get(contract.id)?.resourceCode : contract.resource?.code
   const filterHref = (value?: ContractStatus) => {
     const query = new URLSearchParams()
     if (value) query.set('statut', value)
@@ -43,7 +59,7 @@ export default async function ContractsPage({
     ? 0
     : contracts
         .filter((contract) => contract.status === 'active' && contract.billingPeriod === 'monthly')
-        .reduce((total, contract) => total + contract.amountCents, 0)
+        .reduce((total, contract) => total + amountOf(contract), 0)
 
   return (
     <div className="flex flex-col gap-6">
@@ -55,12 +71,20 @@ export default async function ContractsPage({
           </p>
         </div>
         {can(member.role, 'contrats.creer') && (
-          <Link
-            href="/contrats/nouveau"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-          >
-            Nouveau contrat
-          </Link>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/contrats/nouveau/offre"
+              className="rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
+            >
+              Depuis une offre
+            </Link>
+            <Link
+              href="/contrats/nouveau"
+              className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+            >
+              Nouveau contrat
+            </Link>
+          </div>
         )}
       </div>
 
@@ -160,8 +184,8 @@ export default async function ContractsPage({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">
                     {contractTypeLabels[contract.contractType]}
-                    {contract.resource && (
-                      <span className="ml-2 text-xs">{contract.resource.code}</span>
+                    {resourceCodeOf(contract) && (
+                      <span className="ml-2 text-xs">{resourceCodeOf(contract)}</span>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 tabular text-muted-foreground">
@@ -171,7 +195,7 @@ export default async function ContractsPage({
                     })}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">
-                    {formatCents(contract.amountCents, contract.currency)}{' '}
+                    {formatCents(amountOf(contract), contract.currency)}{' '}
                     <span className="text-xs text-muted-foreground">
                       {billingPeriodSuffixes[contract.billingPeriod]}
                     </span>

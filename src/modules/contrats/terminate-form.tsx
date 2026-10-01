@@ -18,10 +18,17 @@ export function TerminateForm({
   contractId,
   defaultTerminatedOn,
   noticeDays,
+  commitmentEndsOn = null,
 }: {
   contractId: string
   defaultTerminatedOn: string
   noticeDays: number
+  /**
+   * Dernier jour d'engagement (ADR 023), au format « 09/03/2027 ». Une fin
+   * plus tôt reste possible d'un commun accord : le formulaire le signale, la
+   * base ne la refuse pas.
+   */
+  commitmentEndsOn?: string | null
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     terminateContractAction,
@@ -68,6 +75,8 @@ export function TerminateForm({
           />
           <p id="terminatedOn-hint" className="mt-1 text-xs text-muted-foreground">
             Préavis de {noticeDays} jours à compter d’aujourd’hui.
+            {commitmentEndsOn &&
+              ` Engagement jusqu’au ${commitmentEndsOn} : une fin plus tôt est une résiliation anticipée, d’un commun accord avec le client.`}
           </p>
         </div>
         <div>

@@ -1,4 +1,5 @@
 import { parseAmountToCents } from '../facturation/tarifs.ts'
+import { parsePercentToBp } from './lignes.ts'
 import type { ContractInput } from './queries.ts'
 import {
   billingPeriods,
@@ -27,6 +28,10 @@ export const contractFields = [
   'noticeDays',
   'ratePlanId',
   'notes',
+  'vatRate',
+  'commitmentMonths',
+  'tacitRenewal',
+  'renewalMonths',
 ] as const
 export type ContractField = (typeof contractFields)[number]
 
@@ -43,6 +48,55 @@ export const contractFieldLabels: Record<ContractField, string> = {
   noticeDays: 'Préavis',
   ratePlanId: 'Grille tarifaire',
   notes: 'Notes',
+  vatRate: 'TVA',
+  commitmentMonths: 'Engagement',
+  tacitRenewal: 'Reconduction tacite',
+  renewalMonths: 'Durée de reconduction',
+}
+
+/** Durée d'engagement ou de reconduction : 1 à 120 mois (`contracts_commitment_valid`). */
+const MAX_MONTHS = 120
+
+/**
+ * Engagement, reconduction et TVA d'un contrat (R10, ADR 023), partagés par
+ * le formulaire manuel et la création depuis une offre. Vide, un engagement
+ * vaut « sans engagement » ; la TVA vide vaut 20 %.
+ */
+export function readContractTerms(values: {
+  vatRate: string
+  commitmentMonths: string
+  tacitRenewal: string
+  renewalMonths: string
+}): {
+  errors: Partial<Record<'vatRate' | 'commitmentMonths' | 'renewalMonths', string>>
+  terms: Pick<ContractInput, 'vatRateBp' | 'commitmentMonths' | 'tacitRenewal' | 'renewalMonths'>
+} {
+  const errors: Partial<Record<'vatRate' | 'commitmentMonths' | 'renewalMonths', string>> = {}
+  const vatRateBp = values.vatRate === '' ? 2000 : parsePercentToBp(values.vatRate)
+  if (vatRateBp === undefined) errors.vatRate = 'Un taux de 0 à 100. Exemple : 20 ou 5,5'
+
+  const months = (value: string) =>
+    /^\d+$/.test(value) && Number(value) >= 1 && Number(value) <= MAX_MONTHS ? Number(value) : undefined
+  const commitmentMonths = values.commitmentMonths === '' ? null : months(values.commitmentMonths)
+  if (commitmentMonths === undefined) {
+    errors.commitmentMonths = `Un nombre entier de mois, de 1 à ${MAX_MONTHS}, ou vide.`
+  }
+
+  const tacitRenewal = values.tacitRenewal === 'on'
+  const renewalMonths = tacitRenewal ? months(values.renewalMonths) : null
+  if (renewalMonths === undefined) {
+    errors.renewalMonths = `Indiquez la durée de chaque reconduction, de 1 à ${MAX_MONTHS} mois.`
+  }
+
+  return {
+    errors,
+    terms: {
+      vatRateBp: vatRateBp ?? 2000,
+      commitmentMonths: commitmentMonths ?? null,
+      tacitRenewal,
+      renewalMonths: renewalMonths ?? null,
+    },
+  }
 }
 
 export type ContractFormValues = Record<ContractField, string>
@@ -89,7 +143,7 @@ export function readContractForm(
   mode: 'create' | 'update',
 ): ContractFormResult {
   const values = Object.fromEntries(
-    contractFields.map((field) => [field, read(field).trim()]),
+    contractFields.map((field) => [field, (read(field) ?? '').trim()]),
   ) as ContractFormValues
   const errors: ContractFieldErrors = {}
 
@@ -136,6 +190,9 @@ export function readContractForm(
     errors.ratePlanId = 'Grille inconnue.'
   }
 
+  const { errors: termErrors, terms } = readContractTerms(values)
+  Object.assign(errors, termErrors)
+
   if (Object.keys(errors).length > 0 || amountCents === undefined) {
     return { ok: false, fieldErrors: errors, values }
   }
@@ -155,6 +212,7 @@ export function readContractForm(
       resourceId: values.resourceId || null,
       noticeDays,
       notes: values.notes || null,
+      ...terms,
     },
   }
 }

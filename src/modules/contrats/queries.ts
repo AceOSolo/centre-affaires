@@ -6,9 +6,11 @@ import { tenants } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients, type Client } from '../clients/schema.ts'
+import { subscribedServices } from '../facturation/schema-factures.ts'
 import { ratePlans, type RatePlan } from '../facturation/schema.ts'
 import { bookings, type Booking } from '../reservations/schema.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
+import { archiveContractDocument } from './documents.ts'
 import { contractRange, formatCalendarDate, type ContractPeriod } from './occupation.ts'
 import {
   contracts,
@@ -17,6 +19,12 @@ import {
   type ContractStatus,
   type ContractType,
 } from './schema.ts'
+import {
+  alignDraftSubscriptions,
+  archiveContractSubscriptions,
+  endContractSubscriptions,
+  restoreContractSubscriptions,
+} from './souscriptions.ts'
 
 /** Un contrat et ce qu'il désigne, tel que les écrans l'affichent. */
 export type ContractWithRelations = Contract & {
@@ -101,6 +109,27 @@ export type ContractInput = {
   resourceId?: string | null
   noticeDays?: number
   notes?: string | null
+  /** TVA d'un contrat sans ligne, en points de base ; 20 % par défaut en base. */
+  vatRateBp?: number
+  /** Engagement en mois (ADR 023) ; nul : sans engagement. */
+  commitmentMonths?: number | null
+  /** Reconduction tacite, par périodes de `renewalMonths` (les deux ensemble). */
+  tacitRenewal?: boolean
+  renewalMonths?: number | null
+  /** Offre dont le contrat est tiré (ADR 024). */
+  offerId?: string | null
+}
+
+/** Champs d'engagement et de TVA écrits seulement quand la saisie les porte. */
+function termsColumns(input: ContractInput) {
+  return {
+    ...(input.vatRateBp !== undefined && { vatRateBp: input.vatRateBp }),
+    ...(input.commitmentMonths !== undefined && { commitmentMonths: input.commitmentMonths }),
+    ...(input.tacitRenewal !== undefined && {
+      tacitRenewal: input.tacitRenewal,
+      renewalMonths: input.tacitRenewal ? (input.renewalMonths ?? null) : null,
+    }),
+  }
 }
 
 /** Levée quand la référence saisie est déjà portée par un contrat du centre. */
@@ -114,32 +143,42 @@ export class DuplicateReferenceError extends Error {
   }
 }
 
+/** Insère un brouillon dans la transaction de l'appelant. */
+export async function insertContract(tx: Transaction, input: ContractInput): Promise<Contract> {
+  const [created] = await tx
+    .insert(contracts)
+    .values({
+      ...input,
+      ...termsColumns(input),
+      // `undefined` laisse agir la valeur par défaut de la colonne,
+      // `next_contract_reference()` (ADR 021).
+      reference: input.reference || undefined,
+      currency: input.currency || 'EUR',
+      endsOn: input.endsOn || null,
+      ratePlanId: input.ratePlanId || null,
+      resourceId: input.resourceId || null,
+      noticeDays: input.noticeDays ?? 90,
+      offerId: input.offerId || null,
+    })
+    .returning()
+  return created
+}
+
+/** Une référence saisie à la main, déjà portée : l'erreur du formulaire. */
+export function referenceRefusal(error: unknown, reference: string | undefined): unknown {
+  // Une référence attribuée par la base n'entre pas en collision : la
+  // fonction saute les numéros déjà portés. Seule une saisie manuelle le peut.
+  if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && reference) {
+    return new DuplicateReferenceError(reference)
+  }
+  return error
+}
+
 export async function createContract(input: ContractInput): Promise<Contract> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
-        .insert(contracts)
-        .values({
-          ...input,
-          // `undefined` laisse agir la valeur par défaut de la colonne,
-          // `next_contract_reference()` (ADR 021).
-          reference: input.reference || undefined,
-          currency: input.currency || 'EUR',
-          endsOn: input.endsOn || null,
-          ratePlanId: input.ratePlanId || null,
-          resourceId: input.resourceId || null,
-          noticeDays: input.noticeDays ?? 90,
-        })
-        .returning(),
-    )
-    return created
+    return await withTenant(currentTenantId(), (tx) => insertContract(tx, input))
   } catch (error) {
-    // Une référence attribuée par la base n'entre pas en collision : la
-    // fonction saute les numéros déjà portés. Seule une saisie manuelle le peut.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && input.reference) {
-      throw new DuplicateReferenceError(input.reference)
-    }
-    throw error
+    throw referenceRefusal(error, input.reference)
   }
 }
 
@@ -157,8 +196,20 @@ export async function updateDraftContract(
   input: ContractInput & { reference: string },
 ): Promise<boolean> {
   try {
-    const updated = await withTenant(currentTenantId(), (tx) =>
-      tx
+    return await withTenant(currentTenantId(), async (tx) => {
+      // Une souscription rattachée au brouillon (actes inclus d'une offre)
+      // désigne son client par clé étrangère, archivée comprise : le client
+      // ne change plus (ADR 024).
+      const [subscribed] = await tx
+        .select({ clientId: subscribedServices.clientId })
+        .from(subscribedServices)
+        .where(eq(subscribedServices.contractId, id))
+        .limit(1)
+      if (subscribed && subscribed.clientId !== input.clientId) {
+        throw new ContractClientLockedError()
+      }
+
+      const updated = await tx
         .update(contracts)
         .set({
           clientId: input.clientId,
@@ -173,18 +224,32 @@ export async function updateDraftContract(
           resourceId: input.resourceId || null,
           noticeDays: input.noticeDays ?? 90,
           notes: input.notes ?? null,
+          ...termsColumns(input),
         })
         .where(
           and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
         )
-        .returning({ id: contracts.id }),
-    )
-    return updated.length > 0
+        .returning({ id: contracts.id, startsOn: contracts.startsOn, endsOn: contracts.endsOn })
+      if (updated.length === 0) return false
+      // Les actes inclus suivent les dates du brouillon.
+      await alignDraftSubscriptions(tx, updated[0])
+      return true
+    })
   } catch (error) {
     if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
       throw new DuplicateReferenceError(input.reference)
     }
     throw error
+  }
+}
+
+/** Levée quand on change le client d'un brouillon qui porte des souscriptions. */
+export class ContractClientLockedError extends Error {
+  constructor() {
+    super(
+      'Ce brouillon porte des services souscrits pour son client (actes inclus de l’offre) : il ne change plus de client. Archivez-le et créez un nouveau contrat pour l’autre client.',
+    )
+    this.name = 'ContractClientLockedError'
   }
 }
 
@@ -222,7 +287,7 @@ async function centreTimeZone(tx: Transaction): Promise<string | undefined> {
  * annulées exclues. Sert à nommer le conflit, jamais à autoriser l'écriture :
  * c'est la contrainte qui tranche (décision 3).
  */
-async function selectOccupationConflicts(
+export async function selectOccupationConflicts(
   tx: Transaction,
   contractId: string,
   candidate: ContractPeriod & { resourceId: string },
@@ -302,22 +367,31 @@ export async function findContractOccupation(contractId: string): Promise<Bookin
 
 /**
  * Passage à l'état actif : le contrat devient facturable et occupe sa
- * ressource (ADR 018). Rend `false` si le contrat n'était plus un brouillon.
+ * ressource (ADR 018). Dans la même transaction, le document du contrat est
+ * archivé : l'instantané de ce qui est remis au client, avec son empreinte
+ * (ADR 025). Rend `false` si le contrat n'était plus un brouillon.
+ *
+ * `generatedBy` : le membre de l'équipe qui active ; nul pour un script.
  *
  * @throws ContractOccupationConflictError si la ressource est déjà occupée sur
- * la période : le contrat reste alors en brouillon.
+ * la période : le contrat reste alors en brouillon, sans document.
  */
-export async function activateContract(id: string): Promise<boolean> {
-  const activated = await writeContract(id, (tx) =>
-    tx
+export async function activateContract(
+  id: string,
+  generatedBy: string | null = null,
+): Promise<boolean> {
+  return writeContract(id, async (tx) => {
+    const activated = await tx
       .update(contracts)
       .set({ status: 'active' })
       .where(
         and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
       )
-      .returning({ id: contracts.id }),
-  )
-  return activated.length > 0
+      .returning({ id: contracts.id })
+    if (activated.length === 0) return false
+    await archiveContractDocument(tx, { contractId: id, amendmentId: null, generatedBy })
+    return true
+  })
 }
 
 /**
@@ -330,8 +404,8 @@ export class ContractAlreadyStartedError extends Error {
 
   constructor(startsOn: string) {
     super(
-      `Ce contrat a commencé le ${formatCalendarDate(startsOn)} : sa ressource ne change plus. ` +
-        'Pour passer sur une autre ressource, résiliez-le, puis créez un nouveau contrat sur celle-ci.',
+      `Ce contrat a commencé le ${formatCalendarDate(startsOn)} : sa ressource ne change plus ici. ` +
+        'Pour passer sur une autre ressource, établissez un avenant de changement de ressource, à sa date d’effet.',
     )
     this.name = 'ContractAlreadyStartedError'
     this.startsOn = startsOn
@@ -403,14 +477,18 @@ export async function changeContractResource(
  * (ADR 021).
  */
 export async function archiveContract(id: string): Promise<boolean> {
-  const archived = await withTenant(currentTenantId(), (tx) =>
-    tx
+  return withTenant(currentTenantId(), async (tx) => {
+    const archived = await tx
       .update(contracts)
       .set({ deletedAt: sql`now()` })
       .where(and(eq(contracts.id, id), isNull(contracts.deletedAt)))
-      .returning({ id: contracts.id }),
-  )
-  return archived.length > 0
+      .returning({ id: contracts.id })
+    if (archived.length === 0) return false
+    // Les actes inclus du contrat sont archivés au même instant (`now()` est
+    // celui de la transaction) : le désarchivage les retrouve ainsi.
+    await archiveContractSubscriptions(tx, id)
+    return true
+  })
 }
 
 /**
@@ -422,13 +500,16 @@ export async function archiveContract(id: string): Promise<boolean> {
  */
 export async function restoreContract(id: string): Promise<boolean> {
   try {
-    const restored = await writeContract(id, (tx) =>
-      tx
+    const restored = await writeContract(id, async (tx) => {
+      // Avant de lever l'archivage : les souscriptions se reconnaissent à
+      // l'instant d'archivage du contrat.
+      await restoreContractSubscriptions(tx, id)
+      return tx
         .update(contracts)
         .set({ deletedAt: null })
         .where(and(eq(contracts.id, id), isNotNull(contracts.deletedAt)))
-        .returning({ id: contracts.id }),
-    )
+        .returning({ id: contracts.id })
+    })
     return restored.length > 0
   } catch (error) {
     if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) throw error
@@ -462,8 +543,8 @@ export async function terminateContract(
   // `writeContract` nomme alors ce qui bloque au lieu d'une erreur brute.
   const terminated = await writeContract(
     id,
-    (tx) =>
-      tx
+    async (tx) => {
+      const rows = await tx
         .update(contracts)
         .set({
           status: 'terminated',
@@ -473,7 +554,16 @@ export async function terminateContract(
         .where(
           and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
         )
-        .returning({ id: contracts.id }),
+        .returning({ id: contracts.id, endsOn: contracts.endsOn })
+      // Les actes inclus du contrat prennent fin avec lui (ADR 024), au
+      // dernier jour effectif : le plus proche du terme et de la résiliation.
+      const [row] = rows
+      if (row) {
+        const lastDay = row.endsOn && row.endsOn < terminatedOn ? row.endsOn : terminatedOn
+        await endContractSubscriptions(tx, id, lastDay)
+      }
+      return rows
+    },
     { terminatedOn },
   )
   return terminated.length > 0

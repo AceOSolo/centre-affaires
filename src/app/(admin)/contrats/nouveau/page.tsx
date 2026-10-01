@@ -29,6 +29,16 @@ export default async function NewContractPage({
           ← Contrats
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau contrat</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Saisie à la main, d’un montant global. Pour partir d’une offre groupée et de ses lignes :{' '}
+          <Link
+            href="/contrats/nouveau/offre"
+            className="font-medium text-primary underline-offset-2 hover:underline"
+          >
+            nouveau contrat depuis une offre
+          </Link>
+          .
+        </p>
       </div>
       <ContractForm
         clients={clients}
