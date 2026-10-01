@@ -4,8 +4,17 @@ import { formatTime, toWallClock } from '../../lib/dates.ts'
 import { weekdayLabels } from '../ressources/labels.ts'
 import type { TimeRange } from '../ressources/ouverture.ts'
 import type { Resource } from '../ressources/schema.ts'
-import { bookingBlockStyles, bookingStatusLabels } from './labels.ts'
+import {
+  bookingBlockClass,
+  bookingFocus,
+  bookingHref,
+  bookingLabel,
+  bookingTimeLabel,
+} from './affichage.ts'
+import { newBookingHref, planningHref, type PlanningFilters } from './filtres.ts'
+import { bookingStatusLabels } from './labels.ts'
 import { blockGeometry, hourTicks, planningHeightPx } from './planning.ts'
+import { isOpenEndedBooking } from './schema.ts'
 import type { BookingWithResource } from './queries.ts'
 import type { WeekColumn } from './semaine.ts'
 
@@ -24,6 +33,7 @@ export function WeekPlanning({
   bookings,
   opening,
   today,
+  filters = {},
 }: {
   resource: Resource
   timeZone: string
@@ -32,6 +42,8 @@ export function WeekPlanning({
   /** Plages d'ouverture, par jour ISO. */
   opening: Record<string, TimeRange[]>
   today: string
+  /** Filtres du planning, conservés dans les liens (ADR 017). */
+  filters?: PlanningFilters
 }) {
   const occupying = bookings.filter((booking) => booking.status !== 'cancelled')
   // La graduation vient de la première colonne : toutes ont la même amplitude
@@ -82,7 +94,7 @@ export function WeekPlanning({
                   )}
                 </div>
                 <Link
-                  href={`/reservations?date=${column.isoDate}`}
+                  href={planningHref('jour', { ...filters, date: column.isoDate })}
                   className="truncate text-xs text-muted-foreground underline-offset-2 hover:underline"
                 >
                   {column.isoDate.slice(8)}/{column.isoDate.slice(5, 7)}
@@ -127,7 +139,12 @@ export function WeekPlanning({
                   return (
                     <Link
                       key={tick.instant.toISOString()}
-                      href={`/reservations/nouvelle?date=${column.isoDate}&resourceId=${resource.id}&start=${startTime}`}
+                      href={newBookingHref({
+                        date: column.isoDate,
+                        resourceId: resource.id,
+                        start: startTime,
+                        client: filters.client,
+                      })}
                       aria-label={`Réserver ${resource.name} le ${column.isoDate} à ${startTime}`}
                       className="absolute inset-x-0 hover:bg-muted/60"
                       style={{
@@ -141,23 +158,28 @@ export function WeekPlanning({
                 {duJour.map((booking) => {
                   const geometry = blockGeometry(booking, column.window)
                   if (!geometry) return null
-                  const status = booking.status as Exclude<typeof booking.status, 'cancelled'>
+                  const focus = bookingFocus(booking, filters.client)
+                  const label = focus === 'autre' ? 'Occupé' : bookingLabel(booking)
                   return (
                     <Link
                       key={booking.id}
-                      href={`/reservations/${booking.id}`}
-                      className={`absolute inset-x-1 z-10 block overflow-hidden rounded border-l-4 px-2 py-1 text-xs hover:brightness-95 ${bookingBlockStyles[status]}`}
+                      href={bookingHref(booking)}
+                      title={label}
+                      className={`absolute inset-x-1 z-10 block overflow-hidden rounded border-l-4 px-2 py-1 text-xs hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${bookingBlockClass(booking, focus)}`}
                       style={{
                         top: `${geometry.topPercent}%`,
                         height: `${geometry.heightPercent}%`,
                       }}
                     >
-                      <div className="truncate font-medium">{booking.title}</div>
+                      <div className="truncate font-medium">{label}</div>
                       <div className="truncate tabular-nums opacity-80">
-                        {formatTime(booking.startsAt, timeZone)}
+                        {bookingTimeLabel(booking, column.isoDate, timeZone)}
                       </div>
-                      {status === 'pending' && (
+                      {booking.status === 'pending' && (
                         <div className="truncate opacity-80">{bookingStatusLabels.pending}</div>
+                      )}
+                      {booking.kind === 'contract' && isOpenEndedBooking(booking) && (
+                        <div className="truncate opacity-80">Sans terme</div>
                       )}
                     </Link>
                   )

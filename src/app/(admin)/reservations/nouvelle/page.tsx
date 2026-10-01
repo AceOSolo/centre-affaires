@@ -4,7 +4,9 @@ import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
 import { occupiesResource } from '../../../../modules/reservations/availability.ts'
+import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
 import { BookingForm } from '../../../../modules/reservations/booking-form.tsx'
+import { newBookingHref } from '../../../../modules/reservations/filtres.ts'
 import { loadWeekCalendar } from '../../../../modules/reservations/calendar-data.ts'
 import { listBookingsBetween } from '../../../../modules/reservations/queries.ts'
 import { weekDays, weekStart } from '../../../../modules/reservations/semaine.ts'
@@ -27,9 +29,9 @@ const WALL_TIME = /^\d{2}:\d{2}$/
 export default async function NewBookingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; resourceId?: string; start?: string }>
+  searchParams: Promise<{ date?: string; resourceId?: string; start?: string; clientId?: string }>
 }) {
-  const { date, resourceId, start } = await searchParams
+  const { date, resourceId, start, clientId } = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)
   const resources = await listBookableResources()
@@ -65,12 +67,15 @@ export default async function NewBookingPage({
     .filter((booking) => booking.resourceId === resource.id && occupiesResource(booking.status))
     .map((booking) => ({
       id: booking.id,
-      title: booking.title,
+      // « Occupé — contrat CT-… » plutôt que le titre brut de l'occupation.
+      title: bookingLabel(booking),
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
     }))
 
   const lundi = weekStart(defaultDate)
+  // Client pré-choisi depuis un planning filtré (ADR 017), s'il existe encore.
+  const defaultClientId = clients.some((client) => client.id === clientId) ? clientId : undefined
 
   return (
     <div className="flex flex-col gap-6">
@@ -106,6 +111,7 @@ export default async function NewBookingPage({
           </div>
           <input type="hidden" name="date" value={defaultDate} />
           {start && WALL_TIME.test(start) && <input type="hidden" name="start" value={start} />}
+          {defaultClientId && <input type="hidden" name="clientId" value={defaultClientId} />}
           <button
             type="submit"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
@@ -118,17 +124,20 @@ export default async function NewBookingPage({
           <SemaineLink
             date={addDaysToIsoDate(lundi, -7)}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="← Semaine précédente"
           />
           <SemaineLink
             date={today}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="Cette semaine"
             active={weekStart(today) === lundi}
           />
           <SemaineLink
             date={addDaysToIsoDate(lundi, 7)}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="Semaine suivante →"
           />
         </nav>
@@ -144,6 +153,7 @@ export default async function NewBookingPage({
         defaultDate={defaultDate}
         defaultStartTime={start && WALL_TIME.test(start) ? start : undefined}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
+        defaultClientId={defaultClientId}
       />
     </div>
   )
@@ -152,17 +162,19 @@ export default async function NewBookingPage({
 function SemaineLink({
   date,
   resourceId,
+  clientId,
   label,
   active,
 }: {
   date: string
   resourceId: string
+  clientId?: string
   label: string
   active?: boolean
 }) {
   return (
     <Link
-      href={`/reservations/nouvelle?date=${date}&resourceId=${resourceId}`}
+      href={newBookingHref({ date, resourceId, client: clientId })}
       aria-current={active ? 'date' : undefined}
       className={`rounded-md border px-3 py-1.5 text-sm ${
         active

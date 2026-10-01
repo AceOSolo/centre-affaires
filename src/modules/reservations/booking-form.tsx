@@ -51,6 +51,7 @@ export function BookingForm({
   defaultDate,
   defaultStartTime,
   clients = [],
+  defaultClientId,
 }: {
   /** Ressource affichée par le calendrier ; le choix se fait au-dessus. */
   resource: Resource
@@ -64,6 +65,8 @@ export function BookingForm({
   today: string
   defaultDate: string
   defaultStartTime?: string
+  /** Client pré-choisi, quand on vient d'un planning filtré sur lui (ADR 017). */
+  defaultClientId?: string
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(createBookingAction, null)
   const [date, setDate] = useState(defaultDate)
@@ -203,7 +206,7 @@ export function BookingForm({
             <select
               id="clientId"
               name="clientId"
-              defaultValue=""
+              defaultValue={defaultClientId ?? ''}
               aria-describedby="clientId-hint"
               className={`${fieldClass} mt-1`}
             >
