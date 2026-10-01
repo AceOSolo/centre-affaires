@@ -1,8 +1,8 @@
 # ADR 020 — Chiffrement et conservation des documents
 
 **Date** : 2026-10-01
-**Statut** : accepté (partie données ; la mise en œuvre du chiffrement sera
-ajoutée à cet ADR)
+**Statut** : accepté (modèle de données le 2026-10-01 ; mise en œuvre du
+chiffrement, du contrôle de région et de la purge ajoutée ci-dessous)
 
 ## Contexte
 
@@ -86,6 +86,188 @@ C'est le modèle de `purge_expired_mail_scan_views()` (migration 0024) :
 l'application déclenche, la fonction seule choisit quoi effacer. L'appel est à
 ajouter à la tâche nocturne `/api/maintenance/conservation`, à côté de la purge
 du courrier.
+
+## Mise en œuvre
+
+Ajoutée par la tranche sécurité de la vague 1 (R22, R33, fin de B4). Aucune
+dépendance : tout vient de `node:crypto`.
+
+### Format d'un objet chiffré
+
+`src/lib/chiffrement-documents.ts`, en AES-256-GCM :
+
+| Octets | Contenu |
+| --- | --- |
+| 4 | `CAD1` : marque du format, version 1 |
+| 2 | version de la clé, entier non signé gros-boutiste |
+| 12 | vecteur d'initialisation, tiré au hasard pour chaque objet |
+| n | document chiffré |
+| 16 | étiquette d'authentification |
+
+Les données associées (authentifiées, non chiffrées) sont l'en-tête et la clé
+de l'objet dans le stockage (`storage_key`). Conséquences :
+
+- un chiffré recopié sous la clé d'un autre document est refusé : qui peut
+  écrire dans le stockage ne peut pas faire lire à un client le courrier d'un
+  autre ;
+- modifier la version inscrite dans l'en-tête fait échouer l'authentification.
+
+Aucun PDF, JPEG ou PNG ne commence par `CAD1`. C'est ce qui permet de
+reconnaître un objet chiffré à son contenu, et non seulement à la base.
+
+L'objet est déposé en `application/octet-stream`. `content_type` et
+`byte_size` décrivent le document en clair (voir plus haut).
+
+**Pourquoi pas `sealSecret`.** Il encode en base64, ce qui ajoute un tiers au
+poids de chaque scan, et sa clé est celle des jetons de tiers. Deux clés
+séparées ont deux avantages : la fuite de l'une n'ouvre pas l'autre, et chacune
+tourne à son rythme.
+
+### Clés
+
+Trois variables, distinctes de `SECRETS_ENCRYPTION_KEY` :
+
+- `DOCUMENTS_ENCRYPTION_KEY` : 32 octets en base64, la clé courante. Elle
+  chiffre tout nouveau dépôt.
+- `DOCUMENTS_ENCRYPTION_KEY_VERSION` : son numéro, inscrit sur l'objet et dans
+  `encryption_key_version`.
+- `DOCUMENTS_ENCRYPTION_KEY_<N>` : les clés précédentes, présentes le temps
+  d'une rotation.
+
+Le trousseau est relu à chaque usage. Deux clés différentes sous un même numéro
+le rendent invalide : c'est l'oubli typique d'une rotation.
+
+Comportement selon la configuration :
+
+- **sans clé, aucun dépôt** : jamais de repli en clair ; l'accueil voit un
+  message qui le dit ;
+- **objet hérité en clair** (version nulle) : il se relit sans clé.
+
+Chaque environnement a sa propre clé. Une branche créée depuis la production
+copie donc des objets qu'elle ne peut pas lire : c'est ce qui lève B3, une fois
+la reprise faite.
+
+La clé de production est sauvegardée hors du serveur et jamais à côté des
+sauvegardes du stockage (`infra/serveur/README.md`, « Chiffrement des
+documents »). La perdre, c'est perdre les documents.
+
+### Écriture et lecture
+
+**Au dépôt.** `store()` (`courrier/queries.ts`) chiffre chaque fichier avant
+`putObject` et inscrit la version sur la ligne. Le chiffrement a lieu avant le
+premier envoi : sans clé, rien ne part.
+
+**À la lecture.** `serveScan()` (`courrier/servir.ts`) suit cet ordre :
+
+1. lire l'objet entier (`readObjectBytes`) ;
+2. le déchiffrer ;
+3. inscrire la consultation au journal ;
+4. envoyer le document.
+
+Il n'y a plus de flux, car GCM n'authentifie qu'à la dernière étiquette :
+servir au fil de l'eau rendrait des octets avant d'avoir vérifié leur
+intégrité. Un scan pèse au plus 10 Mo.
+
+Un document qui échoue à la vérification n'est ni envoyé ni journalisé.
+L'application rend une erreur 500 en texte, qui dit que le document est
+refusé, et écrit l'identifiant et la cause dans les journaux du serveur. Cela
+couvre quatre cas :
+
+- un document altéré ;
+- un document chiffré avec une autre clé ;
+- une version de clé absente de l'environnement ;
+- un objet en clair là où la base attend un chiffré. L'accepter permettrait de
+  substituer un document en écrivant dans le stockage.
+
+Un cas reste lisible : une ligne de version nulle dont l'objet porte
+l'en-tête. C'est une reprise interrompue entre l'écriture du chiffré et celle
+de la base. L'objet est déchiffré, et authentifié, avec la version de son
+en-tête.
+
+### Reprise des objets existants et rotation
+
+Le script `infra/chiffrer-documents.ts` s'appuie sur
+`courrier/reprise-chiffrement.ts`. Il fonctionne en essai à blanc par défaut,
+et applique avec `--appliquer`. Il sélectionne les numérisations actives non
+chiffrées avec la clé courante : les objets en clair, et ceux d'une clé
+précédente après une rotation. Pour chacune :
+
+1. Il verrouille la ligne (`for update skip locked`, une transaction par
+   objet).
+2. Il lit l'objet et le déchiffre s'il y a lieu.
+3. Il vérifie que la taille correspond à `byte_size`.
+4. Il rechiffre l'objet avec la clé courante et le réécrit **à la même clé de
+   stockage**.
+5. Il enregistre la version.
+
+Réécrire à la même clé de stockage évite qu'une copie en clair survive à côté
+de la version chiffrée, et la ligne garde sa `storage_key`. Le script se rejoue
+sans risque. Un objet déjà chiffré avec la clé courante, laissé par une reprise
+interrompue, est authentifié puis enregistré sans être réécrit.
+
+Certains objets ne sont pas touchés, mais signalés pour qu'une personne les
+examine :
+
+- un objet absent du stockage ;
+- un objet de taille inattendue ;
+- un objet qui échoue à l'authentification.
+
+Le script tourne sur le serveur, dans un conteneur Node jetable qui lit le
+`.env` de production : la clé ne quitte pas le serveur. Il se connecte avec
+`app_centre`, sous la RLS, pour un centre à la fois (`--centre`, par défaut le
+centre unique).
+
+### Exiger la version pour les nouveaux objets
+
+Une migration ultérieure, hors de la vague 1 dont le schéma est figé, ajoutera
+la contrainte suivante, une fois que la reprise en production ne trouve plus
+rien :
+
+```sql
+check (encryption_key_version is not null or deleted_at is not null)
+```
+
+Les lignes purgées gardent une version nulle : leur objet n'existe plus. À ce
+moment, la lecture d'un objet en clair pourra être retirée de
+`openDocument()`.
+
+### Région du stockage (R33)
+
+`src/lib/stockage.ts` refuse de créer son client si `AWS_REGION` n'est pas une
+région de l'Union européenne. L'erreur nomme la région reçue et la liste des
+régions acceptées. Le contrôle a lieu avant toute connexion : une région hors
+de l'Union ne reçoit jamais un octet.
+
+La liste est fermée, au nommage AWS, celui de Neon (`eu-central-1`, Francfort,
+pour ce projet). Un préfixe `eu-` laisserait passer Londres (`eu-west-2`) et
+Zurich (`eu-central-2`), qui sont hors de l'Union. Changer de fournisseur S3
+demande d'ajouter ses régions à la liste, avec leur test.
+
+### Purge des demandes publiques (fin de B4)
+
+`/api/maintenance/conservation` appelle
+`anonymize_expired_public_requests()` (`reservations/conservation.ts`) dans sa
+propre transaction, avant la purge du courrier. Une panne du stockage
+n'empêche donc pas l'effacement des coordonnées. La réponse ajoute
+`publicRequests`, le nombre de demandes anonymisées.
+
+La durée se règle avec celles du courrier, dans `infra/configurer-centre.mjs`.
+La fiche d'une réservation anonymisée indique la date d'effacement des
+coordonnées.
+
+### Tests
+
+- `src/lib/chiffrement-documents.test.ts` : aller-retour, altération (contenu,
+  étiquette, vecteur, troncature, déplacement), objet hérité en clair,
+  mauvaise version de clé, lecture du trousseau.
+- `src/lib/stockage.test.ts` : régions acceptées et refusées, refus avant toute
+  connexion.
+- `src/modules/courrier/chiffrement.db.test.ts` : reprise (essai à blanc,
+  idempotence, interruption, rotation, objets absents ou altérés) et lecture
+  (déchiffrement, journal non écrit en cas de refus).
+- `src/app/api/maintenance/conservation/conservation.db.test.ts` : la route
+  anonymise les demandes échues, suit la durée du centre et reste introuvable
+  sans jeton.
 
 ## Justification
 
