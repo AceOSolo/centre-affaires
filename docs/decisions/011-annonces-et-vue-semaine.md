@@ -1,7 +1,8 @@
 # ADR 011 — Annonces publiques et vue semaine
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — la vue semaine est amendée par l'ADR 017 (semaine
+toutes ressources filtrée par type, vue mois)
 
 ## Contexte
 

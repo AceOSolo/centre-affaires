@@ -19,9 +19,9 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 
 | Réf. | Exigence | Statut | Ce qui manque | Effort | Phase |
 |---|---|---|---|---|---|
-| R01 | Catalogue multi-types, attributs, capacité | ◐ | Écran de modification d'une ressource ; numéro de casier | S | 1 |
+| R01 | Catalogue multi-types, attributs, capacité | ✅ | Fiche et modification livrées, attributs validés par type, numéro de casier. Reste : index unique du numéro de casier (vérifié en code) | S | 1 |
 | R02 | Calendrier par ressource, interne et client | ✅ | Les ressources occupées par contrat (bureau, boîte) paraissent libres — voir D6 | M | 1 |
-| R03 | Planning back-office | ◐ | Semaine toutes ressources (contre ADR 011), vue mois, filtre par type, filtre par client | L | 1 |
+| R03 | Planning back-office | ✅ | Semaine toutes ressources, vue mois en taux, filtres par type et par client, bascule jour / semaine / mois (ADR 017) | L | 1 |
 | R04 | Anti-chevauchement | ✅ | Tests de charge ; aucune exclusion sur `contracts.resource_id` | S–M | 1 |
 | R05 | Réservation : créneau, statut, canal, client, contrat | ◐ | Colonne canal, `contract_id` (`client_id` migré en 0023) | M | 1 |
 | R06 | États des lieux configurables avec photos | ○ | Tout : modèles de champs en base, inspections, photos compressées | L | 4 |

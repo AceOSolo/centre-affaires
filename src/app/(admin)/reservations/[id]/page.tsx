@@ -112,7 +112,21 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         )}
       </dl>
 
-      {!cancelled && (
+      {/* Une occupation de contrat se gère depuis son contrat : la déplacer ou
+          l'annuler ici serait refusé par la base (CA001, ADR 018). */}
+      {booking.kind === 'contract' && booking.contractId && (
+        <p className="rounded-md border border-border bg-white px-4 py-3 text-sm">
+          Occupation tenue par un contrat : elle suit ses dates et son statut.{' '}
+          <Link
+            href={`/contrats/${booking.contractId}`}
+            className="font-medium text-primary underline underline-offset-2"
+          >
+            Ouvrir le contrat
+          </Link>
+        </p>
+      )}
+
+      {!cancelled && booking.kind !== 'contract' && (
         <div>
           <Link
             href={`/reservations/${booking.id}/modifier`}
@@ -162,7 +176,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
 
       {/* Pas de suppression : la réservation reste consultable, l'annulation est
           sa suppression logique (décision 6). */}
-      {!cancelled && (
+      {!cancelled && booking.kind !== 'contract' && (
         <form
           action={cancelBookingAction}
           className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4"
