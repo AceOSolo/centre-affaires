@@ -148,6 +148,8 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
           title: input.title,
           notes: input.notes ?? null,
           clientId: input.clientId ?? null,
+          // Saisie du back-office (R05).
+          channel: 'staff',
         })
         .returning(),
     )
@@ -338,6 +340,9 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
           requesterEmail: input.requesterEmail.trim().toLowerCase(),
           requesterPhone: input.requesterPhone.trim(),
           clientId: input.clientId ?? null,
+          // Rattachée à son entreprise, la demande vient d'une personne
+          // connectée à son espace (ADR 015) ; sinon d'un visiteur (ADR 005).
+          channel: input.clientId ? 'client' : 'public',
         })
         .returning(),
     )

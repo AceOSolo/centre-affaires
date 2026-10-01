@@ -6,6 +6,7 @@ import {
   integer,
   pgEnum,
   pgTable,
+  smallint,
   text,
   timestamp,
   unique,
@@ -147,6 +148,18 @@ export const mailScans = pgTable(
     contentType: text('content_type').notNull(),
     byteSize: integer('byte_size').notNull(),
     uploadedBy: uuid('uploaded_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /**
+     * Chiffrement au repos de l'objet stocké (R22, ADR 020).
+     *
+     * Nul : objet déposé en clair, avant le chiffrement — il reste lisible tel
+     * quel le temps de la reprise. Sinon, la version de la clé avec laquelle
+     * l'objet a été chiffré : c'est elle qui choisit la clé au déchiffrement,
+     * et qui permet de changer de clé sans rendre illisibles les anciens objets.
+     *
+     * `content_type` et `byte_size` décrivent toujours le document en clair,
+     * celui que l'on rend à la lecture, pas le chiffré du stockage.
+     */
+    encryptionKeyVersion: smallint('encryption_key_version'),
     ...timestamps(),
     /** Purge au terme de la durée de conservation : le fichier part, la ligne reste. */
     deletedAt: deletedAt(),
@@ -168,6 +181,15 @@ export const mailScans = pgTable(
       sql`${table.contentType} in ('application/pdf', 'image/jpeg', 'image/png')`,
     ),
     check('mail_scans_byte_size_positive', sql`${table.byteSize} > 0`),
+    check(
+      'mail_scans_encryption_key_version_positive',
+      sql`${table.encryptionKeyVersion} is null or ${table.encryptionKeyVersion} > 0`,
+    ),
+    // File de la reprise : les objets encore en clair, du plus ancien au plus
+    // récent. Elle se vide à mesure qu'ils sont chiffrés.
+    index('mail_scans_unencrypted_idx')
+      .on(table.tenantId, table.createdAt)
+      .where(sql`encryption_key_version is null and deleted_at is null`),
   ],
 )
 

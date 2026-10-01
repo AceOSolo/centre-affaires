@@ -31,3 +31,13 @@ export const PG_UNIQUE_VIOLATION = '23505'
 export const PG_CHECK_VIOLATION = '23514'
 /** Clé étrangère : ressource absente, ou appartenant à un autre centre. */
 export const PG_FOREIGN_KEY_VIOLATION = '23503'
+/** `not null` : une colonne obligatoire omise, comme le canal d'une réservation. */
+export const PG_NOT_NULL_VIOLATION = '23502'
+/** Droit refusé au rôle applicatif : écrire un compteur de numérotation, par exemple. */
+export const PG_INSUFFICIENT_PRIVILEGE = '42501'
+/**
+ * Écriture directe d'une occupation de contrat (`bookings.kind = 'contract'`),
+ * refusée par le trigger `bookings_guard_contract_occupation` (migration 0026,
+ * ADR 018). Elle se modifie à travers son contrat.
+ */
+export const PG_CONTRACT_OCCUPATION_LOCKED = 'CA001'

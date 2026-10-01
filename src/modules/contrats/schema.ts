@@ -9,6 +9,7 @@ import {
   pgEnum,
   pgTable,
   text,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
@@ -42,8 +43,16 @@ export const contracts = pgTable(
     id: primaryKeyId(),
     tenantId: tenantId(),
     clientId: uuid('client_id').notNull(),
-    /** Référence lisible portée sur les documents : « DOM-2026-014 ». */
-    reference: text('reference').notNull(),
+    /**
+     * Référence lisible portée sur les documents.
+     *
+     * Omise à l'insertion, elle est attribuée par la base : `CT-2026-0001`, la
+     * suivante de la série du centre pour l'année en cours (ADR 021). Une
+     * référence saisie à la main reste acceptée — les contrats repris d'avant
+     * l'application gardent la leur. Passer une chaîne vide est refusé : il
+     * faut omettre la valeur (`undefined`) pour obtenir un numéro.
+     */
+    reference: text('reference').notNull().default(sql`next_contract_reference()`),
     contractType: contractTypeEnum('contract_type').notNull(),
     status: contractStatusEnum('status').notNull().default('draft'),
 
@@ -77,6 +86,9 @@ export const contracts = pgTable(
     deletedAt: deletedAt(),
   },
   (table) => [
+    // Cible de la clé étrangère composite de `bookings.contract_id` : une
+    // réservation ne peut pas se rattacher au contrat d'un autre centre.
+    unique('contracts_tenant_id_id_key').on(table.tenantId, table.id),
     foreignKey({
       name: 'contracts_client_fk',
       columns: [table.tenantId, table.clientId],
@@ -93,6 +105,7 @@ export const contracts = pgTable(
       foreignColumns: [resources.tenantId, resources.id],
     }).onDelete('restrict'),
 
+    check('contracts_reference_not_blank', sql`btrim(${table.reference}) <> ''`),
     check('contracts_amount_positive', sql`${table.amountCents} >= 0`),
     check('contracts_notice_positive', sql`${table.noticeDays} >= 0`),
     check(

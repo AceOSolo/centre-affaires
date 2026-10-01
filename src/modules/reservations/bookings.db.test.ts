@@ -8,8 +8,12 @@ import {
   PG_CHECK_VIOLATION,
   PG_EXCLUSION_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
+  PG_NOT_NULL_VIOLATION,
   pgErrorCode,
 } from '../../db/errors.ts'
+
+/** Valeur hors énumération. */
+const PG_INVALID_TEXT_REPRESENTATION = '22P02'
 import { createDatabase, withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 
@@ -52,8 +56,8 @@ describe('contraintes de la table bookings', { skip: raison }, () => {
         DEFAULT_TENANT_ID,
         (tx) =>
           tx.execute(sql`
-            insert into bookings (resource_id, starts_at, ends_at, title)
-            values (${RESOURCE_ID}, ${start}, ${end}, ${title})
+            insert into bookings (resource_id, channel, starts_at, ends_at, title)
+            values (${RESOURCE_ID}, 'staff', ${start}, ${end}, ${title})
           `),
         app.db,
       )
@@ -192,6 +196,36 @@ describe('contraintes de la table bookings', { skip: raison }, () => {
         )
       })
 
+      it('exige le canal de la réservation', async () => {
+        // Pas de valeur par défaut : chaque chemin d'écriture dit d'où il vient
+        // (R05, ADR 018).
+        const sansCanal = await errorCode(() =>
+          withTenant(
+            DEFAULT_TENANT_ID,
+            (tx) =>
+              tx.execute(sql`
+                insert into bookings (resource_id, starts_at, ends_at, title)
+                values (${RESOURCE_ID}, '2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'Sans canal')
+              `),
+            app.db,
+          ),
+        )
+        assert.equal(sansCanal, PG_NOT_NULL_VIOLATION)
+
+        const canalInconnu = await errorCode(() =>
+          withTenant(
+            DEFAULT_TENANT_ID,
+            (tx) =>
+              tx.execute(sql`
+                insert into bookings (resource_id, channel, starts_at, ends_at, title)
+                values (${RESOURCE_ID}, 'telephone', '2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'Canal inconnu')
+              `),
+            app.db,
+          ),
+        )
+        assert.equal(canalInconnu, PG_INVALID_TEXT_REPRESENTATION)
+      })
+
       it('refuse une annulation sans date d’annulation', async () => {
         await book('2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z')
         const code = await errorCode(() =>
@@ -279,8 +313,8 @@ describe('contraintes de la table bookings', { skip: raison }, () => {
             OTHER_TENANT_ID,
             (tx) =>
               tx.execute(sql`
-                insert into bookings (resource_id, starts_at, ends_at, title)
-                values (${RESOURCE_ID}, '2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'Fuite')
+                insert into bookings (resource_id, channel, starts_at, ends_at, title)
+                values (${RESOURCE_ID}, 'staff', '2026-10-01T09:00:00Z', '2026-10-01T10:00:00Z', 'Fuite')
               `),
             app.db,
           ),

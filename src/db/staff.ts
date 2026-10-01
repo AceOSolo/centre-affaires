@@ -22,6 +22,16 @@ export const staffRoles = ['admin', 'staff'] as const
 export type StaffRole = (typeof staffRoles)[number]
 export const staffRoleEnum = pgEnum('staff_role', staffRoles)
 
+/**
+ * Les rôles du cahier des charges (R27), sous les valeurs techniques gardées
+ * en base (ADR 019) : `admin` est l'exploitant, `staff` l'accueil. C'est ce
+ * libellé que l'interface affiche, jamais la valeur.
+ */
+export const staffRoleLabels: Record<StaffRole, string> = {
+  admin: 'Exploitant',
+  staff: 'Accueil',
+}
+
 export const staffMembers = pgTable(
   'staff_members',
   {
@@ -41,7 +51,7 @@ export const staffMembers = pgTable(
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
     email: text('email').notNull(),
     fullName: text('full_name'),
-    /** `admin` gère les membres de l'équipe ; `staff` utilise le back-office. */
+    /** `admin` : exploitant, gère l'équipe ; `staff` : accueil (ADR 019). */
     role: staffRoleEnum('role').notNull().default('staff'),
     ...timestamps(),
     /** Retrait de l'équipe : l'accès cesse, l'historique reste (décision 6). */

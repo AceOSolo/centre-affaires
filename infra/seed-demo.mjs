@@ -131,9 +131,10 @@ try {
     for (const [dayOffset, code, start, end, title, notes] of bookings) {
       const day = isoDate(dayOffset)
       await tx`
-        insert into bookings (resource_id, starts_at, ends_at, title, notes)
+        insert into bookings (resource_id, channel, starts_at, ends_at, title, notes)
         values (
           ${codeToId.get(code)},
+          'staff',
           ${wallClockToUtc(`${day}T${start}`, TIME_ZONE)},
           ${wallClockToUtc(`${day}T${end}`, TIME_ZONE)},
           ${title},

@@ -170,6 +170,26 @@ describe('contraintes des clients, grilles et contrats', { skip: raison }, () =>
       assert.equal(rows[0].n, 2)
     })
 
+    it('libère la place d’un prix retiré pour celui qui le remplace', async () => {
+      // Le retrait est une suppression logique (décision 6) : l'unicité ne
+      // porte que sur les prix encore en vigueur.
+      const ligne = () =>
+        asTenant((tx) =>
+          tx.execute(sql`
+            insert into rate_plan_items (rate_plan_id, resource_type, unit, amount_cents)
+            values (${PLAN_ID}, 'salle', 'day', 13000)
+          `),
+        )
+      await ligne()
+      await asTenant((tx) => tx.execute(sql`update rate_plan_items set deleted_at = now()`))
+      await ligne()
+      assert.equal(await errorCode(ligne), PG_UNIQUE_VIOLATION)
+      const rows = await asTenant((tx) =>
+        tx.execute(sql`select count(*)::int as n from rate_plan_items`),
+      )
+      assert.equal(rows[0].n, 2)
+    })
+
     it('refuse un prix négatif', async () => {
       const code = await errorCode(() =>
         asTenant((tx) =>

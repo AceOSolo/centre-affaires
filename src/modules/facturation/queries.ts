@@ -29,10 +29,11 @@ export async function findRatePlan(id: string): Promise<RatePlanWithItems | unde
   return withTenant(currentTenantId(), async (tx) => {
     const [plan] = await tx.select().from(ratePlans).where(eq(ratePlans.id, id)).limit(1)
     if (!plan) return undefined
+    // Un prix retiré ne s'applique plus (décision 6) : la ligne reste en base.
     const items = await tx
       .select()
       .from(ratePlanItems)
-      .where(eq(ratePlanItems.ratePlanId, id))
+      .where(and(eq(ratePlanItems.ratePlanId, id), isNull(ratePlanItems.deletedAt)))
       .orderBy(asc(ratePlanItems.resourceType), asc(ratePlanItems.unit))
     return { ...plan, items }
   })
@@ -119,9 +120,17 @@ export async function addRatePlanItem(input: RatePlanItemInput): Promise<RatePla
   }
 }
 
+/**
+ * Retrait d'un prix de la grille : suppression logique (décision 6). Le prix
+ * cesse de s'appliquer et libère sa place pour celui qui le remplace ; la
+ * ligne reste pour expliquer un montant calculé avec lui.
+ */
 export async function removeRatePlanItem(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
-    tx.delete(ratePlanItems).where(eq(ratePlanItems.id, id)),
+    tx
+      .update(ratePlanItems)
+      .set({ deletedAt: sql`now()` })
+      .where(and(eq(ratePlanItems.id, id), isNull(ratePlanItems.deletedAt))),
   )
 }
 

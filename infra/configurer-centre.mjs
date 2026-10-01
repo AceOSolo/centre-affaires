@@ -46,6 +46,10 @@ const CENTRE = {
   // de domiciliation.
   mailScanRetentionMonths: 12,
   mailAccessLogRetentionMonths: 12,
+  // Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
+  // depuis la fin du créneau demandé. Douze mois par défaut, à faire valider
+  // par le centre (B4).
+  publicRequestRetentionMonths: 12,
 }
 
 /**
@@ -89,7 +93,8 @@ try {
         timezone       = ${CENTRE.timezone},
         currency       = ${CENTRE.currency},
         mail_scan_retention_months       = ${CENTRE.mailScanRetentionMonths},
-        mail_access_log_retention_months = ${CENTRE.mailAccessLogRetentionMonths}
+        mail_access_log_retention_months = ${CENTRE.mailAccessLogRetentionMonths},
+        public_request_retention_months  = ${CENTRE.publicRequestRetentionMonths}
       where id = ${DEFAULT_TENANT_ID}
       returning name, city, phone, logo_path`
   })

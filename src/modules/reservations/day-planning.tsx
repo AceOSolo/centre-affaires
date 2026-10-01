@@ -43,7 +43,15 @@ export function DayPlanning({
   // L'amplitude couvre toutes les colonnes : sans l'union, une ressource
   // ouverte plus tard que les autres sortirait de la grille.
   const toutesLesPlages = resources.flatMap((resource) => opening[resource.id] ?? [])
-  const window = planningWindow(isoDate, timeZone, occupying, toutesLesPlages)
+  // Une occupation de contrat couvre des jours entiers (ADR 018) : elle
+  // étirerait la grille de minuit à minuit. Elle est rognée sur l'amplitude
+  // comme le reste, sans la fixer.
+  const window = planningWindow(
+    isoDate,
+    timeZone,
+    occupying.filter((booking) => booking.kind !== 'contract'),
+    toutesLesPlages,
+  )
   const ticks = hourTicks(window)
   const height = planningHeightPx(window)
 

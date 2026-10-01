@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   PG_CHECK_VIOLATION,
+  PG_CONTRACT_OCCUPATION_LOCKED,
   PG_EXCLUSION_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
   PG_UNIQUE_VIOLATION,
@@ -19,6 +20,11 @@ const enveloppe = (cause: unknown, message = 'Failed query') =>
 describe('lecture du code d’erreur Postgres', () => {
   it('lit le code posé directement sur l’erreur', () => {
     assert.equal(pgErrorCode(erreurDriver(PG_EXCLUSION_VIOLATION)), '23P01')
+  })
+
+  it('lit un code propre à l’application, levé par un trigger', () => {
+    // `CA001` : occupation de contrat écrite en direct (migration 0026).
+    assert.equal(pgErrorCode(enveloppe(erreurDriver(PG_CONTRACT_OCCUPATION_LOCKED))), 'CA001')
   })
 
   it('déroule l’enveloppe de Drizzle', () => {

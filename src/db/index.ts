@@ -73,4 +73,44 @@ export async function withTenant<T>(
   })
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/**
+ * Transaction dans le contexte d'un centre **et** d'une portée client : celle
+ * de l'espace client, pour les entreprises du compte connecté (ADR 019).
+ *
+ * En plus de `app.tenant_id`, pose `app.client_ids`. Les politiques
+ * restrictives de la migration 0026 ne laissent alors voir ni écrire, dans les
+ * tables qui relèvent d'un client (`clients`, `client_members`,
+ * `client_contacts`, `contracts`, `bookings`, `mail_items`, `mail_scans`,
+ * `mail_scan_views`), que les lignes de ces entreprises — même pour une
+ * requête qui oublierait son filtre `where`. Les tables sans client
+ * (`resources`, `tenants`…) restent lisibles comme sous `withTenant()`.
+ *
+ * Une liste vide ne voit rien : défaut fermé. Les créneaux occupés par
+ * d'autres se lisent par `booking_busy_ranges()`, qui n'en révèle que les
+ * heures.
+ *
+ * Le back-office n'utilise pas cette fonction : sans portée, rien ne change.
+ */
+export async function withClientScope<T>(
+  tenantId: string,
+  clientIds: readonly string[],
+  run: (tx: Transaction) => Promise<T>,
+  database: Database = getDb(),
+): Promise<T> {
+  // La liste devient un littéral de tableau Postgres : un identifiant mal formé
+  // pourrait en changer le sens. Refusé avant d'atteindre la base.
+  if (clientIds.some((id) => !UUID.test(id))) {
+    throw new Error('Portée client invalide : identifiant de client mal formé.')
+  }
+  const scope = `{${clientIds.join(',')}}`
+  return database.transaction(async (tx) => {
+    await tx.execute(
+      sql`select set_config('app.tenant_id', ${tenantId}, true), set_config('app.client_ids', ${scope}, true)`,
+    )
+    return run(tx)
+  })
+}
+
 export * from './schema.ts'
