@@ -19,7 +19,7 @@ ressources, réservations, clients, contrats, facturation, courrier,
 
 - Next.js 16 (App Router) + TypeScript
 - Tailwind CSS
-- PostgreSQL 17 + Drizzle ORM
+- PostgreSQL 18 + Drizzle ORM
 - better-auth
 - Hébergement : VPS de production (Debian, Apache), image Docker déployée
   depuis GitHub (app, ADR 013) + Neon (base), **région EU obligatoire**
