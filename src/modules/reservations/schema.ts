@@ -1,12 +1,15 @@
 import { sql } from 'drizzle-orm'
 import {
+  char,
   check,
   foreignKey,
   index,
+  integer,
   pgEnum,
   pgTable,
   text,
   timestamp,
+  unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
@@ -15,7 +18,8 @@ import { primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clients } from '../clients/schema.ts'
-import { contracts } from '../contrats/schema.ts'
+import { contractAmendments, contracts } from '../contrats/schema.ts'
+import { lineNetAmountSql, rateUnitEnum, ratePlanItems } from '../facturation/schema.ts'
 import { resources } from '../ressources/schema.ts'
 
 /**
@@ -120,6 +124,46 @@ export const bookings = pgTable(
      * une occupation de contrat (`kind = 'contract'`) ; facultatif sinon.
      */
     contractId: uuid('contract_id'),
+    /**
+     * Segment d'occupation d'un contrat (ADR 025) : l'avenant qui l'a ouvert,
+     * nul pour le segment initial. Un avenant qui change la ressource en cours
+     * de contrat laisse l'ancienne occupée jusqu'à la veille de sa date d'effet
+     * et occupe la nouvelle ensuite : deux lignes, une par segment. Posé par
+     * `apply_contract_occupation`, seulement sur `kind = 'contract'`.
+     */
+    contractAmendmentId: uuid('contract_amendment_id'),
+
+    /*
+     * Devis retenu (R11, ADR 023) : le prix figé au moment de la réservation,
+     * que la facture reprendra même si la grille change ensuite. Tout ou rien,
+     * et seulement sur une réservation (`kind = 'booking'`) : nul pour une
+     * indisponibilité, une occupation de contrat, ou une réservation non
+     * chiffrée (antérieure à la vague 2, interne).
+     */
+    /** Unité facturée : heure, demi-journée, journée, semaine. */
+    quoteUnit: rateUnitEnum('quote_unit'),
+    /** Nombre d'unités dues, unité entamée comprise (règle du centre). */
+    quoteQuantity: integer('quote_quantity'),
+    /** Prix unitaire HT retenu, en centimes. */
+    quoteUnitPriceCents: integer('quote_unit_price_cents'),
+    quoteDiscountBp: integer('quote_discount_bp'),
+    quoteDiscountAmountCents: integer('quote_discount_amount_cents'),
+    /** Montant HT du devis, calculé par la base par la règle d'arrondi commune. */
+    quoteAmountCents: integer('quote_amount_cents').generatedAlwaysAs(
+      lineNetAmountSql({
+        quantity: 'quote_quantity',
+        unitPrice: 'quote_unit_price_cents',
+        discountBp: 'quote_discount_bp',
+        discountCents: 'quote_discount_amount_cents',
+      }),
+    ),
+    quoteVatRateBp: integer('quote_vat_rate_bp'),
+    quoteCurrency: char('quote_currency', { length: 3 }),
+    /** Ligne de grille appliquée ; nulle pour un prix saisi à la main. */
+    quoteRatePlanItemId: uuid('quote_rate_plan_item_id'),
+    /** Date du devis : l'instant où le prix a été figé. */
+    quotedAt: timestamp('quoted_at', { withTimezone: true }),
+
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancellationReason: text('cancellation_reason'),
     ...timestamps(),
@@ -140,6 +184,23 @@ export const bookings = pgTable(
       columns: [table.tenantId, table.contractId],
       foreignColumns: [contracts.tenantId, contracts.id],
     }).onDelete('restrict'),
+    // L'avenant est celui du contrat de l'occupation.
+    foreignKey({
+      name: 'bookings_contract_amendment_fk',
+      columns: [table.tenantId, table.contractId, table.contractAmendmentId],
+      foreignColumns: [
+        contractAmendments.tenantId,
+        contractAmendments.contractId,
+        contractAmendments.id,
+      ],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'bookings_quote_rate_plan_item_fk',
+      columns: [table.tenantId, table.quoteRatePlanItemId],
+      foreignColumns: [ratePlanItems.tenantId, ratePlanItems.id],
+    }).onDelete('restrict'),
+    // Cible de la clé étrangère composite des lignes de facture (R15).
+    unique('bookings_tenant_id_id_key').on(table.tenantId, table.id),
     // « Mes réservations » : celles d'un client, par date.
     index('bookings_client_starts_at_idx')
       .on(table.tenantId, table.clientId, table.startsAt)
@@ -148,10 +209,16 @@ export const bookings = pgTable(
     index('bookings_contract_idx')
       .on(table.tenantId, table.contractId)
       .where(sql`contract_id is not null`),
-    // Une seule occupation par contrat : le trigger la déplace, la prolonge ou
-    // l'annule, il n'en crée jamais une seconde (ADR 018).
+    // Une occupation par contrat et par segment : le trigger la déplace, la
+    // prolonge ou l'annule, il n'en crée jamais une seconde pour le même
+    // segment (ADR 018, segments de l'ADR 025). Sans avenant de changement de
+    // ressource, un contrat n'a qu'un segment, donc qu'une occupation.
     uniqueIndex('bookings_contract_occupation_key')
-      .on(table.tenantId, table.contractId)
+      .on(
+        table.tenantId,
+        table.contractId,
+        sql`coalesce(contract_amendment_id, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      )
       .where(sql`kind = 'contract'`),
     check('bookings_range_not_empty', sql`${table.endsAt} > ${table.startsAt}`),
     check(
@@ -161,6 +228,27 @@ export const bookings = pgTable(
     check(
       'bookings_contract_kind_consistent',
       sql`${table.kind} <> 'contract' or ${table.contractId} is not null`,
+    ),
+    check(
+      'bookings_contract_amendment_kind_consistent',
+      sql`${table.contractAmendmentId} is null or ${table.kind} = 'contract'`,
+    ),
+    // Le devis est complet ou absent, et réservé aux réservations.
+    check(
+      'bookings_quote_complete',
+      sql`num_nulls(${table.quoteUnit}, ${table.quoteQuantity}, ${table.quoteUnitPriceCents}, ${table.quoteVatRateBp}, ${table.quoteCurrency}, ${table.quotedAt}) in (0, 6)`,
+    ),
+    check(
+      'bookings_quote_kind_consistent',
+      sql`${table.kind} = 'booking' or ${table.quotedAt} is null`,
+    ),
+    check(
+      'bookings_quote_values_valid',
+      sql`${table.quotedAt} is null or (${table.quoteQuantity} > 0 and ${table.quoteUnitPriceCents} >= 0 and ${table.quoteVatRateBp} between 0 and 10000 and ${table.quoteAmountCents} >= 0 and num_nonnulls(${table.quoteDiscountBp}, ${table.quoteDiscountAmountCents}) <= 1 and (${table.quoteDiscountBp} is null or ${table.quoteDiscountBp} between 0 and 10000) and (${table.quoteDiscountAmountCents} is null or ${table.quoteDiscountAmountCents} >= 0))`,
+    ),
+    check(
+      'bookings_quote_extras_need_quote',
+      sql`${table.quotedAt} is not null or num_nonnulls(${table.quoteDiscountBp}, ${table.quoteDiscountAmountCents}, ${table.quoteRatePlanItemId}) = 0`,
     ),
     index('bookings_series_idx').on(table.tenantId, table.seriesId),
     check(

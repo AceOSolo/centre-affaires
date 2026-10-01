@@ -204,6 +204,27 @@
       "when": 1790864121149,
       "tag": "0028_casier_numero_unique",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1790872363152,
+      "tag": "0029_montants_et_arrondis",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1790872386175,
+      "tag": "0030_monetisation_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1790872701457,
+      "tag": "0031_monetisation_garanties",
+      "breakpoints": true
     }
   ]
 }

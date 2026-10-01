@@ -27,7 +27,7 @@ export const metadata = {
 export const dynamic = 'force-dynamic'
 
 /** Unités cherchées dans la grille, de la plus fine à la plus large. */
-const UNITES: RateUnit[] = ['hour', 'half_day', 'day', 'month', 'unit']
+const UNITES: RateUnit[] = ['hour', 'half_day', 'day', 'week', 'month', 'unit']
 
 export default async function CataloguePage() {
   const tenant = await currentTenant()

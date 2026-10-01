@@ -26,6 +26,7 @@ describe('matrice des droits', () => {
     'clients.gerer',
     'courrier.gerer',
     'contrats.consulter',
+    'facturation.consulter',
   ]
   /** Ce qui engage le centre : l'exploitant seul. */
   const reserve: Permission[] = [
@@ -37,6 +38,13 @@ describe('matrice des droits', () => {
     'contrats.activer',
     'contrats.resilier',
     'contrats.archiver',
+    'contrats.avenants',
+    'services.gerer',
+    'souscriptions.gerer',
+    'facturation.gerer',
+    'paiements.gerer',
+    'comptabilite.exporter',
+    'indicateurs.consulter',
     'clients.archiver',
     'courrier.releve',
     'centre.configurer',
@@ -55,7 +63,7 @@ describe('matrice des droits', () => {
     for (const permission of quotidien) assert.equal(can('staff', permission), true, permission)
   })
 
-  it('réserve à l’exploitant l’équipe, les tarifs, les contrats et la configuration', () => {
+  it('réserve à l’exploitant l’équipe, les tarifs, les contrats, la facturation et la configuration', () => {
     for (const permission of reserve) {
       assert.equal(can('staff', permission), false, permission)
       assert.deepEqual(rolesAllowed(permission), ['Exploitant'], permission)

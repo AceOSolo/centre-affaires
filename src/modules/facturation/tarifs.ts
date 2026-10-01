@@ -79,6 +79,7 @@ export function billableQuantity(unit: RateUnit, startsAt: Date, endsAt: Date): 
   if (unit === 'hour') return Math.ceil(minutes / 60)
   if (unit === 'half_day') return Math.ceil(minutes / MINUTES_PER_HALF_DAY)
   if (unit === 'day') return Math.ceil(minutes / (60 * 24))
+  if (unit === 'week') return Math.ceil(minutes / (60 * 24 * 7))
   return 1
 }
 

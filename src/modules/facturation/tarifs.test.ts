@@ -107,6 +107,15 @@ describe('billableQuantity', () => {
     assert.equal(billableQuantity('day', at('2026-10-01T08:00:00Z'), at('2026-10-02T09:00:00Z')), 2)
   })
 
+  it('facture les semaines entamées (R08)', () => {
+    // Sept jours pleins : une semaine.
+    assert.equal(billableQuantity('week', at('2026-10-05T00:00:00Z'), at('2026-10-12T00:00:00Z')), 1)
+    // Un lundi matin : une semaine entamée est due.
+    assert.equal(billableQuantity('week', at('2026-10-05T08:00:00Z'), at('2026-10-05T12:00:00Z')), 1)
+    // Huit jours : deux semaines entamées.
+    assert.equal(billableQuantity('week', at('2026-10-05T00:00:00Z'), at('2026-10-13T00:00:00Z')), 2)
+  })
+
   it('traite le mois et la prestation comme des forfaits', () => {
     assert.equal(billableQuantity('month', at('2026-10-01T09:00:00Z'), at('2026-10-01T10:00:00Z')), 1)
     assert.equal(billableQuantity('unit', at('2026-10-01T09:00:00Z'), at('2026-10-05T10:00:00Z')), 1)

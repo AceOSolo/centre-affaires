@@ -1,7 +1,62 @@
 import { sql } from 'drizzle-orm'
-import { char, check, integer, jsonb, pgTable, text, uuid } from 'drizzle-orm/pg-core'
+import {
+  bigint,
+  boolean,
+  char,
+  check,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  uuid,
+} from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
+
+/*
+ * Énumérations des paramètres du centre (ADR 023, 026, 027). Déclarées ici et
+ * non dans `facturation` : `tenants` les porte, et `facturation` importe déjà
+ * ce fichier — l'inverse ferait une boucle d'imports.
+ */
+
+/**
+ * Règle de prorata d'une période partielle (ADR 023, amende l'ADR 006).
+ *
+ * - `calendar_days` : jours couverts sur jours réels de la période civile,
+ *   bornes comprises (règle de l'ADR 006, par défaut) ;
+ * - `thirty_day_month` : mois commercial de 30 jours (base 30) ;
+ * - `none` : pas de prorata, une période entamée est due en entier.
+ */
+export const prorataRules = ['calendar_days', 'thirty_day_month', 'none'] as const
+export type ProrataRule = (typeof prorataRules)[number]
+export const prorataRuleEnum = pgEnum('prorata_rule', prorataRules)
+
+/**
+ * Moment où le récurrent (loyers, forfaits) est facturé (ADR 026) : à échoir,
+ * la période qui commence, ou échu, la période écoulée. Les réservations et
+ * les actes sont toujours facturés échus.
+ */
+export const recurringBillingTimings = ['in_advance', 'in_arrears'] as const
+export type RecurringBillingTiming = (typeof recurringBillingTimings)[number]
+export const recurringBillingTimingEnum = pgEnum(
+  'recurring_billing_timing',
+  recurringBillingTimings,
+)
+
+/**
+ * Mode de paiement (ADR 016, ADR 027) : suivi à la main, sans prestataire.
+ * `direct_debit` est le prélèvement SEPA, sur mandat (`sepa_mandates`).
+ */
+export const paymentMethods = ['transfer', 'direct_debit', 'other'] as const
+export type PaymentMethod = (typeof paymentMethods)[number]
+export const paymentMethodEnum = pgEnum('payment_method', paymentMethods)
+
+/** Mention de pénalités de retard par défaut (art. L. 441-10 du Code de commerce). */
+export const DEFAULT_LATE_PAYMENT_PENALTY_TEXT =
+  'Pénalités de retard : taux d’intérêt appliqué par la Banque centrale européenne à son opération de refinancement la plus récente, majoré de 10 points de pourcentage (art. L. 441-10 du Code de commerce).'
+
+export const DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT = 'Pas d’escompte pour paiement anticipé.'
 
 /**
  * Centre unique tant que le produit est mono-centre. Cet identifiant est aussi
@@ -84,6 +139,79 @@ export const tenants = pgTable('tenants', {
    */
   publicRequestRetentionMonths: integer('public_request_retention_months').notNull().default(12),
 
+  /*
+   * Identité légale du vendeur, figée dans chaque facture émise (mentions
+   * obligatoires, ADR 026). `legal_name` et l'adresse sont plus haut.
+   */
+  /** Forme juridique : « SAS », « SARL ». */
+  legalForm: text('legal_form'),
+  /** Capital social, en centimes. `bigint` : 21,5 M€ dépassent un `integer`. */
+  shareCapitalCents: bigint('share_capital_cents', { mode: 'number' }),
+  /** Neuf chiffres, sans espace. */
+  siren: text('siren'),
+  /** Quatorze chiffres, sans espace ; commence par le SIREN. */
+  siret: text('siret'),
+  /** Numéro de TVA intracommunautaire, sans espace : `FR12345678901`. */
+  vatNumber: text('vat_number'),
+  /** Ville du greffe d'immatriculation : « RCS Vienne ». */
+  rcsCity: text('rcs_city'),
+
+  /*
+   * Règlement (ADR 027). L'IBAN du centre est imprimé sur chaque facture payée
+   * par virement : c'est une coordonnée publique du vendeur, stockée en clair.
+   * Celui d'un client (mandat SEPA) est chiffré, jamais en clair.
+   */
+  /** IBAN du compte du centre, en majuscules sans espace. */
+  bankIban: text('bank_iban'),
+  bankBic: text('bank_bic'),
+  /** Identifiant créancier SEPA (ICS) : `FR12ZZZ123456`. */
+  sepaCreditorId: text('sepa_creditor_id'),
+  /** Mode de paiement attendu d'un client sans mandat de prélèvement actif. */
+  defaultPaymentMethod: paymentMethodEnum('default_payment_method').notNull().default('transfer'),
+
+  /*
+   * Règles tarifaires du centre (R10, ADR 023, amende les ADR 006 et 009) :
+   * en base pour se régler par centre (D5). Valeurs par défaut = conventions
+   * des ADR 006 et 009, à valider par le centre.
+   */
+  prorataRule: prorataRuleEnum('prorata_rule').notNull().default('calendar_days'),
+  /**
+   * Tolérance avant qu'une unité entamée ne soit due, en minutes. 0 : toute
+   * unité entamée est due (ADR 006) ; 10 : une réunion de 1 h 10 compte 1 h.
+   */
+  startedUnitToleranceMinutes: integer('started_unit_tolerance_minutes').notNull().default(0),
+  /** Durée d'une demi-journée vendue, en minutes (240 : ADR 009). */
+  halfDayMinutes: integer('half_day_minutes').notNull().default(240),
+  /** Taux de TVA par défaut, en points de base : 2000 = 20 %. */
+  defaultVatRateBp: integer('default_vat_rate_bp').notNull().default(2000),
+
+  /* Facturation (ADR 026). */
+  /** Échéance par défaut d'une facture, en jours après son émission. */
+  invoicePaymentTermsDays: integer('invoice_payment_terms_days').notNull().default(30),
+  recurringBillingTiming: recurringBillingTimingEnum('recurring_billing_timing')
+    .notNull()
+    .default('in_advance'),
+  /**
+   * Option pour le paiement de la TVA d'après les débits (prestations de
+   * services) : la mention figure alors sur les factures. Faux : TVA exigible
+   * à l'encaissement, régime par défaut des services.
+   */
+  vatOnDebits: boolean('vat_on_debits').notNull().default(false),
+  latePaymentPenaltyText: text('late_payment_penalty_text')
+    .notNull()
+    .default(DEFAULT_LATE_PAYMENT_PENALTY_TEXT),
+  /** Indemnité forfaitaire pour frais de recouvrement, en centimes (40 € : art. D. 441-5). */
+  recoveryIndemnityCents: integer('recovery_indemnity_cents').notNull().default(4000),
+  earlyPaymentDiscountText: text('early_payment_discount_text')
+    .notNull()
+    .default(DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT),
+  /** Mentions complémentaires imprimées au pied des factures. */
+  invoiceFooterText: text('invoice_footer_text'),
+
+  /* Export comptable (ADR 027) : codes des journaux. Les comptes sont dans `accounting_accounts`. */
+  accountingSalesJournal: text('accounting_sales_journal').notNull().default('VE'),
+  accountingBankJournal: text('accounting_bank_journal').notNull().default('BQ'),
+
   ...timestamps(),
   deletedAt: deletedAt(),
 }, (table) => [
@@ -95,6 +223,44 @@ export const tenants = pgTable('tenants', {
   check(
     'tenants_public_request_retention_valid',
     sql`${table.publicRequestRetentionMonths} between 1 and 120`,
+  ),
+  check('tenants_siren_format', sql`${table.siren} is null or ${table.siren} ~ '^[0-9]{9}$'`),
+  check(
+    'tenants_siret_format',
+    sql`${table.siret} is null or (${table.siret} ~ '^[0-9]{14}$' and (${table.siren} is null or left(${table.siret}, 9) = ${table.siren}))`,
+  ),
+  check(
+    'tenants_vat_number_format',
+    sql`${table.vatNumber} is null or ${table.vatNumber} ~ '^[A-Z]{2}[0-9A-Z]{2,13}$'`,
+  ),
+  check(
+    'tenants_share_capital_positive',
+    sql`${table.shareCapitalCents} is null or ${table.shareCapitalCents} >= 0`,
+  ),
+  check(
+    'tenants_bank_iban_format',
+    sql`${table.bankIban} is null or ${table.bankIban} ~ '^[A-Z]{2}[0-9]{2}[0-9A-Z]{11,30}$'`,
+  ),
+  check(
+    'tenants_bank_bic_format',
+    sql`${table.bankBic} is null or ${table.bankBic} ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$'`,
+  ),
+  check(
+    'tenants_sepa_creditor_id_format',
+    sql`${table.sepaCreditorId} is null or ${table.sepaCreditorId} ~ '^[A-Z]{2}[0-9]{2}[0-9A-Z]{1,31}$'`,
+  ),
+  check(
+    'tenants_pricing_rules_valid',
+    sql`${table.startedUnitToleranceMinutes} between 0 and 59 and ${table.halfDayMinutes} between 60 and 720 and ${table.defaultVatRateBp} between 0 and 10000`,
+  ),
+  // 60 jours au plus après l'émission : plafond légal (art. L. 441-10).
+  check(
+    'tenants_invoicing_rules_valid',
+    sql`${table.invoicePaymentTermsDays} between 0 and 60 and ${table.recoveryIndemnityCents} >= 0 and btrim(${table.latePaymentPenaltyText}) <> '' and btrim(${table.earlyPaymentDiscountText}) <> ''`,
+  ),
+  check(
+    'tenants_accounting_journals_valid',
+    sql`${table.accountingSalesJournal} ~ '^[0-9A-Z]{1,8}$' and ${table.accountingBankJournal} ~ '^[0-9A-Z]{1,8}$'`,
   ),
 ])
 

@@ -46,6 +46,12 @@ export const clients = pgTable(
     country: char('country', { length: 2 }).notNull().default('FR'),
     status: clientStatusEnum('status').notNull().default('prospect'),
     notes: text('notes'),
+    /**
+     * Compte auxiliaire du client dans l'export comptable (ADR 027), sous le
+     * compte collectif 411 : « DURAND ». Nul : l'export le dérive ou le
+     * demande.
+     */
+    accountingCode: text('accounting_code'),
     ...timestamps(),
     deletedAt: deletedAt(),
   },
@@ -53,6 +59,15 @@ export const clients = pgTable(
     // Cible des clés étrangères composites : un contrat ne peut pas viser le
     // client d'un autre centre.
     unique('clients_tenant_id_id_key').on(table.tenantId, table.id),
+    // Deux clients vivants ne partagent pas un compte auxiliaire : leurs
+    // écritures se mêleraient chez l'expert-comptable.
+    uniqueIndex('clients_tenant_accounting_code_key')
+      .on(table.tenantId, table.accountingCode)
+      .where(sql`deleted_at is null and accounting_code is not null`),
+    check(
+      'clients_accounting_code_format',
+      sql`${table.accountingCode} is null or ${table.accountingCode} ~ '^[0-9A-Z]{1,17}$'`,
+    ),
     // Le SIRET identifie l'entreprise : deux fiches pour le même seraient deux
     // historiques de facturation à réconcilier.
     uniqueIndex('clients_tenant_siret_key')

@@ -10,8 +10,10 @@ import { staffRoleLabels, type StaffRole } from '../../db/staff.ts'
  * serveur du back-office, qui refuse ce que le rôle ne permet pas.
  *
  * Répartition : l'accueil tient l'opérationnel du quotidien — planning,
- * demandes, courrier, fiches clients ; l'exploitant fait tout, dont les tarifs,
- * les contrats, l'équipe et la configuration du centre.
+ * demandes, courrier, fiches clients, lecture des contrats et des factures ;
+ * l'exploitant fait tout, dont les tarifs, les services, les contrats et
+ * leurs avenants, la facturation, les paiements, l'export comptable, les
+ * indicateurs, l'équipe et la configuration du centre (ADR 026, 027).
  *
  * Module pur, sans Next ni accès à la base : il s'éprouve seul
  * (`permissions.test.ts`). La coque du back-office en tire la liste des droits
@@ -29,7 +31,15 @@ export const permissions = [
   'contrats.activer',
   'contrats.resilier',
   'contrats.archiver',
+  'contrats.avenants',
   'tarifs.gerer',
+  'services.gerer',
+  'souscriptions.gerer',
+  'facturation.consulter',
+  'facturation.gerer',
+  'paiements.gerer',
+  'comptabilite.exporter',
+  'indicateurs.consulter',
   'ressources.gerer',
   'horaires.gerer',
   'centre.configurer',
@@ -52,10 +62,19 @@ export const permissionLabels: Record<Permission, string> = {
   'contrats.activer': 'Activer un contrat',
   'contrats.resilier': 'Résilier un contrat',
   'contrats.archiver': 'Archiver un contrat',
+  'contrats.avenants': 'Établir et signer un avenant, éditer les documents de contrat',
   'tarifs.gerer': 'Grilles tarifaires',
+  'services.gerer': 'Catalogue de services et offres groupées',
+  'souscriptions.gerer': 'Souscrire un client à un service, y mettre fin',
+  'facturation.consulter': 'Consulter les factures, les avoirs et leurs paiements',
+  'facturation.gerer': 'Facturer : brouillons, lots périodiques, émission, avoirs',
+  'paiements.gerer': 'Pointer les paiements reçus, mandats de prélèvement SEPA',
+  'comptabilite.exporter': 'Export comptable et plan de comptes',
+  'indicateurs.consulter': 'Indicateurs : occupation, chiffre d’affaires, rentabilité',
   'ressources.gerer': 'Ressources et annonces du site public',
   'horaires.gerer': 'Horaires d’ouverture et fermetures',
-  'centre.configurer': 'Configuration du centre : règles de réservation, conservation',
+  'centre.configurer':
+    'Configuration du centre : règles de réservation, conservation, règles tarifaires, identité de facturation',
   'agenda-google.gerer': 'Agendas Google',
   'equipe.gerer': 'Équipe : inscrire, changer un rôle, retirer',
 }
@@ -67,6 +86,9 @@ const accueil: readonly Permission[] = [
   'clients.gerer',
   'courrier.gerer',
   'contrats.consulter',
+  // Répondre à un client sur sa facture fait partie de l'accueil ; facturer,
+  // pointer un paiement ou un mandat, exporter vers la comptabilité, non.
+  'facturation.consulter',
 ]
 
 /**

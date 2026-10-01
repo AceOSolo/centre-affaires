@@ -283,6 +283,10 @@ async function writeContract<T>(
  * Occupation de la ressource par ce contrat (ADR 018) : la ligne de `bookings`
  * tenue par le trigger, annulée comprise, car elle dit pourquoi la ressource a
  * été libérée. `undefined` pour un contrat qui n'en a jamais eu.
+ *
+ * Un avenant de changement de ressource découpe l'occupation en segments, une
+ * ligne chacun (ADR 025) : c'est alors le dernier segment qui est rendu, celui
+ * de la ressource la plus récente.
  */
 export async function findContractOccupation(contractId: string): Promise<Booking | undefined> {
   const [occupation] = await withTenant(currentTenantId(), (tx) =>
@@ -290,6 +294,7 @@ export async function findContractOccupation(contractId: string): Promise<Bookin
       .select()
       .from(bookings)
       .where(and(eq(bookings.contractId, contractId), eq(bookings.kind, 'contract')))
+      .orderBy(desc(bookings.startsAt))
       .limit(1),
   )
   return occupation

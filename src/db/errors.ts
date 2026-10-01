@@ -55,3 +55,37 @@ export const PG_INSUFFICIENT_PRIVILEGE = '42501'
  * ADR 018). Elle se modifie à travers son contrat.
  */
 export const PG_CONTRACT_OCCUPATION_LOCKED = 'CA001'
+
+/**
+ * Facture émise, ou brouillon abandonné : figé (migration 0031, ADR 026). Une
+ * correction passe par un avoir (`draft_credit_note`, puis `issue_invoice`).
+ * Aussi : suppression d'une facture ou d'une ligne, réécriture du journal des
+ * exports comptables.
+ */
+export const PG_INVOICE_LOCKED = 'CA002'
+/**
+ * Facture non conforme (ADR 026) : émission refusée (mention obligatoire
+ * manquante, facture vide ou négative, mandat absent), avoir excédentaire,
+ * ligne incohérente (source d'un autre client, source absente pour sa
+ * nature), émission hors `issue_invoice()`. Le message dit quoi compléter.
+ */
+export const PG_INVOICE_INVALID = 'CA003'
+/**
+ * Engagement figé (ADR 025) : prix ou lignes d'un contrat qui n'est plus un
+ * brouillon (passer par un avenant), avenant signé, souscription, document de
+ * contrat, date de début d'un contrat qui a des avenants signés.
+ */
+export const PG_COMMITMENT_LOCKED = 'CA004'
+/**
+ * Avenant refusé (ADR 025) : contrat qui n'est pas en cours, date d'effet qui
+ * ne suit pas le début du contrat ou le dernier avenant signé, ou qui dépasse
+ * son dernier jour, avenant qui ne change rien.
+ */
+export const PG_AMENDMENT_INVALID = 'CA005'
+/**
+ * Paiement refusé (ADR 027) : facture brouillon ou avoir, autre devise,
+ * modification ou suppression d'un paiement (il s'annule).
+ */
+export const PG_PAYMENT_REFUSED = 'CA006'
+/** Mandat SEPA : la RUM et le client ne changent pas, un mandat ne se supprime pas (ADR 027). */
+export const PG_SEPA_MANDATE_LOCKED = 'CA007'
