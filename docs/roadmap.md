@@ -40,7 +40,7 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R19 | Réception du courrier, photo d'enveloppe | ✅ | Photo facultative (à rendre obligatoire ?) | S | — |
 | R20 | Notification à la réception | ✅ | Courriel à l'arrivée et à la numérisation, alerte au staff sur demande d'ouverture. Effectif en production une fois `SMTP_URL` et `MAIL_FROM` configurés (SMTP en UE) | — | — |
 | R21 | Espace courrier client | ◐ | Réexpédition absente ; ouverture et scan fusionnés ; une seule demande par pli | L | 3 |
-| R22 | Scans : chiffrement, accès journalisé, purge | ◐ | Accès restreint et journalisé ✅ ; purge ⟳ (0023–0024) ; chiffrement au repos absent | M | 0 |
+| R22 | Scans : chiffrement, accès journalisé, purge | ✅ | Accès restreint et journalisé, purge nocturne, chiffrement au repos (ADR 020). Reste en production : créer la clé, lancer la reprise `infra/chiffrer-documents.ts` | — | 0 |
 | R23 | Réservation en ligne côté client | ◐ | Réservation depuis le compte, total affiché, « Mes réservations », offre groupée | L | 3 |
 | R24 | Traçabilité côté client | ◐ | Historique des demandes (une annulation efface la trace), documents | M | 3 |
 | R25 | Responsive | ◐ | Plusieurs cibles sous 44 px sur le portail | S | 3 |
@@ -51,7 +51,7 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Restent : installation sur le VPS (rôle `sauvegarde`, destination, clés), premier exercice sur Neon | S | 0 |
 | R31 | Indicateurs (occupation, revenu) | ○ | Tableau de bord ; le revenu dépend de la facturation | M–L | 2 |
 | R32 | Une seule API métier | ✅ | — | — | — |
-| R33 | Stockage documentaire | ◐ | Compression, purge, contrôle de la région UE au démarrage | M | 0 / 4 |
+| R33 | Stockage documentaire | ◐ | Région UE contrôlée par `stockage.ts` ✅ ; compression et purge des photos (vague 4) | M | 4 |
 
 Le catalogue détaillé des exigences, chacune avec sa source (slide ou section),
 se trouve en annexe.
@@ -64,24 +64,29 @@ se trouve en annexe.
   encore sur `main`.** Ils sont sur la branche `feat/compte-client-courrier`
   (commits `aea45b0` et `0627417`, migrations 0019 à 0024, ADR 014 et 015).
   → Pull request vers `main`, puis déploiement.
-- **B3. Les scans sont stockés en clair et les branches Neon les copient.** Toute
-  branche créée depuis `production` contiendrait des scans réels lisibles, ce que
-  `CLAUDE.md` interdit (« pas de données réelles en développement »). → Chiffrer
-  les objets avant dépôt (étendre `chiffrement.ts` au binaire), ou isoler le
-  stockage par branche.
+- ~~**B3. Les scans sont stockés en clair et les branches Neon les copient.**~~
+  Résolu dans le code : les documents sont chiffrés avant dépôt, avec une clé
+  propre à chaque environnement (ADR 020). Reste en production : lancer la
+  reprise des objets existants, puis supprimer les branches créées avant elle
+  (`infra/serveur/README.md`, « Chiffrement des documents »).
 - **B4. Durées de conservation et purge : en cours pour le courrier.** L'ADR 015
   en fait un préalable à la mise en production du courrier.
   - Déjà posé : une durée par centre pour les scans et pour le journal d'accès
     (migration 0023, 12 mois par défaut), la purge du journal (fonction de la
     migration 0024) et `src/modules/courrier/conservation.ts`.
-  - Reste à faire : planifier la purge, puis fixer les durées des contacts des
-    demandes publiques (ADR 005) et des comptes `neon_auth`.
+  - Fait : coordonnées des demandes publiques effacées par la tâche nocturne au
+    terme de leur durée (12 mois par défaut, `infra/configurer-centre.mjs`,
+    ADR 020).
+  - Reste à faire : poser la tâche nocturne sur le serveur
+    (`infra/serveur/README.md`), et fixer la durée des comptes `neon_auth`.
 - **B5. Écarts de gouvernance.**
   - ~~Numéros d'ADR en double (deux 010, deux 013) et pas d'ADR 007.~~ Signalés
     par l'index `docs/decisions/README.md`, sans renuméroter.
-  - ~~`rate_plan_items` est supprimé physiquement (`facturation/queries.ts:122-126`),
-    contre la décision 6.~~ Retrait logique depuis le schéma de la vague 1.
+  - ~~`rate_plan_items` est supprimé physiquement, contre la décision 6.~~
+    Retrait logique (`deleted_at`), ignoré des lectures ; les prix d'une grille
+    archivée sont figés.
   - ~~Le commentaire `neon.ts:9` annonce des URL signées, que l'ADR 015 écarte.~~
+    Corrigé.
   - `CLAUDE.md` indique PostgreSQL 17, alors que l'ADR 003 et la CI utilisent 18.
     Reste à corriger par le responsable du dépôt.
   - ~~`README.md` est encore celui de create-next-app.~~

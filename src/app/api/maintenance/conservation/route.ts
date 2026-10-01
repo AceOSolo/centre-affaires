@@ -4,9 +4,12 @@ import { withTenant } from '../../../../db/index.ts'
 import { deleteObject } from '../../../../lib/stockage.ts'
 import { currentTenantId } from '../../../../lib/tenant.ts'
 import { purgeExpiredMail } from '../../../../modules/courrier/conservation.ts'
+import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations/conservation.ts'
 
 /**
- * Purge planifiée du courrier arrivé au terme de sa conservation (ADR 015).
+ * Purge planifiée de ce qui est arrivé au terme de sa conservation : le
+ * courrier et son journal d'accès (ADR 015), les coordonnées des demandeurs de
+ * la page publique (ADR 020). Les durées sont celles du centre (`tenants`).
  *
  * Appelée chaque nuit par une tâche du serveur (infra/serveur/README.md), avec
  * le jeton `MAINTENANCE_TOKEN`. Sans jeton configuré, la route n'existe pas :
@@ -26,6 +29,11 @@ function authorized(request: Request): boolean {
 export async function POST(request: Request) {
   if (!authorized(request)) return new Response('Introuvable.', { status: 404 })
 
-  const result = await withTenant(currentTenantId(), (tx) => purgeExpiredMail(tx, deleteObject))
-  return Response.json(result)
+  const tenantId = currentTenantId()
+  // Les coordonnées des demandes publiques échues d'abord (B4, ADR 020), dans
+  // leur propre transaction : une panne du stockage, qui interrompt la purge
+  // du courrier, ne retient pas leur effacement.
+  const publicRequests = await withTenant(tenantId, anonymizeExpiredPublicRequests)
+  const mail = await withTenant(tenantId, (tx) => purgeExpiredMail(tx, deleteObject))
+  return Response.json({ ...mail, publicRequests })
 }

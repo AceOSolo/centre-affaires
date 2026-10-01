@@ -90,7 +90,9 @@ sudo -u deploy chmod 600 /home/deploy/centre-affaires/.env
 
 Contenu : voir [`.env.example`](.env.example). Ce fichier ne quitte jamais le
 serveur. Si `sudo ss -ltnp | grep ':3000 '` montre que le port 3000 est déjà
-pris, y ajouter `PORT_LOCAL=<autre port>`.
+pris, y ajouter `PORT_LOCAL=<autre port>`. La clé de chiffrement des documents
+se crée et se sauvegarde hors du serveur comme indiqué à « Chiffrement des
+documents », plus bas.
 
 ## 5. Réglages du dépôt GitHub
 
@@ -304,19 +306,132 @@ Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
 Les numérisations de courrier et le journal de leurs consultations ne se
 gardent que le temps fixé par le centre (12 mois par défaut, colonnes
 `mail_*_retention_months` de `tenants`, voir `infra/configurer-centre.mjs`).
+Les coordonnées des personnes qui ont déposé une demande sur la page publique
+(nom, adresse, téléphone) sont effacées au même rythme : 12 mois par défaut
+après la fin du créneau demandé, ou après l'annulation si elle précède
+(`public_request_retention_months`, même script, ADR 020). La réservation
+reste, anonymisée.
 La purge est une route de l'application, appelée chaque nuit ; elle exige
 `MAINTENANCE_TOKEN` dans le `.env` du serveur.
 
 Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 
 ```cron
-# Purge du courrier échu, chaque nuit à 3 h 15 (ADR 015).
+# Purge du courrier échu et des coordonnées des demandes publiques échues,
+# chaque nuit à 3 h 15 (ADR 015, ADR 020).
 15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
 La commande tourne dans le conteneur, qui a déjà le jeton dans son
 environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
-affiche le nombre de numérisations et de consultations purgées.
+affiche le nombre de numérisations et de consultations purgées, et de demandes
+anonymisées : `{"scans":0,"views":0,"publicRequests":0}`.
+
+## Chiffrement des documents
+
+Les scans de courrier et les photos d'enveloppe sont chiffrés par
+l'application avant d'être déposés dans le stockage (AES-256-GCM, R22,
+[ADR 020](../../docs/decisions/020-chiffrement-et-conservation-des-documents.md)).
+Le stockage, et toute branche Neon qui le copie, ne contiennent que du chiffré.
+Sans clé, l'application refuse de déposer un document plutôt que de le
+stocker en clair.
+
+### Créer la clé
+
+Une fois, sur le serveur, avant le premier déploiement qui chiffre :
+
+```bash
+openssl rand -base64 32
+```
+
+Dans `/home/deploy/centre-affaires/.env` :
+
+```dotenv
+DOCUMENTS_ENCRYPTION_KEY=<valeur affichée>
+DOCUMENTS_ENCRYPTION_KEY_VERSION=1
+```
+
+Puis `docker compose up -d` pour que l'application la lise.
+
+### Sauvegarder la clé hors du serveur
+
+**Perdre cette clé, c'est perdre tous les documents chiffrés avec elle**, sans
+aucun recours : ni Neon ni personne ne peut les déchiffrer. La copie du
+stockage (R30) ne sert à rien sans elle.
+
+- La recopier, avec son numéro de version, dans le coffre-fort de mots de
+  passe du centre, au nom de l'application et de l'environnement
+  (« Handfield production — documents, clé 1 »). Une seconde copie hors ligne
+  (papier sous enveloppe au coffre, ou clé USB chiffrée) protège contre la
+  perte du coffre-fort.
+- Jamais dans le dépôt, ni dans les secrets GitHub, ni à côté des sauvegardes
+  du stockage : qui obtient les deux lit tout.
+- Une clé par environnement. La clé de production ne sert jamais en
+  développement ; c'est ce qui rend illisibles les documents copiés dans une
+  branche.
+
+### Chiffrer les documents déposés avant le chiffrement
+
+Les documents déposés avant cette mise en place restent lisibles en clair
+(`mail_scans.encryption_key_version` nul). Le script
+`infra/chiffrer-documents.ts` les chiffre, à leur place dans le stockage. Il
+se lance **sur le serveur**, pour que la clé n'en sorte pas, dans un conteneur
+Node jetable qui lit le `.env` de production :
+
+```bash
+sudo -u deploy -i
+git clone --depth 1 https://github.com/AceOSolo/centre-affaires.git ~/reprise-chiffrement
+cd ~/reprise-chiffrement
+docker run --rm -v "$PWD":/app -w /app --env-file /home/deploy/centre-affaires/.env \
+  node:24-alpine sh -c "npm ci --omit=dev --ignore-scripts --no-audit --no-fund && node infra/chiffrer-documents.ts"
+```
+
+Ce premier passage est un essai à blanc : il compte les documents à chiffrer
+et vérifie la clé, sans rien modifier. Pour chiffrer, relancer la même
+commande en remplaçant `node infra/chiffrer-documents.ts` par
+`node infra/chiffrer-documents.ts --appliquer`. Puis relancer l'essai à blanc :
+il doit répondre « Aucune numérisation à chiffrer ». Enfin `rm -rf
+~/reprise-chiffrement`.
+
+Le script se rejoue sans risque : un document déjà chiffré n'est plus repris,
+une interruption se termine au passage suivant. Un document absent du
+stockage, ou dont la taille ne correspond pas au dépôt, est signalé et laissé
+tel quel : à examiner avant de relancer. Ne pas le lancer pendant la purge de
+3 h 15.
+
+Ensuite :
+
+- si le stockage conserve les versions précédentes des objets (versionnement
+  du bucket), les supprimer : les versions en clair y resteraient ;
+- supprimer les branches Neon créées depuis `production` avant la reprise :
+  elles contiennent les documents en clair (B3). Les recréer après.
+
+### Changer de clé (rotation)
+
+En cas de doute sur la clé (fuite, départ d'une personne qui y avait accès),
+ou à intervalle fixé par le centre :
+
+1. Générer une nouvelle clé (`openssl rand -base64 32`) et la sauvegarder hors
+   du serveur, avec son numéro (2 si la courante est la 1).
+2. Dans le `.env`, garder l'ancienne sous son numéro et poser la nouvelle :
+
+   ```dotenv
+   DOCUMENTS_ENCRYPTION_KEY=<nouvelle clé>
+   DOCUMENTS_ENCRYPTION_KEY_VERSION=2
+   DOCUMENTS_ENCRYPTION_KEY_1=<ancienne clé>
+   ```
+
+   puis `docker compose up -d`. Les nouveaux dépôts partent avec la clé 2 ;
+   les anciens se lisent encore avec la clé 1. Si deux clés différentes
+   portent le même numéro, l'application refuse de chiffrer comme de
+   déchiffrer, plutôt que de se tromper de clé.
+3. Lancer le script comme ci-dessus, essai à blanc puis `--appliquer` : il
+   rechiffre avec la clé 2 tout ce qui l'était avec la clé 1.
+4. Quand l'essai à blanc ne trouve plus rien, retirer
+   `DOCUMENTS_ENCRYPTION_KEY_1` du `.env` et relancer l'application.
+5. Garder l'ancienne clé dans le coffre-fort tant qu'existent des sauvegardes
+   du stockage antérieures à la rotation : elles ne se lisent qu'avec elle.
+   Après une fuite, ces sauvegardes sont à détruire.
 
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
 version précédente.

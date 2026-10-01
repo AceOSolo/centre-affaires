@@ -78,6 +78,19 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           )}
         </dd>
 
+        {/* Demande publique arrivée au terme de sa conservation (ADR 020) :
+            dire pourquoi le demandeur n'apparaît plus. */}
+        {booking.requesterAnonymizedAt && (
+          <>
+            <dt className="text-muted-foreground">Demandeur</dt>
+            <dd>
+              Coordonnées effacées le{' '}
+              {formatLongDate(toIsoDate(booking.requesterAnonymizedAt, timeZone), timeZone)}, au
+              terme de leur durée de conservation
+            </dd>
+          </>
+        )}
+
         {booking.notes && (
           <>
             <dt className="text-muted-foreground">Notes</dt>
