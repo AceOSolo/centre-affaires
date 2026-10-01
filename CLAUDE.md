@@ -113,9 +113,10 @@ légales.
 
 ## Facturation
 
-Hors scope de la V1 (outil interne). Mais la réforme française impose la
-réception de factures électroniques depuis septembre 2026 et l'émission pour
-les TPE/PME au 1er septembre 2027.
+Dans le périmètre depuis l'ADR 016 (cahier des charges DOMOTOP, vague 2).
+Paiements par virement et prélèvement suivis à la main, sans prestataire. La
+réforme française impose la réception de factures électroniques depuis
+septembre 2026 et l'émission pour les TPE/PME au 1er septembre 2027.
 
 Conséquence sur les choix dès maintenant : les factures sont stockées en
 **données structurées**, pas en PDF généré. Le PDF est une vue, pas la source
