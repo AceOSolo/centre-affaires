@@ -1,9 +1,9 @@
-import { and, asc, eq, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
 import { withTenant, type Transaction } from '../../db/index.ts'
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { hasCapacity, mergeAttributes, type ResourceAttributesFor } from './attributs.ts'
+import { hasCapacity, mergeAttributes } from './attributs.ts'
 import { centreRanges } from './ouverture.ts'
 import {
   openingHours,
@@ -58,7 +58,7 @@ export type CreateResourceInput = {
   description?: string | null
   capacity?: number | null
   status?: ResourceStatus
-  attributes?: ResourceAttributesFor[ResourceType]
+  attributes?: ResourceAttributes[ResourceType]
 }
 
 /** Levée quand le code saisi est déjà porté par une ressource active du centre. */
@@ -88,9 +88,6 @@ export class DuplicateResourceCodeError extends Error {
 export async function createResource(input: CreateResourceInput): Promise<Resource> {
   try {
     const created = await withTenant(currentTenantId(), async (tx) => {
-      const numero = lockerNumber(input.resourceType, input.attributes)
-      if (numero) await assertLockerNumberFree(tx, numero)
-
       const [resource] = await tx
         .insert(resources)
         .values({
@@ -125,12 +122,10 @@ export async function createResource(input: CreateResourceInput): Promise<Resour
     })
     return created
   } catch (error) {
-    // L'unicité du code est tenue par un index partiel : la vérifier en amont
-    // laisserait passer deux créations simultanées.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
-      throw new DuplicateResourceCodeError(input.code)
-    }
-    throw error
+    // L'unicité du code et celle du numéro de casier sont tenues par des index
+    // partiels : les vérifier en amont laisserait passer deux créations
+    // simultanées.
+    throw uniquenessError(error, input.code, input.attributes) ?? error
   }
 }
 
@@ -145,42 +140,29 @@ export class DuplicateLockerNumberError extends Error {
   }
 }
 
-/** Numéro d'un casier, ou `undefined` pour tout autre type. */
-function lockerNumber(
-  resourceType: ResourceType,
-  attributes: object | undefined,
-): string | undefined {
-  if (resourceType !== 'casier') return undefined
-  const numero = (attributes as { numero?: unknown } | undefined)?.numero
-  return typeof numero === 'string' && numero.trim() ? numero.trim() : undefined
-}
+/** Index qui tient le numéro de casier unique (migration 0028). */
+const LOCKER_NUMBER_INDEX = 'resources_tenant_locker_numero_key'
 
 /**
- * Deux casiers vivants ne portent pas le même numéro, à la casse près.
+ * Traduit le refus d'un index unique de `resources` en erreur nommée, rattachée
+ * au champ qu'elle concerne. `undefined` pour toute autre erreur, à relever.
  *
- * Vérifié dans la transaction qui écrit, faute d'index unique sur
- * `attributes->>'numero'` : deux saisies strictement simultanées pourraient
- * encore passer. Le risque est accepté pour un écran de back-office ; l'index
- * est demandé pour la prochaine migration.
+ * Deux index : le code de la ressource (`resources_tenant_code_key`) et le
+ * numéro de casier, à la casse près (`resources_tenant_locker_numero_key`,
+ * R01). La base tranche, y compris entre deux saisies simultanées ; aucune
+ * lecture préalable ne le ferait.
  */
-async function assertLockerNumberFree(
-  tx: Transaction,
-  numero: string,
-  exceptId?: string,
-): Promise<void> {
-  const [taken] = await tx
-    .select({ id: resources.id })
-    .from(resources)
-    .where(
-      and(
-        eq(resources.resourceType, 'casier'),
-        isNull(resources.deletedAt),
-        sql`lower(${resources.attributes} ->> 'numero') = lower(${numero})`,
-        exceptId ? ne(resources.id, exceptId) : undefined,
-      ),
-    )
-    .limit(1)
-  if (taken) throw new DuplicateLockerNumberError(numero)
+function uniquenessError(
+  error: unknown,
+  code: string,
+  attributes: object | undefined,
+): Error | undefined {
+  if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) return undefined
+  if (pgConstraintName(error) === LOCKER_NUMBER_INDEX) {
+    const numero = (attributes as { numero?: unknown } | undefined)?.numero
+    return new DuplicateLockerNumberError(typeof numero === 'string' ? numero.trim() : '')
+  }
+  return new DuplicateResourceCodeError(code)
 }
 
 /** Ce que l'écran de modification change. Le type, lui, ne change pas. */
@@ -190,7 +172,7 @@ export type UpdateResourceInput = {
   description: string | null
   capacity: number | null
   status: ResourceStatus
-  attributes: ResourceAttributesFor[ResourceType]
+  attributes: ResourceAttributes[ResourceType]
 }
 
 /**
@@ -219,8 +201,6 @@ export async function writeResourceUpdate(
     existing.attributes as Record<string, unknown>,
     input.attributes as Record<string, unknown>,
   )
-  const numero = lockerNumber(existing.resourceType, attributes)
-  if (numero) await assertLockerNumberFree(tx, numero, id)
 
   const [updated] = await tx
     .update(resources)
@@ -237,7 +217,10 @@ export async function writeResourceUpdate(
   return updated
 }
 
-/** Modification d'une ressource ; le code reste unique dans le centre. */
+/**
+ * Modification d'une ressource ; le code reste unique dans le centre, comme le
+ * numéro d'un casier.
+ */
 export async function updateResource(
   id: string,
   input: UpdateResourceInput,
@@ -245,11 +228,8 @@ export async function updateResource(
   try {
     return await withTenant(currentTenantId(), (tx) => writeResourceUpdate(tx, id, input))
   } catch (error) {
-    // Même garde que la création : l'index partiel tranche, pas une lecture.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
-      throw new DuplicateResourceCodeError(input.code)
-    }
-    throw error
+    // Même garde que la création : les index partiels tranchent, pas une lecture.
+    throw uniquenessError(error, input.code, input.attributes) ?? error
   }
 }
 

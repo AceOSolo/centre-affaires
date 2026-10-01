@@ -20,7 +20,7 @@ la vague 1, intégrée le 01/10/2026 ; l'audit du 30/09 en comptait 5, 18 et 10)
 
 | Réf. | Exigence | Statut | Ce qui manque | Effort | Phase |
 |---|---|---|---|---|---|
-| R01 | Catalogue multi-types, attributs, capacité | ✅ | Fiche et modification livrées, attributs validés par type, numéro de casier. Reste : index unique du numéro de casier (vérifié en code) | S | 1 |
+| R01 | Catalogue multi-types, attributs, capacité | ✅ | — (fiche et modification, attributs validés par type, numéro de casier unique par index, migration 0028) | — | 1 |
 | R02 | Calendrier par ressource, interne et client | ✅ | — (l'occupation par contrat apparaît au planning, sur la fiche ressource et sur la page publique : D6, ADR 018) | — | 1 |
 | R03 | Planning back-office | ✅ | Semaine toutes ressources, vue mois en taux, filtres par type et par client, bascule jour / semaine / mois (ADR 017) | L | 1 |
 | R04 | Anti-chevauchement | ✅ | Tests de charge. L'occupation par contrat est protégée par la même contrainte d'exclusion (ADR 018) ; un conflit à l'activation est nommé à l'écran | S | 1 |
@@ -31,7 +31,7 @@ la vague 1, intégrée le 01/10/2026 ; l'audit du 30/09 en comptait 5, 18 et 10)
 | R09 | Offres groupées ressources + services | ○ | Catalogue de services, offres, lignes d'offre | L | 2 |
 | R10 | Remises, engagement, prorata paramétrables | ◐ | Prorata fait mais codé en dur ; remises et engagement absents | L | 2 |
 | R11 | Moteur tarifaire unique | ◐ | Aucun total calculé (`priceCents` n'est appelé que par les tests) ; grille du contrat ignorée au portail | M | 2 |
-| R12 | Contrat généré, PDF, avenants | ◐ | Numérotation, modification d'un brouillon et archivage faits (vague 1). Reste : contrat généré depuis une offre, PDF, avenants | L | 2 |
+| R12 | Contrat généré, PDF, avenants | ◐ | Numérotation, modification d'un brouillon et archivage faits (vague 1) ; seul un contrat actif se résilie, et sa ressource ne change qu'avant son début (ADR 018). Reste : contrat généré depuis une offre, PDF, avenants (dont le changement de ressource en cours de contrat) | L | 2 |
 | R13 | Facturation intégrée | ○ | Factures, numérotation, TVA, génération périodique — voir D1 | L | 2 |
 | R14 | Actes à l'acte sur la facture | ◐ | Ouvertures comptées (CSV), pas valorisées ni facturées | M | 2 |
 | R15 | Facture = location + forfaits + actes | ○ | Lignes typées reliées à leur source | M | 2 |

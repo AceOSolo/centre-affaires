@@ -19,17 +19,6 @@ import {
  * pour être éprouvé par `node --test`.
  */
 
-/** Attributs du casier, numéro compris (R01). */
-export type CasierAttributes = ResourceAttributes['casier'] & {
-  /** Numéro peint sur la porte : ce que le client et l'accueil se disent. */
-  numero?: string
-}
-
-/** Ce qu'un type peut porter dans `attributes`, numéro de casier compris. */
-export type ResourceAttributesFor = {
-  [Type in ResourceType]: Type extends 'casier' ? CasierAttributes : ResourceAttributes[Type]
-}
-
 type FieldKind = 'decimal' | 'integer' | 'text' | 'list' | 'choice' | 'plate'
 
 export type AttributeField = {
@@ -203,7 +192,7 @@ function parseField(field: AttributeField, raw: string): FieldResult {
 }
 
 export type ParsedAttributes<Type extends ResourceType = ResourceType> = {
-  attributes: ResourceAttributesFor[Type]
+  attributes: ResourceAttributes[Type]
   errors: Record<string, string>
 }
 
@@ -227,7 +216,7 @@ export function parseAttributes<Type extends ResourceType>(
     else if (result.value !== undefined) attributes[field.name] = result.value
   }
 
-  return { attributes: attributes as ResourceAttributesFor[Type], errors }
+  return { attributes: attributes as ResourceAttributes[Type], errors }
 }
 
 /**
@@ -257,7 +246,7 @@ export type ResourceInput = {
   description: string | null
   capacity: number | null
   status: ResourceStatus
-  attributes: ResourceAttributesFor[ResourceType]
+  attributes: ResourceAttributes[ResourceType]
 }
 
 export type ParsedResource =

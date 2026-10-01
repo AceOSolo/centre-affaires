@@ -4,6 +4,7 @@ import { after, before, beforeEach, describe, it } from 'node:test'
 import { eq, sql } from 'drizzle-orm'
 import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
+import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
 import { createDatabase, withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import {
@@ -18,7 +19,8 @@ import { resources } from './schema.ts'
 /**
  * Modification d'une ressource (R01), contre la base et sous `app_centre`,
  * comme l'application l'écrit : attributs fusionnés, capacité tenue à nul pour
- * les types qui n'en ont pas, unicité du code et du numéro de casier.
+ * les types qui n'en ont pas, unicité du code et du numéro de casier — tenue
+ * par des index (migration 0028 pour le numéro), pas par une lecture.
  */
 const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
 const appUrl = process.env.TEST_DATABASE_URL
@@ -155,6 +157,40 @@ describe('modification des ressources', { skip: raison }, () => {
       attributes: { numero: 'A12' },
     })
     assert.deepEqual(created.attributes, { numero: 'A12' })
+  })
+
+  it('fait tenir l’unicité du numéro par la base, même hors de l’application', async () => {
+    let refus: unknown
+    try {
+      await asTenant((tx) =>
+        tx.execute(sql`
+          insert into resources (resource_type, code, name, attributes)
+          values ('casier', 'CAS-09', 'Casier 9', '{"numero": "a13"}')`),
+      )
+    } catch (error) {
+      refus = error
+    }
+    assert.equal(pgErrorCode(refus), PG_UNIQUE_VIOLATION)
+    assert.equal(pgConstraintName(refus), 'resources_tenant_locker_numero_key')
+  })
+
+  it('ne laisse passer qu’une de deux déclarations simultanées du même numéro', async () => {
+    const declarer = (code: string) =>
+      createResource({ resourceType: 'casier', code, name: code, attributes: { numero: 'B7' } })
+    const resultats = await Promise.allSettled([declarer('CAS-10'), declarer('CAS-11')])
+
+    assert.equal(resultats.filter((resultat) => resultat.status === 'fulfilled').length, 1)
+    const [echec] = resultats.filter((resultat) => resultat.status === 'rejected')
+    assert.ok(echec.reason instanceof DuplicateLockerNumberError, String(echec.reason))
+    assert.equal(echec.reason.numero, 'B7')
+  })
+
+  it('ne contraint pas un numéro posé sur une ressource qui n’est pas un casier', async () => {
+    await asTenant((tx) =>
+      tx.execute(sql`
+        update resources set attributes = attributes || '{"numero": "A12"}' where id = ${BUREAU}`),
+    )
+    assert.equal(((await lire(BUREAU)).attributes as { numero?: string }).numero, 'A12')
   })
 
   it('ne modifie pas une ressource archivée', async () => {

@@ -23,9 +23,23 @@ export function pgErrorCode(error: unknown): string | undefined {
   return undefined
 }
 
+/**
+ * Nom de la contrainte ou de l'index en cause (`constraint_name` du pilote),
+ * même sous l'enveloppe de Drizzle. Sert à distinguer deux unicités d'une même
+ * table : le code d'une ressource et le numéro d'un casier, par exemple.
+ */
+export function pgConstraintName(error: unknown): string | undefined {
+  for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
+    const name = (cause as { constraint_name?: unknown }).constraint_name
+    if (typeof name === 'string' && name) return name
+    cause = (cause as { cause?: unknown }).cause
+  }
+  return undefined
+}
+
 /** Contrainte d'exclusion : deux réservations se chevauchent (décision 3). */
 export const PG_EXCLUSION_VIOLATION = '23P01'
-/** Index unique : un code de ressource déjà pris dans le centre. */
+/** Index unique : un code de ressource ou un numéro de casier déjà pris dans le centre. */
 export const PG_UNIQUE_VIOLATION = '23505'
 /** Contrainte `check` : intervalle vide, annulation incohérente. */
 export const PG_CHECK_VIOLATION = '23514'

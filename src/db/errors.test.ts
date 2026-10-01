@@ -7,6 +7,7 @@ import {
   PG_EXCLUSION_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
   PG_UNIQUE_VIOLATION,
+  pgConstraintName,
   pgErrorCode,
 } from './errors.ts'
 
@@ -102,6 +103,32 @@ describe('lecture du code d’erreur Postgres', () => {
       let erreur: unknown = erreurDriver(PG_EXCLUSION_VIOLATION)
       for (let i = 0; i < 9; i++) erreur = enveloppe(erreur)
       assert.equal(pgErrorCode(erreur), '23P01')
+    })
+  })
+
+  describe('nom de la contrainte en cause', () => {
+    const unicite = (constraint_name: string) =>
+      Object.assign(erreurDriver(PG_UNIQUE_VIOLATION), { constraint_name })
+
+    it('lit le nom posé par le pilote, sous l’enveloppe de Drizzle', () => {
+      assert.equal(
+        pgConstraintName(enveloppe(unicite('resources_tenant_locker_numero_key'))),
+        'resources_tenant_locker_numero_key',
+      )
+    })
+
+    it('ne rend rien pour une erreur sans contrainte', () => {
+      assert.equal(pgConstraintName(enveloppe(erreurDriver(PG_UNIQUE_VIOLATION))), undefined)
+      assert.equal(pgConstraintName(new Error('panne réseau')), undefined)
+      assert.equal(pgConstraintName(undefined), undefined)
+    })
+
+    it('ignore un nom vide ou qui n’est pas une chaîne', () => {
+      assert.equal(pgConstraintName(unicite('')), undefined)
+      assert.equal(
+        pgConstraintName(Object.assign(new Error('x'), { constraint_name: 42 })),
+        undefined,
+      )
     })
   })
 

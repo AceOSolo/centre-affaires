@@ -180,8 +180,9 @@ l'objet des indicateurs (R31), qui pourront réutiliser `dayOccupancy`.
 
 **Reste à faire** :
 
-- le numéro de casier (R01) n'est unique que par vérification applicative ;
-  un index unique partiel sur `attributes ->> 'numero'` des casiers vivants
-  reste à poser par migration ;
+- ~~le numéro de casier (R01) n'est unique que par vérification applicative~~ :
+  fait, l'index unique partiel `resources_tenant_locker_numero_key` sur
+  `lower(attributes ->> 'numero')` des casiers vivants (migration 0028) remplace
+  la vérification en code ;
 - un réglage pour masquer les ressources hors service de la vue mois, si la
   liste devient longue.
