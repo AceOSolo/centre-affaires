@@ -38,7 +38,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 021 | [Numérotation des documents](021-numerotation-des-documents.md) | 2026-10-01 | accepté |
 | 022 | [Sauvegardes et plan de reprise](022-sauvegardes-et-plan-de-reprise.md) | 2026-10-01 | accepté |
 | 023 | [Tarification paramétrable, remises, engagement et devis figé](023-tarification-parametrable-et-devis.md) | 2026-10-01 | accepté ; amende les ADR 006 et 009 |
-| 024 | [Catalogue de services, services souscrits et offres groupées](024-services-et-offres-groupees.md) | 2026-10-01 | accepté |
+| 024 | [Catalogue de services, services souscrits et offres groupées](024-services-et-offres-groupees.md) | 2026-10-01 | accepté ; mise en œuvre des écrans, du prix des offres et des souscriptions ajoutée |
 | 025 | [Contrats versionnés : lignes, avenants, segments d'occupation, documents](025-contrats-versionnes-et-documents.md) | 2026-10-01 | accepté ; amende les ADR 006 et 018 |
 | 026 | [Factures structurées : modèle EN 16931, émission, avoirs, double facturation](026-factures-structurees.md) | 2026-10-01 | accepté |
 | 027 | [Paiements, mandats SEPA chiffrés et export comptable](027-paiements-et-export-comptable.md) | 2026-10-01 | accepté |

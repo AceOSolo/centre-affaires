@@ -33,6 +33,7 @@ import {
   contractTypeLabels,
 } from '../../../../modules/contrats/labels.ts'
 import { listContracts } from '../../../../modules/contrats/queries.ts'
+import { ClientSubscriptionsSection } from '../../../../modules/facturation/souscriptions-section.tsx'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import {
   bookingStatusBadgeStyles,
@@ -56,10 +57,13 @@ export default async function ClientPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ contact?: string }>
+  searchParams: Promise<{ contact?: string; souscription?: string }>
 }) {
   const { member: staff } = await requirePermission('clients.gerer')
-  const [{ id }, { contact: contactNotice }] = await Promise.all([params, searchParams])
+  const [{ id }, { contact: contactNotice, souscription: subscriptionNotice }] = await Promise.all([
+    params,
+    searchParams,
+  ])
   // Un identifiant illisible ferait lever Postgres (22P02) : c'est une fiche
   // introuvable, pas une panne.
   if (!isUuid(id)) notFound()
@@ -411,22 +415,13 @@ export default async function ClientPage({
         )}
       </section>
 
-      {/* Place réservée aux services souscrits (R18, vague 2). Un tableau vide
-          dirait « aucun service » d'un client qui en a : le texte dit plutôt
-          que le suivi n'existe pas encore. */}
-      <section aria-labelledby="services-titre" className="flex flex-col gap-3">
-        <h2 id="services-titre" className="text-sm font-semibold tracking-tight">
-          Services souscrits
-        </h2>
-        <div className="rounded-lg border border-dashed border-border bg-white px-5 py-4 text-sm">
-          <p className="font-medium text-foreground">Pas encore suivis dans l’application</p>
-          <p className="mt-1 text-muted-foreground">
-            Les forfaits et les actes — standard, assistante, numérisation du courrier — seront
-            rattachés à la fiche avec la facturation. D’ici là, cette rubrique ne dit pas ce que le
-            client a souscrit : ses prestations récurrentes figurent dans ses contrats.
-          </p>
-        </div>
-      </section>
+      {/* Services souscrits (R07, R18) : en cours, à venir, historique. */}
+      <ClientSubscriptionsSection
+        clientId={client.id}
+        archivedClient={Boolean(client.deletedAt)}
+        canManage={can(staff.role, 'souscriptions.gerer')}
+        notice={typeof subscriptionNotice === 'string' ? subscriptionNotice : undefined}
+      />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
