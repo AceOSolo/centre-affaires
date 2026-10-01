@@ -18,6 +18,7 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/ressources/agendas', label: 'Agendas Google', permission: 'agenda-google.gerer' },
   { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
   { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
+  { href: '/factures', label: 'Factures', permission: 'facturation.consulter' },
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
