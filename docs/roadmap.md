@@ -25,7 +25,7 @@ Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
 | R04 | Anti-chevauchement | ✅ | Tests de charge ; aucune exclusion sur `contracts.resource_id` | S–M | 1 |
 | R05 | Réservation : créneau, statut, canal, client, contrat | ◐ | Colonne canal, `contract_id` (`client_id` migré en 0023) | M | 1 |
 | R06 | États des lieux configurables avec photos | ○ | Tout : modèles de champs en base, inspections, photos compressées | L | 4 |
-| R07 | CRM : fiche, contacts, historique | ◐ | Contacts CRM (≠ accès portail), réservations et services sur la fiche | M | 1 |
+| R07 | CRM : fiche, contacts, historique | ◐ | Services souscrits sur la fiche, avec R18 (place réservée). Faits en vague 1 : contacts CRM distincts des accès, historique des réservations, recherche par SIRET ou contact | S | 2 |
 | R08 | Grilles jour / semaine / mois | ◐ | Unité `week` ; dates de validité ignorées | S–M | 2 |
 | R09 | Offres groupées ressources + services | ○ | Catalogue de services, offres, lignes d'offre | L | 2 |
 | R10 | Remises, engagement, prorata paramétrables | ◐ | Prorata fait mais codé en dur ; remises et engagement absents | L | 2 |
