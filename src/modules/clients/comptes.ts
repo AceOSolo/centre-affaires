@@ -1,7 +1,7 @@
 import { and, asc, eq, isNull, notInArray, sql } from 'drizzle-orm'
 
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
-import { withTenant, type Transaction } from '../../db/index.ts'
+import { withClientScope, withTenant, type Database, type Transaction } from '../../db/index.ts'
 import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients, type ClientMember } from './schema.ts'
@@ -83,6 +83,33 @@ export async function resolveClientAccounts(
       ),
     )
     .orderBy(asc(clients.name))
+}
+
+/**
+ * Transaction de l'espace client : le centre courant **et** la portée des
+ * entreprises du compte (R28, ADR 019).
+ *
+ * Toute lecture ou écriture faite pour une personne connectée à son espace
+ * passe par ici, après la résolution de ses entreprises
+ * (`resolveClientAccounts`, seule requête de l'espace faite sous
+ * `withTenant()`). Les politiques restrictives de la migration 0026 ne
+ * laissent alors voir ni écrire que les lignes de ces entreprises : un filtre
+ * `where client_id …` oublié ne montre rien de plus. Les filtres applicatifs
+ * restent ; la portée est le second verrou.
+ *
+ * Une liste vide ne voit rien : les appelants la refusent en amont.
+ */
+export function inClientSpace<T>(
+  accounts: readonly Pick<ClientAccount, 'clientId'>[],
+  run: (tx: Transaction) => Promise<T>,
+  database?: Database,
+): Promise<T> {
+  return withClientScope(
+    currentTenantId(),
+    accounts.map((account) => account.clientId),
+    run,
+    database,
+  )
 }
 
 /** Personnes inscrites sur une fiche, retirées exclues. */

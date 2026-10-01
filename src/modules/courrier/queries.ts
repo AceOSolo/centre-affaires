@@ -9,7 +9,7 @@ import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
-import type { ClientAccount } from '../clients/comptes.ts'
+import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
 import type { OpeningLine } from './regles.ts'
 import {
@@ -347,7 +347,8 @@ export type ClientMailRow = Pick<
 
 /**
  * Boîte aux lettres : les plis des entreprises du compte, et d'elles seules.
- * Le filtre sur `client_id` est le verrou ; la RLS ne sépare que les centres.
+ * Deux verrous : le filtre sur `client_id`, et la portée client de la
+ * transaction (`inClientSpace`, ADR 019), qui tiendrait sans lui.
  */
 export async function listMailForAccounts(accounts: ClientAccount[]): Promise<ClientMailRow[]> {
   if (accounts.length === 0) return []
@@ -362,7 +363,7 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
       limit 1
     )`
 
-  return withTenant(currentTenantId(), (tx) =>
+  return inClientSpace(accounts, (tx) =>
     tx
       .select({
         id: mailItems.id,
@@ -393,7 +394,7 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
  */
 export async function requestOpening(id: string, accounts: ClientAccount[]): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
-  return withTenant(currentTenantId(), async (tx) => {
+  return inClientSpace(accounts, async (tx) => {
     const [item] = await tx
       .select({ clientId: mailItems.clientId })
       .from(mailItems)
@@ -427,7 +428,7 @@ export async function requestOpening(id: string, accounts: ClientAccount[]): Pro
 /** Annulation, par toute personne de l'entreprise, tant que le pli est fermé. */
 export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
-  const updated = await withTenant(currentTenantId(), (tx) =>
+  const updated = await inClientSpace(accounts, (tx) =>
     tx
       .update(mailItems)
       .set({ status: 'received', openingRequestedAt: null, openingRequestedBy: null })
@@ -484,7 +485,7 @@ export async function findScanForAccounts(
   accounts: ClientAccount[],
 ): Promise<ScanToServe | undefined> {
   if (accounts.length === 0 || !isUuid(scanId)) return undefined
-  const [scan] = await withTenant(currentTenantId(), (tx) =>
+  const [scan] = await inClientSpace(accounts, (tx) =>
     tx
       .select(scanToServe)
       .from(mailScans)
@@ -505,11 +506,28 @@ export async function findScanForAccounts(
   return scan
 }
 
-/** Inscription au journal d'accès. Appelée avant de servir le fichier. */
+/**
+ * Inscription au journal d'accès. Appelée avant de servir le fichier.
+ *
+ * La consultation d'un client s'inscrit sous la portée de l'entreprise
+ * destinataire du pli (ADR 019) : une ligne de journal pour le courrier d'une
+ * autre entreprise serait refusée par la base.
+ */
 export async function logScanView(
   view:
     | { viewer: 'staff'; mailScanId: string; staffMemberId: string; authUserId: string }
-    | { viewer: 'client'; mailScanId: string; clientMemberId: string; authUserId: string },
+    | {
+        viewer: 'client'
+        mailScanId: string
+        clientMemberId: string
+        authUserId: string
+        clientId: string
+      },
 ): Promise<void> {
+  if (view.viewer === 'client') {
+    const { clientId, ...row } = view
+    await inClientSpace([{ clientId }], (tx) => tx.insert(mailScanViews).values(row))
+    return
+  }
   await withTenant(currentTenantId(), (tx) => tx.insert(mailScanViews).values(view))
 }

@@ -6,7 +6,7 @@ import { logScanView, type ScanToServe } from './queries.ts'
 
 type Viewer =
   | { viewer: 'staff'; staffMemberId: string; authUserId: string }
-  | { viewer: 'client'; clientMemberId: string; authUserId: string }
+  | { viewer: 'client'; clientMemberId: string; authUserId: string; clientId: string }
 
 /**
  * Renvoie une numérisation à qui a le droit de la lire — ce droit est vérifié
