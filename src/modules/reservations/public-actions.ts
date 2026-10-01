@@ -5,6 +5,8 @@ import { revalidatePath } from 'next/cache'
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
+import { quote } from '../facturation/devis-queries.ts'
+import { toQuoteDisplay, type QuoteDisplay } from '../facturation/devis.ts'
 import { findResource } from '../ressources/queries.ts'
 import {
   BookingConflictError,
@@ -37,6 +39,43 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
   const availability = (await listDayAvailability(date, timeZone)).find(({ resource }) => resource.id === resourceId)
   if (!availability) return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
   return { status: 'ready', free: requestableRanges(availability.free, tenant, now), closed: availability.closed, latestStart: latest }
+}
+
+/** Montant annoncé au visiteur avant sa demande (R11). */
+export type PublicQuote =
+  | { status: 'priced'; quote: QuoteDisplay; fromContract: boolean }
+  | { status: 'unpriced'; message: string }
+
+/**
+ * Devis d'un créneau, pour la page publique : le même moteur (`quote()`) que
+ * le back-office et que l'écriture de la demande, qui le figera. Un visiteur
+ * connecté qui ne représente qu'une entreprise voit le prix de la grille de
+ * son contrat ; l'entreprise vient de la session, jamais de la requête.
+ *
+ * Ne rend que ce qui s'affiche : aucun identifiant de grille ni de contrat.
+ */
+export async function loadPublicQuoteAction(
+  resourceId: string,
+  date: string,
+  startTime: string,
+  endTime: string,
+): Promise<PublicQuote> {
+  const unpriced = (message: string): PublicQuote => ({ status: 'unpriced', message })
+  if (!UUID.test(resourceId)) return unpriced(rejectionMessages['ressource-indisponible'])
+  const tenant = await currentTenant()
+  const selection = publicSelection(date, startTime, endTime, tenant.timezone)
+  if (!selection) return unpriced(rejectionMessages['creneau-illisible'])
+  const resource = await findResource(resourceId)
+  if (!resource || resource.status !== 'active' || resource.deletedAt) {
+    return unpriced(rejectionMessages['ressource-indisponible'])
+  }
+  const result = await quote({ resourceId, ...selection, clientId: await requesterClientId() })
+  if (!result.ok) return unpriced('Notre équipe vous précisera le tarif de ce créneau.')
+  return {
+    status: 'priced',
+    quote: toQuoteDisplay(result.quote),
+    fromContract: result.quote.source.kind === 'contract',
+  }
 }
 
 /**

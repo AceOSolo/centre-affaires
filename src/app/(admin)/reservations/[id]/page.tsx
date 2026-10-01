@@ -7,6 +7,8 @@ import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../modules/clients/queries.ts'
 import { contractStatusLabels } from '../../../../modules/contrats/labels.ts'
+import { frozenQuoteDisplay } from '../../../../modules/facturation/devis.ts'
+import { QuoteSummary } from '../../../../modules/facturation/devis-resume.tsx'
 import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
 import {
   assignBookingClientAction,
@@ -37,6 +39,8 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   // Occupation d'une ressource sous contrat (ADR 018) : des jours entiers,
   // parfois sans terme, qui ne se modifient qu'à travers le contrat.
   const occupation = booking.kind === 'contract'
+  // Prix figé à l'écriture (R11) : celui que la facture reprendra.
+  const frozenQuote = frozenQuoteDisplay(booking)
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -128,6 +132,29 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         <dd>
           <ChannelLabel channel={booking.channel} detailed />
         </dd>
+
+        {booking.kind === 'booking' && (
+          <>
+            <dt className="text-muted-foreground">Prix</dt>
+            <dd>
+              {frozenQuote && booking.quotedAt ? (
+                <>
+                  <QuoteSummary quote={frozenQuote} className="max-w-sm" />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Figé le {formatLongDate(toIsoDate(booking.quotedAt, timeZone), timeZone)} à{' '}
+                    {formatTime(booking.quotedAt, timeZone)} : la facture le reprendra, même si la
+                    grille change.
+                  </p>
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Non chiffrée — réservation interne, antérieure au calcul des prix, ou sans tarif
+                  dans la grille.
+                </span>
+              )}
+            </dd>
+          </>
+        )}
 
         <dt className="text-muted-foreground">Client</dt>
         <dd>

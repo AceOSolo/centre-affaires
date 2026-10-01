@@ -5,11 +5,12 @@ import { useActionState, useEffect, useRef, useState, type FormEvent } from 'rea
 
 import { ArrowRightIcon, BuildingIcon, CalendarIcon, CheckIcon, ClockIcon, CreditCardIcon, FileTextIcon, UsersIcon } from '../../components/ui/icons.tsx'
 import { addDaysToIsoDate, formatLongDate, formatMinutes, formatTime } from '../../lib/dates.ts'
+import { QuoteSummary } from '../facturation/devis-resume.tsx'
 import { rateUnitSuffixes } from '../facturation/labels.ts'
 import { formatCents, type RateCandidate } from '../facturation/tarifs.ts'
 import { describeAttributes, resourceTypeLabels } from '../ressources/labels.ts'
 import type { Resource } from '../ressources/schema.ts'
-import { loadPublicDayAction, requestBookingAction, type PublicDayAvailability, type PublicFormState } from './public-actions.ts'
+import { loadPublicDayAction, loadPublicQuoteAction, requestBookingAction, type PublicDayAvailability, type PublicFormState, type PublicQuote } from './public-actions.ts'
 import { availableEnds, availableStarts, fitsFreeRange, publicSelection } from './public-selection.ts'
 import { MAX_REQUEST_MINUTES, MIN_REQUEST_MINUTES } from './requests.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
@@ -69,6 +70,10 @@ export function PublicBookingForm({ resources, timeZone, currency, policy, defau
   const start = startTime && publicSelection(date, startTime, '23:59', timeZone)?.startsAt
   const ends = start ? availableEnds(start, free, timeZone) : []
   const error = localError || (showServerError && state.status === 'error' ? state.message : '')
+  // Montant du créneau choisi (R11), demandé au moteur de devis du serveur : le même qui le figera sur la demande.
+  const quoteKey = validSlot ? `${resourceId}/${date}/${startTime}/${endTime}` : ''
+  const [quoteLoaded, setQuoteLoaded] = useState<{ key: string; result: PublicQuote }>()
+  const quote = quoteKey && quoteLoaded?.key === quoteKey ? quoteLoaded.result : undefined
 
   useEffect(() => {
     if (!resourceId || !date || date < minDate || date > maxDate) return
@@ -79,6 +84,16 @@ export function PublicBookingForm({ resources, timeZone, currency, policy, defau
     )
     return () => { cancelled = true }
   }, [resourceId, date, minDate, maxDate, availabilityKey])
+
+  useEffect(() => {
+    if (!quoteKey) return
+    let cancelled = false
+    loadPublicQuoteAction(resourceId, date, startTime, endTime).then(
+      (result) => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result }) },
+      () => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result: { status: 'unpriced', message: 'Le montant n’a pas pu être calculé. Notre équipe vous le précisera.' } }) },
+    )
+    return () => { cancelled = true }
+  }, [quoteKey, resourceId, date, startTime, endTime])
 
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
   useEffect(() => { if (state.status === 'sent') headingRef.current?.focus() }, [state])
@@ -238,6 +253,7 @@ export function PublicBookingForm({ resources, timeZone, currency, policy, defau
               </div>}
             </div>
             {validSlot && <p className="flex items-center gap-2 rounded-md bg-accent/10 p-4 text-sm font-medium text-primary"><CheckIcon className="shrink-0" />{startTime} – {endTime} · {formatMinutes(duration)}</p>}
+            {validSlot && <div className="rounded-md border border-border p-4"><p className="mb-2 text-sm font-medium">Montant de votre réservation</p><QuoteAmount quote={quote} /></div>}
             {!!startTime && !!endTime && availability?.status === 'ready' && !validSlot && <p role="alert" className="text-sm text-destructive">Ces horaires ne sont plus disponibles. Sélectionnez un nouveau créneau.</p>}
           </div>}
 
@@ -263,7 +279,7 @@ export function PublicBookingForm({ resources, timeZone, currency, policy, defau
               <p className="font-semibold text-primary">{resource?.name}</p>
               <p className="mt-2 capitalize">{formatLongDate(date, timeZone)}</p>
               <p className="mt-1">{startTime} – {endTime} · {formatMinutes(duration)}</p>
-              <div className="mt-3 font-medium text-primary"><Rates resource={resource} currency={currency} /></div>
+              <div className="mt-3 border-t border-border pt-3"><QuoteAmount quote={quote} /></div>
               <button type="button" disabled={pending} onClick={() => goTo(2)} className={`mt-2 min-h-11 text-primary underline ${focusClass}`}>Modifier le créneau</button>
             </div>
             <div className="rounded-md border border-border p-4 text-sm">
@@ -305,12 +321,33 @@ export function PublicBookingForm({ resources, timeZone, currency, policy, defau
               <div><dt className="flex items-center gap-2 text-muted-foreground"><BuildingIcon size={18} />Salle</dt><dd className="mt-2 font-medium text-primary">{resource?.name ?? 'À choisir'}</dd>{!!resource?.capacity && <dd className="mt-1 text-muted-foreground">Jusqu’à {resource.capacity} personnes</dd>}</div>
               <div className="border-t border-border pt-5"><dt className="flex items-center gap-2 text-muted-foreground"><CalendarIcon size={18} />Date</dt><dd className="mt-2 font-medium capitalize">{resource && publicSelection(date, '09:00', '10:00', timeZone) ? formatLongDate(date, timeZone) : 'À choisir'}</dd></div>
               <div><dt className="flex items-center gap-2 text-muted-foreground"><ClockIcon size={18} />Horaires</dt><dd className="mt-2 font-medium">{selection ? `${startTime} – ${endTime}` : 'À choisir'}</dd>{selection && <dd className="mt-1 text-muted-foreground">Durée : {formatMinutes(duration)}</dd>}</div>
-              <div className="border-t border-border pt-5"><dt className="text-muted-foreground">Tarif de la salle</dt><dd className="mt-2 space-y-1 font-medium text-primary"><Rates resource={resource} currency={currency} /></dd><dd className="mt-2 text-xs text-muted-foreground">Le montant total sera précisé dans votre devis.</dd></div>
+              <div className="border-t border-border pt-5"><dt className="text-muted-foreground">Tarif de la salle</dt><dd className="mt-2 space-y-1 font-medium text-primary"><Rates resource={resource} currency={currency} /></dd></div>
+              <div className="border-t border-border pt-5"><dt className="text-muted-foreground">Montant</dt><dd className="mt-2"><QuoteAmount quote={quote} live={false} pendingLabel={validSlot ? undefined : 'Choisissez un créneau pour connaître le montant.'} /></dd></div>
             </dl>
             <p className="mt-6 rounded-md border border-border bg-background p-4 text-xs leading-relaxed text-muted-foreground">Un doute ou un besoin particulier ? Précisez-le à l’étape « Vos infos ». Notre équipe vous accompagne.</p>
           </div>
         </aside>
       </div>
+    </div>
+  )
+}
+
+/**
+ * Montant du créneau : HT, TVA, TTC, et le détail de l'unité retenue. La
+ * place est tenue pendant le calcul ; un créneau que la grille ne tarife pas
+ * le dit, sans inventer de prix.
+ */
+function QuoteAmount({ quote, pendingLabel, live = true }: { quote?: PublicQuote; pendingLabel?: string; live?: boolean }) {
+  // Le récapitulatif latéral redit le montant de l'étape en cours : une seule annonce suffit.
+  return (
+    <div aria-live={live ? 'polite' : undefined} aria-busy={live ? !quote && !pendingLabel : undefined} className="min-h-[5rem] text-sm">
+      {pendingLabel ? <p className="text-muted-foreground">{pendingLabel}</p>
+        : !quote ? <p className="text-muted-foreground">Calcul du montant…</p>
+        : quote.status === 'unpriced' ? <p className="text-muted-foreground">{quote.message}</p>
+        : <>
+          <QuoteSummary quote={quote.quote} />
+          <p className="mt-2 text-xs text-muted-foreground">{quote.fromContract ? 'Tarif de votre contrat. ' : ''}Montant retenu sur votre demande, confirmé par notre équipe.</p>
+        </>}
     </div>
   )
 }

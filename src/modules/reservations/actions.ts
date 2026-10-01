@@ -9,6 +9,7 @@ import { requirePermission } from '../../lib/auth/staff.ts'
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { parseQuoteDiscount } from '../facturation/devis.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import { describeBusyBooking } from './occupation.ts'
 import {
@@ -16,6 +17,7 @@ import {
   BookingNotMovableError,
   ContractOccupationLockedError,
   InvalidRangeError,
+  QuoteDiscountError,
   assignBookingClient,
   cancelBooking,
   confirmBooking,
@@ -79,17 +81,28 @@ export async function createBookingAction(
   await requirePermission('reservations.gerer')
   const timeZone = await currentTimeZone()
   const values = Object.fromEntries(
-    ['date', 'startTime', 'endTime', 'title', 'clientId', 'contractId', 'notes'].map((key) => [
-      key,
-      text(formData, key),
-    ]),
+    [
+      'date',
+      'startTime',
+      'endTime',
+      'title',
+      'clientId',
+      'contractId',
+      'notes',
+      'discountKind',
+      'discountValue',
+    ].map((key) => [key, text(formData, key)]),
   )
+  // Usage interne : la réservation n'est pas chiffrée (R11, ADR 023).
+  const internal = formData.get('internal') === 'on'
+  const discount = parseQuoteDiscount(values.discountKind, values.discountValue)
   const resourceId = text(formData, 'resourceId')
   const fieldErrors: Record<string, string> = {}
 
   if (!resourceId) return { error: 'Choisir une ressource.', values }
   if (!values.title) fieldErrors.title = 'Indiquez l’objet de la réservation.'
   if (values.contractId && !isUuid(values.contractId)) fieldErrors.contractId = 'Contrat inconnu.'
+  if (!internal && !discount.ok) fieldErrors.discountValue = discount.message
 
   let startsAt: Date | undefined
   let endsAt: Date | undefined
@@ -119,11 +132,19 @@ export async function createBookingAction(
       // Facultatif : un contrat actif de ce client qui couvre le créneau (R05),
       // vérifié par `createBooking` dans la transaction qui écrit.
       contractId: values.contractId || null,
+      // Le devis est recalculé et figé dans la transaction qui écrit : le
+      // montant affiché par le formulaire n'est qu'une annonce.
+      pricing: internal
+        ? { mode: 'none' }
+        : { mode: 'grid', discount: discount.ok ? discount.discount : null },
     })
     createdId = created.id
   } catch (error) {
     if (error instanceof InvalidRangeError) {
       return { fieldErrors: { endTime: error.message }, values }
+    }
+    if (error instanceof QuoteDiscountError) {
+      return { fieldErrors: { discountValue: error.message }, values }
     }
     if (error instanceof BookingContractError) {
       return {

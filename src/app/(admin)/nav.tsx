@@ -23,6 +23,7 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   // demandes : c'est une file d'attente, pas une liste de consultation.
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
+  { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },
 ]
 
 /**

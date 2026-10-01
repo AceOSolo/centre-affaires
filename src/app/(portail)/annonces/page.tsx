@@ -36,7 +36,7 @@ export default async function CataloguePage() {
 
   const [listings, plan, availability] = await Promise.all([
     listPublishedListings(),
-    findDefaultRatePlan(),
+    findDefaultRatePlan(today),
     listDayAvailability(today, timeZone),
   ])
 
@@ -67,10 +67,11 @@ export default async function CataloguePage() {
             // visiteur veut savoir à partir de combien, pas le tarif mensuel.
             const tarif = plan
               ? UNITES.map((unit) =>
-                  resolveRate(plan.items, {
+                  resolveRate(plan, {
                     resourceId: listing.resourceId,
                     resourceType: listing.resource.resourceType,
                     unit,
+                    on: today,
                   }),
                 ).find(Boolean)
               : undefined

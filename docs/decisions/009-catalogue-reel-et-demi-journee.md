@@ -2,7 +2,9 @@
 
 **Date** : 2026-09-18
 **Statut** : accepté — durée de la demi-journée devenue un paramètre du centre
-(ADR 023) ; options facturées modélisables en services (ADR 024)
+(ADR 023) ; options facturées modélisables en services (ADR 024) ; unité
+retenue par le devis quand la grille en propose plusieurs : ADR 023 (mise en
+œuvre)
 
 ## Contexte
 

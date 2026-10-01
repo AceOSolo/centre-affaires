@@ -58,9 +58,9 @@ export default async function PortailPage({
 
   const [rawAvailability, tarifs, regles] = await Promise.all([
     listDayAvailability(isoDate, timeZone),
-    // Les prix affichés viennent de la grille par défaut : la page vitrine et la
-    // facturation ne peuvent pas diverger.
-    findDefaultRatePlan(),
+    // Les prix affichés viennent de la grille par défaut en vigueur ce jour-là :
+    // la page vitrine et la facturation ne peuvent pas diverger (R08, R11).
+    findDefaultRatePlan(isoDate),
     listOpeningHours(),
   ])
   const availability = rawAvailability.map((entry) => {
@@ -82,9 +82,9 @@ export default async function PortailPage({
     capacity: resource.capacity,
     photoPath: resource.photoPath,
     attributes: resource.attributes,
-    rates: (['hour', 'half_day', 'day'] as const).flatMap((unit) => {
-      const rate = resolveRate(tarifs?.items ?? [], {
-        resourceId: resource.id, resourceType: resource.resourceType, unit,
+    rates: (['hour', 'half_day', 'day', 'week'] as const).flatMap((unit) => {
+      const rate = resolveRate(tarifs, {
+        resourceId: resource.id, resourceType: resource.resourceType, unit, on: isoDate,
       })
       return rate ? [{ unit, amountCents: rate.amountCents }] : []
     }),
@@ -295,17 +295,19 @@ export default async function PortailPage({
                   )}
                   {(() => {
                     const demiJournee = tarifs
-                      ? resolveRate(tarifs.items, {
+                      ? resolveRate(tarifs, {
                           resourceId: resource.id,
                           resourceType: resource.resourceType,
                           unit: 'half_day',
+                          on: isoDate,
                         })
                       : undefined
                     const journee = tarifs
-                      ? resolveRate(tarifs.items, {
+                      ? resolveRate(tarifs, {
                           resourceId: resource.id,
                           resourceType: resource.resourceType,
                           unit: 'day',
+                          on: isoDate,
                         })
                       : undefined
                     if (!demiJournee && !journee) return <p className="mt-auto pt-5 text-sm text-muted-foreground">Contactez-nous pour les tarifs.</p>

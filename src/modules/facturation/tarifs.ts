@@ -2,10 +2,12 @@ import type { ResourceType } from '../ressources/schema.ts'
 import type { RateUnit } from './schema.ts'
 
 /**
- * Résolution du tarif applicable et calcul du montant.
+ * Résolution du tarif applicable et quantité due.
  *
  * Tous les montants sont des entiers de centimes (décision 5). Aucune division
  * ne subsiste dans un résultat : la quantité est entière, le prix unitaire aussi.
+ * Le montant d'un devis est calculé par `devis.ts`, par la règle d'arrondi
+ * unique de l'ADR 023.
  */
 
 /** Ce qu'il faut d'une ligne de grille pour décider. */
@@ -16,10 +18,48 @@ export type RateCandidate = {
   amountCents: number
 }
 
+/** Ce qu'il faut d'une grille pour savoir si elle s'applique un jour donné. */
+export type RatePlanValidity = {
+  /** Dates de calendrier, bornes comprises. Nulles : sans borne. */
+  validFrom: string | null
+  validTo: string | null
+  /** Une grille archivée ne s'applique plus, à aucune date. */
+  deletedAt?: Date | null
+}
+
+/**
+ * La grille s'applique-t-elle ce jour-là (R08, ADR 023) ?
+ *
+ * `isoDate` est un jour du centre : celui de la prestation (le début de la
+ * réservation), pas celui de la saisie. Une grille « valable du 1er janvier »
+ * chiffre les réservations à partir du 1er janvier, même saisies en décembre.
+ */
+export function isRatePlanValidOn(plan: RatePlanValidity, isoDate: string): boolean {
+  if (plan.deletedAt) return false
+  if (plan.validFrom && isoDate < plan.validFrom) return false
+  if (plan.validTo && isoDate > plan.validTo) return false
+  return true
+}
+
+/** Où en est une grille par rapport à un jour : pour l'afficher, jamais pour décider seul. */
+export type RatePlanValidityState = 'archived' | 'upcoming' | 'current' | 'expired'
+
+export function ratePlanValidityState(
+  plan: RatePlanValidity,
+  isoDate: string,
+): RatePlanValidityState {
+  if (plan.deletedAt) return 'archived'
+  if (plan.validFrom && isoDate < plan.validFrom) return 'upcoming'
+  if (plan.validTo && isoDate > plan.validTo) return 'expired'
+  return 'current'
+}
+
 export type RateLookup = {
   resourceId: string
   resourceType: ResourceType
   unit: RateUnit
+  /** Jour du centre auquel le prix s'applique : une grille hors validité ne répond pas. */
+  on: string
 }
 
 /**
@@ -31,12 +71,16 @@ export type RateLookup = {
  *
  * L'unicité des lignes est tenue par deux index partiels (migration 0005) : à
  * précision égale il ne peut pas y avoir deux candidats.
+ *
+ * Une grille absente, archivée ou hors de ses dates de validité le jour
+ * demandé ne tarife rien (R08) : le lecteur n'a pas à le vérifier lui-même.
  */
 export function resolveRate<T extends RateCandidate>(
-  items: readonly T[],
+  plan: (RatePlanValidity & { items: readonly T[] }) | null | undefined,
   lookup: RateLookup,
 ): T | undefined {
-  const applicable = items.filter(
+  if (!plan || !isRatePlanValidOn(plan, lookup.on)) return undefined
+  const applicable = plan.items.filter(
     (item) => item.unit === lookup.unit && item.resourceType === lookup.resourceType,
   )
   return (
@@ -45,56 +89,80 @@ export function resolveRate<T extends RateCandidate>(
   )
 }
 
-const MS_PER_MINUTE = 60_000
-
 /**
- * Durée d'une demi-journée réservable.
- *
- * Le centre ouvre du lundi au samedi de 8h à 22h, mais une demi-journée n'est
- * pas la moitié de l'amplitude : c'est le créneau vendu, matin ou après-midi.
- * Quatre heures est l'usage des centres d'affaires. C'est une convention de
- * gestion, comme l'unité entamée — elle est nommée ici pour se changer en un
- * endroit (ADR 009).
+ * Règles du centre qui fixent la quantité due (ADR 023) : colonnes
+ * `half_day_minutes` et `started_unit_tolerance_minutes` de `tenants`.
  */
-export const MINUTES_PER_HALF_DAY = 4 * 60
-
-/**
- * Quantité facturée pour une durée.
- *
- * Toute unité entamée est due : une réunion d'une heure et dix minutes coûte
- * deux heures. C'est l'usage des centres d'affaires, et c'est une convention de
- * gestion — pas une évidence (ADR 006).
- *
- * `month` et `unit` sont des forfaits : la prestation est due une fois, quelle
- * que soit sa durée. Un tarif au mois se pose sur un contrat, pas sur une
- * réservation.
- *
- * Choisir l'unité reste le travail de la grille : une réservation de 9h à 18h
- * facturée à la demi-journée coûte trois demi-journées, pas une journée. C'est
- * au centre de poser une ligne `day` sur les ressources vendues à la journée.
- */
-export function billableQuantity(unit: RateUnit, startsAt: Date, endsAt: Date): number {
-  const minutes = (endsAt.getTime() - startsAt.getTime()) / MS_PER_MINUTE
-  if (minutes <= 0) return 0
-  if (unit === 'hour') return Math.ceil(minutes / 60)
-  if (unit === 'half_day') return Math.ceil(minutes / MINUTES_PER_HALF_DAY)
-  if (unit === 'day') return Math.ceil(minutes / (60 * 24))
-  if (unit === 'week') return Math.ceil(minutes / (60 * 24 * 7))
-  return 1
+export type QuantityRules = {
+  /** Durée d'une demi-journée vendue, en minutes (240 par défaut, ADR 009). */
+  halfDayMinutes: number
+  /** Minutes tolérées avant qu'une unité entamée soit due (0 par défaut, ADR 006). */
+  startedUnitToleranceMinutes: number
 }
 
-/** Montant dû pour une réservation, en centimes. */
-export function priceCents(
-  rate: Pick<RateCandidate, 'unit' | 'amountCents'>,
-  startsAt: Date,
-  endsAt: Date,
+/**
+ * Valeurs par défaut des colonnes du centre, qui reprennent les conventions
+ * des ADR 006 et 009. Pour les tests et les exemples : le code de production
+ * lit toujours les règles du centre en base.
+ */
+export const DEFAULT_QUANTITY_RULES: QuantityRules = {
+  halfDayMinutes: 240,
+  startedUnitToleranceMinutes: 0,
+}
+
+const MINUTES_PER_HOUR = 60
+const MINUTES_PER_DAY = 24 * MINUTES_PER_HOUR
+
+/**
+ * Durée d'une unité, en minutes. `month` et `unit` sont des forfaits : ils
+ * n'ont pas de durée et ne se comptent pas ainsi.
+ */
+export function unitMinutes(unit: RateUnit, rules: QuantityRules): number | undefined {
+  if (unit === 'hour') return MINUTES_PER_HOUR
+  if (unit === 'half_day') return rules.halfDayMinutes
+  if (unit === 'day') return MINUTES_PER_DAY
+  if (unit === 'week') return 7 * MINUTES_PER_DAY
+  return undefined
+}
+
+/**
+ * Quantité facturée pour une durée (ADR 023) :
+ *
+ *   quantité = max(1, ⌈(durée − tolérance) / durée de l'unité⌉)
+ *
+ * Toute unité entamée au-delà de la tolérance est due : avec la tolérance par
+ * défaut de 0, une réunion d'une heure dix coûte deux heures (ADR 006) ; avec
+ * une tolérance de 10 minutes, une heure. L'unité vaut 60 minutes (heure),
+ * `half_day_minutes` (demi-journée), 24 heures (journée), 7 × 24 heures
+ * (semaine). Une semaine entamée est due (R08).
+ *
+ * La durée est celle de l'heure murale du centre (`devis.ts`) : une
+ * réservation de trois jours qui traverse le changement d'heure reste de trois
+ * jours.
+ *
+ * `month` et `unit` sont des forfaits : la prestation est due une fois, quelle
+ * que soit sa durée. Le devis d'une réservation ne les retient pas (un tarif au
+ * mois se pose sur un contrat, pas sur une réservation).
+ */
+export function billableQuantity(
+  unit: RateUnit,
+  durationMinutes: number,
+  rules: QuantityRules,
 ): number {
-  return rate.amountCents * billableQuantity(rate.unit, startsAt, endsAt)
+  if (!(durationMinutes > 0)) return 0
+  const size = unitMinutes(unit, rules)
+  if (size === undefined) return 1
+  return Math.max(1, Math.ceil((durationMinutes - rules.startedUnitToleranceMinutes) / size))
 }
 
 /** « 1 250,00 € » — affichage, jamais un calcul. */
 export function formatCents(amountCents: number, currency = 'EUR', locale = 'fr-FR'): string {
   return new Intl.NumberFormat(locale, { style: 'currency', currency }).format(amountCents / 100)
+}
+
+/** « 20 % », « 5,5 % » — un taux en points de base, pour l'affichage. */
+export function formatBasisPoints(basisPoints: number, locale = 'fr-FR'): string {
+  return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(basisPoints / 100)} %`
 }
 
 /**
@@ -104,9 +172,23 @@ export function formatCents(amountCents: number, currency = 'EUR', locale = 'fr-
  * saisie illisible plutôt qu'un `NaN` qui finirait en base.
  */
 export function parseAmountToCents(input: string): number | undefined {
-  const cleaned = input.replace(/\s| /g, '').replace(',', '.')
+  const cleaned = input.replace(/\s| /g, '').replace(',', '.')
   if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return undefined
   // Passer par la chaîne évite l'arrondi binaire de 19.99 * 100.
   const [whole, fraction = ''] = cleaned.split('.')
   return Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+}
+
+/**
+ * Lit un pourcentage saisi — « 20 », « 5,5 », « 2.1 » — et le rend en points
+ * de base (2000, 550, 210). Même principe que `parseAmountToCents` : la
+ * chaîne est lue chiffre à chiffre, sans multiplication flottante. Deux
+ * décimales au plus, 100 % au plus. `undefined` sur une saisie illisible.
+ */
+export function parsePercentToBasisPoints(input: string): number | undefined {
+  const cleaned = input.replace(/\s| |%/g, '').replace(',', '.')
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return undefined
+  const [whole, fraction = ''] = cleaned.split('.')
+  const basisPoints = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
+  return basisPoints <= 10_000 ? basisPoints : undefined
 }
