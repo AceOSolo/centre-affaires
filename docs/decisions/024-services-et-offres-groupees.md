@@ -155,3 +155,91 @@ centre aurait les prix du premier.
 - La fiche client montre les souscriptions en cours (R07).
 - **À valider par le centre** : la liste des services et leurs prix, les
   inclus par offre, la règle « les N premiers actes de la période ».
+
+## Mise en œuvre (vague 2) — services, souscriptions, offres
+
+Ajoutée le 2026-10-01, sans changer la décision : elle dit comment les
+écrans et le code l'appliquent, et les choix par défaut qu'ils ont dû faire.
+
+### Écrans et droits
+
+- **`/services`** : catalogue, archivés, création, modification, archivage.
+  La nature d'un service ne change plus après sa création, ni un code posé :
+  les souscriptions, les offres et la facturation s'y fient. Un code de
+  `serviceCodes` sans service vivant est signalé en tête de liste, avec un
+  lien qui préremplit sa création ; seul le prix reste à saisir.
+- **`/offres`** : liste avec le prix par période, création, en-tête, lignes
+  (ajout, modification, retrait logique), archivage. Le formulaire de ligne
+  annonce, à chaque saisie, le prix de la ligne et le nouveau total de
+  l'offre, calculés dans le navigateur par le même moteur que la page.
+- **Fiche client** : section « Services souscrits » (en cours et à venir,
+  historique replié), page « Souscrire un service », page de gestion d'une
+  souscription.
+- `services.gerer` (catalogue et offres) et `souscriptions.gerer` (souscrire,
+  changer les conditions, mettre fin, annuler) restent à l'exploitant ;
+  l'accueil lit la section sur la fiche client (`clients.gerer`).
+
+### Prix d'une offre (`facturation/offres-prix.ts`)
+
+- **Le prix d'une offre est celui d'une période de facturation.** La quantité
+  d'une ligne est due à chaque période : un bureau dans une offre
+  trimestrielle s'écrit trois mois. Aucun multiplicateur caché.
+- **Prix unitaire** : le prix forfaitaire de la ligne, sinon le catalogue —
+  la grille par défaut du centre si elle est en vigueur au jour du devis
+  (dates de validité, ADR 023), la ligne nominative l'emportant sur celle du
+  type ; le prix du service. Une ligne sans prix est signalée et sort du
+  total : rien n'est inventé.
+- **Remise** : par `lineNetAmountCents`, la règle d'arrondi unique de la base.
+  Une remise qui rendrait la ligne négative est signalée.
+- **Ligne d'acte** : N actes inclus par période, à 0 € dans le prix de
+  l'offre ; le prix d'un acte au-delà est affiché. Pas de remise en montant
+  sur un acte : elle vaut « par période », un acte n'en a pas.
+- **TVA** : taux de la ligne, sinon du service, sinon du centre ; calculée
+  comme sur la facture (`invoiceAmounts` : par taux, sur la somme des bases,
+  l'écart d'arrondi porté par la ligne de plus forte valeur).
+- L'écran montre aussi le prix catalogue de l'ensemble (actes inclus
+  valorisés) et la remise qu'en fait l'offre, et le total sur la durée
+  d'engagement quand elle compte un nombre entier de périodes.
+
+### Souscriptions (`facturation/souscriptions-*.ts`)
+
+- **Un acte se souscrit en quantité 1** : son prix est celui d'un acte
+  au-delà des inclus, sa remise un pourcentage, ses inclus
+  (`included_quantity`) un nombre d'actes par mois civil du centre.
+- **Changer la quantité ou le prix** : la souscription prend fin la veille de
+  la date d'effet, une nouvelle la suit aux nouvelles conditions (même
+  client, service et contrat, même fin prévue), dans une transaction. Au
+  premier jour, et si rien n'a été facturé, la souscription est annulée et
+  remplacée. Jamais sur un jour déjà facturé : le dernier jour d'une ligne de
+  facture qui la tient (brouillon compris, ni retirée ni libérée par un
+  avoir) borne la date d'effet.
+- **Fin** : au plus tôt le premier jour et le dernier jour facturé ; vide,
+  sans fin. Prolonger sur la souscription qui prend la suite est refusé par
+  la base (`subscribed_services_no_overlap`).
+- **Annulation** (`deleted_at`) : seulement si aucune ligne de facture ne la
+  tient ; sinon on y met fin. Elle reste dans l'historique, « Annulée ».
+- **Valorisation des actes** : `priceActs` applique la règle « Ce qu'un acte
+  coûte » ci-dessus. Si deux souscriptions au même acte sont en vigueur le
+  même jour (deux contrats), la plus avantageuse pour le client l'emporte :
+  celle qui a encore des inclus, puis le prix net le plus bas. La fiche
+  client montre la consommation du mois pour `courrier.ouverture`, seul acte
+  que l'application enregistre aujourd'hui.
+
+### Données initiales
+
+`facturation/services-attendus.ts` décrit `courrier.ouverture` : désignation,
+acte, à l'unité, TVA 20 %. **Sans prix.** `infra/configurer-centre.mjs` le
+crée au prix inscrit dans `PRIX_DES_SERVICES` — nul tant que le centre ne l'a
+pas fixé : le service n'est alors pas créé et le script le signale — et ne
+touche jamais un service déjà au catalogue. L'écran Services propose la même
+création. Une migration de données aurait dû inventer un prix.
+
+### À valider par le centre et l'expert-comptable
+
+- Le prix de l'ouverture et de la numérisation d'un pli ; la TVA à 20 % des
+  services et des lignes d'offre par défaut.
+- La quantité d'une ligne d'offre due par période ; les actes inclus à 0 €
+  dans le prix de l'offre.
+- Les inclus comptés par mois civil ; la souscription la plus avantageuse
+  quand deux sont en vigueur.
+- Pas de remise en montant sur un acte.

@@ -19,6 +19,8 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
   { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
+  { href: '/services', label: 'Services', permission: 'services.gerer' },
+  { href: '/offres', label: 'Offres', permission: 'services.gerer' },
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },

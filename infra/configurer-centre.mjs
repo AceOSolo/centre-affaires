@@ -12,6 +12,10 @@
  */
 import postgres from 'postgres'
 
+// Module TypeScript importé tel quel : Node 24 retire les types à la volée,
+// comme pour `infra/chiffrer-documents.ts`.
+import { seedExpectedServices } from '../src/modules/facturation/services-attendus.ts'
+
 const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
 
 /**
@@ -60,6 +64,20 @@ const CENTRE = {
  * que le site public propose comme créneaux.
  */
 const OUVERTURE = { opensAt: '08:00', closesAt: '18:00', weekdays: [1, 2, 3, 4, 5] }
+
+/**
+ * Prix HT, en centimes, des services que l'application retrouve par leur code
+ * (`src/modules/facturation/services-attendus.ts`, ADR 024) : aujourd'hui
+ * l'ouverture et la numérisation d'un pli, valorisée sur la facture (R14).
+ *
+ * Désignation, nature, unité et TVA (20 %, à valider avec l'expert-comptable)
+ * viennent du module. Le prix, non : aucun n'est inventé (ADR 009). `null` :
+ * le service n'est pas créé, et le script le signale. Un service déjà au
+ * catalogue est laissé tel quel — son prix se gère ensuite à l'écran Services.
+ */
+const PRIX_DES_SERVICES = {
+  'courrier.ouverture': null,
+}
 
 const url = process.env.APP_DATABASE_URL
 if (!url) {
@@ -117,7 +135,22 @@ try {
       returning weekday`
   })
 
+  const services = await sql.begin(async (tx) => {
+    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
+    return seedExpectedServices(tx, PRIX_DES_SERVICES)
+  })
+
   console.log(`Centre configuré : ${centre.name}, ${centre.city} — ${centre.phone}`)
+  for (const code of services.created) console.log(`Service créé : ${code}`)
+  for (const code of services.existing) {
+    console.log(`Service ${code} déjà au catalogue : laissé tel quel.`)
+  }
+  for (const code of services.withoutPrice) {
+    console.warn(
+      `Service ${code} non créé : prix à fixer dans PRIX_DES_SERVICES, ou à l’écran Services. ` +
+        "D'ici là, ces actes ne sont pas valorisés sur les factures.",
+    )
+  }
   console.log(
     `Ouverture : ${plages.length} jours, ${OUVERTURE.opensAt} – ${OUVERTURE.closesAt}`,
   )
