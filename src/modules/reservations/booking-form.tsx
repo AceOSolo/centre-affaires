@@ -4,17 +4,36 @@ import { useActionState, useMemo, useState } from 'react'
 
 import Link from 'next/link'
 
+import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
 import { formatMinutes, formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
+import { formatContractDays, lastContractDay } from '../contrats/occupation.ts'
 import type { Resource } from '../ressources/schema.ts'
 import { createBookingAction, type FormState } from './actions.ts'
 import { overlaps, type TimeRange } from './availability.ts'
+import { describeBusyBooking } from './occupation.ts'
+import { bookingContractProblem, type AttachableContract } from './rattachement.ts'
+import type { BookingKind } from './schema.ts'
 import { isSelectable, rangeMinutes } from './selection.ts'
 import { WeekCalendar, type CalendarDay } from './week-calendar.tsx'
 
 const fieldClass =
-  'w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40'
+  'w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive'
 const labelClass = 'block text-sm font-medium text-foreground'
+
+/** Libellés repris par le résumé d'erreurs, identiques à ceux des champs. */
+const fieldLabels: Record<string, string> = {
+  date: 'Jour',
+  startTime: 'Début',
+  endTime: 'Fin',
+  title: 'Objet',
+  clientId: 'Client',
+  contractId: 'Contrat',
+  notes: 'Notes',
+}
+
+/** Contrat actif proposé au rattachement (R05). */
+export type ContractOption = AttachableContract & { id: string; reference: string }
 
 /** Ajoute des minutes à une heure murale « 09:00 », sans quitter la journée. */
 function addMinutes(time: string, minutes: number): string {
@@ -24,7 +43,7 @@ function addMinutes(time: string, minutes: number): string {
 }
 
 /** Ce qu'il faut d'une réservation existante pour nommer un conflit. */
-export type BusyBooking = TimeRange & { id: string; title: string }
+export type BusyBooking = TimeRange & { id: string; title: string; kind?: BookingKind }
 
 /**
  * Saisie d'une réservation.
@@ -51,12 +70,15 @@ export function BookingForm({
   defaultDate,
   defaultStartTime,
   clients = [],
+  contracts = [],
 }: {
   /** Ressource affichée par le calendrier ; le choix se fait au-dessus. */
   resource: Resource
   resources: Resource[]
   /** Entreprises clientes, pour rattacher la réservation (ADR 015). */
   clients?: { id: string; name: string }[]
+  /** Contrats actifs du centre, proposés selon le client choisi (R05). */
+  contracts?: ContractOption[]
   days: CalendarDay[]
   /** Réservations de cette ressource, pour nommer le créneau qui bloque. */
   busy: BusyBooking[]
@@ -69,6 +91,15 @@ export function BookingForm({
   const [date, setDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState(defaultStartTime ?? '09:00')
   const [endTime, setEndTime] = useState(addMinutes(defaultStartTime ?? '09:00', 60))
+  // Le contrat dépend du client : les deux sont tenus ici pour que la liste
+  // des contrats suive le client choisi.
+  const [clientId, setClientId] = useState('')
+  const [contractId, setContractId] = useState('')
+  const errors = state?.fieldErrors ?? {}
+  const values = state?.values
+
+  const clientContracts = contracts.filter((contract) => contract.clientId === clientId)
+  const contract = clientContracts.find((candidate) => candidate.id === contractId)
 
   const selection = useMemo<TimeRange | undefined>(() => {
     if (!date || !startTime || !endTime || endTime <= startTime) return undefined
@@ -110,15 +141,14 @@ export function BookingForm({
         />
       </div>
 
-      <form action={formAction} className="flex w-full flex-col gap-5 lg:max-w-sm">
-        {state?.error && (
-          <p
-            role="alert"
-            className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive"
-          >
-            {state.error}
-          </p>
-        )}
+      {/* Remonté après un échec pour reprendre l'objet et les notes saisis :
+          React réinitialise les champs non contrôlés à la fin de l'envoi. */}
+      <form
+        key={JSON.stringify(values ?? {})}
+        action={formAction}
+        className="flex w-full flex-col gap-5 lg:max-w-sm"
+      >
+        <ErrorSummary errors={state?.fieldErrors} labels={fieldLabels} message={state?.error} />
 
         <input type="hidden" name="resourceId" value={resource.id} />
 
@@ -135,8 +165,11 @@ export function BookingForm({
             required
             value={date}
             onChange={(event) => setDate(event.target.value)}
+            aria-invalid={errors.date ? true : undefined}
+            aria-describedby={errors.date ? 'date-error' : undefined}
             className={`${fieldClass} mt-1`}
           />
+          <FieldError name="date" error={errors.date} />
         </div>
 
         <div className="grid grid-cols-2 gap-4">
@@ -173,8 +206,11 @@ export function BookingForm({
               step={900}
               value={endTime}
               onChange={(event) => setEndTime(event.target.value)}
+              aria-invalid={errors.endTime ? true : undefined}
+              aria-describedby={errors.endTime ? 'endTime-error' : undefined}
               className={`${fieldClass} mt-1 tabular`}
             />
+            <FieldError name="endTime" error={errors.endTime} />
           </div>
         </div>
         <p className="-mt-2 text-xs text-muted-foreground">
@@ -191,8 +227,12 @@ export function BookingForm({
             required
             maxLength={200}
             placeholder="Comité de direction"
+            defaultValue={values?.title ?? ''}
+            aria-invalid={errors.title ? true : undefined}
+            aria-describedby={errors.title ? 'title-error' : undefined}
             className={`${fieldClass} mt-1`}
           />
+          <FieldError name="title" error={errors.title} />
         </div>
 
         {clients.length > 0 && (
@@ -203,8 +243,14 @@ export function BookingForm({
             <select
               id="clientId"
               name="clientId"
-              defaultValue=""
-              aria-describedby="clientId-hint"
+              value={clientId}
+              onChange={(event) => {
+                setClientId(event.target.value)
+                // Le contrat d'un autre client ne peut pas rester choisi.
+                setContractId('')
+              }}
+              aria-invalid={errors.clientId ? true : undefined}
+              aria-describedby={`clientId-hint${errors.clientId ? ' clientId-error' : ''}`}
               className={`${fieldClass} mt-1`}
             >
               <option value="">Aucun</option>
@@ -217,14 +263,34 @@ export function BookingForm({
             <p id="clientId-hint" className="mt-1 text-xs text-muted-foreground">
               La réservation apparaît dans l’espace de ce client.
             </p>
+            <FieldError name="clientId" error={errors.clientId} />
           </div>
+        )}
+
+        {clientId && (
+          <ContractField
+            contracts={clientContracts}
+            contract={contract}
+            contractId={contractId}
+            onChange={setContractId}
+            selection={selection}
+            clientId={clientId}
+            timeZone={timeZone}
+            error={errors.contractId}
+          />
         )}
 
         <div>
           <label className={labelClass} htmlFor="notes">
             Notes <span className="font-normal text-muted-foreground">(facultatif)</span>
           </label>
-          <textarea id="notes" name="notes" rows={3} className={`${fieldClass} mt-1`} />
+          <textarea
+            id="notes"
+            name="notes"
+            rows={3}
+            defaultValue={values?.notes ?? ''}
+            className={`${fieldClass} mt-1`}
+          />
         </div>
 
         <div className="flex items-center gap-3">
@@ -243,6 +309,94 @@ export function BookingForm({
           </Link>
         </div>
       </form>
+    </div>
+  )
+}
+
+function FieldError({ name, error }: { name: string; error?: string }) {
+  if (!error) return null
+  return (
+    <p id={`${name}-error`} role="alert" className="mt-1 text-xs text-destructive">
+      {error}
+    </p>
+  )
+}
+
+/**
+ * Contrat au titre duquel la ressource est réservée (R05) : seuls les contrats
+ * actifs du client choisi sont proposés.
+ *
+ * L'avertissement « hors période » est annoncé avant l'envoi, mais il n'est
+ * pas l'autorité : `createBooking` revérifie la règle dans la transaction qui
+ * écrit, et l'erreur revient sous ce champ.
+ */
+function ContractField({
+  contracts,
+  contract,
+  contractId,
+  onChange,
+  selection,
+  clientId,
+  timeZone,
+  error,
+}: {
+  contracts: ContractOption[]
+  contract: ContractOption | undefined
+  contractId: string
+  onChange: (contractId: string) => void
+  selection: TimeRange | undefined
+  clientId: string
+  timeZone: string
+  error?: string
+}) {
+  if (contracts.length === 0) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Aucun contrat en cours pour ce client : la réservation ne peut pas y être rattachée.
+      </p>
+    )
+  }
+
+  const outside =
+    contract && selection
+      ? bookingContractProblem(contract, { ...selection, clientId }, timeZone) === 'hors-periode'
+      : false
+  const describedBy = ['contractId-hint', outside && 'contractId-warning', error && 'contractId-error']
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div>
+      <label className={labelClass} htmlFor="contractId">
+        Contrat <span className="font-normal text-muted-foreground">(facultatif)</span>
+      </label>
+      <select
+        id="contractId"
+        name="contractId"
+        value={contractId}
+        onChange={(event) => onChange(event.target.value)}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={describedBy}
+        className={`${fieldClass} mt-1`}
+      >
+        <option value="">Aucun</option>
+        {contracts.map((option) => (
+          <option key={option.id} value={option.id}>
+            {option.reference} —{' '}
+            {formatContractDays({ firstDay: option.startsOn, lastDay: lastContractDay(option) })}
+          </option>
+        ))}
+      </select>
+      <p id="contractId-hint" className="mt-1 text-xs text-muted-foreground">
+        Réservation comprise dans un contrat en cours de ce client. Le créneau doit tenir dans sa
+        période.
+      </p>
+      <p id="contractId-warning" aria-live="polite" className="mt-1 text-xs text-foreground empty:hidden">
+        {outside && contract
+          ? `Attention : le créneau sort de la période du contrat ${contract.reference}. L’enregistrement sera refusé.`
+          : ''}
+      </p>
+      <FieldError name="contractId" error={error} />
     </div>
   )
 }
@@ -290,12 +444,15 @@ export function AvailabilityVerdict({
         <span>
           <strong className="font-medium">Créneau occupé</strong> par{' '}
           {conflicts
-            .map(
-              (booking) =>
-                `« ${booking.title} » de ${formatTime(booking.startsAt, timeZone)} à ${formatTime(
-                  booking.endsAt,
-                  timeZone,
-                )}`,
+            .map((booking) =>
+              // Une occupation de contrat se dit par sa période, pas par
+              // « 00:00 à 00:00 » (ADR 018).
+              booking.kind === 'contract'
+                ? describeBusyBooking({ ...booking, kind: 'contract' }, timeZone)
+                : `« ${booking.title} » de ${formatTime(booking.startsAt, timeZone)} à ${formatTime(
+                    booking.endsAt,
+                    timeZone,
+                  )}`,
             )
             .join(', ')}
           .

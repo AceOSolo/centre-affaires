@@ -10,9 +10,11 @@ import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
+import { describeBusyBooking } from './occupation.ts'
 import {
   BookingConflictError,
   BookingNotMovableError,
+  ContractOccupationLockedError,
   InvalidRangeError,
   assignBookingClient,
   cancelBooking,
@@ -22,8 +24,18 @@ import {
   moveBooking,
   refuseBooking,
 } from './queries.ts'
+import { BookingContractError } from './rattachement.ts'
 
-export type FormState = { error?: string } | null
+/**
+ * État rendu au formulaire. `fieldErrors` rattache chaque erreur à son champ,
+ * que le formulaire affiche à côté et reprend dans le résumé en tête ;
+ * `values` lui rend la saisie, que React efface à la fin de l'envoi.
+ */
+export type FormState = {
+  error?: string
+  fieldErrors?: Record<string, string>
+  values?: Record<string, string>
+} | null
 
 function text(formData: FormData, key: string): string {
   return String(formData.get(key) ?? '').trim()
@@ -40,11 +52,16 @@ function text(formData: FormData, key: string): string {
 function describeBookingError(error: unknown, timeZone: string): string | undefined {
   if (error instanceof InvalidRangeError) return error.message
   if (error instanceof BookingNotMovableError) return error.message
+  if (error instanceof ContractOccupationLockedError) return error.message
+  if (error instanceof BookingContractError) return error.message
   if (error instanceof BookingConflictError) {
     const occupied = error.conflicts
-      .map(
-        (conflict) =>
-          `« ${conflict.title} » de ${formatTime(conflict.startsAt, timeZone)} à ${formatTime(conflict.endsAt, timeZone)}`,
+      .map((conflict) =>
+        // Une occupation de contrat couvre des jours entiers : « de 00:00 à
+        // 00:00 » ne dirait rien (ADR 018).
+        conflict.kind === 'contract'
+          ? describeBusyBooking(conflict, timeZone)
+          : `« ${conflict.title} » de ${formatTime(conflict.startsAt, timeZone)} à ${formatTime(conflict.endsAt, timeZone)}`,
       )
       .join(', ')
     return occupied ? `Créneau déjà pris sur cette ressource : ${occupied}.` : error.message
@@ -61,22 +78,32 @@ export async function createBookingAction(
   // la protège pas (ADR 008).
   await requireStaff()
   const timeZone = await currentTimeZone()
+  const values = Object.fromEntries(
+    ['date', 'startTime', 'endTime', 'title', 'clientId', 'contractId', 'notes'].map((key) => [
+      key,
+      text(formData, key),
+    ]),
+  )
   const resourceId = text(formData, 'resourceId')
-  const date = text(formData, 'date')
-  const title = text(formData, 'title')
+  const fieldErrors: Record<string, string> = {}
 
-  if (!resourceId) return { error: 'Choisir une ressource.' }
-  if (!title) return { error: "Indiquer l'objet de la réservation." }
+  if (!resourceId) return { error: 'Choisir une ressource.', values }
+  if (!values.title) fieldErrors.title = 'Indiquez l’objet de la réservation.'
+  if (values.contractId && !isUuid(values.contractId)) fieldErrors.contractId = 'Contrat inconnu.'
 
-  let startsAt: Date
-  let endsAt: Date
+  let startsAt: Date | undefined
+  let endsAt: Date | undefined
   try {
     // Le staff saisit une date et deux heures murales ; la base reçoit deux
     // instants UTC (décision 4).
-    startsAt = wallClockToUtc(`${date}T${text(formData, 'startTime')}`, timeZone)
-    endsAt = wallClockToUtc(`${date}T${text(formData, 'endTime')}`, timeZone)
+    startsAt = wallClockToUtc(`${values.date}T${values.startTime}`, timeZone)
+    endsAt = wallClockToUtc(`${values.date}T${values.endTime}`, timeZone)
   } catch {
-    return { error: 'Date ou horaires illisibles.' }
+    fieldErrors.date = 'Date ou horaires illisibles.'
+  }
+
+  if (Object.keys(fieldErrors).length > 0 || !startsAt || !endsAt) {
+    return { fieldErrors, values }
   }
 
   let createdId: string
@@ -85,15 +112,30 @@ export async function createBookingAction(
       resourceId,
       startsAt,
       endsAt,
-      title,
-      notes: text(formData, 'notes') || null,
+      title: values.title,
+      notes: values.notes || null,
       // Facultatif : la réservation apparaît alors dans l'espace du client.
-      clientId: isUuid(text(formData, 'clientId')) ? text(formData, 'clientId') : null,
+      clientId: isUuid(values.clientId) ? values.clientId : null,
+      // Facultatif : un contrat actif de ce client qui couvre le créneau (R05),
+      // vérifié par `createBooking` dans la transaction qui écrit.
+      contractId: values.contractId || null,
     })
     createdId = created.id
   } catch (error) {
+    if (error instanceof InvalidRangeError) {
+      return { fieldErrors: { endTime: error.message }, values }
+    }
+    if (error instanceof BookingContractError) {
+      return {
+        fieldErrors:
+          error.problem === 'sans-client'
+            ? { clientId: error.message }
+            : { contractId: error.message },
+        values,
+      }
+    }
     const message = describeBookingError(error, timeZone)
-    if (message) return { error: message }
+    if (message) return { error: message, values }
     throw error
   }
 

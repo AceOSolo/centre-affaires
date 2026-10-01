@@ -5,6 +5,7 @@ import { resourceTypeLabels } from '../ressources/labels.ts'
 import type { TimeRange } from '../ressources/ouverture.ts'
 import type { Resource } from '../ressources/schema.ts'
 import { bookingBlockStyles, bookingStatusLabels } from './labels.ts'
+import { bookingDisplayTitle } from './occupation.ts'
 import { blockGeometry, hourTicks, planningHeightPx, planningWindow } from './planning.ts'
 import type { BookingWithResource } from './queries.ts'
 
@@ -148,10 +149,11 @@ export function DayPlanning({
                         height: `${geometry.heightPercent}%`,
                       }}
                     >
-                      <div className="truncate font-medium">{booking.title}</div>
+                      <div className="truncate font-medium">{bookingDisplayTitle(booking)}</div>
                       <div className="truncate tabular-nums opacity-80">
-                        {formatTime(booking.startsAt, timeZone)} –{' '}
-                        {formatTime(booking.endsAt, timeZone)}
+                        {booking.kind === 'contract'
+                          ? 'Toute la journée'
+                          : `${formatTime(booking.startsAt, timeZone)} – ${formatTime(booking.endsAt, timeZone)}`}
                       </div>
                       {/* Le statut est écrit, pas seulement coloré (ADR 004). */}
                       {status === 'pending' && (

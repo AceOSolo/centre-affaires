@@ -3,11 +3,16 @@ import { notFound } from 'next/navigation'
 
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
+import { isUuid } from '../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../modules/clients/queries.ts'
+import { contractStatusLabels } from '../../../../modules/contrats/labels.ts'
+import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
 import {
   assignBookingClientAction,
   cancelBookingAction,
 } from '../../../../modules/reservations/actions.ts'
+import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
+import { bookingDisplayTitle } from '../../../../modules/reservations/occupation.ts'
 import { findBooking } from '../../../../modules/reservations/queries.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 
@@ -15,6 +20,7 @@ export const metadata = { title: 'Réservation' }
 
 export default async function BookingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
+  if (!isUuid(id)) notFound()
   const timeZone = await currentTimeZone()
   const booking = await findBooking(id)
   if (!booking) notFound()
@@ -26,6 +32,9 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
   const cancelled = booking.status === 'cancelled'
+  // Occupation d'une ressource sous contrat (ADR 018) : des jours entiers,
+  // parfois sans terme, qui ne se modifient qu'à travers le contrat.
+  const occupation = booking.kind === 'contract'
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -36,14 +45,32 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         >
           ← Planning
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{booking.title}</h1>
+        <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bookingDisplayTitle(booking)}</h1>
         {booking.seriesId && <Link href={`/reservations/series/${booking.seriesId}`} className="mt-2 inline-block text-sm text-primary underline underline-offset-2">Voir la série et gérer les occurrences à venir</Link>}
         {cancelled && (
           <p className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
-            Annulée — le créneau est libre
+            {occupation ? 'Occupation levée — la ressource est libre' : 'Annulée — le créneau est libre'}
           </p>
         )}
       </div>
+
+      {occupation && (
+        <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted px-5 py-4 text-sm">
+          <p>
+            La ressource est occupée au titre d’un contrat. Cette occupation suit le contrat : elle
+            ne se déplace ni ne s’annule ici. Pour la changer, modifiez le contrat — ressource,
+            dates, résiliation ou archivage.
+          </p>
+          {booking.contractId && (
+            <Link
+              href={`/contrats/${booking.contractId}`}
+              className="self-start rounded-md border border-primary bg-white px-4 py-2 font-medium text-primary transition-colors hover:bg-muted"
+            >
+              Ouvrir le contrat {booking.contract?.reference}
+            </Link>
+          )}
+        </div>
+      )}
 
       <dl className="grid grid-cols-[8rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
         <dt className="text-muted-foreground">Ressource</dt>
@@ -54,15 +81,50 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           </span>
         </dd>
 
-        <dt className="text-muted-foreground">Date</dt>
-        <dd className="capitalize">{formatLongDate(isoDate, timeZone)}</dd>
+        {occupation ? (
+          <>
+            <dt className="text-muted-foreground">Période</dt>
+            <dd className="tabular">
+              {formatContractDays(occupationDays(booking, timeZone))}
+            </dd>
+          </>
+        ) : (
+          <>
+            <dt className="text-muted-foreground">Date</dt>
+            <dd className="capitalize">{formatLongDate(isoDate, timeZone)}</dd>
 
-        <dt className="text-muted-foreground">Créneau</dt>
+            <dt className="text-muted-foreground">Créneau</dt>
+            <dd>
+              {formatTime(booking.startsAt, timeZone)} – {formatTime(booking.endsAt, timeZone)}{' '}
+              <span className="text-muted-foreground">
+                ({formatDuration(booking.startsAt, booking.endsAt)})
+              </span>
+            </dd>
+          </>
+        )}
+
+        {booking.contract && (
+          <>
+            <dt className="text-muted-foreground">Contrat</dt>
+            <dd>
+              <Link
+                href={`/contrats/${booking.contract.id}`}
+                className="underline-offset-2 hover:underline"
+              >
+                {booking.contract.reference}
+              </Link>{' '}
+              <span className="text-muted-foreground">
+                ({booking.contract.deletedAt
+                  ? 'archivé'
+                  : contractStatusLabels[booking.contract.status].toLowerCase()})
+              </span>
+            </dd>
+          </>
+        )}
+
+        <dt className="text-muted-foreground">Canal</dt>
         <dd>
-          {formatTime(booking.startsAt, timeZone)} – {formatTime(booking.endsAt, timeZone)}{' '}
-          <span className="text-muted-foreground">
-            ({formatDuration(booking.startsAt, booking.endsAt)})
-          </span>
+          <ChannelLabel channel={booking.channel} detailed />
         </dd>
 
         <dt className="text-muted-foreground">Client</dt>
@@ -99,7 +161,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         )}
       </dl>
 
-      {!cancelled && (
+      {!cancelled && !occupation && (
         <div>
           <Link
             href={`/reservations/${booking.id}/modifier`}
@@ -136,6 +198,8 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
             </select>
             <p id="clientId-hint" className="mt-1 text-xs text-muted-foreground">
               La réservation apparaît dans l’espace de ce client.
+              {booking.contract &&
+                ` Changer de client la détache du contrat ${booking.contract.reference}.`}
             </p>
           </div>
           <button
@@ -148,8 +212,9 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
       )}
 
       {/* Pas de suppression : la réservation reste consultable, l'annulation est
-          sa suppression logique (décision 6). */}
-      {!cancelled && (
+          sa suppression logique (décision 6). Une occupation de contrat
+          s'annule par son contrat (ADR 018). */}
+      {!cancelled && !occupation && (
         <form
           action={cancelBookingAction}
           className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4"

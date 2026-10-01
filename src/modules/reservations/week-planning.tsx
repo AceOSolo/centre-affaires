@@ -5,6 +5,7 @@ import { weekdayLabels } from '../ressources/labels.ts'
 import type { TimeRange } from '../ressources/ouverture.ts'
 import type { Resource } from '../ressources/schema.ts'
 import { bookingBlockStyles, bookingStatusLabels } from './labels.ts'
+import { bookingDisplayTitle } from './occupation.ts'
 import { blockGeometry, hourTicks, planningHeightPx } from './planning.ts'
 import type { BookingWithResource } from './queries.ts'
 import type { WeekColumn } from './semaine.ts'
@@ -152,9 +153,11 @@ export function WeekPlanning({
                         height: `${geometry.heightPercent}%`,
                       }}
                     >
-                      <div className="truncate font-medium">{booking.title}</div>
+                      <div className="truncate font-medium">{bookingDisplayTitle(booking)}</div>
                       <div className="truncate tabular-nums opacity-80">
-                        {formatTime(booking.startsAt, timeZone)}
+                        {booking.kind === 'contract'
+                          ? 'Toute la journée'
+                          : formatTime(booking.startsAt, timeZone)}
                       </div>
                       {status === 'pending' && (
                         <div className="truncate opacity-80">{bookingStatusLabels.pending}</div>

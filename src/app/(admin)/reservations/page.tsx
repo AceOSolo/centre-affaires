@@ -8,7 +8,9 @@ import {
   todayIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { formatContractDays, occupationDays } from '../../../modules/contrats/occupation.ts'
 import { DayPlanning } from '../../../modules/reservations/day-planning.tsx'
+import { bookingDisplayTitle } from '../../../modules/reservations/occupation.ts'
 import {
   bookingStatusBadgeStyles,
   bookingStatusLabels,
@@ -164,11 +166,24 @@ export default async function PlanningPage({
                 {[...occupying, ...cancelled].map((booking) => (
                   <tr key={booking.id} className={booking.status === 'cancelled' ? 'opacity-60' : ''}>
                     <td className="whitespace-nowrap px-4 py-3 tabular-nums">
-                      {formatTime(booking.startsAt, timeZone)} –{' '}
-                      {formatTime(booking.endsAt, timeZone)}
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {formatDuration(booking.startsAt, booking.endsAt)}
-                      </span>
+                      {booking.kind === 'contract' ? (
+                        // Une occupation de contrat couvre des jours entiers,
+                        // parfois sans terme (ADR 018).
+                        <>
+                          Toute la journée
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {formatContractDays(occupationDays(booking, timeZone))}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          {formatTime(booking.startsAt, timeZone)} –{' '}
+                          {formatTime(booking.endsAt, timeZone)}
+                          <span className="ml-2 text-xs text-muted-foreground">
+                            {formatDuration(booking.startsAt, booking.endsAt)}
+                          </span>
+                        </>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
                       <span className="font-mono text-xs">{booking.resource.code}</span>{' '}
@@ -179,7 +194,7 @@ export default async function PlanningPage({
                         href={`/reservations/${booking.id}`}
                         className={`underline-offset-2 hover:underline ${booking.status === 'cancelled' ? 'line-through' : 'font-medium'}`}
                       >
-                        {booking.title}
+                        {bookingDisplayTitle(booking)}
                       </Link>
                       {booking.notes && (
                         <div className="text-xs text-muted-foreground">
