@@ -39,12 +39,13 @@ renuméroter casserait ces renvois sans rien gagner.
 | 022 | [Sauvegardes et plan de reprise](022-sauvegardes-et-plan-de-reprise.md) | 2026-10-01 | accepté |
 | 023 | [Tarification paramétrable, remises, engagement et devis figé](023-tarification-parametrable-et-devis.md) | 2026-10-01 | accepté ; amende les ADR 006 et 009 ; mise en œuvre du devis, de l'échéancier et de la configuration ajoutée |
 | 024 | [Catalogue de services, services souscrits et offres groupées](024-services-et-offres-groupees.md) | 2026-10-01 | accepté ; mise en œuvre des écrans, du prix des offres et des souscriptions ajoutée |
-| 025 | [Contrats versionnés : lignes, avenants, segments d'occupation, documents](025-contrats-versionnes-et-documents.md) | 2026-10-01 | accepté ; amende les ADR 006 et 018 |
-| 026 | [Factures structurées : modèle EN 16931, émission, avoirs, double facturation](026-factures-structurees.md) | 2026-10-01 | accepté |
+| 025 | [Contrats versionnés : lignes, avenants, segments d'occupation, documents](025-contrats-versionnes-et-documents.md) | 2026-10-01 | accepté ; amende les ADR 006 et 018 ; mis en œuvre par l'ADR 028 |
+| 026 | [Factures structurées : modèle EN 16931, émission, avoirs, double facturation](026-factures-structurees.md) | 2026-10-01 | accepté ; précisé par l'ADR 029 |
 | 027 | [Paiements, mandats SEPA chiffrés et export comptable](027-paiements-et-export-comptable.md) | 2026-10-01 | accepté ; précisé par l'ADR 030 |
-| 028 | [Contrats tirés d'une offre, avenants à l'écran, échéancier versionné et documents archivés](028-contrats-depuis-offre-avenants-documents.md) | 2026-10-01 | accepté ; choix à valider par le centre |
+| 028 | [Contrats tirés d'une offre, avenants à l'écran, échéancier versionné et documents archivés](028-contrats-depuis-offre-avenants-documents.md) | 2026-10-01 | accepté ; choix à valider par le centre ; quantités d'offre alignées sur l'ADR 024 à l'intégration |
 | 029 | [Lot de facturation périodique et écrans de facturation](029-lot-de-facturation-et-ecrans.md) | 2026-10-01 | accepté ; précise l'ADR 026 |
 | 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 |
+| 031 | [Indicateurs : définitions de l'occupation et du chiffre d'affaires](031-indicateurs-occupation-et-chiffre-d-affaires.md) | 2026-10-01 | accepté ; définitions à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -64,17 +65,26 @@ ici, sans renuméroter (bloquant B5 de [`docs/roadmap.md`](../roadmap.md)) :
 Pour citer sans ambiguïté l'un des ADR en double, donner son sujet ou le nom
 de son fichier : « ADR 010 (calendrier de sélection) », « ADR 013 (séries) ».
 
+**Vague 2 : pas de doublon.** Trois tranches parallèles avaient chacune pris
+le 028 dans leur copie de travail. Aucune n'était encore intégrée : à
+l'intégration du 01/10/2026, les contrats gardent le 028, le lot de
+facturation devient le 029 et les règlements le 030, renvois du code compris.
+Aucun numéro déjà publié n'a été réattribué.
+
 ## Écarts connus avec `CLAUDE.md`
 
-`CLAUDE.md` mentionne encore PostgreSQL 17 : l'ADR 003 a aligné tous les
-environnements sur PostgreSQL 18 (Neon, CI, `docker-compose.yml`). La
-correction de `CLAUDE.md` revient au responsable du dépôt.
+- ~~`CLAUDE.md` mentionne PostgreSQL 17~~ : corrigé (commit `1d55ec2`), aligné
+  sur l'ADR 003.
+- La section Facturation de `CLAUDE.md` dit encore « hors scope de la V1 » :
+  l'ADR 016 l'a fait entrer dans le périmètre, et la vague 2 (ADR 023 à 030)
+  l'a construite. La correction de `CLAUDE.md` revient au responsable du
+  dépôt.
 
 ## Écrire un nouvel ADR
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **029**.
+   `ListAgents`. Le prochain numéro libre est **032**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).
