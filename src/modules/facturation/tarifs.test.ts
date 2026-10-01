@@ -9,6 +9,7 @@ import {
   isRatePlanValidOn,
   parseAmountToCents,
   parsePercentToBasisPoints,
+  pickRateItem,
   ratePlanValidityState,
   resolveRate,
   type RateCandidate,
@@ -89,6 +90,21 @@ describe('resolveRate', () => {
     assert.equal(resolveRate(g2026, { ...lookup, on: '2026-12-31' })?.amountCents, 2_500)
     assert.equal(resolveRate(g2026, { ...lookup, on: '2027-01-01' }), undefined)
     assert.equal(resolveRate(g2026, { ...lookup, on: '2025-12-31' }), undefined)
+  })
+
+  it('ne lit que la ligne de type pour une cible sans ressource précise', () => {
+    // Une ligne d'offre ou de contrat qui vise « une salle » : le prix nominatif
+    // de la salle Europe ne la concerne pas.
+    assert.equal(
+      pickRateItem(grille.items, { resourceId: null, resourceType: 'salle', unit: 'hour' })
+        ?.amountCents,
+      2_500,
+    )
+    assert.equal(
+      pickRateItem(grille.items, { resourceId: SALLE_EUROPE, resourceType: 'salle', unit: 'hour' })
+        ?.amountCents,
+      4_000,
+    )
   })
 
   it('ignore une grille archivée', () => {

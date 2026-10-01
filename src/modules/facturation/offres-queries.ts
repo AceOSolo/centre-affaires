@@ -11,12 +11,11 @@ import type { OfferItemInput, OfferHeaderInput } from './offres-regles.ts'
 import {
   offerItems,
   offers,
-  ratePlanItems,
-  ratePlans,
   services,
   type Offer,
   type OfferItem,
 } from './schema.ts'
+import { findDefaultRatePlan } from './queries.ts'
 
 /**
  * Offres groupées (R09, ADR 024) : lecture, création, modification,
@@ -108,35 +107,21 @@ export function toOfferLineInput(item: OfferItem): OfferLineInput {
  * qu'ignorée — et taux de TVA par défaut du centre.
  */
 export async function loadOfferCatalogue(today: string): Promise<OfferCatalogue> {
+  // La grille par défaut en vigueur ce jour-là, lue comme le moteur de devis la
+  // lit (R08, `findDefaultRatePlan`).
+  const plan = await findDefaultRatePlan(today)
   return withTenant(currentTenantId(), async (tx) => {
     const [tenant] = await tx
       .select({ defaultVatRateBp: tenants.defaultVatRateBp })
       .from(tenants)
       .where(eq(tenants.id, currentTenantId()))
       .limit(1)
-    const [plan] = await tx
-      .select({ id: ratePlans.id, currency: ratePlans.currency })
-      .from(ratePlans)
-      .where(
-        and(
-          eq(ratePlans.isDefault, true),
-          isNull(ratePlans.deletedAt),
-          sql`(${ratePlans.validFrom} is null or ${ratePlans.validFrom} <= ${today})`,
-          sql`(${ratePlans.validTo} is null or ${ratePlans.validTo} >= ${today})`,
-        ),
-      )
-      .limit(1)
-    const rateItems = plan
-      ? await tx
-          .select({
-            resourceType: ratePlanItems.resourceType,
-            resourceId: ratePlanItems.resourceId,
-            unit: ratePlanItems.unit,
-            amountCents: ratePlanItems.amountCents,
-          })
-          .from(ratePlanItems)
-          .where(and(eq(ratePlanItems.ratePlanId, plan.id), isNull(ratePlanItems.deletedAt)))
-      : []
+    const rateItems = (plan?.items ?? []).map(({ resourceType, resourceId, unit, amountCents }) => ({
+      resourceType,
+      resourceId,
+      unit,
+      amountCents,
+    }))
     const serviceRows = await tx.select().from(services).orderBy(asc(services.name))
     const resourceRows = await tx
       .select({

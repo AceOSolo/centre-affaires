@@ -3,17 +3,21 @@ import { describe, it } from 'node:test'
 
 import {
   addDays,
+  addMonths,
   billingSchedule,
+  commitmentEndsOn,
   commitmentSchedule,
+  contractSchedule,
   daysInclusive,
   earliestEndOn,
   noticeEndsOn,
   periodEnd,
   periodStart,
+  prorataCents,
   prorataFraction,
   scheduleTotalCents,
-  thirtyDayCount,
   type ScheduledContract,
+  type ScheduleVersion,
 } from './echeancier.ts'
 
 const mensuel = (overrides: Partial<ScheduledContract> = {}): ScheduledContract => ({
@@ -62,91 +66,50 @@ describe('bornes de période', () => {
   })
 })
 
-describe('prorataFraction', () => {
-  const mars = { startsOn: '2026-03-01', endsOn: '2026-03-31', period: 'monthly' as const }
-  const du10au31 = { startsOn: '2026-03-10', endsOn: '2026-03-31' }
-
-  it('compte les jours réels, bornes comprises (calendar_days, ADR 006)', () => {
-    assert.deepEqual(prorataFraction('calendar_days', du10au31, mars), {
-      numerator: 22,
-      denominator: 31,
-    })
+describe('prorataCents', () => {
+  it('rend le montant entier pour une période complète', () => {
+    assert.equal(prorataCents(90_000, 31, 31), 90_000)
   })
 
-  it('compte en base 30 : le 31 n’existe pas (thirty_day_month)', () => {
-    // Du 10 au 31 mars : 21/30 (ADR 023).
-    assert.deepEqual(prorataFraction('thirty_day_month', du10au31, mars), {
-      numerator: 21,
-      denominator: 30,
-    })
+  it('ne dépasse jamais le montant du contrat', () => {
+    assert.equal(prorataCents(90_000, 40, 31), 90_000)
   })
 
-  it('ne proratise rien sans prorata (none)', () => {
-    assert.deepEqual(prorataFraction('none', du10au31, mars), { numerator: 1, denominator: 1 })
+  it('calcule au prorata des jours couverts', () => {
+    // Du 10 au 31 mars : 22 jours sur 31.
+    assert.equal(prorataCents(90_000, 22, 31), Math.round((90_000 * 22) / 31))
+    assert.equal(prorataCents(90_000, 22, 31), 63_871)
   })
 
-  it('rend une fraction égale à 1 pour une période entière', () => {
-    for (const rule of ['calendar_days', 'thirty_day_month', 'none'] as const) {
-      const { numerator, denominator } = prorataFraction(rule, mars, mars)
-      assert.equal(numerator, denominator, rule)
-    }
+  it('rend un entier de centimes, jamais un flottant', () => {
+    const montant = prorataCents(100_000, 1, 31)
+    assert.equal(Number.isInteger(montant), true)
+    assert.equal(montant, 3_226)
+  })
+
+  it('ne facture rien pour une période non couverte', () => {
+    assert.equal(prorataCents(90_000, 0, 31), 0)
+    assert.equal(prorataCents(90_000, 10, 0), 0)
   })
 })
-
-describe('thirtyDayCount', () => {
-  it('compte la fin février comme un 30', () => {
-    assert.equal(thirtyDayCount('2026-02-01', '2026-02-28'), 30)
-    assert.equal(thirtyDayCount('2026-02-15', '2026-02-28'), 16)
-    assert.equal(thirtyDayCount('2026-02-01', '2026-02-27'), 27)
-  })
-
-  it('distingue le 28 et le 29 février d’une année bissextile', () => {
-    assert.equal(thirtyDayCount('2028-02-01', '2028-02-28'), 28)
-    assert.equal(thirtyDayCount('2028-02-01', '2028-02-29'), 30)
-  })
-
-  it('ignore le 31 : du 1er au 30 mars vaut un mois entier', () => {
-    assert.equal(thirtyDayCount('2026-03-01', '2026-03-30'), 30)
-    assert.equal(thirtyDayCount('2026-03-31', '2026-03-31'), 1)
-  })
-
-  it('additionne les mois d’un trimestre', () => {
-    assert.equal(thirtyDayCount('2026-02-01', '2026-03-31'), 60)
-    assert.equal(thirtyDayCount('2026-01-01', '2026-03-31'), 90)
-  })
-})
-
-/** Ce que la plupart des cas comparent : bornes, couverture, montant. */
-const essentiel = (periods: ReturnType<typeof billingSchedule>) =>
-  periods.map(({ startsOn, endsOn, full, amountCents }) => ({ startsOn, endsOn, full, amountCents }))
 
 describe('billingSchedule', () => {
   it('facture un mois plein sans prorata', () => {
     const periods = billingSchedule(mensuel(), '2026-03-31')
     assert.deepEqual(periods, [
-      {
-        startsOn: '2026-03-01',
-        endsOn: '2026-03-31',
-        full: true,
-        amountCents: 90_000,
-        prorata: { numerator: 31, denominator: 31 },
-        amendmentNumber: null,
-        oneOffCents: 0,
-      },
+      { startsOn: '2026-03-01', endsOn: '2026-03-31', full: true, amountCents: 90_000 },
     ])
   })
 
   it('proratise le premier mois quand le contrat commence en cours de mois', () => {
     const periods = billingSchedule(mensuel({ startsOn: '2026-03-10' }), '2026-04-30')
     assert.equal(periods.length, 2)
-    assert.deepEqual(essentiel(periods)[0], {
+    assert.deepEqual(periods[0], {
       startsOn: '2026-03-10',
       endsOn: '2026-03-31',
       full: false,
-      // 900 € × 22/31 = 638,709… €, un seul arrondi.
       amountCents: 63_871,
     })
-    assert.deepEqual(periods[0].prorata, { numerator: 22, denominator: 31 })
     assert.equal(periods[1].full, true)
     assert.equal(periods[1].amountCents, 90_000)
   })
@@ -157,7 +120,7 @@ describe('billingSchedule', () => {
       '2026-12-31',
     )
     assert.equal(periods.length, 2)
-    assert.deepEqual(essentiel(periods)[1], {
+    assert.deepEqual(periods[1], {
       startsOn: '2026-04-01',
       endsOn: '2026-04-15',
       full: false,
@@ -189,12 +152,12 @@ describe('billingSchedule', () => {
   it('coupe la dernière période sur `until`', () => {
     const periods = billingSchedule(mensuel({ startsOn: '2026-01-01' }), '2026-02-10')
     assert.equal(periods.length, 2)
-    assert.deepEqual(essentiel(periods)[1], {
+    assert.deepEqual(periods[1], {
       startsOn: '2026-02-01',
       endsOn: '2026-02-10',
       full: false,
-      // 10 jours sur 28 : 321,428… €.
-      amountCents: 32_143,
+      // 10 jours sur 28.
+      amountCents: prorataCents(90_000, 10, 28),
     })
   })
 
@@ -203,11 +166,20 @@ describe('billingSchedule', () => {
       mensuel({ startsOn: '2026-02-01', billingPeriod: 'quarterly', amountCents: 270_000 }),
       '2026-06-30',
     )
-    assert.deepEqual(essentiel(periods), [
+    assert.equal(periods.length, 2)
+    assert.deepEqual(periods[0], {
+      startsOn: '2026-02-01',
+      endsOn: '2026-03-31',
+      full: false,
       // 59 jours (février + mars) sur 90 (janvier à mars).
-      { startsOn: '2026-02-01', endsOn: '2026-03-31', full: false, amountCents: 177_000 },
-      { startsOn: '2026-04-01', endsOn: '2026-06-30', full: true, amountCents: 270_000 },
-    ])
+      amountCents: prorataCents(270_000, 59, 90),
+    })
+    assert.deepEqual(periods[1], {
+      startsOn: '2026-04-01',
+      endsOn: '2026-06-30',
+      full: true,
+      amountCents: 270_000,
+    })
   })
 
   it('facture une année civile en une échéance', () => {
@@ -215,7 +187,7 @@ describe('billingSchedule', () => {
       mensuel({ startsOn: '2026-01-01', billingPeriod: 'yearly', amountCents: 1_080_000 }),
       '2026-12-31',
     )
-    assert.deepEqual(essentiel(periods), [
+    assert.deepEqual(periods, [
       { startsOn: '2026-01-01', endsOn: '2026-12-31', full: true, amountCents: 1_080_000 },
     ])
   })
@@ -226,152 +198,7 @@ describe('billingSchedule', () => {
       '2026-12-31',
     )
     assert.equal(periods.length, 1)
-    // 900 € × 1/31 = 29,032… €.
-    assert.equal(periods[0].amountCents, 2_903)
-  })
-
-  it('rend un entier de centimes, jamais un flottant', () => {
-    const periods = billingSchedule(mensuel({ startsOn: '2026-03-31', amountCents: 100_000 }), '2026-03-31')
-    assert.equal(Number.isInteger(periods[0].amountCents), true)
-    assert.equal(periods[0].amountCents, 3_226)
-  })
-})
-
-describe('billingSchedule : règle de prorata du centre (R10, ADR 023)', () => {
-  it('base 30 : du 10 au 31 mars vaut 21/30', () => {
-    const [mars] = billingSchedule(mensuel({ startsOn: '2026-03-10' }), '2026-03-31', {
-      prorataRule: 'thirty_day_month',
-    })
-    assert.deepEqual(mars.prorata, { numerator: 21, denominator: 30 })
-    assert.equal(mars.amountCents, 63_000)
-  })
-
-  it('base 30 : février entier est un mois entier', () => {
-    const periods = billingSchedule(mensuel({ startsOn: '2026-02-01' }), '2026-02-28', {
-      prorataRule: 'thirty_day_month',
-    })
-    assert.equal(periods[0].full, true)
-    assert.equal(periods[0].amountCents, 90_000)
-  })
-
-  it('base 30 au trimestre : dénominateur 90', () => {
-    const [premier] = billingSchedule(
-      mensuel({ startsOn: '2026-02-01', billingPeriod: 'quarterly', amountCents: 270_000 }),
-      '2026-03-31',
-      { prorataRule: 'thirty_day_month' },
-    )
-    assert.deepEqual(premier.prorata, { numerator: 60, denominator: 90 })
-    assert.equal(premier.amountCents, 180_000)
-  })
-
-  it('sans prorata : une période entamée est due en entier', () => {
-    const periods = billingSchedule(
-      mensuel({ startsOn: '2026-03-10', terminatedOn: '2026-04-15' }),
-      '2026-12-31',
-      { prorataRule: 'none' },
-    )
-    assert.deepEqual(
-      periods.map((period) => period.amountCents),
-      [90_000, 90_000],
-    )
-  })
-})
-
-describe('billingSchedule : versions de prix (ADR 025)', () => {
-  const versions = [
-    { amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-03-14', amountCents: 90_000, lines: [] },
-    { amendmentNumber: 1, startsOn: '2026-03-15', endsOn: null, amountCents: 120_000, lines: [] },
-  ]
-
-  it('coupe la période à la date d’effet de l’avenant', () => {
-    const periods = billingSchedule(mensuel({ startsOn: '2026-01-01' }), '2026-04-30', { versions })
-    const mars = periods.filter((period) => period.startsOn.startsWith('2026-03'))
-    assert.deepEqual(
-      mars.map(({ startsOn, endsOn, amountCents, amendmentNumber }) => ({
-        startsOn,
-        endsOn,
-        amountCents,
-        amendmentNumber,
-      })),
-      [
-        // 900 € × 14/31 et 1 200 € × 17/31.
-        { startsOn: '2026-03-01', endsOn: '2026-03-14', amountCents: 40_645, amendmentNumber: null },
-        { startsOn: '2026-03-15', endsOn: '2026-03-31', amountCents: 65_806, amendmentNumber: 1 },
-      ],
-    )
-    assert.equal(periods.at(-1)?.amountCents, 120_000)
-  })
-
-  it('en base 30, chaque morceau compte ses jours de base 30', () => {
-    const periods = billingSchedule(mensuel({ startsOn: '2026-01-01' }), '2026-03-31', {
-      versions,
-      prorataRule: 'thirty_day_month',
-    })
-    // 900 € × 14/30 et 1 200 € × 16/30.
-    assert.deepEqual(
-      periods.slice(-2).map((period) => period.amountCents),
-      [42_000, 64_000],
-    )
-  })
-
-  it('sans prorata, l’avenant s’applique à la période suivante', () => {
-    const periods = billingSchedule(mensuel({ startsOn: '2026-01-01' }), '2026-04-30', {
-      versions,
-      prorataRule: 'none',
-    })
-    assert.deepEqual(
-      periods.map((period) => period.amountCents),
-      [90_000, 90_000, 90_000, 120_000],
-    )
-  })
-
-  it('facture une version ligne à ligne, remises comprises', () => {
-    const lignes = [
-      // Bureau à 500 € remisé de 10 %.
-      { quantity: 1, unitPriceCents: 50_000, discountBp: 1_000, isRecurring: true },
-      // Domiciliation à 30 € remisée de 5 €.
-      { quantity: 1, unitPriceCents: 3_000, discountAmountCents: 500, isRecurring: true },
-      // Frais de dossier, une fois.
-      { quantity: 1, unitPriceCents: 15_000, isRecurring: false },
-    ]
-    const periods = billingSchedule(mensuel({ startsOn: '2026-03-10' }), '2026-04-30', {
-      versions: [{ amendmentNumber: null, startsOn: '2026-03-10', endsOn: null, amountCents: 0, lines: lignes }],
-    })
-    // Mars, 22/31 : 450 € × 22/31 = 319,354… → 319,35 € ; 25 € × 22/31 =
-    // 17,741… → 17,74 € ; plus 150 € de frais.
-    assert.equal(periods[0].amountCents, 31_935 + 1_774 + 15_000)
-    assert.equal(periods[0].oneOffCents, 15_000)
-    // Avril entier, sans les frais.
-    assert.equal(periods[1].amountCents, 45_000 + 2_500)
-    assert.equal(periods[1].oneOffCents, 0)
-  })
-})
-
-describe('engagement (R10, ADR 023)', () => {
-  const engage = {
-    ...mensuel({ startsOn: '2026-03-10', amountCents: 45_000 }),
-    commitmentEndsOn: '2027-03-09',
-  }
-
-  it('totalise ce que l’engagement garantit, de date à date', () => {
-    const engagement = commitmentSchedule(engage)
-    assert.equal(engagement?.endsOn, '2027-03-09')
-    assert.equal(engagement?.periods.length, 13)
-    // 22/31 de mars, onze mois, 9/31 de mars suivant : douze mois exactement.
-    assert.equal(engagement?.totalCents, 12 * 45_000)
-  })
-
-  it('ne rend rien sans engagement', () => {
-    assert.equal(commitmentSchedule({ ...engage, commitmentEndsOn: null }), undefined)
-  })
-
-  it('reporte la fin possible au terme de l’engagement', () => {
-    assert.equal(earliestEndOn('2026-06-01', 90, '2027-03-09'), '2027-03-09')
-  })
-
-  it('laisse le préavis l’emporter quand il finit après l’engagement', () => {
-    assert.equal(earliestEndOn('2027-01-15', 90, '2027-03-09'), '2027-04-14')
-    assert.equal(earliestEndOn('2027-01-15', 90, null), '2027-04-14')
+    assert.equal(periods[0].amountCents, prorataCents(90_000, 1, 31))
   })
 })
 
@@ -383,5 +210,311 @@ describe('noticeEndsOn', () => {
 
   it('termine le jour même quand il n’y a pas de préavis', () => {
     assert.equal(noticeEndsOn('2026-03-01', 0), '2026-03-01')
+  })
+})
+
+describe('prorataFraction : règle du centre (ADR 023)', () => {
+  it('compte les jours réels par défaut', () => {
+    assert.deepEqual(prorataFraction('calendar_days', '2026-03-10', '2026-03-31', 'monthly'), {
+      numerator: 22,
+      denominator: 31,
+    })
+    assert.deepEqual(prorataFraction('calendar_days', '2026-02-01', '2026-03-31', 'quarterly'), {
+      numerator: 59,
+      denominator: 90,
+    })
+  })
+
+  it('compte en mois de 30 jours : le 31 n’existe pas, le dernier jour vaut le 30', () => {
+    // L'exemple de l'ADR 023 : du 10 au 31 mars, 21/30.
+    assert.deepEqual(prorataFraction('thirty_day_month', '2026-03-10', '2026-03-31', 'monthly'), {
+      numerator: 21,
+      denominator: 30,
+    })
+    // Fin février : le 28 compte comme le 30.
+    assert.deepEqual(prorataFraction('thirty_day_month', '2026-02-15', '2026-02-28', 'monthly'), {
+      numerator: 16,
+      denominator: 30,
+    })
+    assert.deepEqual(prorataFraction('thirty_day_month', '2026-02-01', '2026-02-28', 'monthly'), {
+      numerator: 30,
+      denominator: 30,
+    })
+    // Le 31 seul ne compte rien.
+    assert.deepEqual(prorataFraction('thirty_day_month', '2026-03-31', '2026-03-31', 'monthly'), {
+      numerator: 0,
+      denominator: 30,
+    })
+    // Sur un trimestre : février (16, du 15 au 28) et mars (30), sur 90.
+    assert.deepEqual(prorataFraction('thirty_day_month', '2026-02-15', '2026-03-31', 'quarterly'), {
+      numerator: 46,
+      denominator: 90,
+    })
+  })
+
+  it('donne, en base 30, des morceaux d’un même mois qui s’additionnent à 30', () => {
+    for (const cut of ['2026-02-15', '2028-02-29', '2026-03-31', '2026-03-16', '2026-04-30']) {
+      const first = prorataFraction(
+        'thirty_day_month',
+        periodStart(cut, 'monthly'),
+        addDays(cut, -1),
+        'monthly',
+      )
+      const rest = prorataFraction('thirty_day_month', cut, periodEnd(cut, 'monthly'), 'monthly')
+      assert.equal(first.numerator + rest.numerator, 30, cut)
+    }
+  })
+
+  it('ne proratise rien en règle « none »', () => {
+    assert.deepEqual(prorataFraction('none', '2026-03-10', '2026-03-31', 'monthly'), {
+      numerator: 1,
+      denominator: 1,
+    })
+  })
+})
+
+describe('contractSchedule : échéancier versionné (ADR 025)', () => {
+  const contrat: ScheduledContract = {
+    startsOn: '2026-03-01',
+    billingPeriod: 'monthly',
+    amountCents: 90_000,
+  }
+  const initiale: ScheduleVersion = {
+    amendmentId: null,
+    amendmentNumber: null,
+    startsOn: '2026-03-01',
+    endsOn: '2026-06-14',
+    amountCents: 90_000,
+  }
+  const avenant: ScheduleVersion = {
+    amendmentId: 'avenant-1',
+    amendmentNumber: 1,
+    startsOn: '2026-06-15',
+    endsOn: null,
+    amountCents: 95_000,
+  }
+
+  it('coupe la période au jour d’effet de l’avenant et proratise chaque morceau', () => {
+    const periods = contractSchedule(contrat, [initiale, avenant], '2026-07-31')
+    assert.equal(periods.length, 5)
+    const juin = periods[3]
+    assert.equal(juin.startsOn, '2026-06-01')
+    assert.equal(juin.full, true)
+    assert.deepEqual(
+      juin.pieces.map((piece) => [
+        piece.startsOn,
+        piece.endsOn,
+        piece.amendmentNumber,
+        piece.numerator,
+        piece.denominator,
+        piece.amountCents,
+      ]),
+      [
+        // 14 jours sur 30 à 900 €, puis 16 sur 30 à 950 €.
+        ['2026-06-01', '2026-06-14', null, 14, 30, 42_000],
+        ['2026-06-15', '2026-06-30', 1, 16, 30, 50_667],
+      ],
+    )
+    assert.equal(juin.amountCents, 42_000 + 50_667)
+    // Juillet est entièrement au nouveau prix.
+    assert.equal(periods[4].amountCents, 95_000)
+    assert.equal(periods[4].pieces[0].amendmentId, 'avenant-1')
+  })
+
+  it('suit la règle du mois de 30 jours au jour d’effet', () => {
+    const periods = contractSchedule(
+      contrat,
+      [{ ...initiale, endsOn: '2026-07-14' }, { ...avenant, startsOn: '2026-07-15' }],
+      '2026-07-31',
+      'thirty_day_month',
+    )
+    // Juillet compte 31 jours réels : du 1er au 14 (14/30), du 15 au 31 (16/30).
+    assert.deepEqual(
+      periods[4].pieces.map((piece) => [piece.numerator, piece.denominator, piece.amountCents]),
+      [
+        [14, 30, 42_000],
+        [16, 30, 50_667],
+      ],
+    )
+  })
+
+  it('en règle « none », garde la période entière au prix en vigueur sur son premier jour', () => {
+    const periods = contractSchedule(contrat, [initiale, avenant], '2026-07-31', 'none')
+    const [juinAncien, juinNouveau] = periods[3].pieces
+    assert.equal(juinAncien.amountCents, 90_000)
+    assert.equal(juinNouveau.numerator, 0)
+    assert.equal(juinNouveau.amountCents, 0)
+    assert.equal(periods[3].amountCents, 90_000)
+    assert.equal(periods[4].amountCents, 95_000)
+    // Une période d'entrée partielle est due en entier.
+    const tardif = contractSchedule(
+      { ...contrat, startsOn: '2026-03-10' },
+      [{ ...initiale, startsOn: '2026-03-10' }],
+      '2026-03-31',
+      'none',
+    )
+    assert.equal(tardif[0].full, false)
+    assert.equal(tardif[0].amountCents, 90_000)
+  })
+
+  it('facture une version ligne à ligne, au centime de la base', () => {
+    const lignes: ScheduleVersion = {
+      ...initiale,
+      startsOn: '2026-03-10',
+      endsOn: null,
+      amountCents: 107_000,
+      lines: [
+        { quantity: 1, unitPriceCents: 80_000, isRecurring: true },
+        // 2 × 150 € remisés de 10 % : 270 € par mois.
+        { quantity: 2, unitPriceCents: 15_000, discountBp: 1_000, isRecurring: true },
+        { quantity: 1, unitPriceCents: 5_000, isRecurring: false },
+      ],
+    }
+    const [mars, avril] = contractSchedule(
+      { ...contrat, startsOn: '2026-03-10' },
+      [lignes],
+      '2026-04-30',
+    )
+    // Chaque ligne est proratisée et arrondie seule : 22/31 de 800 € et de 270 €.
+    assert.equal(mars.pieces[0].amountCents, 56_774 + 19_161)
+    // Les frais de dossier sont dus une fois, dans la période du premier jour.
+    assert.equal(mars.pieces[0].oneOffCents, 5_000)
+    assert.equal(mars.amountCents, 56_774 + 19_161 + 5_000)
+    assert.equal(avril.amountCents, 107_000)
+    assert.equal(avril.pieces[0].oneOffCents, 0)
+  })
+
+  it('reste celui d’avant pour un contrat sans version', () => {
+    const versionne = contractSchedule({ ...contrat, startsOn: '2026-03-10' }, [], '2026-04-30')
+    const simple = billingSchedule({ ...contrat, startsOn: '2026-03-10' }, '2026-04-30')
+    assert.deepEqual(
+      versionne.map(({ startsOn, endsOn, full, amountCents }) => ({
+        startsOn,
+        endsOn,
+        full,
+        amountCents,
+      })),
+      simple,
+    )
+  })
+
+  it('s’arrête à la résiliation, même au milieu d’une version', () => {
+    const periods = contractSchedule(
+      { ...contrat, terminatedOn: '2026-06-20' },
+      [initiale, avenant],
+      '2026-12-31',
+    )
+    const dernier = periods.at(-1)
+    assert.equal(dernier?.endsOn, '2026-06-20')
+    assert.equal(dernier?.pieces.at(-1)?.endsOn, '2026-06-20')
+    // Du 15 au 20 juin : 6 jours sur 30 de 950 €.
+    assert.equal(dernier?.pieces.at(-1)?.amountCents, 19_000)
+  })
+})
+
+describe('engagement et préavis (ADR 023)', () => {
+  it('ajoute des mois comme Postgres, en ramenant au dernier jour du mois', () => {
+    assert.equal(addMonths('2026-01-31', 1), '2026-02-28')
+    assert.equal(addMonths('2028-01-31', 1), '2028-02-29')
+    assert.equal(addMonths('2026-03-10', 12), '2027-03-10')
+    assert.equal(addMonths('2026-11-15', 3), '2027-02-15')
+  })
+
+  it('calcule la fin d’engagement de date à date', () => {
+    assert.equal(commitmentEndsOn('2026-03-10', 12), '2027-03-09')
+    assert.equal(commitmentEndsOn('2026-03-01', 1), '2026-03-31')
+    assert.equal(commitmentEndsOn('2026-01-31', 1), '2026-02-27')
+    assert.equal(commitmentEndsOn('2026-03-10', null), null)
+  })
+
+  it('retient le plus tardif du préavis et de la fin d’engagement', () => {
+    assert.equal(earliestEndOn('2026-04-01', 90, '2027-03-09'), '2027-03-09')
+    assert.equal(earliestEndOn('2027-03-01', 90, '2027-03-09'), '2027-05-29')
+    assert.equal(earliestEndOn('2026-03-01', 90, null), '2026-05-29')
+  })
+})
+
+describe('règle de prorata du centre sur l’échéancier (R10, ADR 023)', () => {
+  const dixMars: ScheduledContract = {
+    startsOn: '2026-03-10',
+    billingPeriod: 'monthly',
+    amountCents: 90_000,
+  }
+
+  it('rend une fraction égale à 1 pour une période entière, quelle que soit la règle', () => {
+    for (const rule of ['calendar_days', 'thirty_day_month', 'none'] as const) {
+      const { numerator, denominator } = prorataFraction(rule, '2026-03-01', '2026-03-31', 'monthly')
+      assert.equal(numerator, denominator, rule)
+    }
+  })
+
+  it('distingue, en base 30, le 28 et le 29 février d’une année bissextile', () => {
+    assert.equal(prorataFraction('thirty_day_month', '2028-02-01', '2028-02-28', 'monthly').numerator, 28)
+    assert.equal(prorataFraction('thirty_day_month', '2028-02-01', '2028-02-29', 'monthly').numerator, 30)
+    // Du 1er au 30 mars vaut un mois entier.
+    assert.equal(prorataFraction('thirty_day_month', '2026-03-01', '2026-03-30', 'monthly').numerator, 30)
+  })
+
+  it('base 30 : du 10 au 31 mars vaut 21/30 de la mensualité', () => {
+    const [mars] = contractSchedule(dixMars, [], '2026-03-31', 'thirty_day_month')
+    assert.deepEqual([mars.pieces[0].numerator, mars.pieces[0].denominator], [21, 30])
+    assert.equal(mars.amountCents, 63_000)
+  })
+
+  it('base 30 au trimestre : dénominateur 90', () => {
+    const [premier] = contractSchedule(
+      { startsOn: '2026-02-01', billingPeriod: 'quarterly', amountCents: 270_000 },
+      [],
+      '2026-03-31',
+      'thirty_day_month',
+    )
+    assert.deepEqual([premier.pieces[0].numerator, premier.pieces[0].denominator], [60, 90])
+    assert.equal(premier.amountCents, 180_000)
+  })
+
+  it('sans prorata : une période entamée, à l’entrée comme à la sortie, est due en entier', () => {
+    const periods = contractSchedule(
+      { ...dixMars, terminatedOn: '2026-04-15' },
+      [],
+      '2026-12-31',
+      'none',
+    )
+    assert.deepEqual(
+      periods.map((period) => period.amountCents),
+      [90_000, 90_000],
+    )
+  })
+})
+
+describe('commitmentSchedule : ce que l’engagement garantit (R10, ADR 023)', () => {
+  const engage = {
+    startsOn: '2026-03-10',
+    billingPeriod: 'monthly' as const,
+    amountCents: 45_000,
+    commitmentEndsOn: '2027-03-09',
+  }
+
+  it('totalise les périodes dues jusqu’à la fin d’engagement, de date à date', () => {
+    const engagement = commitmentSchedule(engage)
+    assert.equal(engagement?.endsOn, '2027-03-09')
+    assert.equal(engagement?.periods.length, 13)
+    // 22/31 de mars, onze mois, 9/31 de mars suivant : douze mois exactement.
+    assert.equal(engagement?.totalCents, 12 * 45_000)
+  })
+
+  it('suit les versions de prix et la règle du centre', () => {
+    const engagement = commitmentSchedule(
+      { ...engage, startsOn: '2026-03-01', commitmentEndsOn: '2026-04-30' },
+      [
+        { amendmentId: null, amendmentNumber: null, startsOn: '2026-03-01', endsOn: '2026-03-31', amountCents: 45_000 },
+        { amendmentId: 'avenant-1', amendmentNumber: 1, startsOn: '2026-04-01', endsOn: null, amountCents: 50_000 },
+      ],
+      'thirty_day_month',
+    )
+    assert.equal(engagement?.totalCents, 45_000 + 50_000)
+  })
+
+  it('ne rend rien sans engagement', () => {
+    assert.equal(commitmentSchedule({ ...engage, commitmentEndsOn: null }), undefined)
   })
 })

@@ -80,11 +80,26 @@ export function resolveRate<T extends RateCandidate>(
   lookup: RateLookup,
 ): T | undefined {
   if (!plan || !isRatePlanValidOn(plan, lookup.on)) return undefined
-  const applicable = plan.items.filter(
+  return pickRateItem(plan.items, lookup)
+}
+
+/**
+ * La ligne nominative avant la ligne de type, parmi les lignes d'une grille
+ * **déjà reconnue en vigueur** (`resolveRate` le vérifie ; un chargeur comme
+ * `findDefaultRatePlan(on)` aussi). `resourceId` nul : seule la ligne de type
+ * répond — une ligne d'offre ou de contrat qui vise un type de ressource.
+ */
+export function pickRateItem<T extends RateCandidate>(
+  items: readonly T[],
+  lookup: { resourceId: string | null; resourceType: ResourceType; unit: RateUnit },
+): T | undefined {
+  const applicable = items.filter(
     (item) => item.unit === lookup.unit && item.resourceType === lookup.resourceType,
   )
   return (
-    applicable.find((item) => item.resourceId === lookup.resourceId) ??
+    (lookup.resourceId === null
+      ? undefined
+      : applicable.find((item) => item.resourceId === lookup.resourceId)) ??
     applicable.find((item) => item.resourceId === null)
   )
 }

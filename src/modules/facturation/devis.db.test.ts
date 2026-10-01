@@ -7,8 +7,8 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID, tenants } from '../../db/tenants.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
-import { billingSchedule } from '../contrats/echeancier.ts'
-import { loadContractScheduleOptions } from '../contrats/echeancier-queries.ts'
+import { contractSchedule } from '../contrats/echeancier.ts'
+import { scheduleVersions, selectPriceVersions } from '../contrats/versions.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
 import {
   QuoteDiscountError,
@@ -468,16 +468,22 @@ describe('devis des réservations', { skip: raison }, () => {
         ]),
       )
 
-      const options = await loadContractScheduleOptions(contrat.id)
-      assert.equal(options.prorataRule, 'thirty_day_month')
-      assert.equal(options.versions.length, 1)
-      assert.equal(options.versions[0].startsOn, '2026-03-10')
-      assert.equal(options.versions[0].lines.length, 3)
+      const [tenant] = await asTenant((tx) =>
+        tx
+          .select({ prorataRule: tenants.prorataRule })
+          .from(tenants)
+          .where(eq(tenants.id, DEFAULT_TENANT_ID)),
+      )
+      assert.equal(tenant.prorataRule, 'thirty_day_month')
+      const versions = scheduleVersions(await asTenant((tx) => selectPriceVersions(tx, contrat.id)))
+      assert.equal(versions.length, 1)
+      assert.equal(versions[0].startsOn, '2026-03-10')
+      assert.equal(versions[0].lines?.length, 3)
 
       const [row] = await asTenant((tx) => tx.select().from(contracts).where(eq(contracts.id, contrat.id)))
       // La base tient le montant du brouillon égal à ses lignes récurrentes.
       assert.equal(row.amountCents, 47_500)
-      const periods = billingSchedule(row, '2026-04-30', options)
+      const periods = contractSchedule(row, versions, '2026-04-30', tenant.prorataRule)
       // Mars en base 30 : 21/30 de 450 € et de 25 €, plus 150 € de frais.
       assert.deepEqual(
         periods.map((period) => period.amountCents),

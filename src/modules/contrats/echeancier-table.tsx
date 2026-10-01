@@ -1,11 +1,11 @@
 import type { ProrataRule } from '../../db/tenants.ts'
 import { formatCents } from '../facturation/tarifs.ts'
 import {
-  billingSchedule,
+  contractSchedule,
   scheduleTotalCents,
-  type ScheduleOptions,
   type ScheduledContract,
-  type ScheduledPeriod,
+  type SchedulePiece,
+  type ScheduleVersion,
 } from './echeancier.ts'
 
 const dateFormat = new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeZone: 'UTC' })
@@ -15,39 +15,46 @@ function formatIsoDate(isoDate: string): string {
   return dateFormat.format(new Date(`${isoDate}T00:00:00Z`))
 }
 
-/**
- * Ce que couvre une échéance, en toutes lettres : la fraction de prorata est
- * écrite, pas seulement déduite du montant (ADR 023).
- */
-function describeCoverage(period: ScheduledPeriod, rule: ProrataRule): string {
-  if (period.full) return 'Période entière'
-  if (rule === 'none') return 'Période entamée, due en entier'
-  const fraction = `${period.prorata.numerator}/${period.prorata.denominator}`
-  return rule === 'thirty_day_month' ? `Prorata ${fraction} (base 30)` : `Prorata ${fraction} jours`
+/** « version initiale », « avenant n° 2 ». */
+function versionLabel(piece: SchedulePiece): string {
+  return piece.amendmentNumber === null ? 'version initiale' : `avenant n° ${piece.amendmentNumber}`
 }
 
 /**
- * Échéancier prévisionnel du contrat.
+ * Le prorata est écrit, pas seulement déduit du montant, avec la règle du
+ * centre (ADR 023) : « prorata 22/31 jours », « prorata 21/30 (base 30) ».
+ */
+function coverageLabel(piece: SchedulePiece, rule: ProrataRule): string {
+  if (piece.numerator === 0) return 'compté à partir de la période suivante'
+  if (piece.numerator === piece.denominator) return 'période commencée, due en entier'
+  const fraction = `${piece.numerator}/${piece.denominator}`
+  return rule === 'thirty_day_month' ? `prorata ${fraction} (base 30)` : `prorata ${fraction} jours`
+}
+
+/**
+ * Échéancier prévisionnel du contrat (ADR 006, 023, 025).
  *
- * Calculé à la volée, jamais stocké : il se lit depuis les versions de prix du
- * contrat et la règle de prorata du centre (ADR 023, ADR 025). Ce qui est figé,
- * c'est la facture (ADR 026).
+ * Calculé à la volée, jamais stocké : ce qui se fige, c'est la facture. Chaque
+ * période civile est coupée aux dates d'effet des avenants, chaque morceau
+ * proratisé selon la règle du centre ; la colonne « Détail » le dit en toutes
+ * lettres.
  */
 export function EcheancierTable({
   contract,
+  versions = [],
+  rule = 'calendar_days',
   until,
   currency,
-  options = {},
 }: {
   contract: ScheduledContract
+  /** Versions de prix (`contract_price_versions`) ; vide : le seul montant du contrat. */
+  versions?: readonly ScheduleVersion[]
+  rule?: ProrataRule
   until: string
   currency: string
-  /** Règle de prorata du centre et versions de prix (`loadContractScheduleOptions`). */
-  options?: ScheduleOptions
 }) {
-  const periods = billingSchedule(contract, until, options)
-  const rule = options.prorataRule ?? 'calendar_days'
-  const versioned = periods.some((period) => period.amendmentNumber !== null)
+  const periods = contractSchedule(contract, versions, until, rule)
+  const versioned = periods.some((period) => period.pieces.some((piece) => piece.amendmentId !== null))
 
   if (periods.length === 0) {
     return (
@@ -66,41 +73,40 @@ export function EcheancierTable({
         <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
           <tr>
             <th scope="col" className="px-4 py-3 font-medium">Période</th>
-            <th scope="col" className="px-4 py-3 font-medium">Couverture</th>
-            {versioned && <th scope="col" className="px-4 py-3 font-medium">Prix</th>}
+            <th scope="col" className="px-4 py-3 font-medium">Détail</th>
             <th scope="col" className="px-4 py-3 text-right font-medium">Montant HT</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
-          {periods.map((period) => (
-            <tr key={`${period.startsOn}-${period.amendmentNumber ?? 0}`}>
-              <td className="whitespace-nowrap px-4 py-2.5 tabular">
-                {formatIsoDate(period.startsOn)} – {formatIsoDate(period.endsOn)}
-              </td>
-              <td className="px-4 py-2.5 text-muted-foreground">
-                {describeCoverage(period, rule)}
-                {period.oneOffCents > 0 && (
-                  <span className="block text-xs">
-                    dont frais ponctuels : {formatCents(period.oneOffCents, currency)}
-                  </span>
-                )}
-              </td>
-              {versioned && (
-                <td className="px-4 py-2.5 text-muted-foreground">
-                  {period.amendmentNumber === null
-                    ? 'Contrat initial'
-                    : `Avenant n° ${period.amendmentNumber}`}
+          {periods.map((period) => {
+            const single = period.pieces.length === 1 ? period.pieces[0] : undefined
+            return (
+              <tr key={period.startsOn}>
+                <td className="whitespace-nowrap px-4 py-2.5 align-top tabular">
+                  {formatIsoDate(period.startsOn)} – {formatIsoDate(period.endsOn)}
                 </td>
-              )}
-              <td className="px-4 py-2.5 text-right tabular">
-                {formatCents(period.amountCents, currency)}
-              </td>
-            </tr>
-          ))}
+                <td className="px-4 py-2.5 text-muted-foreground">
+                  {period.pieces.map((piece) => (
+                    <span key={piece.startsOn} className="block">
+                      {period.pieces.length > 1 &&
+                        `Du ${formatIsoDate(piece.startsOn)} au ${formatIsoDate(piece.endsOn)} : `}
+                      {versioned && `${versionLabel(piece)}, `}
+                      {single && period.full ? 'période entière' : coverageLabel(piece, rule)}
+                      {piece.oneOffCents > 0 &&
+                        ` ; frais dus une fois : ${formatCents(piece.oneOffCents, currency)}`}
+                    </span>
+                  ))}
+                </td>
+                <td className="whitespace-nowrap px-4 py-2.5 text-right align-top tabular">
+                  {formatCents(period.amountCents, currency)}
+                </td>
+              </tr>
+            )
+          })}
         </tbody>
         <tfoot className="border-t border-border text-sm font-medium">
           <tr>
-            <td className="px-4 py-3" colSpan={versioned ? 3 : 2}>
+            <td className="px-4 py-3" colSpan={2}>
               Total sur {periods.length} échéance{periods.length > 1 ? 's' : ''}
             </td>
             <td className="px-4 py-3 text-right tabular">

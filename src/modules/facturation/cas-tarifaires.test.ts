@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { wallClockToUtc } from '../../lib/dates.ts'
-import { billingSchedule, scheduleTotalCents } from '../contrats/echeancier.ts'
+import { contractSchedule, scheduleTotalCents } from '../contrats/echeancier.ts'
 import {
   GRILLE_REELLE,
   REGLES_PAR_DEFAUT,
@@ -42,9 +42,16 @@ describe(`cas tarifaires des réservations (${STATUT_DES_CAS})`, () => {
 describe(`cas tarifaires des contrats (${STATUT_DES_CAS})`, () => {
   for (const cas of casContrats) {
     it(`${cas.id} — ${cas.libelle}`, () => {
-      const periods = billingSchedule(cas.contrat, cas.jusquAu, cas.options)
+      const periods = contractSchedule(
+        cas.contrat,
+        cas.options.versions ?? [],
+        cas.jusquAu,
+        cas.options.prorataRule,
+      )
       assert.deepEqual(
-        periods.map((period) => period.amountCents),
+        periods.flatMap((period) =>
+          period.pieces.map((piece) => piece.amountCents + piece.oneOffCents),
+        ),
         cas.attendu.echeances,
       )
       assert.equal(scheduleTotalCents(periods), cas.attendu.totalCents)

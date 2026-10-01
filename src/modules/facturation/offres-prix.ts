@@ -3,7 +3,7 @@ import type { ResourceType } from '../ressources/schema.ts'
 import { invoiceAmounts, lineNetAmountCents } from './montants.ts'
 import type { BillingPeriod, RateUnit, ServiceNature } from './schema.ts'
 import type { OfferTarget } from './services-labels.ts'
-import { resolveRate, type RateCandidate } from './tarifs.ts'
+import { pickRateItem, type RateCandidate } from './tarifs.ts'
 
 /**
  * Prix d'une offre groupée (R09, ADR 024) : le moteur de devis appliqué aux
@@ -21,7 +21,7 @@ import { resolveRate, type RateCandidate } from './tarifs.ts'
  *   trimestrielle s'écrit trois mois. Aucun multiplicateur caché.
  * - **Prix unitaire** : le prix forfaitaire de la ligne s'il y en a un, sinon
  *   celui du catalogue — la grille par défaut du centre pour une ressource
- *   (la ligne nominative l'emporte sur celle du type, `resolveRate`), le prix
+ *   (la ligne nominative l'emporte sur celle du type, `pickRateItem`), le prix
  *   du service pour un service. Sans prix, la ligne est signalée et sort du
  *   total : on n'invente pas de prix (ADR 009).
  * - **Remise** : en pourcentage ou en montant par période, jamais les deux ;
@@ -272,16 +272,11 @@ function catalogueFor(line: OfferLineInput, offerCurrency: string, catalogue: Of
 
   // La ligne nominative de la grille l'emporte sur celle du type ; une ligne
   // d'offre par type ne lit que le prix du type.
-  const rate = resource
-    ? resolveRate(catalogue.rateItems, {
-        resourceId: resource.id,
-        resourceType,
-        unit: line.unit,
-      })
-    : catalogue.rateItems.find(
-        (item) =>
-          item.resourceType === resourceType && item.resourceId === null && item.unit === line.unit,
-      )
+  const rate = pickRateItem(catalogue.rateItems, {
+    resourceId: resource?.id ?? null,
+    resourceType,
+    unit: line.unit,
+  })
   const currencyMismatch =
     rate !== undefined && catalogue.rateCurrency !== null && catalogue.rateCurrency !== offerCurrency
   return {

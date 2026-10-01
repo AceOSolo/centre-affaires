@@ -1,5 +1,5 @@
 import type { ProrataRule } from '../../db/tenants.ts'
-import type { ScheduleOptions, ScheduledContract } from '../contrats/echeancier.ts'
+import type { ScheduleVersion, ScheduledContract } from '../contrats/echeancier.ts'
 import type { BookableUnit, QuoteDiscount, QuotePlan, QuoteRules } from './devis.ts'
 import { DEFAULT_QUANTITY_RULES } from './tarifs.ts'
 
@@ -205,11 +205,15 @@ export type CasContrat = {
   id: string
   libelle: string
   contrat: ScheduledContract & { commitmentEndsOn?: string | null }
-  options: ScheduleOptions
+  /** Règle de prorata du centre et versions de prix, comme `contractSchedule` les lit. */
+  options: { prorataRule: ProrataRule; versions?: readonly ScheduleVersion[] }
   /** Fin de l'échéancier regardé. */
   jusquAu: string
   attendu: {
-    /** Montant HT de chaque échéance, dans l'ordre. */
+    /**
+     * Montant HT de chaque échéance, dans l'ordre : un par morceau de période
+     * (une période coupée par un avenant en donne deux), frais ponctuels compris.
+     */
     echeances: number[]
     totalCents: number
   }
@@ -265,6 +269,7 @@ export const casContrats: readonly CasContrat[] = [
       prorataRule: 'calendar_days',
       versions: [
         {
+          amendmentId: null,
           amendmentNumber: null,
           startsOn: '2026-03-10',
           endsOn: null,
@@ -302,8 +307,8 @@ export const casContrats: readonly CasContrat[] = [
     options: {
       prorataRule: 'calendar_days',
       versions: [
-        { amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-03-14', amountCents: 90_000, lines: [] },
-        { amendmentNumber: 1, startsOn: '2026-03-15', endsOn: null, amountCents: 120_000, lines: [] },
+        { amendmentId: null, amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-03-14', amountCents: 90_000, lines: [] },
+        { amendmentId: 'avenant-1', amendmentNumber: 1, startsOn: '2026-03-15', endsOn: null, amountCents: 120_000, lines: [] },
       ],
     },
     jusquAu: '2026-03-31',

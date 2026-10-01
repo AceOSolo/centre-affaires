@@ -264,19 +264,24 @@ journée).
 
 ### Échéancier
 
-`billingSchedule(contrat, jusqu'au, { prorataRule, versions })` lit la règle
-de prorata du centre et les versions de prix (`contract_price_versions`, ADR
-025), lignes et remises comprises (`loadContractScheduleOptions`). Chaque
-morceau porte sa fraction (`prorataFraction`), affichée à l'écran.
+`contractSchedule(contrat, versions, jusqu'au, règle)` (`contrats/echeancier.ts`,
+une seule implémentation depuis l'intégration de la vague 2) lit la règle de
+prorata du centre et les versions de prix (`contract_price_versions`, ADR 025,
+lues par `selectPriceVersions`), lignes et remises comprises. Chaque période
+est coupée en morceaux aux dates d'effet ; chaque morceau porte sa fraction
+(`prorataFraction`), affichée à l'écran et reprise telle quelle sur la ligne de
+facture par le lot de facturation.
 
 - **Base 30** : chaque mois compte 30 jours ; le dernier jour du mois compte
-  comme le 30, donc du 1er au 30 mars vaut un mois entier, et un 31 isolé un
-  jour. **À valider.**
+  comme le 30, donc du 1er au 30 mars vaut un mois entier. Un morceau qui
+  commence le 31 ne compte rien, pour que les morceaux d'un même mois coupé
+  par un avenant s'additionnent toujours à 30 (règle retenue à l'intégration,
+  ADR 028). **À valider.**
 - **Sans prorata** et avenant en cours de période : la période est due en
   entier au prix de la version en vigueur à son premier jour, l'avenant
   s'applique à la période suivante. **À valider.**
-- Une ligne ponctuelle (frais de dossier) est due une fois, avec le premier
-  morceau de sa version.
+- Une ligne ponctuelle (frais de dossier) est due une fois, dans la période qui
+  contient le premier jour de sa version.
 - **Engagement** : la fiche du contrat affiche la fin d'engagement et le
   minimum dû sur sa durée (`commitmentSchedule`) ; l'horizon de l'échéancier
   va au moins jusqu'à elle. La résiliation propose le premier dernier jour qui
