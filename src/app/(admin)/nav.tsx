@@ -28,6 +28,7 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
+  { href: '/indicateurs', label: 'Indicateurs', permission: 'indicateurs.consulter' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
   { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },
 ]
@@ -57,8 +58,10 @@ export function Nav({
     )
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
 
+  // Dix-neuf entrées depuis la vague 2 : elles passent à la ligne plutôt que de
+  // faire défiler la page horizontalement.
   return (
-    <nav className="flex gap-1">
+    <nav className="flex flex-wrap gap-1">
       {visibles.map((section) => {
         const active = section.href === actif
         return (
