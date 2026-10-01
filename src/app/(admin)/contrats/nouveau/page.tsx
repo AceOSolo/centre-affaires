@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
 import { ContractForm } from '../../../../modules/contrats/contract-form.tsx'
 import { listRatePlans } from '../../../../modules/facturation/queries.ts'
@@ -12,6 +13,7 @@ export default async function NewContractPage({
 }: {
   searchParams: Promise<{ clientId?: string }>
 }) {
+  await requirePermission('contrats.creer')
   const { clientId } = await searchParams
   const [clients, ratePlans, resources] = await Promise.all([
     listClients(),

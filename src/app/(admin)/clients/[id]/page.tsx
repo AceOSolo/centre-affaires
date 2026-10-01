@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { can } from '../../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { archiveClientAction } from '../../../../modules/clients/actions.ts'
 import { listClientMembers } from '../../../../modules/clients/comptes.ts'
 import { removeClientMemberAction } from '../../../../modules/clients/comptes-actions.ts'
@@ -24,6 +26,7 @@ import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 export const metadata = { title: 'Client' }
 
 export default async function ClientPage({ params }: { params: Promise<{ id: string }> }) {
+  const { member: staff } = await requirePermission('clients.gerer')
   const { id } = await params
   const client = await findClient(id)
   if (!client) notFound()
@@ -62,12 +65,14 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         >
           Modifier la fiche
         </Link>
-        <Link
-          href={`/contrats/nouveau?clientId=${client.id}`}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Nouveau contrat
-        </Link>
+        {can(staff.role, 'contrats.creer') && (
+          <Link
+            href={`/contrats/nouveau?clientId=${client.id}`}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Nouveau contrat
+          </Link>
+        )}
       </div>
 
       <dl className="grid grid-cols-[10rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
@@ -250,7 +255,7 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
         )}
       </section>
 
-      {!client.deletedAt && (
+      {!client.deletedAt && can(staff.role, 'clients.archiver') && (
         <form
           action={archiveClientAction}
           className="rounded-lg border border-border bg-white px-5 py-4"

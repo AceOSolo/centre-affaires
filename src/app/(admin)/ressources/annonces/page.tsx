@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import {
   publishListingAction,
   unpublishListingAction,
@@ -11,6 +12,7 @@ import { listBookableResources } from '../../../../modules/ressources/queries.ts
 export const metadata = { title: 'Annonces' }
 
 export default async function AnnoncesPage() {
+  await requirePermission('ressources.gerer')
   const [listings, resources] = await Promise.all([listAllListings(), listBookableResources()])
 
   const annoncees = new Set(listings.map((listing) => listing.resourceId))

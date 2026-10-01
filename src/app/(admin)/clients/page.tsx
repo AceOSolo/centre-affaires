@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import { clientStatusLabels, clientStatusStyles, formatSiret } from '../../../modules/clients/labels.ts'
 import { listClients } from '../../../modules/clients/queries.ts'
 import { clientStatuses, type ClientStatus } from '../../../modules/clients/schema.ts'
@@ -11,6 +12,7 @@ export default async function ClientsPage({
 }: {
   searchParams: Promise<{ statut?: string; q?: string }>
 }) {
+  await requirePermission('clients.gerer')
   const { statut, q } = await searchParams
   const status = clientStatuses.includes(statut as ClientStatus)
     ? (statut as ClientStatus)

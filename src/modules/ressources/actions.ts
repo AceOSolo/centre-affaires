@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import {
   DuplicateResourceCodeError,
@@ -78,7 +78,7 @@ export async function createResourceAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const resourceType = text(formData, 'resourceType') as ResourceType
   const code = text(formData, 'code')
   const name = text(formData, 'name')
@@ -110,7 +110,7 @@ export async function createResourceAction(
 }
 
 export async function updateResourceStatusAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   const status = text(formData, 'status') as ResourceStatus
   if (!id || !resourceStatuses.includes(status)) return
@@ -120,7 +120,7 @@ export async function updateResourceStatusAction(formData: FormData): Promise<vo
 }
 
 export async function archiveResourceAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('ressources.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await archiveResource(id)

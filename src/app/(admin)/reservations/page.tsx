@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   addDaysToIsoDate,
   formatDuration,
@@ -28,6 +29,7 @@ export default async function PlanningPage({
 }: {
   searchParams: Promise<{ date?: string }>
 }) {
+  await requirePermission('reservations.gerer')
   const { date } = await searchParams
   const timeZone = await currentTimeZone()
   // Le jour du centre, pas celui du serveur : Vercel tourne en UTC (décision 4).

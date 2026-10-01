@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
@@ -29,6 +30,7 @@ export default async function NewBookingPage({
 }: {
   searchParams: Promise<{ date?: string; resourceId?: string; start?: string }>
 }) {
+  await requirePermission('reservations.gerer')
   const { date, resourceId, start } = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)

@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { readScan, type ScanFile } from './fichiers.ts'
@@ -41,7 +41,7 @@ export async function registerMailAction(
   formData: FormData,
 ): Promise<MailFormState> {
   // Contrôle d'accès dans l'action elle-même (ADR 008).
-  const { member } = await requireStaff()
+  const { member } = await requirePermission('courrier.gerer')
   const timeZone = await currentTimeZone()
 
   const values = {
@@ -103,7 +103,7 @@ export async function openMailAction(
   _previous: MailFormState,
   formData: FormData,
 ): Promise<MailFormState> {
-  const { member } = await requireStaff()
+  const { member } = await requirePermission('courrier.gerer')
   const id = text(formData, 'id')
   if (!id) return { error: 'Courrier introuvable.' }
 
@@ -127,7 +127,7 @@ export async function openMailAction(
 }
 
 export async function withdrawMailAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('courrier.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await withdrawMail(id)

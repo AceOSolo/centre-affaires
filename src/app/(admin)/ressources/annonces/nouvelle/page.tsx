@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { AnnonceForm } from '../../../../../modules/ressources/annonce-form.tsx'
 import { listAllListings } from '../../../../../modules/ressources/annonces-queries.ts'
 import { listBookableResources } from '../../../../../modules/ressources/queries.ts'
@@ -7,6 +8,7 @@ import { listBookableResources } from '../../../../../modules/ressources/queries
 export const metadata = { title: 'Nouvelle annonce' }
 
 export default async function NewAnnoncePage() {
+  await requirePermission('ressources.gerer')
   const [listings, resources] = await Promise.all([listAllListings(), listBookableResources()])
   const annoncees = new Set(listings.map((listing) => listing.resourceId))
   const sansAnnonce = resources.filter((resource) => !annoncees.has(resource.id))

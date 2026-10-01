@@ -1,6 +1,8 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
+import { staffRoleLabels } from '../../db/staff.ts'
+import { permissionsOf } from '../../lib/auth/permissions.ts'
 import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { countOpeningRequests } from '../../modules/courrier/queries.ts'
@@ -25,8 +27,9 @@ export const dynamic = 'force-dynamic'
  */
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   // Premier verrou du back-office : sans membre d'équipe, on ne rend rien.
-  // Les actions serveur rappellent `requireStaff()` de leur côté — elles ne
-  // passent pas par cette coque (ADR 008).
+  // Les pages et les actions serveur vérifient le droit de leur rôle par
+  // `requirePermission()` — les actions ne passent pas par cette coque
+  // (ADR 008, ADR 019).
   const { member } = await requireStaff()
   const [tenant, pending, mailRequests] = await Promise.all([
     currentTenant(),
@@ -52,7 +55,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               <span className="text-sm font-semibold tracking-tight">{tenant.name}</span>
             )}
           </Link>
-          <Nav pendingCount={pending.length} mailRequestCount={mailRequests} />
+          <Nav pendingCount={pending.length} mailRequestCount={mailRequests} allowed={permissionsOf(member.role)} />
           <div className="ml-auto flex items-center gap-4">
             <span className="hidden text-xs text-muted-foreground sm:block">
               {/* Le fuseau est affiché : toutes les heures de l'écran sont les
@@ -60,7 +63,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
               Heures affichées en {tenant.timezone}
             </span>
             <span className="text-xs text-muted-foreground">
-              {member.fullName ?? member.email}
+              {member.fullName ?? member.email} · {staffRoleLabels[member.role]}
             </span>
             <SignOutButton className="rounded-md border border-border px-3 py-1.5 text-xs font-medium transition-colors hover:bg-muted" />
           </div>

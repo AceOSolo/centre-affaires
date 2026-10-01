@@ -7,7 +7,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
-import { requireAdmin } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import {
   AGENDAS_PATH,
   CALLBACK_PATH,
@@ -32,7 +32,7 @@ import {
 
 /** Départ vers l'écran de consentement de Google. */
 export async function connectGoogleCalendarAction(): Promise<void> {
-  await requireAdmin()
+  await requirePermission('agenda-google.gerer')
   const config = googleConfig()
   if (!config) redirect(`${AGENDAS_PATH}?compte=non-configure`)
 
@@ -52,7 +52,7 @@ export async function connectGoogleCalendarAction(): Promise<void> {
 }
 
 export async function disconnectGoogleCalendarAction(): Promise<void> {
-  await requireAdmin()
+  await requirePermission('agenda-google.gerer')
   await disconnectGoogleCalendar()
   revalidatePath(AGENDAS_PATH)
   redirect(`${AGENDAS_PATH}?compte=deconnecte`)
@@ -70,7 +70,7 @@ function selectedResources(formData: FormData): string[] {
  * après la réponse.
  */
 export async function createResourceCalendarsAction(formData: FormData): Promise<void> {
-  await requireAdmin()
+  await requirePermission('agenda-google.gerer')
   const ids = selectedResources(formData)
   if (!ids.length) redirect(`${AGENDAS_PATH}?agendas=vide`)
 
@@ -81,7 +81,7 @@ export async function createResourceCalendarsAction(formData: FormData): Promise
 }
 
 export async function removeResourceCalendarsAction(formData: FormData): Promise<void> {
-  await requireAdmin()
+  await requirePermission('agenda-google.gerer')
   const ids = selectedResources(formData)
   if (!ids.length) redirect(`${AGENDAS_PATH}?agendas=vide`)
 

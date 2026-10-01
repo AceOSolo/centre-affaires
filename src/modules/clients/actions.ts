@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { DuplicateSiretError, archiveClient, createClient, updateClient } from './queries.ts'
 import { clientStatuses, type ClientStatus } from './schema.ts'
@@ -65,7 +65,7 @@ export async function createClientAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const read = readClient(formData)
   if ('error' in read) return read
 
@@ -85,7 +85,7 @@ export async function updateClientAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const id = text(formData, 'id')
   if (!id) return { error: 'Client introuvable.' }
 
@@ -104,7 +104,7 @@ export async function updateClientAction(
 }
 
 export async function archiveClientAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('clients.archiver')
   const id = text(formData, 'id')
   if (!id) return
   await archiveClient(id)

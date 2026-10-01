@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { can } from '../../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { activateContractAction } from '../../../../modules/contrats/actions.ts'
 import { addDays, noticeEndsOn } from '../../../../modules/contrats/echeancier.ts'
 import { EcheancierTable } from '../../../../modules/contrats/echeancier-table.tsx'
@@ -19,6 +21,7 @@ import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 export const metadata = { title: 'Contrat' }
 
 export default async function ContractPage({ params }: { params: Promise<{ id: string }> }) {
+  const { member } = await requirePermission('contrats.consulter')
   const { id } = await params
   const contract = await findContract(id)
   if (!contract) notFound()
@@ -50,7 +53,7 @@ export default async function ContractPage({ params }: { params: Promise<{ id: s
         </p>
       </div>
 
-      {contract.status === 'draft' && (
+      {contract.status === 'draft' && can(member.role, 'contrats.activer') && (
         <form action={activateContractAction} className="flex items-center gap-3">
           <input type="hidden" name="id" value={contract.id} />
           <button
@@ -131,7 +134,7 @@ export default async function ContractPage({ params }: { params: Promise<{ id: s
         <EcheancierTable contract={contract} until={horizon} currency={contract.currency} />
       </section>
 
-      {contract.status !== 'terminated' && (
+      {contract.status !== 'terminated' && can(member.role, 'contrats.resilier') && (
         <TerminateForm
           contractId={contract.id}
           defaultTerminatedOn={noticeEndsOn(today, contract.noticeDays)}

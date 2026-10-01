@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   archiveResourceAction,
   updateResourceStatusAction,
@@ -20,6 +21,7 @@ export default async function ResourcesPage({
 }: {
   searchParams: Promise<{ type?: string }>
 }) {
+  await requirePermission('ressources.gerer')
   const { type } = await searchParams
   const filter = resourceTypes.includes(type as ResourceType) ? (type as ResourceType) : undefined
   const resources = await listResources({ resourceType: filter })

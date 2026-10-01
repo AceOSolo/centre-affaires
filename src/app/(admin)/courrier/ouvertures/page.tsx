@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import {
   addMonthsToIsoMonth,
   formatDateTime,
@@ -25,6 +26,7 @@ export default async function OuverturesPage({
 }: {
   searchParams: Promise<{ mois?: string }>
 }) {
+  await requirePermission('courrier.releve')
   const { mois } = await searchParams
   const timeZone = await currentTimeZone()
   const month = isIsoMonth(mois) ? mois : todayIsoDate(timeZone).slice(0, 7)

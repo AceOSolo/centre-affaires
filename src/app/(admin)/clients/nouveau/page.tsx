@@ -1,10 +1,12 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { ClientForm } from '../../../../modules/clients/client-form.tsx'
 
 export const metadata = { title: 'Nouveau client' }
 
-export default function NewClientPage() {
+export default async function NewClientPage() {
+  await requirePermission('clients.gerer')
   return (
     <div className="flex flex-col gap-6">
       <div>
