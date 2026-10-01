@@ -2,14 +2,22 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { requirePermission } from '../../../../lib/auth/staff.ts'
+import { todayIsoDate } from '../../../../lib/dates.ts'
+import { currentTimeZone } from '../../../../lib/tenant.ts'
 import {
   archiveRatePlanAction,
   removeRatePlanItemAction,
 } from '../../../../modules/facturation/actions.ts'
+import {
+  formatRatePlanValidity,
+  ratePlanValidityLabels,
+  ratePlanValidityStyles,
+} from '../../../../modules/facturation/grilles-affichage.ts'
 import { rateUnitLabels, rateUnitSuffixes } from '../../../../modules/facturation/labels.ts'
 import { findRatePlan } from '../../../../modules/facturation/queries.ts'
 import { RateItemForm } from '../../../../modules/facturation/rate-item-form.tsx'
-import { formatCents } from '../../../../modules/facturation/tarifs.ts'
+import { RatePlanForm } from '../../../../modules/facturation/rate-plan-form.tsx'
+import { formatCents, ratePlanValidityState } from '../../../../modules/facturation/tarifs.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 import { listResources } from '../../../../modules/ressources/queries.ts'
 
@@ -18,8 +26,13 @@ export const metadata = { title: 'Grille tarifaire' }
 export default async function RatePlanPage({ params }: { params: Promise<{ id: string }> }) {
   await requirePermission('tarifs.gerer')
   const { id } = await params
-  const [plan, resources] = await Promise.all([findRatePlan(id), listResources()])
+  const [plan, resources, timeZone] = await Promise.all([
+    findRatePlan(id),
+    listResources(),
+    currentTimeZone(),
+  ])
   if (!plan) notFound()
+  const validity = ratePlanValidityState(plan, todayIsoDate(timeZone))
 
   const resourceNames = new Map(resources.map((resource) => [resource.id, resource]))
   const archived = Boolean(plan.deletedAt)
@@ -37,15 +50,20 @@ export default async function RatePlanPage({ params }: { params: Promise<{ id: s
               Grille par défaut
             </span>
           )}
-          {plan.deletedAt && (
-            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
-              Archivée
-            </span>
-          )}
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${ratePlanValidityStyles[validity]}`}
+          >
+            {ratePlanValidityLabels[validity]}
+          </span>
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
-          Validité : {plan.validFrom ?? 'sans début'} → {plan.validTo ?? 'sans fin'} · {plan.currency}
+          Valable {formatRatePlanValidity(plan)} · {plan.currency}
         </p>
+        {!archived && validity !== 'current' && (
+          <p className="mt-2 text-sm">
+            Hors de ses dates aujourd’hui : ses prix ne chiffrent aucune réservation de ce jour.
+          </p>
+        )}
       </div>
 
       <section className="flex flex-col gap-3">
@@ -136,6 +154,21 @@ export default async function RatePlanPage({ params }: { params: Promise<{ id: s
         <section className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
           <h2 className="text-sm font-semibold tracking-tight">Ajouter un prix</h2>
           <RateItemForm ratePlanId={plan.id} resources={resources} />
+        </section>
+      )}
+
+      {!plan.deletedAt && (
+        <section className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
+          <h2 className="text-sm font-semibold tracking-tight">Nom, validité et rôle</h2>
+          <RatePlanForm
+            plan={{
+              id: plan.id,
+              name: plan.name,
+              validFrom: plan.validFrom,
+              validTo: plan.validTo,
+              isDefault: plan.isDefault,
+            }}
+          />
         </section>
       )}
 

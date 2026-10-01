@@ -81,7 +81,12 @@ describe('retrait des prix d’une grille', { skip: raison }, () => {
   it('ne l’applique plus : le tarif du type reprend la main', async () => {
     await prix(2500)
     const nominatif = await prix(4000, SALLE)
-    const lookup = { resourceId: SALLE, resourceType: 'salle' as const, unit: 'hour' as const }
+    const lookup = {
+      resourceId: SALLE,
+      resourceType: 'salle' as const,
+      unit: 'hour' as const,
+      on: '2026-10-01',
+    }
     assert.equal((await findApplicableRate(lookup, PLAN))?.item.amountCents, 4000)
 
     await removeRatePlanItem(nominatif.id)

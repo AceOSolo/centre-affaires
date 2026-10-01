@@ -10,6 +10,9 @@ import { tenants } from '../../db/tenants.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { contracts, type Contract } from '../contrats/schema.ts'
+import { NO_BOOKING_QUOTE, bookingQuoteColumns, type QuoteDiscount } from '../facturation/devis.ts'
+import { quoteInTransaction, type QuoteRequest } from '../facturation/devis-queries.ts'
+import { invoiceLines } from '../facturation/schema-factures.ts'
 import { openingWindows } from '../ressources/ouverture.ts'
 import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
@@ -204,13 +207,101 @@ export type CreateBookingInput = {
    * du même client, qui couvre le créneau. Vérifié avant l'écriture.
    */
   contractId?: string | null
+  /**
+   * Prix de la réservation (R11). Par défaut, le devis de la grille
+   * (`quote()`), figé sur la réservation ; `none` pour une réservation
+   * interne, non chiffrée.
+   */
+  pricing?: BookingPricing
+}
+
+/** Comment chiffrer une réservation à l'écriture. */
+export type BookingPricing =
+  | { mode: 'grid'; discount?: QuoteDiscount | null }
+  | { mode: 'none' }
+
+/** Remise refusée par le devis : illisible, ou plus grande que le montant. */
+export class QuoteDiscountError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'QuoteDiscountError'
+  }
+}
+
+/**
+ * Colonnes `quote_*` d'une réservation à écrire : le devis de la grille,
+ * calculé dans la transaction qui écrit (R11, ADR 023). Un créneau que la
+ * grille ne tarife pas est écrit sans devis ; le formulaire l'a annoncé.
+ */
+async function quoteColumnsFor(
+  tx: Transaction,
+  request: Omit<QuoteRequest, 'discount'>,
+  pricing: BookingPricing = { mode: 'grid' },
+) {
+  if (pricing.mode === 'none') return NO_BOOKING_QUOTE
+  const result = await quoteInTransaction(tx, { ...request, discount: pricing.discount ?? null })
+  if (result.ok) return bookingQuoteColumns(result.quote, new Date())
+  if (result.reason === 'remise-invalide' || result.reason === 'remise-excessive') {
+    throw new QuoteDiscountError(result.message)
+  }
+  return NO_BOOKING_QUOTE
+}
+
+/**
+ * Refait le devis d'une réservation déplacée : d'autres heures ou une autre
+ * ressource, c'est un autre prix. La remise accordée est gardée ; si elle
+ * dépasse désormais le montant, elle tombe. Un prix saisi à la main (sans
+ * ligne de grille) n'est pas touché, une réservation non chiffrée non plus,
+ * ni une réservation déjà portée sur une facture : la facture a repris son
+ * prix, il ne bouge plus.
+ */
+async function requoteMovedBooking(tx: Transaction, row: Booking): Promise<Booking> {
+  if (!row.quotedAt || !row.quoteRatePlanItemId) return row
+  const [invoiced] = await tx
+    .select({ id: invoiceLines.id })
+    .from(invoiceLines)
+    .where(
+      and(
+        eq(invoiceLines.bookingId, row.id),
+        isNull(invoiceLines.deletedAt),
+        isNull(invoiceLines.releasedAt),
+      ),
+    )
+    .limit(1)
+  if (invoiced) return row
+  const discount: QuoteDiscount | null = row.quoteDiscountBp
+    ? { kind: 'percent', basisPoints: row.quoteDiscountBp }
+    : row.quoteDiscountAmountCents
+      ? { kind: 'amount', cents: row.quoteDiscountAmountCents }
+      : null
+  const request = {
+    resourceId: row.resourceId,
+    startsAt: row.startsAt,
+    endsAt: row.endsAt,
+    clientId: row.clientId,
+    contractId: row.contractId,
+  }
+  let result = await quoteInTransaction(tx, { ...request, discount })
+  if (!result.ok && result.reason === 'remise-excessive') {
+    result = await quoteInTransaction(tx, { ...request, discount: null })
+  }
+  const [requoted] = await tx
+    .update(bookings)
+    .set(result.ok ? bookingQuoteColumns(result.quote, new Date()) : NO_BOOKING_QUOTE)
+    .where(eq(bookings.id, row.id))
+    .returning()
+  return requoted
 }
 
 /**
  * Réservation saisie par l'équipe dans le back-office.
  *
+ * Le devis est calculé et figé dans la même transaction que l'insertion
+ * (R11) : la facture le reprendra, même si la grille change ensuite.
+ *
  * @throws BookingContractError si le contrat demandé ne peut pas porter cette
  * réservation : autre client, contrat pas en cours, créneau hors période.
+ * @throws QuoteDiscountError si la remise demandée est refusée.
  */
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   if (!isValidRange(input)) throw new InvalidRangeError()
@@ -224,6 +315,17 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
           endsAt: input.endsAt,
         })
       }
+      const quote = await quoteColumnsFor(
+        tx,
+        {
+          resourceId: input.resourceId,
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          clientId: input.clientId ?? null,
+          contractId: input.contractId ?? null,
+        },
+        input.pricing,
+      )
       return tx
         .insert(bookings)
         .values({
@@ -236,6 +338,7 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
           contractId: input.contractId ?? null,
           // Saisie du back-office (R05).
           channel: 'staff',
+          ...quote,
         })
         .returning()
     })
@@ -308,7 +411,7 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
         throw occupation ? new ContractOccupationLockedError() : new BookingNotMovableError()
       }
       if (row.contractId) await assertBookingContract(tx, row.contractId, row)
-      return row
+      return requoteMovedBooking(tx, row)
     })
     return moved
   } catch (error) {
@@ -443,8 +546,20 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
+    const [created] = await withTenant(currentTenantId(), async (tx) => {
+      // Le montant affiché au demandeur est figé sur sa demande (R11) : celui
+      // que l'équipe validera et que la facture reprendra.
+      const quote = await quoteColumnsFor(
+        tx,
+        {
+          resourceId: input.resourceId,
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+          clientId: input.clientId ?? null,
+        },
+        input.pricing,
+      )
+      return tx
         .insert(bookings)
         .values({
           resourceId: input.resourceId,
@@ -460,9 +575,10 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
           // Rattachée à son entreprise, la demande vient d'une personne
           // connectée à son espace (ADR 015) ; sinon d'un visiteur (ADR 005).
           channel: input.clientId ? 'client' : 'public',
+          ...quote,
         })
-        .returning(),
-    )
+        .returning()
+    })
     return created
   } catch (error) {
     if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error

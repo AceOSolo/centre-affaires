@@ -13,7 +13,12 @@ import {
 } from '../../../../modules/contrats/contract-actions.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
-import { addDays, noticeEndsOn } from '../../../../modules/contrats/echeancier.ts'
+import {
+  addDays,
+  commitmentSchedule,
+  earliestEndOn,
+} from '../../../../modules/contrats/echeancier.ts'
+import { loadContractScheduleOptions } from '../../../../modules/contrats/echeancier-queries.ts'
 import { EcheancierTable } from '../../../../modules/contrats/echeancier-table.tsx'
 import {
   billingPeriodLabels,
@@ -32,6 +37,7 @@ import {
 } from '../../../../modules/contrats/occupation.ts'
 import { findContract, findContractOccupation } from '../../../../modules/contrats/queries.ts'
 import { TerminateForm } from '../../../../modules/contrats/terminate-form.tsx'
+import { prorataRuleLabels } from '../../../../modules/facturation/parametres-libelles.ts'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 import { listResources } from '../../../../modules/ressources/queries.ts'
@@ -59,10 +65,12 @@ export default async function ContractPage({
   const { id } = await params
   const { fait } = await searchParams
   if (!isUuid(id)) notFound()
-  const [contract, occupation, timeZone] = await Promise.all([
+  const [contract, occupation, timeZone, scheduleOptions] = await Promise.all([
     findContract(id),
     findContractOccupation(id),
     currentTimeZone(),
+    // Règle de prorata du centre et versions de prix du contrat (R10, ADR 025).
+    loadContractScheduleOptions(id),
   ])
   if (!contract) notFound()
 
@@ -75,9 +83,14 @@ export default async function ContractPage({
   const canChangeResource = canManageOccupation && canChangeContractResource(contract, today)
   const resources = canChangeResource ? await listResources() : []
 
-  // Douze mois d'horizon : assez pour lire l'engagement en cours sans dérouler
-  // une durée indéterminée jusqu'à la fin des temps.
-  const horizon = addDays(today, 365)
+  // Douze mois d'horizon, et au moins jusqu'à la fin de l'engagement : assez
+  // pour le lire sans dérouler une durée indéterminée jusqu'à la fin des temps.
+  const twelveMonths = addDays(today, 365)
+  const horizon =
+    contract.commitmentEndsOn && contract.commitmentEndsOn > twelveMonths
+      ? contract.commitmentEndsOn
+      : twelveMonths
+  const engagement = commitmentSchedule(contract, scheduleOptions)
   const resourceLabel = contract.resource
     ? `${contract.resource.name} (${contract.resource.code})`
     : null
@@ -171,6 +184,23 @@ export default async function ContractPage({
         <dt className="text-muted-foreground">Préavis</dt>
         <dd>{contract.noticeDays} jours</dd>
 
+        <dt className="text-muted-foreground">Engagement</dt>
+        <dd>
+          {contract.commitmentMonths && contract.commitmentEndsOn ? (
+            <>
+              {contract.commitmentMonths} mois, jusqu’au{' '}
+              <span className="tabular">{formatCalendarDate(contract.commitmentEndsOn)}</span>
+            </>
+          ) : (
+            'Sans engagement'
+          )}
+          {contract.tacitRenewal && contract.renewalMonths && (
+            <span className="block text-muted-foreground">
+              Reconduction tacite par périodes de {contract.renewalMonths} mois, sauf préavis.
+            </span>
+          )}
+        </dd>
+
         <dt className="text-muted-foreground">Ressource</dt>
         <dd>
           {contract.resource
@@ -244,18 +274,37 @@ export default async function ContractPage({
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Échéancier prévisionnel</h2>
         <p className="text-xs text-muted-foreground">
-          Périodes civiles, prorata temporis au jour sur les périodes partielles. Calculé à la
-          lecture, jamais figé en base.
+          Périodes civiles ; prorata des périodes partielles selon la règle du centre :{' '}
+          {prorataRuleLabels[scheduleOptions.prorataRule].label.toLowerCase()}. Chaque période est
+          facturée aux lignes de sa version, remises comprises. Calculé à la lecture, jamais figé
+          en base.
         </p>
-        <EcheancierTable contract={contract} until={horizon} currency={contract.currency} />
+        {engagement && (
+          <p className="text-sm">
+            <strong className="font-medium">Engagement jusqu’au </strong>
+            <span className="tabular">{formatCalendarDate(engagement.endsOn)}</span> : minimum dû
+            sur la durée d’engagement,{' '}
+            <span className="tabular">{formatCents(engagement.totalCents, contract.currency)}</span>{' '}
+            HT.
+          </p>
+        )}
+        <EcheancierTable
+          contract={contract}
+          until={horizon}
+          currency={contract.currency}
+          options={scheduleOptions}
+        />
       </section>
 
       {/* Seul un contrat en cours se résilie : un brouillon abandonné s'archive. */}
       {!archived && contract.status === 'active' && can(member.role, 'contrats.resilier') && (
         <TerminateForm
           contractId={contract.id}
-          defaultTerminatedOn={noticeEndsOn(today, contract.noticeDays)}
+          // Le premier dernier jour qui respecte le préavis et l'engagement
+          // (`contract_earliest_end_on`, ADR 023).
+          defaultTerminatedOn={earliestEndOn(today, contract.noticeDays, contract.commitmentEndsOn)}
           noticeDays={contract.noticeDays}
+          commitmentEndsOn={contract.commitmentEndsOn}
         />
       )}
 

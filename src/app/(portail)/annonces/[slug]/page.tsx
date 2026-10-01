@@ -46,7 +46,7 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
   const dernierJour = addDaysToIsoDate(today, JOURS_AFFICHES - 1)
 
   const [plan, bookings, contexte] = await Promise.all([
-    findDefaultRatePlan(),
+    findDefaultRatePlan(today),
     listBookingsBetween(today, dernierJour, timeZone),
     loadOpeningContext(today, dernierJour),
   ])
@@ -72,10 +72,11 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
     ? rateUnits
         .map((unit) => ({
           unit,
-          rate: resolveRate(plan.items, {
+          rate: resolveRate(plan, {
             resourceId: listing.resourceId,
             resourceType: listing.resource.resourceType,
             unit,
+            on: today,
           }),
         }))
         .filter((ligne) => ligne.rate)

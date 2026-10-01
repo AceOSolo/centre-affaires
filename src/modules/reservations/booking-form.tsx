@@ -1,6 +1,6 @@
 'use client'
 
-import { useActionState, useMemo, useState } from 'react'
+import { useActionState, useEffect, useMemo, useState } from 'react'
 
 import Link from 'next/link'
 
@@ -8,9 +8,11 @@ import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
 import { formatMinutes, formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { formatContractDays, lastContractDay } from '../contrats/occupation.ts'
+import { QuoteSummary, quotePlanLabel } from '../facturation/devis-resume.tsx'
 import type { Resource } from '../ressources/schema.ts'
 import { createBookingAction, type FormState } from './actions.ts'
 import { overlaps, type TimeRange } from './availability.ts'
+import { previewBookingQuoteAction, type BookingQuotePreview } from './devis-actions.ts'
 import { describeBusyBooking } from './occupation.ts'
 import { bookingContractProblem, type AttachableContract } from './rattachement.ts'
 import type { BookingKind } from './schema.ts'
@@ -29,6 +31,7 @@ const fieldLabels: Record<string, string> = {
   title: 'Objet',
   clientId: 'Client',
   contractId: 'Contrat',
+  discountValue: 'Remise',
   notes: 'Notes',
 }
 
@@ -98,6 +101,10 @@ export function BookingForm({
   // des contrats suive le client choisi.
   const [clientId, setClientId] = useState(defaultClientId ?? '')
   const [contractId, setContractId] = useState('')
+  // Prix (R11) : la remise et l'usage interne nourrissent le devis annoncé.
+  const [discountKind, setDiscountKind] = useState('')
+  const [discountValue, setDiscountValue] = useState('')
+  const [internal, setInternal] = useState(false)
   const errors = state?.fieldErrors ?? {}
   const values = state?.values
 
@@ -111,6 +118,21 @@ export function BookingForm({
       endsAt: wallClockToUtc(`${date}T${endTime}`, timeZone),
     }
   }, [date, startTime, endTime, timeZone])
+
+  const preview = useQuotePreview({
+    enabled: Boolean(selection) && !internal,
+    resourceId: resource.id,
+    date,
+    startTime,
+    endTime,
+    clientId,
+    contractId,
+    discountKind,
+    discountValue,
+  })
+  const discountError =
+    errors.discountValue ??
+    (preview?.status === 'invalid' && preview.field === 'discountValue' ? preview.message : undefined)
 
   function onSelect(range: TimeRange | undefined) {
     if (!range) return
@@ -283,6 +305,69 @@ export function BookingForm({
           />
         )}
 
+        <fieldset className="flex flex-col gap-3 rounded-md border border-border px-4 py-3">
+          <legend className="px-1 text-sm font-medium text-foreground">Prix</legend>
+
+          <QuotePanel internal={internal} selection={selection} preview={preview} />
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className={labelClass} htmlFor="discountKind">
+                Remise <span className="font-normal text-muted-foreground">(facultatif)</span>
+              </label>
+              <select
+                id="discountKind"
+                name="discountKind"
+                value={discountKind}
+                disabled={internal}
+                onChange={(event) => setDiscountKind(event.target.value)}
+                className={`${fieldClass} mt-1 disabled:bg-muted`}
+              >
+                <option value="">Aucune</option>
+                <option value="percent">En pourcentage</option>
+                <option value="amount">En euros</option>
+              </select>
+            </div>
+            <div>
+              <label className={labelClass} htmlFor="discountValue">
+                {discountKind === 'amount' ? 'Montant HT (€)' : 'Taux (%)'}
+              </label>
+              <input
+                id="discountValue"
+                name="discountValue"
+                inputMode="decimal"
+                value={discountValue}
+                disabled={internal || discountKind === ''}
+                onChange={(event) => setDiscountValue(event.target.value)}
+                aria-invalid={discountError ? true : undefined}
+                aria-describedby={discountError ? 'discountValue-error' : undefined}
+                className={`${fieldClass} mt-1 tabular disabled:bg-muted`}
+              />
+            </div>
+          </div>
+          <FieldError name="discountValue" error={discountError} />
+
+          <div className="flex items-start gap-2">
+            <input
+              id="internal"
+              name="internal"
+              type="checkbox"
+              checked={internal}
+              onChange={(event) => setInternal(event.target.checked)}
+              aria-describedby="internal-hint"
+              className="mt-1"
+            />
+            <div>
+              <label htmlFor="internal" className="text-sm font-medium text-foreground">
+                Usage interne : ne pas chiffrer
+              </label>
+              <p id="internal-hint" className="text-xs text-muted-foreground">
+                La réservation n’aura pas de prix et ne sera pas facturée.
+              </p>
+            </div>
+          </div>
+        </fieldset>
+
         <div>
           <label className={labelClass} htmlFor="notes">
             Notes <span className="font-normal text-muted-foreground">(facultatif)</span>
@@ -312,6 +397,107 @@ export function BookingForm({
           </Link>
         </div>
       </form>
+    </div>
+  )
+}
+
+/**
+ * Devis annoncé avant l'envoi (R11), demandé au serveur — `quote()`, la
+ * fonction qui le figera à l'écriture — à chaque changement du créneau, du
+ * client, du contrat ou de la remise. Une réponse dépassée par une saisie plus
+ * récente est ignorée.
+ */
+function useQuotePreview(input: {
+  enabled: boolean
+  resourceId: string
+  date: string
+  startTime: string
+  endTime: string
+  clientId: string
+  contractId: string
+  discountKind: string
+  discountValue: string
+}): BookingQuotePreview | undefined {
+  const key = JSON.stringify(input)
+  const [loaded, setLoaded] = useState<{ key: string; preview: BookingQuotePreview }>()
+
+  useEffect(() => {
+    if (!input.enabled) return
+    let cancelled = false
+    // Un court délai : la saisie d'une remise ne lance pas une requête par touche.
+    const timer = setTimeout(() => {
+      previewBookingQuoteAction(input).then(
+        (preview) => {
+          if (!cancelled) setLoaded({ key, preview })
+        },
+        () => {
+          if (!cancelled) {
+            setLoaded({
+              key,
+              preview: { status: 'unpriced', message: 'Le montant n’a pas pu être calculé. Réessayez.' },
+            })
+          }
+        },
+      )
+    }, 250)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+    // `key` résume toute la saisie : relancer quand elle change, et seulement alors.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  return input.enabled && loaded?.key === key ? loaded.preview : undefined
+}
+
+/**
+ * Montant annoncé : unité, quantité, remise, HT, TVA, TTC. La place est
+ * réservée pendant le calcul, pour que le formulaire ne saute pas.
+ */
+function QuotePanel({
+  internal,
+  selection,
+  preview,
+}: {
+  internal: boolean
+  selection: TimeRange | undefined
+  preview: BookingQuotePreview | undefined
+}) {
+  let content: React.ReactNode
+  if (internal) {
+    content = <p className="text-muted-foreground">Réservation interne : aucun prix.</p>
+  } else if (!selection) {
+    content = <p className="text-muted-foreground">Le montant s’affiche une fois le créneau choisi.</p>
+  } else if (!preview) {
+    content = <p className="text-muted-foreground">Calcul du montant…</p>
+  } else if (preview.status === 'priced') {
+    content = (
+      <>
+        <QuoteSummary quote={preview.quote} />
+        <p className="mt-2 text-xs text-muted-foreground">
+          {quotePlanLabel(preview.quote)}. Montant figé sur la réservation à
+          l’enregistrement.
+        </p>
+      </>
+    )
+  } else if (preview.status === 'unpriced') {
+    content = (
+      <p>
+        <strong className="font-medium">Non chiffrée</strong> — {preview.message} La réservation
+        sera enregistrée sans prix.
+      </p>
+    )
+  } else {
+    content = <p className="text-muted-foreground">{preview.message}</p>
+  }
+  return (
+    <div
+      aria-live="polite"
+      aria-busy={Boolean(selection) && !internal && !preview}
+      className="min-h-[7.5rem] rounded-md bg-muted px-3 py-2.5 text-sm"
+    >
+      {content}
     </div>
   )
 }

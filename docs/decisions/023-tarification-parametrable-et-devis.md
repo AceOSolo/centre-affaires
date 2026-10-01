@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-01
 **Statut** : accepté — amende l'ADR 006 (prorata et unité entamée deviennent
-des paramètres du centre) et l'ADR 009 (durée de la demi-journée)
+des paramètres du centre) et l'ADR 009 (durée de la demi-journée, choix de
+l'unité d'une réservation) ; mise en œuvre du moteur de devis, de
+l'échéancier et de la configuration ajoutée
 
 ## Contexte
 
@@ -186,3 +188,125 @@ changer entre-temps, et le client paierait un autre prix que celui annoncé.
 - **À valider par le centre** : les quatre paramètres ci-dessus, le principe de
   la remise en montant proratisée avec le prix, la date à date de
   l'engagement.
+
+## Mise en œuvre — moteur de devis, échéancier, configuration (vague 2)
+
+Ajoutée avec la tranche « tarifs » (R08, R10, R11). Elle précise comment les
+décisions ci-dessus s'appliquent ; les choix nouveaux sont marqués **à
+valider**.
+
+### Un seul moteur de devis
+
+`quote(ressource, créneau, client facultatif, contrat facultatif, remise
+facultative)` (`facturation/devis-queries.ts`) lit en base les règles du
+centre, la ressource et les grilles candidates, et confie le calcul à
+`quoteBooking()` (`facturation/devis.ts`, pur, testé). Il rend l'unité, la
+quantité, le prix unitaire HT, la remise, le montant HT, la TVA et le TTC.
+
+- **Back-office** : le formulaire de réservation annonce le devis avant
+  l'envoi (`previewBookingQuoteAction`) ; `createBooking` le recalcule et le
+  fige dans la transaction qui insère. Le montant affiché n'est qu'une
+  annonce : celui de la base fait foi.
+- **Page publique** : le montant HT, la TVA et le TTC du créneau s'affichent
+  avant la demande (`loadPublicQuoteAction`), et `createBookingRequest` les
+  fige sur la demande en attente. La facture reprendra le prix annoncé.
+- `billableQuantity` lit les règles du centre ; `priceCents` et
+  `MINUTES_PER_HALF_DAY` disparaissent, remplacés par le devis.
+
+### Quelle grille
+
+1. Les contrats **en cours ce jour-là** du client (actifs, ou résiliés dont le
+   dernier jour n'est pas passé, non archivés) qui désignent une grille : le
+   contrat rattaché à la réservation d'abord, puis le plus récent.
+2. La grille par défaut du centre.
+
+La première qui est **en vigueur le jour du début de la réservation** (jour du
+centre) et qui **tarife la ressource** à une unité de durée l'emporte. Une
+grille archivée, ou hors de ses dates de validité, ne tarife rien
+(`resolveRate`, `findDefaultRatePlan`, `findApplicableRate` et le devis
+l'ignorent). Sans grille, le créneau n'est pas chiffré, et l'écran le dit.
+
+### Quelle unité — **à valider**
+
+Parmi l'heure, la demi-journée, la journée et la semaine que la grille propose
+pour la ressource (le tarif nominatif primant sur celui du type), le devis
+retient **celle qui donne le montant le plus bas** pour le créneau ; à montant
+égal, la plus large. Avec la grille réelle (90 € la demi-journée, 130 € la
+journée), une réunion de quatre heures coûte une demi-journée, une de cinq ou
+neuf heures une journée. Cela précise l'ADR 009, qui laissait « le choix de
+l'unité à la grille » sans dire lequel retenir quand elle en propose
+plusieurs. Le mois et le forfait ne chiffrent pas une réservation : ce sont
+des tarifs de contrat et de prestation.
+
+### Quelle durée — **à valider**
+
+La durée se compte en **heure murale du centre** : une réservation du samedi
+0 h au mardi 0 h vaut trois jours, même si la nuit du changement d'heure en
+compte 23 ou 25. La tolérance de l'unité entamée s'applique à toutes les
+unités de durée (une journée de 24 h 10 avec 15 minutes de tolérance vaut une
+journée).
+
+### TVA, remise, réservation interne
+
+- TVA au taux par défaut du centre (`default_vat_rate_bp`) : les lignes de
+  grille n'ont pas de taux propre.
+- Remise saisie par l'équipe au back-office, en pourcentage ou en euros ; une
+  remise plus grande que le montant est refusée. La page publique n'en accorde
+  aucune.
+- « Usage interne » : la réservation est écrite sans devis. Un créneau que la
+  grille ne tarife pas aussi, après l'avoir annoncé. Les séries posées en
+  masse restent non chiffrées.
+- **Déplacer une réservation refait son devis** (autres heures, autre
+  ressource : autre prix), remise gardée — elle tombe si elle dépasse le
+  nouveau montant. Un prix saisi à la main (sans ligne de grille) n'est jamais
+  recalculé. Changer le client d'une réservation ne change pas son prix
+  annoncé. **À valider.**
+
+### Échéancier
+
+`billingSchedule(contrat, jusqu'au, { prorataRule, versions })` lit la règle
+de prorata du centre et les versions de prix (`contract_price_versions`, ADR
+025), lignes et remises comprises (`loadContractScheduleOptions`). Chaque
+morceau porte sa fraction (`prorataFraction`), affichée à l'écran.
+
+- **Base 30** : chaque mois compte 30 jours ; le dernier jour du mois compte
+  comme le 30, donc du 1er au 30 mars vaut un mois entier, et un 31 isolé un
+  jour. **À valider.**
+- **Sans prorata** et avenant en cours de période : la période est due en
+  entier au prix de la version en vigueur à son premier jour, l'avenant
+  s'applique à la période suivante. **À valider.**
+- Une ligne ponctuelle (frais de dossier) est due une fois, avec le premier
+  morceau de sa version.
+- **Engagement** : la fiche du contrat affiche la fin d'engagement et le
+  minimum dû sur sa durée (`commitmentSchedule`) ; l'horizon de l'échéancier
+  va au moins jusqu'à elle. La résiliation propose le premier dernier jour qui
+  respecte préavis et engagement (`earliestEndOn`, jumeau de
+  `contract_earliest_end_on`) et signale une date antérieure, sans la refuser.
+
+### Écran de configuration
+
+`/configuration`, réservé à l'exploitant (`centre.configurer`) : règles
+tarifaires, facturation (échéance, à échoir ou échu, TVA sur les débits,
+mentions), identité légale et coordonnées bancaires du vendeur. Les
+identifiants sont contrôlés avant l'écriture : SIREN et SIRET (clé de Luhn, La
+Poste comprise), TVA intracommunautaire française (clé et SIREN), IBAN (modulo
+97), identifiant créancier SEPA (clé). L'écran dit ce qui manque encore pour
+émettre une facture (`missingInvoiceRequirements`, comme `issue_invoice`).
+
+### Jeu de cas tarifaires figé
+
+`facturation/cas-tarifaires.ts`, rejoué par `cas-tarifaires.test.ts` : la
+grille réelle du centre, et des cas demi-journée, journée, heure, semaine,
+mois, prorata (jours réels, base 30, sans), remises (ligne et devis),
+engagement, avenant, chacun avec son montant attendu au centime. **Statut : à
+valider par l'exploitation.** Le centre ne publie ni prix à l'heure ni prix à
+la semaine : deux prix hypothétiques (25 € l'heure de salle, 150 € la semaine
+de poste) éprouvent ces unités, à remplacer ou à retirer.
+
+### Limites connues
+
+- Une seule grille par défaut à la fois (index `rate_plans_tenant_default_key`)
+  : la grille de l'année suivante ne peut pas être préparée comme grille par
+  défaut aux dates qui suivent ; il faut basculer le drapeau le jour venu.
+- Les lignes de grille n'ont pas de taux de TVA : toutes les réservations
+  prennent le taux par défaut du centre.
