@@ -38,6 +38,7 @@ export const config = {
     '/contrats/:path*',
     '/tarifs/:path*',
     '/courrier/:path*',
+    '/indicateurs/:path*',
     '/equipe/:path*',
     '/acces-reserve/:path*',
     // L'espace client : même commodité, même limite — les pages et les
