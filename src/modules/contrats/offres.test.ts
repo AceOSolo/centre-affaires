@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import { priceOffer } from '../facturation/offres-prix.ts'
 import type { RateCandidate } from '../facturation/tarifs.ts'
 import { linesTotals } from './lignes.ts'
 import {
@@ -135,15 +136,58 @@ describe('proposition de contrat depuis une offre', () => {
     ])
   })
 
-  it('compte trois mois par trimestre pour une ligne au mois, remise en montant comprise', () => {
+  it('reprend la quantité de l’offre, due par période : aucun multiplicateur caché (ADR 024)', () => {
+    // Un bureau dans une offre trimestrielle s'écrit trois mois à l'écran des
+    // offres ; le contrat le facture tel quel.
     const proposal = proposeContractFromOffer(
-      offre([item({ resource: BUREAU, discountAmountCents: 5_000 })], { billingPeriod: 'quarterly' }),
+      offre([item({ resource: BUREAU, quantity: 3, discountAmountCents: 15_000 })], {
+        billingPeriod: 'quarterly',
+      }),
       contexte,
     )
     const [line] = proposal.lines
     assert.equal(line.quantity, 3)
     assert.equal(line.discountAmountCents, 15_000)
     assert.equal(linesTotals(proposal.lines).recurringNetCents, 3 * 90_000 - 15_000)
+  })
+
+  it('tombe sur le prix par période que l’écran des offres annonce (priceOffer)', () => {
+    const items = [
+      item({ resource: BUREAU, quantity: 3, discountBp: 1_000 }),
+      item({ position: 1, service: service(), quantity: 3, discountAmountCents: 1_000 }),
+      item({ position: 2, resourceType: 'boite_aux_lettres', quantity: 3, priceCents: 2_500 }),
+    ]
+    const offer = offre(items, { billingPeriod: 'quarterly' })
+    const proposal = proposeContractFromOffer(offer, contexte)
+    const quote = priceOffer(
+      {
+        billingPeriod: offer.billingPeriod,
+        commitmentMonths: offer.commitmentMonths,
+        currency: offer.currency,
+        items: items.map((line) => ({
+          id: line.id,
+          position: line.position,
+          resourceType: line.resourceType,
+          resourceId: line.resource?.id ?? null,
+          serviceId: line.service?.id ?? null,
+          quantity: line.quantity,
+          unit: line.unit,
+          priceCents: line.priceCents,
+          discountBp: line.discountBp,
+          discountAmountCents: line.discountAmountCents,
+          vatRateBp: line.vatRateBp,
+        })),
+      },
+      {
+        defaultVatRateBp: contexte.defaultVatRateBp,
+        rateItems: contexte.rates,
+        rateCurrency: 'EUR',
+        services: [{ ...service(), archived: false }],
+        resources: [{ ...BUREAU, archived: false }],
+      },
+    )
+    assert.equal(quote.complete, true)
+    assert.equal(linesTotals(proposal.lines).recurringNetCents, quote.totalExclTaxCents)
   })
 
   it('n’invente aucun prix : une ligne sans prix de grille est proposée à 0 € et signalée', () => {

@@ -1,6 +1,11 @@
 'use client'
 
-/** Imprime la page : la feuille d'impression ne garde que le document (vue imprimable, pas de PDF généré). */
+/**
+ * Imprime la page : la feuille d'impression ne garde que le document. Le
+ * navigateur propose aussi « Enregistrer au format PDF » : le PDF est cette
+ * vue, sans bibliothèque (ADR 025, 026). Un seul bouton pour les contrats, les
+ * factures et les relances.
+ */
 export function PrintButton({ label = 'Imprimer' }: { label?: string }) {
   return (
     <button

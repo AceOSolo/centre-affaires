@@ -2,7 +2,6 @@ import type { RateUnit, ServiceNature } from '../facturation/schema.ts'
 import { parseAmountToCents, pickRateItem, type RateCandidate } from '../facturation/tarifs.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
 import type { ResourceType } from '../ressources/schema.ts'
-import { monthsPerPeriod } from './echeancier.ts'
 import { centsToInput, formatBpAsPercent, parsePercentToBp, type LineDraft } from './lignes.ts'
 import type { BillingPeriod, ContractType } from './schema.ts'
 
@@ -108,8 +107,10 @@ export function resourceDescription(
  *   catalogue — grille (`rates`, la ligne nominative avant celle du type) pour
  *   une ressource, prix du service pour un service ; la remise de la ligne
  *   d'offre est reprise telle quelle ;
- * - une ligne au mois est due par période de facturation : sur un contrat
- *   trimestriel ou annuel, sa quantité est multipliée par 3 ou 12 ;
+ * - la quantité d'une ligne d'offre est due à chaque période de facturation,
+ *   telle que l'écran des offres la saisit et la chiffre (`priceOffer`,
+ *   ADR 024) : un bureau dans une offre trimestrielle s'y écrit trois mois, et
+ *   le contrat la reprend telle quelle — aucun multiplicateur caché ;
  * - un acte (service `act`) devient une souscription : la quantité de l'offre
  *   est le nombre d'actes inclus par période ; au-delà, le prix de l'offre ou
  *   du catalogue, avec la remise de la ligne ;
@@ -127,18 +128,15 @@ export function proposeContractFromOffer(
   const warnings: string[] = []
   const types: ResourceType[] = []
   let resourceId: string | null = null
-  const periodMonths = monthsPerPeriod(offer.billingPeriod)
 
   const items = [...offer.items].sort((a, b) => a.position - b.position)
   for (const item of items) {
-    // Une ligne au mois est due par période : trois mois par trimestre, et sa
-    // remise en montant, mensuelle comme le prix, avec elle.
-    const scale = item.unit === 'month' ? periodMonths : 1
-    const quantity = item.quantity * scale
+    // Quantité et remise de l'offre, dues par période de facturation : le
+    // contrat facture ce que l'écran des offres annonce (`priceOffer`).
+    const quantity = item.quantity
     const discount = {
       discountBp: item.discountBp,
-      discountAmountCents:
-        item.discountAmountCents === null ? null : item.discountAmountCents * scale,
+      discountAmountCents: item.discountAmountCents,
     }
 
     if (item.service) {

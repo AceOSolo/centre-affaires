@@ -12,6 +12,7 @@ import { contractLines, contracts } from '../contrats/schema.ts'
 import { mailItems } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
+import { frozenQuoteDisplay } from './devis.ts'
 import { pgMessage } from './factures-erreurs.ts'
 import { invoicePaymentSetup } from './mandats.ts'
 import {
@@ -370,29 +371,32 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       endsOn: subscription.endsOn,
     })),
     subscriptionBilled,
-    bookings: bookingRows.map(({ booking, resourceName, held }) => ({
-      id: booking.id,
-      clientId: booking.clientId as string,
-      resourceId: booking.resourceId,
-      resourceName,
-      day: toIsoDate(booking.startsAt, tenant.timezone),
-      startTime: formatTime(booking.startsAt, tenant.timezone),
-      endTime: formatTime(booking.endsAt, tenant.timezone),
-      quote:
-        booking.quotedAt && booking.quoteUnit && booking.quoteQuantity !== null &&
-        booking.quoteUnitPriceCents !== null && booking.quoteVatRateBp !== null && booking.quoteCurrency
+    bookings: bookingRows.map(({ booking, resourceName, held }) => {
+      // Le devis figé (R11, ADR 023), lu par la même règle que la fiche de la
+      // réservation : sans devis complet, la réservation est signalée.
+      const frozen = frozenQuoteDisplay(booking)
+      return {
+        id: booking.id,
+        clientId: booking.clientId as string,
+        resourceId: booking.resourceId,
+        resourceName,
+        day: toIsoDate(booking.startsAt, tenant.timezone),
+        startTime: formatTime(booking.startsAt, tenant.timezone),
+        endTime: formatTime(booking.endsAt, tenant.timezone),
+        quote: frozen
           ? {
-              unit: booking.quoteUnit,
-              quantity: booking.quoteQuantity,
-              unitPriceCents: booking.quoteUnitPriceCents,
-              discountBp: booking.quoteDiscountBp,
-              discountAmountCents: booking.quoteDiscountAmountCents,
-              vatRateBp: booking.quoteVatRateBp,
-              currency: booking.quoteCurrency,
+              unit: frozen.unit,
+              quantity: frozen.quantity,
+              unitPriceCents: frozen.unitPriceCents,
+              discountBp: frozen.discountBp,
+              discountAmountCents: frozen.discountAmountCents,
+              vatRateBp: frozen.vatRateBp,
+              currency: frozen.currency,
             }
           : null,
-      held: Boolean(held),
-    })),
+        held: Boolean(held),
+      }
+    }),
     mailItems: mailRows.map((row) => ({
       id: row.id,
       clientId: row.clientId,

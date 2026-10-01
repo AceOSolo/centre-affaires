@@ -1,3 +1,4 @@
+import { isCalendarDate } from '../../lib/dates.ts'
 import { resourceTypes, type ResourceType } from '../ressources/schema.ts'
 
 /**
@@ -40,16 +41,10 @@ export function firstParam(value: SearchParam): string | undefined {
   return Array.isArray(value) ? value[0] : value
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Jour ISO valide, calendrier compris : le 31 février est refusé. */
-export function isIsoDate(value: string | undefined): value is string {
-  if (!value || !ISO_DATE.test(value)) return false
-  const [year, month, day] = value.split('-').map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-}
+export const isIsoDate = isCalendarDate
 
 /**
  * Filtres lus dans l'URL. Une valeur inconnue est ignorée plutôt que de faire

@@ -1,4 +1,5 @@
 import type { PaymentMethod, ProrataRule, RecurringBillingTiming } from '../../db/tenants.ts'
+import { formatCalendarDate } from '../../lib/dates.ts'
 import { invoiceAmounts, lineNetAmountCents, type InvoiceAmounts } from './montants.ts'
 import {
   billablePieces,
@@ -11,8 +12,8 @@ import {
   type VersionSpan,
 } from './periodes.ts'
 import type { InvoiceLineKind, VatCategory } from './schema-factures.ts'
-import { priceActs } from './souscriptions-regles.ts'
 import type { BillingPeriod, RateUnit } from './schema.ts'
+import { priceActs } from './souscriptions-regles.ts'
 
 /**
  * Lot de facturation périodique (R13, R14, R15, ADR 026, ADR 029) : à partir
@@ -85,9 +86,7 @@ export function vatCategoryFor(vatRateBp: number): VatCategory {
 }
 
 /** « 12/09/2026 ». */
-export function dayLabel(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(0, 4)}`
-}
+export const dayLabel = formatCalendarDate
 
 /* -------------------------------------------------------------------------- */
 /* Contrats : loyers et lignes, par version (ADR 025)                          */

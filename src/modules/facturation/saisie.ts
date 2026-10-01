@@ -1,3 +1,11 @@
+import { addDaysToIsoDate, isCalendarDate } from '../../lib/dates.ts'
+import {
+  basisPointsToInput,
+  centsToInput,
+  formatBasisPoints,
+  parsePercentToBasisPoints,
+} from './tarifs.ts'
+
 /**
  * Lecture des saisies d'argent, de taux et de dates des formulaires de la
  * facturation : catalogue de services, offres groupées, souscriptions.
@@ -23,32 +31,16 @@ export const BASIS_POINTS_PER_UNIT = 10_000
  *
  * Rend `undefined` sur une saisie illisible ou hors de 0 à 100 %.
  */
-export function parsePercentToBp(input: string): number | undefined {
-  const cleaned = input.replace(/\s| |%/g, '').replace(',', '.')
-  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return undefined
-  const [whole, fraction = ''] = cleaned.split('.')
-  const bp = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
-  return bp <= BASIS_POINTS_PER_UNIT ? bp : undefined
-}
+export const parsePercentToBp = parsePercentToBasisPoints
 
 /** 2000 → « 20 », 550 → « 5,5 », 1225 → « 12,25 » : la forme de saisie. */
-export function bpToPercentInput(bp: number): string {
-  const whole = Math.trunc(bp / 100)
-  const fraction = String(bp % 100).padStart(2, '0').replace(/0+$/, '')
-  return fraction ? `${whole},${fraction}` : String(whole)
-}
+export const bpToPercentInput = basisPointsToInput
 
 /** 2000 → « 20 % », 550 → « 5,5 % » : affichage d'un taux. */
-export function formatBp(bp: number): string {
-  return `${bpToPercentInput(bp)} %`
-}
+export const formatBp = (bp: number): string => formatBasisPoints(bp)
 
 /** 1999 → « 19,99 » : un montant en centimes rendu au format de saisie. */
-export function centsToAmountInput(amountCents: number): string {
-  const sign = amountCents < 0 ? '-' : ''
-  const magnitude = Math.abs(amountCents)
-  return `${sign}${Math.trunc(magnitude / 100)},${String(magnitude % 100).padStart(2, '0')}`
-}
+export const centsToAmountInput = centsToInput
 
 /**
  * Lit une quantité entière : « 3 » → 3. Rend `undefined` pour une saisie qui
@@ -62,24 +54,11 @@ export function parseInteger(input: string, min = 0): number | undefined {
   return value
 }
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
-
 /** Une date de calendrier qui existe : « 2026-02-30 » est refusé ici, pas en base. */
-export function isIsoDate(value: string): boolean {
-  const match = ISO_DATE.exec(value)
-  if (!match) return false
-  const [, year, month, day] = match.map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  )
-}
+export const isIsoDate = isCalendarDate
 
 /** Décale un jour ISO, sans fuseau : arithmétique de calendrier pure. */
-export function shiftIsoDate(isoDate: string, days: number): string {
-  const [year, month, day] = isoDate.split('-').map(Number)
-  return new Date(Date.UTC(year, month - 1, day + days)).toISOString().slice(0, 10)
-}
+export const shiftIsoDate = addDaysToIsoDate
 
 /** « 1 oct. 2026 » : affichage d'une date de calendrier, sans fuseau. */
 export function formatCalendarDay(isoDate: string): string {

@@ -1,4 +1,4 @@
-import { addDaysToIsoDate, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
+import { addDaysToIsoDate, formatCalendarDate, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import type { TimeRange } from '../reservations/availability.ts'
 import { OPEN_ENDED_BOOKING_END } from '../reservations/schema.ts'
 import type { ContractStatus } from './schema.ts'
@@ -108,9 +108,7 @@ export function occupationDays(
 }
 
 /** « 01/03/2026 » : une date de calendrier, identique dans tous les fuseaux. */
-export function formatCalendarDate(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(0, 4)}`
-}
+export { formatCalendarDate }
 
 /** « du 01/03/2026 au 30/06/2026 », « à partir du 01/03/2026, sans terme ». */
 export function formatContractDays({

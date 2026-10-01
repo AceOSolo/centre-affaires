@@ -183,7 +183,9 @@ Ajoutée le 2026-10-01, sans changer la décision : elle dit comment les
 
 - **Le prix d'une offre est celui d'une période de facturation.** La quantité
   d'une ligne est due à chaque période : un bureau dans une offre
-  trimestrielle s'écrit trois mois. Aucun multiplicateur caché.
+  trimestrielle s'écrit trois mois. Aucun multiplicateur caché. Le contrat
+  tiré d'une offre reprend ces quantités telles quelles (ADR 028, aligné à
+  l'intégration de la vague 2 ; un test vérifie qu'il tombe sur ce prix).
 - **Prix unitaire** : le prix forfaitaire de la ligne, sinon le catalogue —
   la grille par défaut du centre si elle est en vigueur au jour du devis
   (dates de validité, ADR 023), la ligne nominative l'emportant sur celle du

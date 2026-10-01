@@ -6,6 +6,7 @@ import type {
   InvoiceStatus,
   VatCategory,
 } from './schema-factures.ts'
+import { formatBasisPoints as formatSharedBasisPoints } from './tarifs.ts'
 
 /**
  * Libellés de la facturation (R13). Un statut se lit toujours par son texte :
@@ -76,11 +77,7 @@ export const invoiceRunStatusLabels: Record<InvoiceRunStatus, string> = {
 }
 
 /** « 20 % », « 5,5 % », « 2,1 % » — un taux en points de base, sans flottant. */
-export function formatBasisPoints(basisPoints: number): string {
-  const whole = Math.trunc(basisPoints / 100)
-  const fraction = String(Math.abs(basisPoints % 100)).padStart(2, '0').replace(/0+$/, '')
-  return `${whole}${fraction ? `,${fraction}` : ''} %`
-}
+export const formatBasisPoints = (basisPoints: number): string => formatSharedBasisPoints(basisPoints)
 
 /** « 22/31 » : la fraction d'une période partielle. */
 export function formatProrata(numerator: number | null, denominator: number | null): string | null {

@@ -1,5 +1,5 @@
 import type { ProrataRule, RecurringBillingTiming } from '../../db/tenants.ts'
-import { addMonthsToIsoMonth, formatIsoMonth } from '../../lib/dates.ts'
+import { addMonthsToIsoMonth, formatCalendarDate, formatIsoMonth } from '../../lib/dates.ts'
 import {
   addDays,
   periodEnd,
@@ -36,11 +36,6 @@ export function monthRange(isoMonth: string): DateRange {
   return { start, end: periodEnd(start, 'monthly') }
 }
 
-/** « 12/09/2026 ». */
-function frenchDay(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(0, 4)}`
-}
-
 /**
  * Une période lisible : « octobre 2026 » pour un mois civil entier, « le
  * 12/09/2026 » pour un jour, « du 10/03/2026 au 31/03/2026 » sinon.
@@ -48,8 +43,8 @@ function frenchDay(isoDate: string): string {
 export function formatPeriod(start: string, end: string): string {
   const month = monthRange(start.slice(0, 7))
   if (month.start === start && month.end === end) return formatIsoMonth(start.slice(0, 7))
-  if (start === end) return `le ${frenchDay(start)}`
-  return `du ${frenchDay(start)} au ${frenchDay(end)}`
+  if (start === end) return `le ${formatCalendarDate(start)}`
+  return `du ${formatCalendarDate(start)} au ${formatCalendarDate(end)}`
 }
 
 /** Intersection de deux périodes, nulle si elles ne se touchent pas. */

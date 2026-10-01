@@ -1,4 +1,5 @@
 import type { PaymentMethod } from '../../db/tenants.ts'
+import { formatCalendarDate, isCalendarDate } from '../../lib/dates.ts'
 import { paymentMethodLabels } from './reglements-labels.ts'
 import { formatCents, parseAmountToCents } from './tarifs.ts'
 
@@ -12,21 +13,15 @@ import { formatCents, parseAmountToCents } from './tarifs.ts'
  * ce qui ne va pas dans sa saisie.
  */
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const MS_PER_DAY = 86_400_000
 /** Plafond d'une colonne `integer` en centimes : 21 474 836,47. */
 const MAX_CENTS = 2_147_483_647
 
 /** « 1250,10 » : un montant en centimes, tel qu'il se saisit dans un champ. */
-export function centsToInput(cents: number): string {
-  const magnitude = Math.abs(cents)
-  return `${cents < 0 ? '-' : ''}${Math.floor(magnitude / 100)},${String(magnitude % 100).padStart(2, '0')}`
-}
+export { centsToInput } from './tarifs.ts'
 
 /** « 05/10/2026 » : un jour civil, sans fuseau. */
-export function formatIsoDateFr(isoDate: string): string {
-  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(0, 4)}`
-}
+export const formatIsoDateFr = formatCalendarDate
 
 function isoDayNumber(isoDate: string): number {
   const [year, month, day] = isoDate.split('-').map(Number)
@@ -39,12 +34,7 @@ export function daysBetween(from: string, to: string): number {
 }
 
 /** Un jour civil réel, pas seulement au bon format : le 31/02 est refusé. */
-export function isIsoDate(value: string): boolean {
-  if (!ISO_DATE.test(value)) return false
-  const [year, month, day] = value.split('-').map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-}
+export const isIsoDate = isCalendarDate
 
 /* ------------------------------------------------------------------------- */
 /* Pointage d'un paiement                                                    */

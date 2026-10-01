@@ -180,6 +180,22 @@ export function formatBasisPoints(basisPoints: number, locale = 'fr-FR'): string
   return `${new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(basisPoints / 100)} %`
 }
 
+/** 2000 → « 20 », 550 → « 5,5 », 1225 → « 12,25 » : un taux au format de saisie. */
+export function basisPointsToInput(basisPoints: number): string {
+  const whole = Math.trunc(basisPoints / 100)
+  const fraction = String(Math.abs(basisPoints % 100)).padStart(2, '0').replace(/0+$/, '')
+  return fraction ? `${whole},${fraction}` : String(whole)
+}
+
+/**
+ * 125 010 → « 1250,10 », −50 → « -0,50 » : des centimes au format de saisie,
+ * inverse de `parseAmountToCents`, sans passer par un flottant.
+ */
+export function centsToInput(cents: number): string {
+  const magnitude = Math.abs(cents)
+  return `${cents < 0 ? '-' : ''}${Math.trunc(magnitude / 100)},${String(magnitude % 100).padStart(2, '0')}`
+}
+
 /**
  * Lit un montant saisi en euros et le rend en centimes.
  *

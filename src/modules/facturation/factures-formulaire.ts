@@ -1,7 +1,8 @@
 import type { PaymentMethod } from '../../db/tenants.ts'
+import { isCalendarDate as isSharedCalendarDate } from '../../lib/dates.ts'
 import { paymentMethodChoices } from './factures-labels.ts'
 import type { DraftInvoiceInput, LineEditInput, ManualLineInput } from './factures-queries.ts'
-import { parseAmountToCents } from './tarifs.ts'
+import { centsToInput, parseAmountToCents } from './tarifs.ts'
 
 /**
  * Lecture et contrôle des formulaires de facture (R13) : conditions d'un
@@ -19,28 +20,20 @@ export type FormRead<T> =
 
 type Get = (name: string) => string
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const ISO_MONTH = /^\d{4}-(0[1-9]|1[0-2])$/
 const INTEGER = /^\d+$/
 
 /** Une date qui existe : « 2026-02-30 » est refusée ici, pas en base. */
-export function isCalendarDate(value: string): boolean {
-  const match = ISO_DATE.exec(value)
-  if (!match) return false
-  const [, year, month, day] = match.map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-}
+export const isCalendarDate = isSharedCalendarDate
 
 export function isIsoMonthInput(value: string): boolean {
   return ISO_MONTH.test(value)
 }
 
 /** « 900,00 » : un montant en centimes au format de saisie, inverse de `parseAmountToCents`. */
-export function centsToAmountInput(amountCents: number): string {
-  const absolute = Math.abs(amountCents)
-  return `${Math.trunc(absolute / 100)},${String(absolute % 100).padStart(2, '0')}`
-}
+export const centsToAmountInput = (amountCents: number): string =>
+  // En valeur absolue : une ligne d'avoir se saisit en positif.
+  centsToInput(Math.abs(amountCents))
 
 /** Taux de TVA proposés à la saisie, en points de base : 20 %, 10 %, 5,5 %, 2,1 %, exonéré. */
 export const vatRateChoices = [2000, 1000, 550, 210, 0] as const

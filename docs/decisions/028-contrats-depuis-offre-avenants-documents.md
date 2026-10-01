@@ -34,10 +34,14 @@ correspondance de l'ADR 024 :
 
 - **TVA** : celle de la ligne d'offre, sinon du service, sinon le taux par
   défaut du centre (20 %).
-- **Une ligne au mois est due par période de facturation** : sur un contrat
-  trimestriel ou annuel, sa quantité — et sa remise en montant — est
-  multipliée par 3 ou 12. Les actes inclus restent comptés par mois : le lot de
-  facturation est mensuel (ADR 026).
+- **La quantité d'une ligne d'offre est due par période de facturation**, telle
+  que l'écran des offres la saisit et la chiffre (ADR 024, `priceOffer`) : le
+  contrat la reprend sans multiplicateur. *Intégration de la vague 2 : la
+  tranche contrats multipliait les lignes au mois par 3 ou 12, ce qui aurait
+  facturé trois fois l'offre trimestrielle que l'écran des offres annonçait ;
+  une seule règle est gardée, celle de l'ADR 024, et un test vérifie que la
+  proposition tombe sur le prix de l'offre.* Les actes inclus restent comptés
+  par mois : le lot de facturation est mensuel (ADR 026).
 - **Aucun prix n'est inventé** (ADR 009) : une ligne sans prix de grille est
   proposée à 0 € et signalée ; un service archivé ou dans une autre devise
   aussi.
@@ -148,7 +152,7 @@ accord : la base ne la refuse pas.
 ## Justification
 
 **La proposition en module pur.** La correspondance offre → contrat porte des
-règles d'argent (prix du catalogue, multiplication par période, remises) : elle
+règles d'argent (prix du catalogue, quantités par période, remises) : elle
 s'éprouve sans base, et l'écran l'ajuste avant toute écriture.
 
 **Des souscriptions créées avec le brouillon.** Le schéma n'a pas d'autre
@@ -176,8 +180,8 @@ passée serait fausse dès le premier avenant.
 ## Conséquences
 
 - **À valider par le centre et son expert-comptable** : la règle `none` face à
-  un avenant en cours de période ; le comptage en base 30 ; la multiplication
-  des lignes au mois par période ; les inclus comptés par mois ; le texte du
+  un avenant en cours de période ; le comptage en base 30 ; les inclus comptés
+  par mois ; le texte du
   document (articles, absence de conditions générales, mentions de
   signature) ; la date d'effet proposée.
 - Le lot de facturation réutilise `contractSchedule` et `prorataFraction` pour

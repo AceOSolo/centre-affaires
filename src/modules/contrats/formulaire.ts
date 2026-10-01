@@ -1,4 +1,5 @@
-import { parseAmountToCents } from '../facturation/tarifs.ts'
+import { isCalendarDate as isSharedCalendarDate } from '../../lib/dates.ts'
+import { centsToInput, parseAmountToCents } from '../facturation/tarifs.ts'
 import { parsePercentToBp } from './lignes.ts'
 import type { ContractInput } from './queries.ts'
 import {
@@ -106,7 +107,6 @@ export type ContractFormResult =
   | { ok: true; input: ContractInput; values: ContractFormValues }
   | { ok: false; fieldErrors: ContractFieldErrors; values: ContractFormValues }
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 /** Plafond d'une colonne `integer` : au-delà, la base lèverait une erreur brute. */
 const MAX_INTEGER = 2_147_483_647
@@ -116,20 +116,10 @@ const MAX_REFERENCE_LENGTH = 50
  * « 900,00 » : un montant en centimes rendu au format de saisie, pour remplir
  * le formulaire d'un brouillon. `parseAmountToCents` en est l'inverse exact.
  */
-export function centsToAmountInput(amountCents: number): string {
-  return `${Math.trunc(amountCents / 100)},${String(amountCents % 100).padStart(2, '0')}`
-}
+export const centsToAmountInput = centsToInput
 
 /** Une date de calendrier qui existe : « 2026-02-30 » est refusé ici, pas en base. */
-export function isCalendarDate(value: string): boolean {
-  const match = ISO_DATE.exec(value)
-  if (!match) return false
-  const [, year, month, day] = match.map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  )
-}
+export const isCalendarDate = isSharedCalendarDate
 
 /**
  * - `create` : la référence est facultative. Vide, la base attribue le numéro

@@ -140,9 +140,12 @@ facturable : un lot rejoué sur la même période la reprend.
 
 ### Mode de paiement attendu
 
-Le prélèvement si le client a un mandat actif (et ce mandat sur la facture),
-sinon le mode par défaut du centre — le virement si ce défaut est le
-prélèvement, qu'aucun mandat ne permet (ADR 027).
+Le prélèvement si le client a un mandat actif et non caduc (et ce mandat sur
+la facture), sinon le mode par défaut du centre — le virement si ce défaut est
+le prélèvement, qu'aucun mandat ne permet (ADR 027). Le lot pose ce mode par
+`invoicePaymentSetup` (ADR 030), qui applique la règle pure
+`expectedPaymentFor` : un mandat caduc (36 mois sans prélèvement) ne rend plus
+une facture prélevable.
 
 ### TVA
 

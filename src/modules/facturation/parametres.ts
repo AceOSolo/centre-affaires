@@ -9,7 +9,12 @@ import {
   type Tenant,
 } from '../../db/tenants.ts'
 import { isValidIban, normalizeIban } from './iban.ts'
-import { parseAmountToCents, parsePercentToBasisPoints } from './tarifs.ts'
+import {
+  basisPointsToInput,
+  centsToInput,
+  parseAmountToCents,
+  parsePercentToBasisPoints,
+} from './tarifs.ts'
 
 /**
  * Paramètres du centre éditables à l'écran de configuration (R10, ADR 023,
@@ -244,19 +249,8 @@ export function parseBankDetails(input: SettingsInput): SettingsResult {
 /* Valeurs affichées dans les champs                                        */
 /* ------------------------------------------------------------------------ */
 
-/** 4 000 centimes → « 40,00 », sans passer par un flottant. */
-export function centsToInput(cents: number): string {
-  const whole = Math.trunc(cents / 100)
-  return `${whole},${String(Math.abs(cents % 100)).padStart(2, '0')}`
-}
-
-/** 2 000 points → « 20 », 550 → « 5,5 », 210 → « 2,1 ». */
-export function basisPointsToInput(basisPoints: number): string {
-  const whole = Math.trunc(basisPoints / 100)
-  const fraction = basisPoints % 100
-  if (fraction === 0) return String(whole)
-  return `${whole},${String(fraction).padStart(2, '0').replace(/0$/, '')}`
-}
+/** Formes de saisie des montants et des taux : les règles uniques de `tarifs.ts`. */
+export { basisPointsToInput, centsToInput }
 
 /** Paramètres du centre, mis en forme pour les champs de l'écran de configuration. */
 export function centreSettingsValues(tenant: Tenant): Record<string, string> {

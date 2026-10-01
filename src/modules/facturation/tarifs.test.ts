@@ -3,7 +3,9 @@ import { describe, it } from 'node:test'
 
 import {
   DEFAULT_QUANTITY_RULES,
+  basisPointsToInput,
   billableQuantity,
+  centsToInput,
   formatBasisPoints,
   formatCents,
   isRatePlanValidOn,
@@ -263,6 +265,23 @@ describe('formatCents', () => {
     // Les espaces sont insécables dans le format français.
     assert.match(formatCents(125_050), /1\s?250,50\s?€/)
     assert.match(formatCents(90_000), /900,00\s?€/)
+  })
+})
+
+describe('formes de saisie', () => {
+  it('rend des centimes au format de saisie, signe compris, sans flottant', () => {
+    assert.equal(centsToInput(125_010), '1250,10')
+    assert.equal(centsToInput(5), '0,05')
+    assert.equal(centsToInput(-50), '-0,50')
+    assert.equal(centsToInput(-1_005), '-10,05')
+    assert.equal(parseAmountToCents(centsToInput(199_99)), 199_99)
+  })
+
+  it('rend un taux en points de base au format de saisie', () => {
+    assert.equal(basisPointsToInput(2_000), '20')
+    assert.equal(basisPointsToInput(550), '5,5')
+    assert.equal(basisPointsToInput(1_225), '12,25')
+    assert.equal(parsePercentToBasisPoints(basisPointsToInput(210)), 210)
   })
 })
 

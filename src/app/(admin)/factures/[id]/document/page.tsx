@@ -10,7 +10,7 @@ import {
   type DocumentBuyer,
   type DocumentSeller,
 } from '../../../../../modules/facturation/factures-document.ts'
-import { PrintButton } from '../../../../../modules/facturation/factures-forms.tsx'
+import { PrintButton } from '../../../../../modules/facturation/print-button.tsx'
 import {
   formatBasisPoints,
   formatProrata,
@@ -91,7 +91,7 @@ export default async function InvoiceDocumentPage({ params }: { params: Promise<
         <Link href={`/factures/${invoice.id}`} className="text-sm text-muted-foreground hover:underline">
           ← Retour à la fiche
         </Link>
-        <PrintButton />
+        <PrintButton label="Imprimer ou enregistrer en PDF" />
       </div>
 
       <article

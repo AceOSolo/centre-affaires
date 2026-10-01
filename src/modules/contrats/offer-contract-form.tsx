@@ -175,7 +175,8 @@ export function OfferContractForm({
             ))}
           </select>
           <p id="billingPeriod-hint" className="mt-1 text-xs text-muted-foreground">
-            Une ligne est due par période : au trimestre, une ligne au mois compte trois mois.
+            Les quantités de l’offre sont dues par période de facturation : changer la périodicité
+            ne les recalcule pas, ajustez les lignes.
           </p>
           <FieldError name="billingPeriod" error={errors.billingPeriod} />
         </div>

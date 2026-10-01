@@ -629,12 +629,3 @@ export function RemoveLineButton({
     </form>
   )
 }
-
-/** Imprimer, ou enregistrer en PDF depuis la boîte d'impression du navigateur. */
-export function PrintButton() {
-  return (
-    <button type="button" onClick={() => window.print()} className={primaryButton}>
-      Imprimer ou enregistrer en PDF
-    </button>
-  )
-}

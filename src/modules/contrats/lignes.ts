@@ -1,7 +1,12 @@
 import { lineNetAmountCents, vatAmountCents } from '../facturation/montants.ts'
 import { rateUnits, type RateUnit } from '../facturation/schema.ts'
-import { parseAmountToCents } from '../facturation/tarifs.ts'
 import { resourceTypes, type ResourceType } from '../ressources/schema.ts'
+import {
+  basisPointsToInput,
+  centsToInput,
+  parseAmountToCents,
+  parsePercentToBasisPoints,
+} from '../facturation/tarifs.ts'
 
 /**
  * Lignes d'un contrat ou d'un avenant (R12, ADR 025), vues du formulaire.
@@ -147,25 +152,13 @@ const MAX_DESCRIPTION = 500
  * 550, 210). Deux décimales au plus, de 0 à 100. `undefined` sur une saisie
  * illisible, jamais un flottant.
  */
-export function parsePercentToBp(input: string): number | undefined {
-  const cleaned = input.replace(/\s| |%/g, '').replace(',', '.')
-  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return undefined
-  const [whole, fraction = ''] = cleaned.split('.')
-  const bp = Number(whole) * 100 + Number(fraction.padEnd(2, '0'))
-  return bp <= 10_000 ? bp : undefined
-}
+export const parsePercentToBp = parsePercentToBasisPoints
 
 /** 2000 → « 20 », 550 → « 5,5 », 1250 → « 12,5 » : l'inverse de `parsePercentToBp`. */
-export function formatBpAsPercent(bp: number): string {
-  const whole = Math.trunc(bp / 100)
-  const fraction = String(bp % 100).padStart(2, '0').replace(/0+$/, '')
-  return fraction ? `${whole},${fraction}` : String(whole)
-}
+export const formatBpAsPercent = basisPointsToInput
 
-/** « 900,00 » : des centimes au format de saisie. */
-export function centsToInput(cents: number): string {
-  return `${Math.trunc(cents / 100)},${String(cents % 100).padStart(2, '0')}`
-}
+/** « 900,00 » : des centimes au format de saisie (règle unique de `tarifs.ts`). */
+export { centsToInput }
 
 /** Une ligne en base ou proposée, au format du formulaire. */
 export function lineToFormValues(key: string, line: LineDraft): LineFormValues {

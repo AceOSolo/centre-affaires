@@ -301,10 +301,21 @@ export default async function ClientPage({
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold tracking-tight">
-          Contrats{' '}
-          <span className="font-normal text-muted-foreground">({contracts.length})</span>
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Contrats{' '}
+            <span className="font-normal text-muted-foreground">({contracts.length})</span>
+          </h2>
+          {/* Factures et avoirs du client (R13, ADR 029) : la liste filtrée. */}
+          {can(staff.role, 'facturation.consulter') && (
+            <Link
+              href={`/factures?client=${client.id}`}
+              className="text-sm text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Factures de ce client
+            </Link>
+          )}
+        </div>
 
         {contracts.length === 0 ? (
           <p className="text-sm text-muted-foreground">

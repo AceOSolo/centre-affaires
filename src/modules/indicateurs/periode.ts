@@ -1,4 +1,4 @@
-import { addDaysToIsoDate, addMonthsToIsoMonth } from '../../lib/dates.ts'
+import { addDaysToIsoDate, addMonthsToIsoMonth, isCalendarDate } from '../../lib/dates.ts'
 
 /**
  * Période d'observation des indicateurs (R31) : deux jours civils du centre,
@@ -32,19 +32,8 @@ export type ParsedPeriod = {
   errors: Partial<Record<PeriodField, string>>
 }
 
-const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
-
 /** Vrai pour une date ISO qui existe : « 2026-02-30 » est refusé. */
-export function isIsoDate(value: string | undefined): value is string {
-  if (!value) return false
-  const match = ISO_DATE.exec(value)
-  if (!match) return false
-  const [, year, month, day] = match.map(Number)
-  const date = new Date(Date.UTC(year, month - 1, day))
-  return (
-    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
-  )
-}
+export const isIsoDate = isCalendarDate
 
 /** Premier et dernier jour d'un mois ISO. */
 export function monthPeriod(isoMonth: string): Period {

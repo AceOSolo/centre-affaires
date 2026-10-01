@@ -14,7 +14,7 @@ import {
   previewContractSnapshot,
 } from '../../../../../modules/contrats/documents.ts'
 import type { ContractSnapshot } from '../../../../../modules/contrats/instantane.ts'
-import { PrintButton } from '../../../../../modules/contrats/print-button.tsx'
+import { PrintButton } from '../../../../../modules/facturation/print-button.tsx'
 
 export const metadata = { title: 'Document de contrat' }
 
@@ -82,7 +82,7 @@ export default async function ContractDocumentPage({
         <Link href={`/contrats/${id}#documents`} className="text-sm text-muted-foreground hover:underline">
           ← Retour au contrat
         </Link>
-        <PrintButton />
+        <PrintButton label="Imprimer ou enregistrer en PDF" />
       </div>
       {snapshot ? (
         <ContractDocumentView snapshot={snapshot} provenance={provenance} />
