@@ -45,6 +45,12 @@ export const permissions = [
   'centre.configurer',
   'agenda-google.gerer',
   'equipe.gerer',
+  // Vague 3 (ADR 038 à 040) : ajoutés à la fin, la matrice n'est pas réordonnée.
+  'notifications.consulter',
+  'notifications.gerer',
+  'etats-des-lieux.gerer',
+  'etats-des-lieux.modeles',
+  'rgpd.anonymiser',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -77,6 +83,11 @@ export const permissionLabels: Record<Permission, string> = {
     'Configuration du centre : règles de réservation, conservation, règles tarifaires, identité de facturation',
   'agenda-google.gerer': 'Agendas Google',
   'equipe.gerer': 'Équipe : inscrire, changer un rôle, retirer',
+  'notifications.consulter': 'Consulter le journal des messages envoyés',
+  'notifications.gerer': 'Modèles des messages envoyés aux clients et au centre',
+  'etats-des-lieux.gerer': 'Saisir, photographier et clore les états des lieux',
+  'etats-des-lieux.modeles': 'Modèles de formulaire des états des lieux',
+  'rgpd.anonymiser': 'Anonymiser un client, un accès ou un membre retiré (RGPD)',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */
@@ -89,6 +100,10 @@ const accueil: readonly Permission[] = [
   // Répondre à un client sur sa facture fait partie de l'accueil ; facturer,
   // pointer un paiement ou un mandat, exporter vers la comptabilité, non.
   'facturation.consulter',
+  // Dire à un client si un message est parti ; faire l'état des lieux d'une
+  // entrée ou d'une sortie. Les modèles et l'anonymisation engagent le centre.
+  'notifications.consulter',
+  'etats-des-lieux.gerer',
 ]
 
 /**

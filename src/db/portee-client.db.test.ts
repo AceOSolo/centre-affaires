@@ -253,11 +253,13 @@ describe('portée client', { skip: raison }, () => {
 
   it('laisse écrire pour sa propre entreprise', async () => {
     await asClients([DURAND], async (tx) => {
-      await tx.execute(sql`
-        insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-        values (${BUREAU}, ${DURAND}, 'client', '2026-11-02T08:00:00Z', '2026-11-02T09:00:00Z', 'Rendez-vous')`)
-      const [scan] = await tx.execute(sql`select id from mail_scans`)
       const [member] = await tx.execute(sql`select id from client_members`)
+      // Depuis l'espace, une réservation porte la personne qui la fait (ADR 036).
+      await tx.execute(sql`
+        insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title, booked_by_member_id)
+        values (${BUREAU}, ${DURAND}, 'client', '2026-11-02T08:00:00Z', '2026-11-02T09:00:00Z', 'Rendez-vous',
+                ${member.id as string})`)
+      const [scan] = await tx.execute(sql`select id from mail_scans`)
       await tx.execute(sql`
         insert into mail_scan_views (mail_scan_id, viewer, client_member_id, auth_user_id)
         values (${scan.id as string}, 'client', ${member.id as string}, 'u-1')`)

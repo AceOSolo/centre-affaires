@@ -73,6 +73,10 @@ describe('réservations de l’espace client', { skip: raison }, () => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
           (${DURAND}, 'Atelier Durand', 'active'), (${PETIT}, 'Boulangerie Petit', 'active')`)
+      // L'annulation par le client porte la personne qui annule (ADR 036).
+      await tx.execute(sql`
+        insert into client_members (id, client_id, email, auth_user_id)
+        values (${JEANNE}, ${DURAND}, 'jeanne@durand.fr', 'u-jeanne')`)
     })
   })
 

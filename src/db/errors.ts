@@ -89,3 +89,46 @@ export const PG_AMENDMENT_INVALID = 'CA005'
 export const PG_PAYMENT_REFUSED = 'CA006'
 /** Mandat SEPA : la RUM et le client ne changent pas, un mandat ne se supprime pas (ADR 027). */
 export const PG_SEPA_MANDATE_LOCKED = 'CA007'
+/**
+ * Demande de courrier refusée (ADR 037, migration 0041) : transition
+ * impossible (une demande faite, refusée ou annulée ne bouge plus ; le client
+ * n'annule qu'une demande `requested`), pli retiré ou réexpédié, ouverture
+ * d'un pli déjà ouvert, numérisation seule d'un pli fermé, auteur manquant,
+ * adresse de réexpédition ou frais d'une réexpédition facturée réécrits,
+ * suppression. Aussi : écriture directe du résumé de la demande d'ouverture
+ * sur le pli (`mail_items.status = 'opening_requested'`,
+ * `opening_requested_*`).
+ */
+export const PG_MAIL_REQUEST_REFUSED = 'CA008'
+/**
+ * Réservation depuis l'espace client refusée (ADR 036, migration 0041) :
+ * ressource fermée au portail (`client_booking_mode = 'closed'`), inactive ou
+ * archivée ; annulation par le client d'une réservation qui n'est pas une
+ * demande en attente à venir ; écriture sous portée client autre qu'une
+ * réservation au nom d'une personne de l'entreprise, ou que son annulation ;
+ * auteur d'une réservation du portail réécrit.
+ */
+export const PG_CLIENT_BOOKING_REFUSED = 'CA009'
+/**
+ * État des lieux figé (ADR 039, migration 0042) : état clos (seule la
+ * validation du client, une fois, passe), brouillon retiré, nature,
+ * ressource, client ou version de modèle réécrits, photo ajoutée, modifiée
+ * ou retirée sur un état clos, écriture depuis l'espace client autre que la
+ * validation, suppression.
+ */
+export const PG_INSPECTION_LOCKED = 'CA010'
+/**
+ * État des lieux non conforme (ADR 039, migration 0042) : valeur hors du
+ * modèle (champ inconnu, type, option, échelle), champ obligatoire vide à la
+ * clôture, modèle d'un autre type de ressource, sortie sans entrée close,
+ * photo rattachée à un champ inconnu, clôture sans auteur. Le message dit
+ * quoi corriger, en français.
+ */
+export const PG_INSPECTION_INVALID = 'CA011'
+/**
+ * Anonymisation refusée (ADR 040, migration 0043) : exclusion (facture non
+ * soldée, contrat vivant… — le message les énumère), membre non retiré,
+ * appel sous portée client ; ou écriture d'une ligne anonymisée, ou de
+ * `anonymized_at` hors des fonctions `anonymize_*`.
+ */
+export const PG_ANONYMIZATION_REFUSED = 'CA012'

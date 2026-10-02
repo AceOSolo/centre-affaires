@@ -17,7 +17,7 @@ import {
 import { primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
-import { clients } from '../clients/schema.ts'
+import { clientMembers, clients } from '../clients/schema.ts'
 import { contractAmendments, contracts } from '../contrats/schema.ts'
 import { lineNetAmountSql, rateUnitEnum, ratePlanItems } from '../facturation/schema.ts'
 import { resources } from '../ressources/schema.ts'
@@ -164,8 +164,30 @@ export const bookings = pgTable(
     /** Date du devis : l'instant où le prix a été figé. */
     quotedAt: timestamp('quoted_at', { withTimezone: true }),
 
+    /**
+     * Personne qui a réservé depuis son espace client (R23, ADR 036) : une
+     * personne de l'entreprise `client_id`. Posée, la réservation suit le
+     * réglage de sa ressource (`resources.client_booking_mode`) : la base en
+     * pose le statut — confirmée d'emblée (`instant`, devis figé), en attente
+     * de l'accueil sinon — et refuse une ressource fermée au portail
+     * (SQLSTATE `CA009`). Nulle pour l'équipe, la page publique et les
+     * occupations de contrat.
+     */
+    bookedByMemberId: uuid('booked_by_member_id'),
+
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancellationReason: text('cancellation_reason'),
+    /**
+     * Auteur de l'annulation (R24, ADR 036) : la personne de l'entreprise qui
+     * a annulé depuis son espace — seulement une demande en attente, pas
+     * commencée (`canClientCancel`, vérifié par la base, `CA009`) — ou le
+     * membre de l'équipe. Nuls pour une annulation antérieure à la vague 3,
+     * ou posée par la base (occupation de contrat).
+     */
+    cancelledByMemberId: uuid('cancelled_by_member_id'),
+    cancelledByStaffId: uuid('cancelled_by_staff_id').references(() => staffMembers.id, {
+      onDelete: 'restrict',
+    }),
     ...timestamps(),
   },
   (table) => [
@@ -199,8 +221,30 @@ export const bookings = pgTable(
       columns: [table.tenantId, table.quoteRatePlanItemId],
       foreignColumns: [ratePlanItems.tenantId, ratePlanItems.id],
     }).onDelete('restrict'),
+    // La personne est de l'entreprise de la réservation.
+    foreignKey({
+      name: 'bookings_booked_by_member_fk',
+      columns: [table.tenantId, table.clientId, table.bookedByMemberId],
+      foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'bookings_cancelled_by_member_fk',
+      columns: [table.tenantId, table.clientId, table.cancelledByMemberId],
+      foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
+    }).onDelete('restrict'),
     // Cible de la clé étrangère composite des lignes de facture (R15).
     unique('bookings_tenant_id_id_key').on(table.tenantId, table.id),
+    // Cible des clés étrangères qui exigent le client de la réservation : un
+    // état des lieux est celui du client qui occupe (ADR 039).
+    unique('bookings_tenant_id_client_key').on(table.tenantId, table.id, table.clientId),
+    check(
+      'bookings_booked_by_member_consistent',
+      sql`${table.bookedByMemberId} is null or (${table.channel} = 'client' and ${table.kind} = 'booking' and ${table.clientId} is not null)`,
+    ),
+    check(
+      'bookings_cancelled_by_consistent',
+      sql`num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 0 or (${table.status} = 'cancelled' and num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 1 and (${table.cancelledByMemberId} is null or ${table.clientId} is not null))`,
+    ),
     // « Mes réservations » : celles d'un client, par date.
     index('bookings_client_starts_at_idx')
       .on(table.tenantId, table.clientId, table.startsAt)

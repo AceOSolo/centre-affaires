@@ -200,8 +200,10 @@ export const serviceNatureEnum = pgEnum('service_nature', serviceNatures)
 export const serviceCodes = {
   /** Ouverture et numérisation d'un pli (ADR 015 : les deux ne font qu'un acte). */
   mailOpening: 'courrier.ouverture',
-  /** Réexpédition d'un pli (R21, vague 3). */
+  /** Réexpédition d'un pli (R21, ADR 037) : l'acte, hors frais d'affranchissement. */
   mailForwarding: 'courrier.reexpedition',
+  /** Numérisation seule d'un pli déjà ouvert, sur demande (R21, ADR 037). */
+  mailScan: 'courrier.numerisation',
 } as const
 
 /**
@@ -281,6 +283,13 @@ export const offers = pgTable(
     /** Durée d'engagement proposée, en mois. Nulle : sans engagement. */
     commitmentMonths: integer('commitment_months'),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
+    /**
+     * Présentée dans l'espace client (R23, ADR 036) : le client la voit, avec
+     * son prix (`priceOffer`), et la demande à l'accueil, qui en tire le
+     * contrat (ADR 028). Faux par défaut : une offre se prépare avant d'être
+     * montrée.
+     */
+    clientVisible: boolean('client_visible').notNull().default(false),
     ...timestamps(),
     deletedAt: deletedAt(),
   },
@@ -327,11 +336,21 @@ export const offerItems = pgTable(
     vatRateBp: integer('vat_rate_bp'),
     /** Ordre d'affichage dans l'offre. */
     position: smallint('position').notNull().default(0),
+    /**
+     * Désignation commerciale de la ligne (ADR 036, manque reporté par
+     * l'ADR 035) : « Bureau fermé de 12 m² », « Dix numérisations par mois ».
+     * Nulle : le nom du service, de la ressource ou du type.
+     */
+    label: text('label'),
     ...timestamps(),
     deletedAt: deletedAt(),
   },
   (table) => [
     unique('offer_items_tenant_id_id_key').on(table.tenantId, table.id),
+    check(
+      'offer_items_label_not_blank',
+      sql`${table.label} is null or btrim(${table.label}) <> ''`,
+    ),
     foreignKey({
       name: 'offer_items_offer_fk',
       columns: [table.tenantId, table.offerId],

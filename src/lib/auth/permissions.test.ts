@@ -27,6 +27,8 @@ describe('matrice des droits', () => {
     'courrier.gerer',
     'contrats.consulter',
     'facturation.consulter',
+    'notifications.consulter',
+    'etats-des-lieux.gerer',
   ]
   /** Ce qui engage le centre : l'exploitant seul. */
   const reserve: Permission[] = [
@@ -49,6 +51,9 @@ describe('matrice des droits', () => {
     'courrier.releve',
     'centre.configurer',
     'agenda-google.gerer',
+    'notifications.gerer',
+    'etats-des-lieux.modeles',
+    'rgpd.anonymiser',
   ]
 
   it('couvre chaque rôle de l’équipe', () => {

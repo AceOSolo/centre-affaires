@@ -196,6 +196,14 @@ un par un, dans l'[ADR 035](decisions/035-suites-de-la-vague-2-et-manques-ecarte
 - R17 / R24 : mes contrats, mes factures, historique des demandes.
 - R25 : cibles de 44 px, vérification à 375 px.
 
+**Schéma posé le 02/10/2026** pour les phases 3 et 4 et la partie code de R29
+(dernière vague, migrations 0039 à 0043, ADR 036 à 040), avant les écrans :
+réglage de réservation par ressource, auteur et annulation tracés (ADR 036) ;
+demandes de courrier et leur facturation (ADR 037) ; événements, modèles,
+journal et préférences de notifications (ADR 038) ; états des lieux et
+photos (ADR 039) ; anonymisation (ADR 040). Les statuts du tableau changent
+quand les tranches livrent les écrans.
+
 ### Phase 4 — États des lieux (tranche 6)
 R06 (D8) et le reste de R33 (compression, purge des photos).
 

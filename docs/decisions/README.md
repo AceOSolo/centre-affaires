@@ -50,6 +50,11 @@ renuméroter casserait ces renvois sans rien gagner.
 | 033 | [Tâches planifiées de la facturation : lot mensuel et reconduction tacite](033-taches-planifiees-de-la-facturation.md) | 2026-10-02 | accepté ; met en œuvre la reconduction de l'ADR 023 et le lancement planifié de R13 ; choix à valider par le centre |
 | 034 | [Règlements : journal des relances, rechiffrement des mandats, remises sans table](034-journal-des-relances-et-rechiffrement-des-mandats.md) | 2026-10-02 | accepté ; précise l'ADR 030 ; choix à valider par le centre |
 | 035 | [Suites de la vague 2 : grilles par défaut successives, devis d'une réservation facturée, et manques de schéma écartés](035-suites-de-la-vague-2-et-manques-ecartes.md) | 2026-10-02 | accepté ; amende l'ADR 023 ; choix à valider par le centre |
+| 036 | [Réservation par un client connecté : réglage par ressource, auteur et annulation tracés](036-reservation-par-le-client-connecte.md) | 2026-10-02 | accepté ; met en œuvre la décision D4 de l'ADR 016 ; précise l'ADR 015 ; choix à valider par le centre |
+| 037 | [Demandes de courrier : ouverture, numérisation, réexpédition, historique et facturation](037-demandes-de-courrier-et-reexpedition.md) | 2026-10-02 | accepté ; précise les ADR 015 et 026 ; choix à valider par le centre |
+| 038 | [Notifications : événements, modèles éditables, journal des envois et préférences](038-modeles-et-journal-des-notifications.md) | 2026-10-02 | accepté ; étend l'ADR 015 ; choix à valider par le centre |
+| 039 | [États des lieux : modèles versionnés par type, état clos figé, photos chiffrées](039-etats-des-lieux.md) | 2026-10-02 | accepté ; met en œuvre la décision D8 de l'ADR 016, compression dans le navigateur ; choix à valider par le centre |
+| 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; durées à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -75,6 +80,11 @@ l'intégration du 01/10/2026, les contrats gardent le 028, le lot de
 facturation devient le 029 et les règlements le 030, renvois du code compris.
 Aucun numéro déjà publié n'a été réattribué.
 
+**Vague 3 : numéros posés d'avance.** Le schéma de la vague (migrations 0039
+à 0043) est posé avant les écrans, avec ses cinq ADR (036 à 040). Les
+tranches parallèles qui construisent les écrans les complètent (section
+« Mise en œuvre ») et n'en ouvrent pas de nouveaux : pas de doublon possible.
+
 ## Écarts connus avec `CLAUDE.md`
 
 - ~~`CLAUDE.md` mentionne PostgreSQL 17~~ : corrigé (commit `1d55ec2`), aligné
@@ -87,7 +97,7 @@ Aucun numéro déjà publié n'a été réattribué.
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **036**.
+   `ListAgents`. Le prochain numéro libre est **041**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

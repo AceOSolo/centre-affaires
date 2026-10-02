@@ -274,6 +274,41 @@
       "when": 1790925651234,
       "tag": "0038_garde_devis_et_grilles",
       "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "7",
+      "when": 1790928204819,
+      "tag": "0039_fonctions_prealables_vague_3",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1790928285309,
+      "tag": "0040_vague_3_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790928434849,
+      "tag": "0041_demandes_de_courrier_et_portail",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1790928437204,
+      "tag": "0042_notifications_et_etats_des_lieux",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1790928439435,
+      "tag": "0043_anonymisation_rgpd",
+      "breakpoints": true
     }
   ]
 }

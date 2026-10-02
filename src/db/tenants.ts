@@ -140,6 +140,31 @@ export const tenants = pgTable('tenants', {
   publicRequestRetentionMonths: integer('public_request_retention_months').notNull().default(12),
 
   /*
+   * Anonymisation (R29, ADR 040), en mois. Propositions du registre
+   * (`docs/rgpd/durees-de-conservation.md`), à valider par le centre. Au
+   * terme, les fonctions `anonymize_*` effacent les champs personnels ; les
+   * lignes restent (décision 6), les factures émises et leurs instantanés ne
+   * sont jamais touchés (10 ans, art. L.123-22 du Code de commerce).
+   */
+  /** Prospect sans contact, compté depuis sa dernière activité (`client_last_activity_on`). */
+  prospectRetentionMonths: integer('prospect_retention_months').notNull().default(36),
+  /** Client, compté depuis la fin de la relation (`client_last_activity_on`). */
+  clientRetentionMonths: integer('client_retention_months').notNull().default(60),
+  /** Trace d'un membre retiré (équipe ou espace client), comptée depuis son retrait. */
+  removedMemberRetentionMonths: integer('removed_member_retention_months').notNull().default(12),
+  /** Journal des envois de notifications (ADR 038), compté depuis l'envoi. */
+  notificationLogRetentionMonths: integer('notification_log_retention_months').notNull().default(12),
+  /**
+   * Photos d'états des lieux (ADR 039), comptées depuis la clôture de l'état
+   * des lieux de sortie. Le fichier part, la ligne reste.
+   */
+  inspectionPhotoRetentionMonths: integer('inspection_photo_retention_months').notNull().default(36),
+  /** Journal des consultations des photos d'états des lieux. */
+  inspectionAccessLogRetentionMonths: integer('inspection_access_log_retention_months')
+    .notNull()
+    .default(12),
+
+  /*
    * Identité légale du vendeur, figée dans chaque facture émise (mentions
    * obligatoires, ADR 026). `legal_name` et l'adresse sont plus haut.
    */
@@ -223,6 +248,18 @@ export const tenants = pgTable('tenants', {
   check(
     'tenants_public_request_retention_valid',
     sql`${table.publicRequestRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_anonymization_retention_valid',
+    sql`${table.prospectRetentionMonths} between 1 and 120 and ${table.clientRetentionMonths} between 1 and 120 and ${table.removedMemberRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_notification_retention_valid',
+    sql`${table.notificationLogRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_inspection_retention_valid',
+    sql`${table.inspectionPhotoRetentionMonths} between 1 and 120 and ${table.inspectionAccessLogRetentionMonths} between 1 and 120`,
   ),
   check('tenants_siren_format', sql`${table.siren} is null or ${table.siren} ~ '^[0-9]{9}$'`),
   check(

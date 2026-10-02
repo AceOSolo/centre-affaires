@@ -23,7 +23,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { paymentMethodEnum, tenantId, tenants } from '../../db/tenants.ts'
 import { clients } from '../clients/schema.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
-import { mailItems } from '../courrier/schema.ts'
+import { mailItems, mailRequests } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { lineNetAmountSql, rateUnitEnum, services } from './schema.ts'
@@ -637,6 +637,15 @@ export const invoiceLines = pgTable(
     bookingId: uuid('booking_id'),
     subscribedServiceId: uuid('subscribed_service_id'),
     mailItemId: uuid('mail_item_id'),
+    /**
+     * Demande de courrier faite (ADR 037) : numérisation seule ou réexpédition.
+     * Une ligne `act` (le service `courrier.numerisation` ou
+     * `courrier.reexpedition`) et, pour une réexpédition, une ligne `other`
+     * des frais d'affranchissement relevés : au plus une de chaque, hors avoir
+     * (`invoice_lines_mail_request_key`). L'ouverture demandée, elle, se
+     * facture par le pli (`mail_item_id`), jamais par sa demande.
+     */
+    mailRequestId: uuid('mail_request_id'),
     /** Service du catalogue facturé (forfait, acte) : rentabilité des services (R31). */
     serviceId: uuid('service_id'),
     /** Ressource facturée : revenu par ressource (R31). */
@@ -686,6 +695,11 @@ export const invoiceLines = pgTable(
       foreignColumns: [mailItems.tenantId, mailItems.id],
     }).onDelete('restrict'),
     foreignKey({
+      name: 'invoice_lines_mail_request_fk',
+      columns: [table.tenantId, table.mailRequestId],
+      foreignColumns: [mailRequests.tenantId, mailRequests.id],
+    }).onDelete('restrict'),
+    foreignKey({
       name: 'invoice_lines_service_fk',
       columns: [table.tenantId, table.serviceId],
       foreignColumns: [services.tenantId, services.id],
@@ -707,6 +721,16 @@ export const invoiceLines = pgTable(
     uniqueIndex('invoice_lines_mail_item_key')
       .on(table.tenantId, table.mailItemId)
       .where(sql`mail_item_id is not null and deleted_at is null and released_at is null`),
+    // Une demande faite : un acte, et des frais d'affranchissement au plus.
+    uniqueIndex('invoice_lines_mail_request_key')
+      .on(table.tenantId, table.mailRequestId, table.kind)
+      .where(sql`mail_request_id is not null and deleted_at is null and released_at is null`),
+    // Un pli et une demande ne se facturent pas sur la même ligne : l'ouverture
+    // est la source du pli, chaque demande la sienne.
+    check(
+      'invoice_lines_one_mail_source',
+      sql`num_nonnulls(${table.mailItemId}, ${table.mailRequestId}) <= 1`,
+    ),
     check('invoice_lines_description_not_blank', sql`btrim(${table.description}) <> ''`),
     check('invoice_lines_quantity_positive', sql`${table.quantity} > 0`),
     check(
