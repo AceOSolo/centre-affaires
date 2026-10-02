@@ -1,4 +1,5 @@
 import { formatDateTime, formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
+import type { OfferRequestStatus } from '../contrats/schema.ts'
 import type { MailKind, MailRequestKind, MailRequestStatus } from '../courrier/schema.ts'
 import { inspectionKindTitles } from '../etats-des-lieux/labels.ts'
 import type { InspectionKind } from '../etats-des-lieux/schema.ts'
@@ -14,9 +15,10 @@ import type { BookingChannel, BookingStatus } from '../reservations/schema.ts'
  * Il se lit dans les tables elles-mêmes, qui ne perdent rien : une
  * réservation annulée garde son créneau, sa date et son auteur d'annulation
  * (ADR 036) ; une demande de courrier annulée ou refusée reste une demande,
- * avec chaque transition datée (ADR 037) ; un document de contrat ne se
- * réécrit pas (ADR 025) ; une facture émise ne s'efface jamais (ADR 026) ; un
- * état des lieux clos est figé, sa validation par le client aussi (ADR 039).
+ * avec chaque transition datée (ADR 037) ; une demande d'offre reste, traitée
+ * par un contrat ou écartée (ADR 041) ; un document de contrat ne se réécrit
+ * pas (ADR 025) ; une facture émise ne s'efface jamais (ADR 026) ; un état des
+ * lieux clos est figé, sa validation par le client aussi (ADR 039).
  *
  * Ce module est pur : il met en forme des lignes déjà lues, pour être éprouvé
  * sans base. La lecture est dans `historique-compte-queries.ts`.
@@ -91,6 +93,13 @@ export type HistoryBookingRow = {
   endsAt: Date
   /** La personne de l'entreprise qui l'a faite depuis son espace (ADR 036) ; nulle sinon. */
   bookedByName: string | null
+  /**
+   * Confirmation, datée par la base (ADR 041) ; nulle pour une réservation
+   * en attente, ou confirmée avant que la base ne la date.
+   */
+  confirmedAt: Date | null
+  /** Confirmée par un membre de l'équipe : une demande acceptée par l'accueil. */
+  confirmedByStaff: boolean
   cancelledAt: Date | null
   cancellationReason: string | null
   /** La personne de l'entreprise qui l'a annulée ; nulle sinon. */
@@ -121,14 +130,26 @@ export function bookingHistoryEntry(row: HistoryBookingRow, timeZone: string): H
 
   const steps: HistoryStep[] = [requested]
   const notes: string[] = []
+  // Une demande (site ou espace client) a une étape de confirmation ; une
+  // réservation saisie par le centre est ferme dès son enregistrement. Sans
+  // date pour une confirmation antérieure à la migration 0044.
+  const confirmation: HistoryStep = {
+    label: row.confirmedByStaff
+      ? 'Confirmée par le centre'
+      : fromSpace && row.confirmedAt
+        ? 'Confirmée immédiatement'
+        : 'Confirmée',
+    at: row.confirmedAt,
+  }
   let outcome: HistoryEntry['outcome']
   if (row.status === 'pending') {
     outcome = { label: 'En attente de validation', tone: 'waiting' }
   } else if (row.status === 'confirmed') {
     outcome = { label: 'Confirmée', tone: 'done' }
-    // La base ne date pas la confirmation : l'étape est dite sans date.
-    if (row.channel !== 'staff') steps.push({ label: 'Confirmée', at: null })
+    if (row.channel !== 'staff') steps.push(confirmation)
   } else {
+    // Confirmée puis annulée : les deux étapes restent.
+    if (row.channel !== 'staff' && row.confirmedAt) steps.push(confirmation)
     const by = row.cancelledByMemberName
       ? ` par ${row.cancelledByMemberName}`
       : row.cancelledByStaff
@@ -298,6 +319,69 @@ export function contractDocumentHistoryEntry(row: HistoryContractDocumentRow): H
 }
 
 /* -------------------------------------------------------------------------- */
+/* Demandes d'offre                                                           */
+/* -------------------------------------------------------------------------- */
+
+/** Une offre groupée demandée depuis l'espace client (R23, ADR 041). */
+export type HistoryOfferRequestRow = {
+  id: string
+  clientId: string
+  clientName: string
+  offerName: string
+  status: OfferRequestStatus
+  requestedAt: Date
+  /** La personne de l'entreprise qui l'a déposée. */
+  requestedByName: string | null
+  /** Contrat établi, ou demande écartée : date posée par la base. */
+  closedAt: Date | null
+  /** Référence du contrat tiré de l'offre, quand l'entreprise peut le voir. */
+  contractReference: string | null
+  /** Motif d'une demande écartée, tel que l'accueil l'a saisi. */
+  dismissalReason: string | null
+}
+
+export function offerRequestHistoryEntry(row: HistoryOfferRequestRow): HistoryEntry {
+  const steps: HistoryStep[] = [
+    {
+      label: row.requestedByName
+        ? `Demandée depuis l’espace client par ${row.requestedByName}`
+        : 'Demandée depuis l’espace client',
+      at: row.requestedAt,
+    },
+  ]
+  const notes: string[] = []
+  let outcome: HistoryEntry['outcome']
+  if (row.status === 'contracted') {
+    outcome = { label: 'Contrat préparé', tone: 'done' }
+    steps.push({
+      label: row.contractReference
+        ? `Contrat ${row.contractReference} préparé par le centre`
+        : 'Contrat préparé par le centre',
+      at: row.closedAt,
+    })
+  } else if (row.status === 'dismissed') {
+    outcome = { label: 'Écartée', tone: 'closed' }
+    steps.push({ label: 'Écartée par le centre', at: row.closedAt })
+    if (row.dismissalReason) notes.push(`Motif : ${row.dismissalReason}`)
+  } else {
+    outcome = { label: 'Transmise à l’accueil', tone: 'waiting' }
+  }
+  return {
+    key: `contrats:offre:${row.id}`,
+    category: 'contrats',
+    at: row.requestedAt,
+    title: `Demande d’offre — ${row.offerName}`,
+    detail: null,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    outcome,
+    steps,
+    notes,
+    link: { href: '/compte/offres', label: 'Voir les offres' },
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Factures et avoirs                                                         */
 /* -------------------------------------------------------------------------- */
 
@@ -403,6 +487,8 @@ export type AccountHistorySources = {
   bookings: readonly HistoryBookingRow[]
   mailRequests: readonly HistoryMailRequestRow[]
   contractDocuments: readonly HistoryContractDocumentRow[]
+  /** Offres demandées : rangées avec les contrats, qu'elles précèdent. */
+  offerRequests: readonly HistoryOfferRequestRow[]
   invoices: readonly HistoryInvoiceRow[]
   inspections: readonly HistoryInspectionRow[]
 }
@@ -420,6 +506,7 @@ export function buildAccountHistory(
     ...sources.bookings.map((row) => bookingHistoryEntry(row, options.timeZone)),
     ...sources.mailRequests.map((row) => mailRequestHistoryEntry(row, options.timeZone)),
     ...sources.contractDocuments.map(contractDocumentHistoryEntry),
+    ...sources.offerRequests.map(offerRequestHistoryEntry),
     ...sources.invoices.map((row) => invoiceHistoryEntry(row, options.today)),
     ...sources.inspections.map((row) => inspectionHistoryEntry(row, options.timeZone)),
   ]

@@ -2,8 +2,10 @@
 
 **Date** : 2026-10-02
 **Statut** : accepté — construit la partie code de R29 annoncée par l'ADR 020
-et le registre (`docs/rgpd/durees-de-conservation.md`) ; les durées proposées
-sont *à valider* par le centre
+et le registre (`docs/rgpd/durees-de-conservation.md`) ; corrigé par l'ADR 041
+(compte auxiliaire figé à l'anonymisation, auteur et fondement tracés, tâche
+de nuit isolée étape par étape) ; les durées proposées sont *à valider* par le
+centre
 
 ## Contexte
 

@@ -377,6 +377,17 @@ describe('états des lieux', { skip: raison }, () => {
     it('le client le valide une fois, depuis son espace, avec ses réserves', async () => {
       const id = await etat(await modele())
       await clore(id)
+      // Des réserves au-delà de 2 000 caractères : la base les refuse, comme la saisie (ADR 041).
+      assert.equal(
+        await codeErreur(() =>
+          asClients([DURAND], (tx) =>
+            tx.execute(sql`
+              update inspections set signed_by_member_id = ${JEANNE}, client_remarks = repeat('x', 2001)
+               where id = ${id}`),
+          ),
+        ),
+        PG_CHECK_VIOLATION,
+      )
       await asClients([DURAND], (tx) =>
         tx.execute(sql`
           update inspections set signed_by_member_id = ${JEANNE}, client_remarks = 'Rayure sur la porte',

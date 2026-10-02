@@ -1,11 +1,11 @@
 /**
- * Reprise du chiffrement des documents stockés (R22, ADR 020) et des IBAN des
- * mandats SEPA (R16, ADR 034).
+ * Reprise du chiffrement des documents stockés (R22, R33, ADR 020), des IBAN
+ * des mandats SEPA (R16, ADR 034) et des photos d'états des lieux (ADR 041).
  *
  * Chiffre les numérisations de courrier déposées en clair avant le
  * chiffrement, et, après une rotation de clé, rechiffre avec la clé courante
  * celles de la clé précédente — ainsi que les IBAN des mandats, chiffrés en
- * base avec la même clé. Procédure complète : `infra/serveur/README.md`,
+ * base avec la même clé, et les photos d'états des lieux. Procédure complète : `infra/serveur/README.md`,
  * « Chiffrement des documents ».
  *
  *   node --env-file=<fichier> infra/chiffrer-documents.ts              # essai à blanc
@@ -29,7 +29,7 @@ import { DEFAULT_TENANT_ID } from '../src/db/tenants.ts'
 import { documentKeyringFromEnv } from '../src/lib/chiffrement-documents.ts'
 import { putObject, readObjectBytes } from '../src/lib/stockage.ts'
 import { encryptStoredScans, type ObjectStore } from '../src/modules/courrier/reprise-chiffrement.ts'
-import { inspectionPhotosOnPreviousKeys } from '../src/modules/etats-des-lieux/conservation.ts'
+import { rekeyInspectionPhotos } from '../src/modules/etats-des-lieux/rechiffrement.ts'
 import { rekeyMandateIbans } from '../src/modules/facturation/mandats-rechiffrement.ts'
 
 const { values } = parseArgs({
@@ -111,23 +111,30 @@ try {
     if (mandates.failed.length > 0) process.exitCode = 1
   }
 
-  // Les photos d'états des lieux ne se rechiffrent pas : la base fige la clé
-  // d'une photo déposée (ADR 039). On dit seulement quelles clés précédentes
-  // doivent rester dans l'environnement tant qu'elles existent.
-  const photos = Object.entries(
-    await inspectionPhotosOnPreviousKeys({
-      database: db,
-      tenantId: values.centre,
-      currentVersion: keyring.currentVersion,
-    }),
+  // Les photos d'états des lieux (ADR 039, ADR 041) : rechiffrées comme les
+  // numérisations, à la même clé de stockage ; la base n'en change que la
+  // version de clé (`rekey_inspection_photo()`).
+  const photos = await rekeyInspectionPhotos({
+    database: db,
+    tenantId: values.centre,
+    store,
+    keyring,
+    apply: values.appliquer,
+  })
+  const pendingPhotos = Object.entries(photos.pending)
+  console.log(
+    pendingPhotos.length === 0
+      ? 'Aucune photo d’état des lieux à rechiffrer.'
+      : `Photos d’états des lieux à rechiffrer : ${pendingPhotos.map(([label, count]) => `${count} (${label})`).join(', ')}.`,
   )
-  if (photos.length > 0) {
+  if (values.appliquer) {
     console.log(
-      `Photos d’états des lieux chiffrées avec une clé précédente : ${photos
-        .map(([version, count]) => `${count} (clé ${version})`)
-        .join(', ')}. Elles restent lisibles tant que ces clés restent configurées ` +
-        '(DOCUMENTS_ENCRYPTION_KEY_<N>) ; ne les retirez qu’une fois ces photos purgées.',
+      `Photos rechiffrées : ${photos.rotated} · déjà rechiffrées, base mise à jour : ${photos.recorded} · ` +
+        `traitées ailleurs : ${photos.skipped}.`,
     )
+    for (const id of photos.missing) console.error(`Objet absent du stockage : inspection_photos ${id}`)
+    for (const { id, error } of photos.failed) console.error(`Laissée telle quelle : inspection_photos ${id} — ${error}`)
+    if (photos.missing.length > 0 || photos.failed.length > 0) process.exitCode = 1
   }
 } finally {
   await client.end()

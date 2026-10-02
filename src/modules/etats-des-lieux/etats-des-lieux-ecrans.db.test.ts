@@ -286,6 +286,23 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
       const inspection = await findInspection(id)
       assert.equal(inspection?.template.version, 1)
     })
+
+    it('garde à un état des lieux le nom que son modèle portait, même renommé depuis (ADR 041)', async () => {
+      const id = await ouvrir()
+      const avant = await findInspection(id)
+      assert.equal(avant?.template.name, defaultTemplates.vehicule.name)
+      assert.deepEqual(
+        await publishTemplateVersion(
+          { resourceType: 'vehicule', name: 'Véhicule de service', fields: defaultTemplates.vehicule.fields },
+          CAMILLE,
+        ),
+        { status: 'published', version: 2 },
+      )
+      assert.equal((await findTemplateOverview('vehicule')).template?.name, 'Véhicule de service')
+      const apres = await findInspection(id)
+      assert.equal(apres?.template.version, 1)
+      assert.equal(apres?.template.name, defaultTemplates.vehicule.name)
+    })
   })
 
   describe('saisie', () => {

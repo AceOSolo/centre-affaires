@@ -2,10 +2,11 @@ import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 import { wallClockToUtc } from '../../lib/dates.ts'
-import { contractAmendments, contractDocuments, contracts } from '../contrats/schema.ts'
+import { contractAmendments, contractDocuments, contracts, offerRequests } from '../contrats/schema.ts'
 import { mailItems, mailRequests } from '../courrier/schema.ts'
 import { inspections } from '../etats-des-lieux/schema.ts'
 import { invoices } from '../facturation/schema-factures.ts'
+import { offers } from '../facturation/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { inClientSpace, type ClientAccount } from './comptes.ts'
@@ -17,6 +18,7 @@ import type {
   HistoryInspectionRow,
   HistoryInvoiceRow,
   HistoryMailRequestRow,
+  HistoryOfferRequestRow,
 } from './historique-compte.ts'
 import { clientMembers, clients } from './schema.ts'
 
@@ -53,6 +55,7 @@ export async function loadAccountHistory(
     bookings: [],
     mailRequests: [],
     contractDocuments: [],
+    offerRequests: [],
     invoices: [],
     inspections: [],
   }
@@ -79,6 +82,8 @@ export async function loadAccountHistory(
           startsAt: bookings.startsAt,
           endsAt: bookings.endsAt,
           bookedByName: memberName(bookedBy),
+          confirmedAt: bookings.confirmedAt,
+          confirmedByStaff: sql<boolean>`${bookings.confirmedByStaffId} is not null`,
           cancelledAt: bookings.cancelledAt,
           cancellationReason: bookings.cancellationReason,
           cancelledByMemberName: memberName(cancelledBy),
@@ -176,6 +181,41 @@ export async function loadAccountHistory(
         .limit(HISTORY_SOURCE_LIMIT + 1)
     }
 
+    // Les offres demandées depuis l'espace (ADR 041) : avec les contrats,
+    // qu'elles précèdent. Le contrat n'est nommé que si l'entreprise le voit
+    // déjà (un brouillon ne lui est pas montré).
+    let offerRequestRows: HistoryOfferRequestRow[] = []
+    if (wants('contrats')) {
+      const requestedBy = alias(clientMembers, 'offer_requested_by')
+      offerRequestRows = await tx
+        .select({
+          id: offerRequests.id,
+          clientId: clients.id,
+          clientName: clients.name,
+          offerName: offers.name,
+          status: offerRequests.status,
+          requestedAt: offerRequests.requestedAt,
+          requestedByName: memberName(requestedBy),
+          closedAt: offerRequests.closedAt,
+          contractReference: sql<string | null>`case when ${contracts.status} <> 'draft' and ${contracts.deletedAt} is null then ${contracts.reference} end`,
+          dismissalReason: offerRequests.dismissalReason,
+        })
+        .from(offerRequests)
+        .innerJoin(clients, eq(clients.id, offerRequests.clientId))
+        .innerJoin(offers, eq(offers.id, offerRequests.offerId))
+        .leftJoin(requestedBy, eq(requestedBy.id, offerRequests.requestedByMemberId))
+        .leftJoin(contracts, eq(contracts.id, offerRequests.contractId))
+        .where(
+          and(
+            inArray(offerRequests.clientId, clientIds),
+            gte(offerRequests.requestedAt, from),
+            lt(offerRequests.requestedAt, to),
+          ),
+        )
+        .orderBy(desc(offerRequests.requestedAt))
+        .limit(HISTORY_SOURCE_LIMIT + 1)
+    }
+
     let invoiceRows: HistoryInvoiceRow[] = []
     if (wants('factures')) {
       const issuedAt = sql<Date>`coalesce(${invoices.issuedAt}, ${invoices.createdAt})`.mapWith(
@@ -248,7 +288,14 @@ export async function loadAccountHistory(
         .limit(HISTORY_SOURCE_LIMIT + 1)
     }
 
-    const truncated = [bookingRows, mailRequestRows, documentRows, invoiceRows, inspectionRows].some(
+    const truncated = [
+      bookingRows,
+      mailRequestRows,
+      documentRows,
+      offerRequestRows,
+      invoiceRows,
+      inspectionRows,
+    ].some(
       (rows) => rows.length > HISTORY_SOURCE_LIMIT,
     )
     return {
@@ -256,6 +303,7 @@ export async function loadAccountHistory(
         bookings: bookingRows.slice(0, HISTORY_SOURCE_LIMIT),
         mailRequests: mailRequestRows.slice(0, HISTORY_SOURCE_LIMIT),
         contractDocuments: documentRows.slice(0, HISTORY_SOURCE_LIMIT),
+        offerRequests: offerRequestRows.slice(0, HISTORY_SOURCE_LIMIT),
         invoices: invoiceRows.slice(0, HISTORY_SOURCE_LIMIT),
         inspections: inspectionRows.slice(0, HISTORY_SOURCE_LIMIT),
       },

@@ -44,17 +44,18 @@ renuméroter casserait ces renvois sans rien gagner.
 | 027 | [Paiements, mandats SEPA chiffrés et export comptable](027-paiements-et-export-comptable.md) | 2026-10-01 | accepté ; précisé par l'ADR 030 |
 | 028 | [Contrats tirés d'une offre, avenants à l'écran, échéancier versionné et documents archivés](028-contrats-depuis-offre-avenants-documents.md) | 2026-10-01 | accepté ; choix à valider par le centre ; quantités d'offre alignées sur l'ADR 024 à l'intégration ; reconduction tacite mise en œuvre par l'ADR 033 |
 | 029 | [Lot de facturation périodique et écrans de facturation](029-lot-de-facturation-et-ecrans.md) | 2026-10-01 | accepté ; précise l'ADR 026 ; deux conséquences corrigées par l'ADR 032 ; lancement planifié ajouté par l'ADR 033 |
-| 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 ; contrôle BR-CO-17 d'un avoir précisé par l'ADR 032 ; journal des relances et rechiffrement des mandats par l'ADR 034 |
+| 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 ; contrôle BR-CO-17 d'un avoir précisé par l'ADR 032 ; journal des relances et rechiffrement des mandats par l'ADR 034 ; libellés de l'export lus dans la pièce par l'ADR 041 |
 | 031 | [Indicateurs : définitions de l'occupation et du chiffre d'affaires](031-indicateurs-occupation-et-chiffre-d-affaires.md) | 2026-10-01 | accepté ; définitions à valider par le centre |
 | 032 | [Correctifs de la facturation : avenants déjà facturés, avoirs au centime, forfaits sans prorata, motif d'exonération](032-correctifs-de-la-facturation.md) | 2026-10-02 | accepté ; corrige l'ADR 029, précise les ADR 026 et 030 ; choix à valider par l'expert-comptable |
 | 033 | [Tâches planifiées de la facturation : lot mensuel et reconduction tacite](033-taches-planifiees-de-la-facturation.md) | 2026-10-02 | accepté ; met en œuvre la reconduction de l'ADR 023 et le lancement planifié de R13 ; choix à valider par le centre |
 | 034 | [Règlements : journal des relances, rechiffrement des mandats, remises sans table](034-journal-des-relances-et-rechiffrement-des-mandats.md) | 2026-10-02 | accepté ; précise l'ADR 030 ; choix à valider par le centre |
 | 035 | [Suites de la vague 2 : grilles par défaut successives, devis d'une réservation facturée, et manques de schéma écartés](035-suites-de-la-vague-2-et-manques-ecartes.md) | 2026-10-02 | accepté ; amende l'ADR 023 ; choix à valider par le centre |
-| 036 | [Réservation par un client connecté : réglage par ressource, auteur et annulation tracés](036-reservation-par-le-client-connecte.md) | 2026-10-02 | accepté ; met en œuvre la décision D4 de l'ADR 016 ; précise l'ADR 015 ; mise en œuvre du portail (réservation, offres, contrats, factures, historique, revue mobile) ajoutée ; choix à valider par le centre |
-| 037 | [Demandes de courrier : ouverture, numérisation, réexpédition, historique et facturation](037-demandes-de-courrier-et-reexpedition.md) | 2026-10-02 | accepté ; précise les ADR 015 et 026 ; mise en œuvre des écrans et de la facturation ajoutée ; choix à valider par le centre |
+| 036 | [Réservation par un client connecté : réglage par ressource, auteur et annulation tracés](036-reservation-par-le-client-connecte.md) | 2026-10-02 | accepté ; met en œuvre la décision D4 de l'ADR 016 ; précise l'ADR 015 ; mise en œuvre du portail (réservation, offres, contrats, factures, historique, revue mobile) ajoutée ; confirmation datée et demandes d'offre en table par l'ADR 041 ; choix à valider par le centre |
+| 037 | [Demandes de courrier : ouverture, numérisation, réexpédition, historique et facturation](037-demandes-de-courrier-et-reexpedition.md) | 2026-10-02 | accepté ; précise les ADR 015 et 026 ; mise en œuvre des écrans et de la facturation ajoutée ; rattrapage des demandes non facturées par l'ADR 041 ; choix à valider par le centre |
 | 038 | [Notifications : événements, modèles éditables, journal des envois et préférences](038-modeles-et-journal-des-notifications.md) | 2026-10-02 | accepté ; étend l'ADR 015 ; mise en œuvre du moteur, des écrans et des déclencheurs ajoutée, relances inscrites telles qu'elles partent (précise l'ADR 034) ; choix à valider par le centre |
-| 039 | [États des lieux : modèles versionnés par type, état clos figé, photos chiffrées](039-etats-des-lieux.md) | 2026-10-02 | accepté ; met en œuvre la décision D8 de l'ADR 016, compression dans le navigateur ; mise en œuvre des écrans, des photos et de la purge ajoutée ; choix à valider par le centre |
-| 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; durées à valider par le centre |
+| 039 | [États des lieux : modèles versionnés par type, état clos figé, photos chiffrées](039-etats-des-lieux.md) | 2026-10-02 | accepté ; met en œuvre la décision D8 de l'ADR 016, compression dans le navigateur ; mise en œuvre des écrans, des photos et de la purge ajoutée ; rechiffrement des photos et nom du modèle figé par l'ADR 041 ; choix à valider par le centre |
+| 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; compte auxiliaire figé, anonymisation tracée et tâche de nuit isolée par l'ADR 041 ; durées à valider par le centre |
+| 041 | [Correctifs de la dernière vague : export comptable après anonymisation, rattrapage du courrier, tâche de nuit, et manques de schéma tranchés](041-correctifs-de-la-derniere-vague-et-manques-ecartes.md) | 2026-10-02 | accepté ; corrige les ADR 037 et 040, précise les ADR 030, 036, 038 et 039 ; choix à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -87,6 +88,8 @@ tranches parallèles qui construisent les écrans les complètent (section
 Intégrées le 02/10/2026 sans nouveau numéro ; le raccordement des six
 tranches (notifications par le moteur unique, historique, navigation, tâche
 de nuit) est consigné dans les ADR 036 à 039 (« Intégration de la vague »).
+Les correctifs de la revue et les manques de schéma relevés à l'intégration
+sont tranchés par l'ADR 041 (migration 0044).
 
 ## Écarts connus avec `CLAUDE.md`
 
@@ -100,7 +103,7 @@ de nuit) est consigné dans les ADR 036 à 039 (« Intégration de la vague »).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **041**.
+   `ListAgents`. Le prochain numéro libre est **042**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

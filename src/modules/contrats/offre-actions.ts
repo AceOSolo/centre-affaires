@@ -75,6 +75,7 @@ export async function createContractFromOfferAction(
         contract: { ...contract.input, offerId, currency },
         lines: lines.lines,
         subscriptions: acts.subscriptions,
+        drawnBy: member.id,
       })
     ).id
   } catch (error) {
@@ -88,5 +89,6 @@ export async function createContractFromOfferAction(
   }
 
   revalidatePath('/contrats')
+  revalidatePath('/demandes')
   redirect(`/contrats/${id}?fait=cree`)
 }
