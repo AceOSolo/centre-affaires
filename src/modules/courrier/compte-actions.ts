@@ -24,7 +24,8 @@ export async function requestOpeningAction(
     return { error: 'La demande n’a pas pu être enregistrée : ce courrier a peut-être déjà été traité.' }
   }
   after(() => notifyOpeningRequested(id))
-  revalidatePath('/compte/courrier')
+  // La boîte aux lettres et la page du pli (`/compte/courrier/[id]`).
+  revalidatePath('/compte/courrier', 'layout')
   // La file « À ouvrir » et le compteur de la navigation du back-office.
   revalidatePath('/courrier')
   return { ok: 'Demande envoyée. Le centre ouvrira ce courrier et vous le mettra à disposition ici.' }
@@ -38,8 +39,10 @@ export async function cancelOpeningRequestAction(
   const id = String(formData.get('id') ?? '')
 
   if (!(await cancelOpeningRequest(id, accounts))) {
-    return { error: 'La demande ne peut plus être annulée : le courrier a peut-être déjà été ouvert.' }
+    return {
+      error: 'La demande ne peut plus être annulée : le centre l’a déjà prise en charge, ou le courrier est ouvert.',
+    }
   }
-  revalidatePath('/compte/courrier')
+  revalidatePath('/compte/courrier', 'layout')
   return { ok: 'Demande annulée.' }
 }

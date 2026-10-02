@@ -55,3 +55,87 @@ export const PG_INSUFFICIENT_PRIVILEGE = '42501'
  * ADR 018). Elle se modifie à travers son contrat.
  */
 export const PG_CONTRACT_OCCUPATION_LOCKED = 'CA001'
+
+/**
+ * Facture émise, ou brouillon abandonné : figé (migration 0031, ADR 026). Une
+ * correction passe par un avoir (`draft_credit_note`, puis `issue_invoice`).
+ * Aussi : suppression d'une facture ou d'une ligne, réécriture du journal des
+ * exports comptables.
+ */
+export const PG_INVOICE_LOCKED = 'CA002'
+/**
+ * Facture non conforme (ADR 026) : émission refusée (mention obligatoire
+ * manquante, facture vide ou négative, mandat absent), avoir excédentaire,
+ * ligne incohérente (source d'un autre client, source absente pour sa
+ * nature), émission hors `issue_invoice()`. Le message dit quoi compléter.
+ */
+export const PG_INVOICE_INVALID = 'CA003'
+/**
+ * Engagement figé (ADR 025) : prix ou lignes d'un contrat qui n'est plus un
+ * brouillon (passer par un avenant), avenant signé, souscription, document de
+ * contrat, date de début d'un contrat qui a des avenants signés.
+ */
+export const PG_COMMITMENT_LOCKED = 'CA004'
+/**
+ * Avenant refusé (ADR 025) : contrat qui n'est pas en cours, date d'effet qui
+ * ne suit pas le début du contrat ou le dernier avenant signé, ou qui dépasse
+ * son dernier jour, avenant qui ne change rien.
+ */
+export const PG_AMENDMENT_INVALID = 'CA005'
+/**
+ * Paiement refusé (ADR 027) : facture brouillon ou avoir, autre devise,
+ * modification ou suppression d'un paiement (il s'annule).
+ */
+export const PG_PAYMENT_REFUSED = 'CA006'
+/** Mandat SEPA : la RUM et le client ne changent pas, un mandat ne se supprime pas (ADR 027). */
+export const PG_SEPA_MANDATE_LOCKED = 'CA007'
+/**
+ * Demande de courrier refusée (ADR 037, migration 0041) : transition
+ * impossible (une demande faite, refusée ou annulée ne bouge plus ; le client
+ * n'annule qu'une demande `requested`), pli retiré ou réexpédié, ouverture
+ * d'un pli déjà ouvert, numérisation seule d'un pli fermé, auteur manquant,
+ * adresse de réexpédition ou frais d'une réexpédition facturée réécrits,
+ * suppression. Aussi : écriture directe du résumé de la demande d'ouverture
+ * sur le pli (`mail_items.status = 'opening_requested'`,
+ * `opening_requested_*`).
+ */
+export const PG_MAIL_REQUEST_REFUSED = 'CA008'
+/**
+ * Réservation depuis l'espace client refusée (ADR 036, migration 0041) :
+ * ressource fermée au portail (`client_booking_mode = 'closed'`), inactive ou
+ * archivée ; annulation par le client d'une réservation qui n'est pas une
+ * demande en attente à venir ; écriture sous portée client autre qu'une
+ * réservation au nom d'une personne de l'entreprise, ou que son annulation ;
+ * auteur d'une réservation du portail réécrit.
+ */
+export const PG_CLIENT_BOOKING_REFUSED = 'CA009'
+/**
+ * État des lieux figé (ADR 039, migration 0042) : état clos (seule la
+ * validation du client, une fois, passe), brouillon retiré, nature,
+ * ressource, client ou version de modèle réécrits, photo ajoutée, modifiée
+ * ou retirée sur un état clos, écriture depuis l'espace client autre que la
+ * validation, suppression.
+ */
+export const PG_INSPECTION_LOCKED = 'CA010'
+/**
+ * État des lieux non conforme (ADR 039, migration 0042) : valeur hors du
+ * modèle (champ inconnu, type, option, échelle), champ obligatoire vide à la
+ * clôture, modèle d'un autre type de ressource, sortie sans entrée close,
+ * photo rattachée à un champ inconnu, clôture sans auteur. Le message dit
+ * quoi corriger, en français.
+ */
+export const PG_INSPECTION_INVALID = 'CA011'
+/**
+ * Anonymisation refusée (ADR 040, migration 0043) : exclusion (facture non
+ * soldée, contrat vivant… — le message les énumère), membre non retiré,
+ * appel sous portée client ; ou écriture d'une ligne anonymisée, ou de
+ * `anonymized_at` hors des fonctions `anonymize_*`.
+ */
+export const PG_ANONYMIZATION_REFUSED = 'CA012'
+/**
+ * Demande d'offre refusée (ADR 041, migration 0044) : offre non présentée
+ * dans l'espace client, demande déjà traitée, contrat qui n'est pas tiré de
+ * cette offre, refus sans auteur, modification depuis l'espace client ou
+ * suppression.
+ */
+export const PG_OFFER_REQUEST_REFUSED = 'CA013'

@@ -1,7 +1,10 @@
 # ADR 009 — Catalogue réel du centre et unité « demi-journée »
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — durée de la demi-journée devenue un paramètre du centre
+(ADR 023) ; options facturées modélisables en services (ADR 024) ; unité
+retenue par le devis quand la grille en propose plusieurs : ADR 023 (mise en
+œuvre)
 
 ## Contexte
 

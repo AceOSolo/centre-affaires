@@ -3,17 +3,20 @@ import {
   boolean,
   char,
   check,
+  date,
   foreignKey,
   index,
   pgEnum,
   pgTable,
   text,
+  timestamp,
   unique,
   uniqueIndex,
   uuid,
 } from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { anonymizationBasisEnum, anonymizationTraceCheck, staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 
 /**
@@ -46,13 +49,56 @@ export const clients = pgTable(
     country: char('country', { length: 2 }).notNull().default('FR'),
     status: clientStatusEnum('status').notNull().default('prospect'),
     notes: text('notes'),
+    /**
+     * Compte auxiliaire du client dans l'export comptable (ADR 027), sous le
+     * compte collectif 411 : « DURAND ». Nul : l'export le dérive ou le
+     * demande.
+     */
+    accountingCode: text('accounting_code'),
+    /**
+     * Dernier échange noté par l'équipe avec l'entreprise (appel, rendez-vous,
+     * visite), jour civil du centre. Une des dates dont
+     * `client_last_activity_on()` tire la fin de la relation (R29, ADR 040) :
+     * un prospect qu'on rappelle ne s'anonymise pas.
+     */
+    lastContactOn: date('last_contact_on', { mode: 'string' }),
     ...timestamps(),
     deletedAt: deletedAt(),
+    /**
+     * Anonymisation (R29, ADR 040) : raison sociale remplacée, coordonnées,
+     * SIRET et notes effacés, contacts et accès anonymisés avec elle. Posée par
+     * `anonymize_client()` ou `anonymize_expired_clients()`, jamais par le
+     * code ; une fiche anonymisée ne change plus (SQLSTATE `CA012`). Les
+     * factures émises gardent leur instantané de l'acheteur (obligation de
+     * conservation de 10 ans).
+     */
+    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
+    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /** Au terme, à la demande d'effacement, ou à la fin de la relation (`anonymizationBases`). */
+    anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
+    /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
+    erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
   },
   (table) => [
     // Cible des clés étrangères composites : un contrat ne peut pas viser le
     // client d'un autre centre.
     unique('clients_tenant_id_id_key').on(table.tenantId, table.id),
+    // Une fiche anonymisée est archivée : elle sort des listes.
+    check(
+      'clients_anonymized_archived',
+      sql`${table.anonymizedAt} is null or ${table.deletedAt} is not null`,
+    ),
+    check('clients_anonymization_traced', anonymizationTraceCheck(table)),
+    // Deux clients vivants ne partagent pas un compte auxiliaire : leurs
+    // écritures se mêleraient chez l'expert-comptable.
+    uniqueIndex('clients_tenant_accounting_code_key')
+      .on(table.tenantId, table.accountingCode)
+      .where(sql`deleted_at is null and accounting_code is not null`),
+    check(
+      'clients_accounting_code_format',
+      sql`${table.accountingCode} is null or ${table.accountingCode} ~ '^[0-9A-Z]{1,17}$'`,
+    ),
     // Le SIRET identifie l'entreprise : deux fiches pour le même seraient deux
     // historiques de facturation à réconcilier.
     uniqueIndex('clients_tenant_siret_key')
@@ -97,6 +143,18 @@ export const clientMembers = pgTable(
     ...timestamps(),
     /** Retrait de l'accès : il cesse, l'historique des demandes reste (décision 6). */
     deletedAt: deletedAt(),
+    /**
+     * Anonymisation de la trace d'un accès retiré, ou de l'entreprise (R29,
+     * ADR 040) : adresse remplacée par une adresse inexistante, nom effacé,
+     * compte détaché. La ligne reste : elle signe des demandes, des
+     * consultations, des validations d'états des lieux.
+     */
+    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
+    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
+    /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
+    erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
   },
   (table) => [
     foreignKey({
@@ -107,6 +165,15 @@ export const clientMembers = pgTable(
     // Cible des clés étrangères composites du courrier : une demande
     // d'ouverture ne peut pas être attribuée à la personne d'un autre centre.
     unique('client_members_tenant_id_id_key').on(table.tenantId, table.id),
+    // Cible des clés étrangères qui exigent que la personne relève de
+    // l'entreprise de la ligne : une demande de courrier, une réservation du
+    // portail, une préférence, la validation d'un état des lieux (vague 3).
+    unique('client_members_tenant_client_id_key').on(table.tenantId, table.clientId, table.id),
+    check(
+      'client_members_anonymized_removed',
+      sql`${table.anonymizedAt} is null or (${table.deletedAt} is not null and ${table.authUserId} is null)`,
+    ),
+    check('client_members_anonymization_traced', anonymizationTraceCheck(table)),
     // Une adresse ne vaut qu'une fois par entreprise, et redevient libre après
     // un retrait.
     uniqueIndex('client_members_client_email_key')
@@ -154,6 +221,8 @@ export const clientContacts = pgTable(
     notes: text('notes'),
     ...timestamps(),
     deletedAt: deletedAt(),
+    /** Anonymisation avec la fiche de l'entreprise (R29, ADR 040). */
+    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
   },
   (table) => [
     foreignKey({
@@ -171,6 +240,10 @@ export const clientContacts = pgTable(
       .where(sql`is_primary and deleted_at is null`),
     index('client_contacts_client_idx').on(table.tenantId, table.clientId),
     check('client_contacts_name_not_blank', sql`btrim(${table.fullName}) <> ''`),
+    check(
+      'client_contacts_anonymized_archived',
+      sql`${table.anonymizedAt} is null or ${table.deletedAt} is not null`,
+    ),
   ],
 )
 

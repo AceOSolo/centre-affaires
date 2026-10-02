@@ -17,9 +17,10 @@ import { groupOpeningsByClient, openingOrigin } from '../../../../modules/courri
 export const metadata = { title: 'Relevé des ouvertures' }
 
 /**
- * Relevé mensuel des ouvertures de courrier, par client : ce qui se reporte sur
- * la facture de chacun. La facturation elle-même viendra avec sa tranche ; en
- * attendant, ce relevé et son export en sont la source.
+ * Relevé mensuel des ouvertures de courrier, par client. Depuis la facturation
+ * intégrée (ADR 026, 028), ce n'est plus la source de facturation : chaque pli
+ * ouvert devient une ligne de la facture du client, par le lot du mois. Le
+ * relevé et son export restent un contrôle (ADR 015).
  */
 export default async function OuverturesPage({
   searchParams,
@@ -46,6 +47,10 @@ export default async function OuverturesPage({
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Chaque pli ouvert et numérisé dans le mois, par client. Heures en {timeZone}.
+        </p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Un contrôle, pas la source de facturation : les plis ouverts sont facturés par le lot
+          mensuel, sur la facture de chaque client.
         </p>
       </div>
 
@@ -99,10 +104,10 @@ export default async function OuverturesPage({
             Aucune ouverture de courrier en {formatIsoMonth(month)}.
           </p>
           <Link
-            href="/courrier?vue=a-ouvrir"
+            href="/courrier/demandes?nature=ouverture"
             className="mt-4 inline-block text-sm text-muted-foreground underline-offset-2 hover:underline"
           >
-            Voir les courriers à ouvrir
+            Voir les demandes d’ouverture à traiter
           </Link>
         </div>
       ) : (

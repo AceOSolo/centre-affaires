@@ -2,7 +2,13 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { wallClockToUtc } from '../../lib/dates.ts'
-import { bookingContractProblem, type AttachableContract } from './rattachement.ts'
+import {
+  bookingClientLock,
+  bookingClientLockMessages,
+  bookingContractProblem,
+  type AttachableContract,
+  type BookingClientFacts,
+} from './rattachement.ts'
 
 /**
  * Rattachement d'une réservation à un contrat (R05) : même client, contrat
@@ -138,5 +144,30 @@ describe('rattachement d’une réservation à un contrat', () => {
       ),
       undefined,
     )
+  })
+})
+
+describe('client d’une réservation (ADR 041)', () => {
+  const faits = (overrides: Partial<BookingClientFacts> = {}): BookingClientFacts => ({
+    bookedByMemberId: null,
+    cancelledByMemberId: null,
+    inspected: false,
+    invoiced: false,
+    ...overrides,
+  })
+
+  it('laisse changer le client d’une réservation de l’accueil, ni inspectée ni facturée', () => {
+    assert.equal(bookingClientLock(faits()), undefined)
+  })
+
+  it('fige le client d’une réservation faite ou annulée depuis l’espace client', () => {
+    assert.equal(bookingClientLock(faits({ bookedByMemberId: 'm1' })), 'espace-client')
+    assert.equal(bookingClientLock(faits({ cancelledByMemberId: 'm1' })), 'espace-client')
+  })
+
+  it('fige le client d’une réservation inspectée ou facturée, et le dit', () => {
+    assert.equal(bookingClientLock(faits({ inspected: true, invoiced: true })), 'etat-des-lieux')
+    assert.equal(bookingClientLock(faits({ invoiced: true })), 'facturee')
+    assert.match(bookingClientLockMessages.facturee, /avoir/)
   })
 })

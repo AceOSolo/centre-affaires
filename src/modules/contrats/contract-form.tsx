@@ -31,6 +31,10 @@ export type ContractFormDefaults = {
   noticeDays: string
   ratePlanId: string
   notes: string
+  vatRate: string
+  commitmentMonths: string
+  tacitRenewal: string
+  renewalMonths: string
 }
 
 /**
@@ -51,6 +55,7 @@ export function ContractForm({
   resources,
   defaultClientId,
   contract,
+  amountFromLines = false,
 }: {
   clients: { id: string; name: string }[]
   ratePlans: RatePlan[]
@@ -58,6 +63,11 @@ export function ContractForm({
   defaultClientId?: string
   /** Brouillon à modifier ; absent en création. */
   contract?: ContractFormDefaults
+  /**
+   * Le brouillon a des lignes récurrentes : son montant en est la somme, tenue
+   * par la base (ADR 025). Le champ est alors en lecture seule.
+   */
+  amountFromLines?: boolean
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(
     contract ? updateContractAction : createContractAction,
@@ -268,16 +278,25 @@ export function ContractForm({
               id="amount"
               name="amount"
               required
+              readOnly={amountFromLines}
               inputMode="decimal"
               placeholder="900,00"
               defaultValue={value('amount')}
               {...invalid('amount', true)}
-              className={`${fieldClass} tabular`}
+              className={`${fieldClass} tabular read-only:bg-muted`}
             />
             <span className="text-sm text-muted-foreground">€</span>
           </div>
           <p id="amount-hint" className="mt-1 text-xs text-muted-foreground">
             {billingPeriodSuffixes[billingPeriod]}
+            {amountFromLines && contract && (
+              <>
+                {' '}— somme des lignes récurrentes.{' '}
+                <Link href={`/contrats/${contract.id}/lignes`} className="underline underline-offset-2">
+                  Modifier les lignes
+                </Link>
+              </>
+            )}
           </p>
           <FieldError name="amount" error={errors.amount} />
         </div>
@@ -300,6 +319,85 @@ export function ContractForm({
             <span className="text-sm text-muted-foreground">jours</span>
           </div>
           <FieldError name="noticeDays" error={errors.noticeDays} />
+        </div>
+      </div>
+
+      <div className="grid gap-5 sm:grid-cols-4">
+        <div>
+          <label className={labelClass} htmlFor="vatRate">
+            TVA
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id="vatRate"
+              name="vatRate"
+              inputMode="decimal"
+              defaultValue={value('vatRate', '20')}
+              {...invalid('vatRate', true)}
+              className={`${fieldClass} tabular`}
+            />
+            <span className="text-sm text-muted-foreground">%</span>
+          </div>
+          <p id="vatRate-hint" className="mt-1 text-xs text-muted-foreground">
+            Du montant, quand le prix n’est pas détaillé en lignes.
+          </p>
+          <FieldError name="vatRate" error={errors.vatRate} />
+        </div>
+
+        <div>
+          <label className={labelClass} htmlFor="commitmentMonths">
+            Engagement <span className="font-normal text-muted-foreground">(facultatif)</span>
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id="commitmentMonths"
+              name="commitmentMonths"
+              inputMode="numeric"
+              defaultValue={value('commitmentMonths')}
+              {...invalid('commitmentMonths', true)}
+              className={`${fieldClass} tabular`}
+            />
+            <span className="text-sm text-muted-foreground">mois</span>
+          </div>
+          <p id="commitmentMonths-hint" className="mt-1 text-xs text-muted-foreground">
+            De date à date. Vide : sans engagement.
+          </p>
+          <FieldError name="commitmentMonths" error={errors.commitmentMonths} />
+        </div>
+
+        <div className="flex items-end pb-2">
+          <label className="flex items-center gap-2 text-sm" htmlFor="tacitRenewal">
+            <input
+              id="tacitRenewal"
+              name="tacitRenewal"
+              type="checkbox"
+              value="on"
+              defaultChecked={value('tacitRenewal') === 'on'}
+              className="size-4 accent-primary"
+            />
+            Reconduction tacite
+          </label>
+        </div>
+
+        <div>
+          <label className={labelClass} htmlFor="renewalMonths">
+            Reconduit par
+          </label>
+          <div className="mt-1 flex items-center gap-2">
+            <input
+              id="renewalMonths"
+              name="renewalMonths"
+              inputMode="numeric"
+              defaultValue={value('renewalMonths')}
+              {...invalid('renewalMonths', true)}
+              className={`${fieldClass} tabular`}
+            />
+            <span className="text-sm text-muted-foreground">mois</span>
+          </div>
+          <p id="renewalMonths-hint" className="mt-1 text-xs text-muted-foreground">
+            Seulement avec la reconduction tacite.
+          </p>
+          <FieldError name="renewalMonths" error={errors.renewalMonths} />
         </div>
       </div>
 

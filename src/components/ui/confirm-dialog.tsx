@@ -19,6 +19,7 @@ type ActionState = { error?: string } | null
  */
 export function ConfirmDialog({
   triggerLabel,
+  triggerAriaLabel,
   triggerClassName,
   title,
   children,
@@ -29,6 +30,8 @@ export function ConfirmDialog({
   fields,
 }: {
   triggerLabel: string
+  /** Nom accessible du déclencheur, quand le libellé seul se répète d'une ligne à l'autre. */
+  triggerAriaLabel?: string
   triggerClassName?: string
   title: string
   /** Ce que l'action va faire, et ce qui reste possible après. */
@@ -68,6 +71,7 @@ export function ConfirmDialog({
         type="button"
         onClick={open}
         aria-haspopup="dialog"
+        aria-label={triggerAriaLabel}
         className={triggerClassName}
       >
         {triggerLabel}

@@ -1,35 +1,43 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../modules/clients/queries.ts'
 import { contractStatusLabels } from '../../../../modules/contrats/labels.ts'
+import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
+import { frozenQuoteDisplay } from '../../../../modules/facturation/devis.ts'
+import { QuoteSummary } from '../../../../modules/facturation/devis-resume.tsx'
 import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
-import {
-  assignBookingClientAction,
-  cancelBookingAction,
-} from '../../../../modules/reservations/actions.ts'
+import { cancelBookingAction } from '../../../../modules/reservations/actions.ts'
 import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
+import { AssignClientForm } from '../../../../modules/reservations/assign-client-form.tsx'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
-import { findBooking } from '../../../../modules/reservations/queries.ts'
+import { findBookingAuthors } from '../../../../modules/reservations/demandes-queries.ts'
+import { findBooking, findBookingClientLock } from '../../../../modules/reservations/queries.ts'
+import { bookingClientLockMessages } from '../../../../modules/reservations/rattachement.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 
 export const metadata = { title: 'Réservation' }
 
 export default async function BookingPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const { id } = await params
   if (!isUuid(id)) notFound()
   const timeZone = await currentTimeZone()
   const booking = await findBooking(id)
   if (!booking) notFound()
   // `findClient` et non la liste : une fiche archivée reste nommée ici.
-  const [clients, client] = await Promise.all([
+  const [clients, client, authors, clientLock] = await Promise.all([
     listClients(),
     booking.clientId ? findClient(booking.clientId) : undefined,
+    // Auteur de la réservation et de l'annulation (ADR 036).
+    findBookingAuthors(booking.id),
+    // Client figé par l'espace client, un état des lieux ou une facture (ADR 041).
+    booking.kind === 'booking' ? findBookingClientLock(booking.id) : undefined,
   ])
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
@@ -37,6 +45,8 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   // Occupation d'une ressource sous contrat (ADR 018) : des jours entiers,
   // parfois sans terme, qui ne se modifient qu'à travers le contrat.
   const occupation = booking.kind === 'contract'
+  // Prix figé à l'écriture (R11) : celui que la facture reprendra.
+  const frozenQuote = frozenQuoteDisplay(booking)
 
   return (
     <div className="flex max-w-2xl flex-col gap-6">
@@ -129,6 +139,36 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           <ChannelLabel channel={booking.channel} detailed />
         </dd>
 
+        {authors.bookedBy && (
+          <>
+            <dt className="text-muted-foreground">Réservée par</dt>
+            <dd>{authors.bookedBy}, depuis l’espace client</dd>
+          </>
+        )}
+
+        {booking.kind === 'booking' && (
+          <>
+            <dt className="text-muted-foreground">Prix</dt>
+            <dd>
+              {frozenQuote && booking.quotedAt ? (
+                <>
+                  <QuoteSummary quote={frozenQuote} className="max-w-sm" />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Figé le {formatLongDate(toIsoDate(booking.quotedAt, timeZone), timeZone)} à{' '}
+                    {formatTime(booking.quotedAt, timeZone)} : la facture le reprendra, même si la
+                    grille change.
+                  </p>
+                </>
+              ) : (
+                <span className="text-muted-foreground">
+                  Non chiffrée — réservation interne, antérieure au calcul des prix, ou sans tarif
+                  dans la grille.
+                </span>
+              )}
+            </dd>
+          </>
+        )}
+
         <dt className="text-muted-foreground">Client</dt>
         <dd>
           {client ? (
@@ -170,6 +210,16 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
                 ? `${formatLongDate(toIsoDate(booking.cancelledAt, timeZone), timeZone)} à ${formatTime(booking.cancelledAt, timeZone)}`
                 : '—'}
             </dd>
+            {(authors.cancelledByMember || authors.cancelledByStaff) && (
+              <>
+                <dt className="text-muted-foreground">Annulée par</dt>
+                <dd>
+                  {authors.cancelledByMember
+                    ? `${authors.cancelledByMember}, depuis l’espace client`
+                    : `${authors.cancelledByStaff}, de l’équipe`}
+                </dd>
+              </>
+            )}
             <dt className="text-muted-foreground">Motif</dt>
             <dd>{booking.cancellationReason ?? '—'}</dd>
           </>
@@ -187,44 +237,43 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         </div>
       )}
 
-      {booking.kind === 'booking' && clients.length > 0 && (
-        <form
-          action={assignBookingClientAction}
-          className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4 sm:flex-row sm:items-end"
-        >
-          <input type="hidden" name="id" value={booking.id} />
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-foreground" htmlFor="clientId">
-              Client rattaché
-            </label>
-            <select
-              id="clientId"
-              name="clientId"
-              defaultValue={booking.clientId ?? ''}
-              aria-describedby="clientId-hint"
-              className="mt-1 w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40"
-            >
-              <option value="">Aucun</option>
-              {clients.map((candidate) => (
-                <option key={candidate.id} value={candidate.id}>
-                  {candidate.name}
-                </option>
-              ))}
-            </select>
-            <p id="clientId-hint" className="mt-1 text-xs text-muted-foreground">
-              La réservation apparaît dans l’espace de ce client.
-              {booking.contract &&
-                ` Changer de client la détache du contrat ${booking.contract.reference}.`}
-            </p>
-          </div>
-          <button
-            type="submit"
-            className="self-start rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted sm:self-auto"
-          >
-            Enregistrer
-          </button>
-        </form>
+      {/* États des lieux au titre de cette réservation (R06, ADR 039). */}
+      {can(member.role, 'etats-des-lieux.gerer') && (
+        <InspectionsSection
+          filter={{ bookingId: booking.id }}
+          context={{ reservation: booking.id }}
+          timeZone={timeZone}
+          unavailable={
+            cancelled
+              ? 'Réservation annulée : plus d’état des lieux à ouvrir.'
+              : !booking.clientId
+                ? 'Rattachez un client à la réservation pour en faire l’état des lieux.'
+                : undefined
+          }
+        />
       )}
+
+      {booking.kind === 'booking' &&
+        (clientLock ? (
+          <section
+            aria-labelledby="client-fige"
+            className="rounded-lg border border-border bg-white px-5 py-4"
+          >
+            <h2 id="client-fige" className="text-sm font-medium text-foreground">
+              Client rattaché : {client?.name ?? 'aucun'}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">{bookingClientLockMessages[clientLock]}</p>
+          </section>
+        ) : (
+          clients.length > 0 && (
+            <AssignClientForm
+              bookingId={booking.id}
+              clientId={booking.clientId}
+              clients={clients.map((candidate) => ({ id: candidate.id, name: candidate.name }))}
+              contractReference={booking.contract?.reference ?? null}
+            />
+          )
+        ))}
 
       {/* Pas de suppression : la réservation reste consultable, l'annulation est
           sa suppression logique (décision 6). Une occupation de contrat

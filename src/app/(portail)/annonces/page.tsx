@@ -27,7 +27,7 @@ export const metadata = {
 export const dynamic = 'force-dynamic'
 
 /** Unités cherchées dans la grille, de la plus fine à la plus large. */
-const UNITES: RateUnit[] = ['hour', 'half_day', 'day', 'month', 'unit']
+const UNITES: RateUnit[] = ['hour', 'half_day', 'day', 'week', 'month', 'unit']
 
 export default async function CataloguePage() {
   const tenant = await currentTenant()
@@ -36,14 +36,14 @@ export default async function CataloguePage() {
 
   const [listings, plan, availability] = await Promise.all([
     listPublishedListings(),
-    findDefaultRatePlan(),
+    findDefaultRatePlan(today),
     listDayAvailability(today, timeZone),
   ])
 
   const dispoParRessource = new Map(availability.map((entry) => [entry.resource.id, entry]))
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-5 py-10 sm:px-8">
       <header className="flex flex-col gap-2">
         <h1 className="text-3xl font-semibold tracking-tight">Nos espaces à louer</h1>
         <p className="max-w-2xl text-muted-foreground">
@@ -67,10 +67,11 @@ export default async function CataloguePage() {
             // visiteur veut savoir à partir de combien, pas le tarif mensuel.
             const tarif = plan
               ? UNITES.map((unit) =>
-                  resolveRate(plan.items, {
+                  resolveRate(plan, {
                     resourceId: listing.resourceId,
                     resourceType: listing.resource.resourceType,
                     unit,
+                    on: today,
                   }),
                 ).find(Boolean)
               : undefined
@@ -101,7 +102,7 @@ export default async function CataloguePage() {
                 </div>
 
                 <h2 className="text-lg font-semibold tracking-tight">
-                  <Link href={`/annonces/${listing.slug}`} className="hover:underline">
+                  <Link href={`/annonces/${listing.slug}`} className="inline-flex min-h-11 items-center hover:underline">
                     {listing.headline}
                   </Link>
                 </h2>
@@ -145,7 +146,7 @@ export default async function CataloguePage() {
                   </p>
                   <Link
                     href={`/annonces/${listing.slug}`}
-                    className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+                    className="inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
                   >
                     Voir
                   </Link>

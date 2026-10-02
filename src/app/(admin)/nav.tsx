@@ -18,11 +18,23 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/ressources/agendas', label: 'Agendas Google', permission: 'agenda-google.gerer' },
   { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
   { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
+  { href: '/factures', label: 'Factures', permission: 'facturation.consulter' },
+  // Règlements et export comptable (R16, ADR 030) : l'accueil consulte, l'exploitant pointe.
+  { href: '/paiements', label: 'Règlements', permission: 'facturation.consulter' },
+  { href: '/comptabilite', label: 'Comptabilité', permission: 'comptabilite.exporter' },
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
-  // Les plis dont le client attend l'ouverture sont comptés, comme les
-  // demandes : c'est une file d'attente, pas une liste de consultation.
+  { href: '/services', label: 'Services', permission: 'services.gerer' },
+  { href: '/offres', label: 'Offres', permission: 'services.gerer' },
+  // Les demandes de courrier à traiter (ouverture, numérisation,
+  // réexpédition) sont comptées : c'est une file d'attente (ADR 037).
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
+  // Entrées et sorties des ressources occupées ; les modèles s'y rejoignent (ADR 039).
+  { href: '/etats-des-lieux', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+  // Journal des messages envoyés ; les modèles s'ouvrent depuis lui (ADR 038).
+  { href: '/notifications', label: 'Messages', permission: 'notifications.consulter' },
+  { href: '/indicateurs', label: 'Indicateurs', permission: 'indicateurs.consulter' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
+  { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },
 ]
 
 /**
@@ -50,8 +62,10 @@ export function Nav({
     )
     .sort((a, b) => b.href.length - a.href.length)[0]?.href
 
+  // Dix-neuf entrées depuis la vague 2 : elles passent à la ligne plutôt que de
+  // faire défiler la page horizontalement.
   return (
-    <nav className="flex gap-1">
+    <nav className="flex flex-wrap gap-1">
       {visibles.map((section) => {
         const active = section.href === actif
         return (
@@ -77,7 +91,7 @@ export function Nav({
             {section.href === '/courrier' && mailRequestCount > 0 && (
               <span
                 className="ml-1.5 inline-block rounded-full bg-primary px-1.5 text-xs font-semibold text-white tabular"
-                aria-label={`${mailRequestCount} courrier${mailRequestCount > 1 ? 's' : ''} à ouvrir`}
+                aria-label={`${mailRequestCount} demande${mailRequestCount > 1 ? 's' : ''} de courrier à traiter`}
               >
                 {mailRequestCount}
               </span>

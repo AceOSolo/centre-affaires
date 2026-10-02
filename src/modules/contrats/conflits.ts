@@ -10,10 +10,12 @@ export function occupationConflictMessage(
   resource: { name: string; code: string } | undefined,
   conflicts: readonly BusyBooking[],
   timeZone: string,
+  /** Période en cause : celle du contrat, ou à partir de la date d'effet d'un avenant. */
+  period = 'sur la période du contrat',
 ): string {
   const name = resource ? `La ressource ${resource.name} (${resource.code})` : 'La ressource'
   const busy = conflicts.map((conflict) => describeBusyBooking(conflict, timeZone)).join(' ; ')
   return busy
-    ? `${name} est déjà occupée sur la période du contrat : ${busy}. Choisissez une autre ressource, ou libérez celle-ci avant de recommencer.`
-    : `${name} est déjà occupée sur la période du contrat. Choisissez une autre ressource, ou libérez celle-ci avant de recommencer.`
+    ? `${name} est déjà occupée ${period} : ${busy}. Choisissez une autre ressource, ou libérez celle-ci avant de recommencer.`
+    : `${name} est déjà occupée ${period}. Choisissez une autre ressource, ou libérez celle-ci avant de recommencer.`
 }

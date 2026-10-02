@@ -5,8 +5,10 @@ import {
   addDaysToIsoDate,
   addMonthsToIsoMonth,
   dayRangeUtc,
+  formatCalendarDate,
   formatDateTime,
   formatIsoMonth,
+  isCalendarDate,
   isIsoMonth,
   monthRangeUtc,
   formatDuration,
@@ -145,5 +147,21 @@ describe('mois du centre', () => {
 
   it('nomme le mois en français', () => {
     assert.equal(formatIsoMonth('2026-09'), 'septembre 2026')
+  })
+})
+
+describe('dates de calendrier', () => {
+  it('refuse une date qui n’existe pas ou mal écrite', () => {
+    assert.equal(isCalendarDate('2026-02-28'), true)
+    assert.equal(isCalendarDate('2028-02-29'), true)
+    assert.equal(isCalendarDate('2026-02-29'), false)
+    assert.equal(isCalendarDate('2026-13-01'), false)
+    assert.equal(isCalendarDate('01/03/2026'), false)
+    assert.equal(isCalendarDate(''), false)
+    assert.equal(isCalendarDate(undefined), false)
+  })
+
+  it('affiche un jour au format français, sans fuseau', () => {
+    assert.equal(formatCalendarDate('2026-03-01'), '01/03/2026')
   })
 })

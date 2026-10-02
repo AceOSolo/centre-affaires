@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
 import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
+import { PG_MAIL_REQUEST_REFUSED, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
@@ -15,6 +16,7 @@ import { scanExtensions, type ScanFile } from './fichiers.ts'
 import type { OpeningLine } from './regles.ts'
 import {
   mailItems,
+  mailRequests,
   mailScans,
   mailScanViews,
   type MailItem,
@@ -36,7 +38,7 @@ const displayName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
 /* Stockage                                                                   */
 /* -------------------------------------------------------------------------- */
 
-type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
+export type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
 
 /**
  * Dépose les fichiers avant d'écrire en base : une ligne ne doit jamais
@@ -47,7 +49,7 @@ type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionK
  * reçoit jamais le document en clair. Sans clé configurée, le dépôt échoue
  * avant le premier envoi.
  */
-async function store(
+export async function store(
   tenantId: string,
   scans: Partial<Record<MailScanSide, ScanFile>>,
 ): Promise<StoredScan[]> {
@@ -66,11 +68,11 @@ async function store(
   return stored
 }
 
-async function discard(stored: StoredScan[]): Promise<void> {
+export async function discard(stored: StoredScan[]): Promise<void> {
   await Promise.allSettled(stored.map(({ key }) => deleteObject(key)))
 }
 
-const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
+export const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
   stored.map(({ side, key, scan, encryptionKeyVersion }) => ({
     mailItemId,
     side,
@@ -177,7 +179,8 @@ export async function findMail(id: string): Promise<MailDetail | undefined> {
       .select()
       .from(mailScans)
       .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt)))
-      .orderBy(asc(mailScans.side))
+      // L'enveloppe, puis les contenus dans l'ordre de leur dépôt (ADR 037).
+      .orderBy(asc(mailScans.side), asc(mailScans.createdAt))
 
     const views = await tx
       .select({
@@ -269,21 +272,63 @@ export async function openMail(id: string, staffMemberId: string, content: ScanF
   const stored = await store(tenantId, { content })
 
   try {
-    await withTenant(tenantId, async (tx) => {
-      const [item] = await tx
-        .update(mailItems)
-        .set({ status: 'opened', openedAt: sql`now()`, openedBy: staffMemberId })
-        .where(
-          and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
-        )
-        .returning({ id: mailItems.id })
-      if (!item) throw new MailStateError('Ce courrier a déjà été ouvert, ou il a été retiré.')
-      await tx.insert(mailScans).values(scanRows(item.id, stored, staffMemberId))
-    })
+    await recordOpening(id, staffMemberId, stored)
   } catch (error) {
     await discard(stored)
     throw error
   }
+}
+
+/**
+ * Écriture de l'ouverture, une fois le contenu déposé : séparée du dépôt pour
+ * s'éprouver contre la base sans stockage réel.
+ *
+ * La demande d'ouverture en cours (ADR 037) est verrouillée d'abord : le
+ * client ne l'annule pas pendant qu'on ouvre. L'ouverture du pli la clôt
+ * (trigger `mail_items_follow_requests`), et le contenu lui est rattaché
+ * (`mail_scans.mail_request_id`) ; sans demande, c'est une ouverture d'office,
+ * contenu sans demande.
+ */
+export async function recordOpening(
+  id: string,
+  staffMemberId: string,
+  stored: StoredScan[],
+): Promise<{ mailRequestId: string | null }> {
+  return withTenant(currentTenantId(), async (tx) => {
+    const [request] = await tx
+      .select({ id: mailRequests.id })
+      .from(mailRequests)
+      .where(
+        and(
+          eq(mailRequests.mailItemId, id),
+          eq(mailRequests.kind, 'open_and_scan'),
+          inArray(mailRequests.status, ['requested', 'in_progress']),
+        ),
+      )
+      .limit(1)
+      .for('update')
+    const [item] = await tx
+      .update(mailItems)
+      .set({ status: 'opened', openedAt: sql`now()`, openedBy: staffMemberId })
+      .where(
+        and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
+      )
+      .returning({ id: mailItems.id })
+    if (!item) throw new MailStateError('Ce courrier a déjà été ouvert, ou il a été retiré.')
+    const mailRequestId = request?.id ?? null
+    if (stored.length > 0) {
+      await tx
+        .insert(mailScans)
+        .values(
+          scanRows(item.id, stored, staffMemberId).map((row) => ({
+            ...row,
+            // Seul un contenu est le produit d'une demande.
+            mailRequestId: row.side === 'content' ? mailRequestId : null,
+          })),
+        )
+    }
+    return { mailRequestId }
+  })
 }
 
 /**
@@ -363,12 +408,15 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
   if (accounts.length === 0) return []
   const clientIds = accounts.map((account) => account.clientId)
 
+  // Un pli peut porter plusieurs contenus, un par numérisation demandée
+  // (ADR 037) : le plus récent.
   const scanId = (side: MailScanSide) =>
     sql<string | null>`(
       select ${mailScans.id} from ${mailScans}
       where ${mailScans.mailItemId} = ${mailItems.id}
         and ${mailScans.side} = ${side}
         and ${mailScans.deletedAt} is null
+      order by ${mailScans.createdAt} desc
       limit 1
     )`
 
@@ -397,64 +445,88 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
 }
 
 /**
- * Demande d'ouverture par le client. Rend `false` quand le pli n'est pas à
- * lui, ou plus dans un état qui le permet — un double clic, une demande déjà
- * faite par un collègue.
+ * Demande d'ouverture par le client : une ligne de `mail_requests` (ADR 037),
+ * au nom de la personne de l'entreprise destinataire. La base tient le
+ * résumé du pli (`opening_requested`) et refuse une seconde demande en cours.
+ *
+ * Rend `false` quand le pli n'est pas à lui, ou plus dans un état qui le
+ * permet — un double clic, une demande déjà faite par un collègue, un pli
+ * ouvert entre-temps.
  */
 export async function requestOpening(id: string, accounts: ClientAccount[]): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
+  try {
+    return await inClientSpace(accounts, async (tx) => {
+      const [item] = await tx
+        .select({ clientId: mailItems.clientId, status: mailItems.status })
+        .from(mailItems)
+        .where(
+          and(
+            eq(mailItems.id, id),
+            inArray(
+              mailItems.clientId,
+              accounts.map((account) => account.clientId),
+            ),
+            isNull(mailItems.deletedAt),
+          ),
+        )
+        .limit(1)
+      const account = item && accounts.find((candidate) => candidate.clientId === item.clientId)
+      if (!account || item.status !== 'received') return false
+
+      await tx.insert(mailRequests).values({
+        mailItemId: id,
+        clientId: account.clientId,
+        kind: 'open_and_scan',
+        requestedByMemberId: account.memberId,
+      })
+      return true
+    })
+  } catch (error) {
+    // Deux demandes simultanées : l'index des demandes en cours n'en garde
+    // qu'une ; un pli ouvert ou retiré entre-temps : la garde refuse (CA008).
+    const code = pgErrorCode(error)
+    if (code === PG_UNIQUE_VIOLATION || code === PG_MAIL_REQUEST_REFUSED) return false
+    throw error
+  }
+}
+
+/**
+ * Annulation, par toute personne de l'entreprise, tant que le centre n'a pas
+ * pris la demande en charge. La demande passe `cancelled`, à son nom : la
+ * trace reste (ADR 037), seul le résumé du pli redevient `received`.
+ */
+export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]): Promise<boolean> {
+  if (accounts.length === 0 || !isUuid(id)) return false
   return inClientSpace(accounts, async (tx) => {
-    const [item] = await tx
-      .select({ clientId: mailItems.clientId })
-      .from(mailItems)
+    const [request] = await tx
+      .select({ id: mailRequests.id, clientId: mailRequests.clientId })
+      .from(mailRequests)
+      .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
       .where(
         and(
-          eq(mailItems.id, id),
+          eq(mailRequests.mailItemId, id),
+          eq(mailRequests.kind, 'open_and_scan'),
+          eq(mailRequests.status, 'requested'),
           inArray(
-            mailItems.clientId,
+            mailRequests.clientId,
             accounts.map((account) => account.clientId),
           ),
           isNull(mailItems.deletedAt),
         ),
       )
       .limit(1)
-    const account = item && accounts.find((candidate) => candidate.clientId === item.clientId)
+    const account = request && accounts.find((candidate) => candidate.clientId === request.clientId)
     if (!account) return false
 
+    // La date d'annulation est posée par la base.
     const updated = await tx
-      .update(mailItems)
-      .set({
-        status: 'opening_requested',
-        openingRequestedAt: sql`now()`,
-        openingRequestedBy: account.memberId,
-      })
-      .where(and(eq(mailItems.id, id), eq(mailItems.status, 'received')))
-      .returning({ id: mailItems.id })
+      .update(mailRequests)
+      .set({ status: 'cancelled', cancelledByMemberId: account.memberId })
+      .where(and(eq(mailRequests.id, request.id), eq(mailRequests.status, 'requested')))
+      .returning({ id: mailRequests.id })
     return updated.length > 0
   })
-}
-
-/** Annulation, par toute personne de l'entreprise, tant que le pli est fermé. */
-export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]): Promise<boolean> {
-  if (accounts.length === 0 || !isUuid(id)) return false
-  const updated = await inClientSpace(accounts, (tx) =>
-    tx
-      .update(mailItems)
-      .set({ status: 'received', openingRequestedAt: null, openingRequestedBy: null })
-      .where(
-        and(
-          eq(mailItems.id, id),
-          eq(mailItems.status, 'opening_requested'),
-          inArray(
-            mailItems.clientId,
-            accounts.map((account) => account.clientId),
-          ),
-          isNull(mailItems.deletedAt),
-        ),
-      )
-      .returning({ id: mailItems.id }),
-  )
-  return updated.length > 0
 }
 
 /* -------------------------------------------------------------------------- */

@@ -1,13 +1,28 @@
 import Link from 'next/link'
 
+import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
+import { todayIsoDate } from '../../../lib/dates.ts'
+import { currentTimeZone } from '../../../lib/tenant.ts'
+import {
+  formatRatePlanValidity,
+  ratePlanValidityLabels,
+  ratePlanValidityStyles,
+} from '../../../modules/facturation/grilles-affichage.ts'
 import { listRatePlans } from '../../../modules/facturation/queries.ts'
+import { ratePlanValidityState } from '../../../modules/facturation/tarifs.ts'
 
 export const metadata = { title: 'Grilles tarifaires' }
 
 export default async function RatePlansPage() {
-  await requirePermission('tarifs.gerer')
-  const plans = await listRatePlans()
+  const { member } = await requirePermission('tarifs.gerer')
+  const [plans, timeZone] = await Promise.all([listRatePlans(), currentTimeZone()])
+  // Le jour du centre, pas celui du serveur (décision 4).
+  const today = todayIsoDate(timeZone)
+  // Plusieurs grilles par défaut se suivent dans le temps (ADR 035) : celle
+  // d'aujourd'hui chiffre les réservations sans grille de contrat.
+  const defaultPlans = plans.filter((plan) => plan.isDefault)
+  const currentDefault = defaultPlans.find((plan) => ratePlanValidityState(plan, today) === 'current')
 
   return (
     <div className="flex flex-col gap-6">
@@ -15,8 +30,18 @@ export default async function RatePlansPage() {
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Grilles tarifaires</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Prix des ressources à l’heure, à la journée ou au forfait. Un contrat peut désigner sa
-            propre grille.
+            Prix des ressources à l’heure, à la demi-journée, à la journée, à la semaine ou au mois.
+            Un contrat peut désigner sa propre grille.
+            {can(member.role, 'centre.configurer') && (
+              <>
+                {' '}
+                Les règles de calcul (unité entamée, demi-journée, prorata, TVA) se règlent dans la{' '}
+                <Link href="/configuration" className="underline underline-offset-2">
+                  configuration du centre
+                </Link>
+                .
+              </>
+            )}
           </p>
         </div>
         <Link
@@ -26,6 +51,17 @@ export default async function RatePlansPage() {
           Nouvelle grille
         </Link>
       </div>
+
+      {/* Une grille par défaut hors de ses dates ne chiffre rien : le dire ici,
+          avant qu'une réservation ne parte sans prix. */}
+      {defaultPlans.length > 0 && !currentDefault && (
+        <p role="status" className="rounded-md border border-statut-conflit/40 bg-white px-4 py-3 text-sm">
+          <strong className="font-medium">Aucune grille par défaut en vigueur aujourd’hui</strong> —{' '}
+          {defaultPlans.map((plan) => `« ${plan.name} » est valable ${formatRatePlanValidity(plan)}`).join(' ; ')} :
+          aujourd’hui, les réservations sans grille de contrat ne sont pas chiffrées. Modifiez des dates ou
+          désignez une autre grille par défaut.
+        </p>
+      )}
 
       {plans.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
@@ -47,6 +83,7 @@ export default async function RatePlansPage() {
               <tr>
                 <th className="px-4 py-3 font-medium">Nom</th>
                 <th className="px-4 py-3 font-medium">Validité</th>
+                <th className="px-4 py-3 font-medium">État</th>
                 <th className="px-4 py-3 font-medium">Devise</th>
                 <th className="px-4 py-3 font-medium">Rôle</th>
               </tr>
@@ -62,8 +99,15 @@ export default async function RatePlansPage() {
                       {plan.name}
                     </Link>
                   </td>
-                  <td className="whitespace-nowrap px-4 py-3 text-muted-foreground">
-                    {plan.validFrom ?? '—'} → {plan.validTo ?? '—'}
+                  <td className="whitespace-nowrap px-4 py-3 tabular text-muted-foreground">
+                    {formatRatePlanValidity(plan)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${ratePlanValidityStyles[ratePlanValidityState(plan, today)]}`}
+                    >
+                      {ratePlanValidityLabels[ratePlanValidityState(plan, today)]}
+                    </span>
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{plan.currency}</td>
                   <td className="px-4 py-3">

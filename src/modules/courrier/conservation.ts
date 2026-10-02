@@ -27,6 +27,19 @@ export async function purgeExpiredMail(
   tx: Transaction,
   removeObject: (key: string) => Promise<void>,
 ): Promise<{ scans: number; views: number }> {
+  const scans = await purgeExpiredMailScans(tx, removeObject)
+  const views = await purgeExpiredMailScanViews(tx)
+  return { scans, views }
+}
+
+/**
+ * Numérisations échues : fichier effacé du stockage, puis ligne marquée. Rend
+ * le nombre de numérisations purgées.
+ */
+export async function purgeExpiredMailScans(
+  tx: Transaction,
+  removeObject: (key: string) => Promise<void>,
+): Promise<number> {
   const expired = await tx
     .select({ id: mailScans.id, storageKey: mailScans.storageKey })
     .from(mailScans)
@@ -45,9 +58,16 @@ export async function purgeExpiredMail(
     await removeObject(scan.storageKey)
     await tx.update(mailScans).set({ deletedAt: sql`now()` }).where(eq(mailScans.id, scan.id))
   }
+  return expired.length
+}
 
+/**
+ * Journal d'accès aux numérisations, au terme de sa durée : il ne dépend pas
+ * du stockage, la tâche de nuit le purge avant lui.
+ */
+export async function purgeExpiredMailScanViews(tx: Transaction): Promise<number> {
   const [row] = await tx.execute<{ purged: number }>(
     sql`select purge_expired_mail_scan_views() as purged`,
   )
-  return { scans: expired.length, views: Number(row?.purged ?? 0) }
+  return Number(row?.purged ?? 0)
 }

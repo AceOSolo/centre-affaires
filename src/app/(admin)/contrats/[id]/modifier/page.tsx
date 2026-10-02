@@ -7,7 +7,9 @@ import { findClient, listClients } from '../../../../../modules/clients/queries.
 import { ContractForm } from '../../../../../modules/contrats/contract-form.tsx'
 import { centsToAmountInput } from '../../../../../modules/contrats/formulaire.ts'
 import { contractStatusLabels } from '../../../../../modules/contrats/labels.ts'
+import { formatBpAsPercent } from '../../../../../modules/contrats/lignes.ts'
 import { findContract } from '../../../../../modules/contrats/queries.ts'
+import { findContractTerms } from '../../../../../modules/contrats/versions.ts'
 import { listRatePlans } from '../../../../../modules/facturation/queries.ts'
 import { listResources } from '../../../../../modules/ressources/queries.ts'
 
@@ -67,6 +69,13 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
     contract.ratePlan && !ratePlans.some((plan) => plan.id === contract.ratePlan?.id)
       ? [contract.ratePlan, ...ratePlans]
       : ratePlans
+  // Avec des lignes récurrentes, la base tient le montant égal à leur somme
+  // (ADR 025) : le champ ne fait que l'afficher.
+  const { versions } = await findContractTerms(id)
+  const amountFromLines =
+    versions
+      .find((version) => version.amendmentId === null)
+      ?.lines.some((line) => line.isRecurring) ?? false
 
   return (
     <div className="flex flex-col gap-6">
@@ -83,6 +92,7 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
         clients={clientOptions}
         ratePlans={ratePlanOptions}
         resources={resourceOptions}
+        amountFromLines={amountFromLines}
         contract={{
           id: contract.id,
           clientId: contract.clientId,
@@ -96,6 +106,10 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
           noticeDays: String(contract.noticeDays),
           ratePlanId: contract.ratePlanId ?? '',
           notes: contract.notes ?? '',
+          vatRate: formatBpAsPercent(contract.vatRateBp),
+          commitmentMonths: contract.commitmentMonths ? String(contract.commitmentMonths) : '',
+          tacitRenewal: contract.tacitRenewal ? 'on' : '',
+          renewalMonths: contract.renewalMonths ? String(contract.renewalMonths) : '',
         }}
       />
     </div>

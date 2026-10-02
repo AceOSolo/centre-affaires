@@ -9,6 +9,13 @@ import { requirePermission } from '../../lib/auth/staff.ts'
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { parseQuoteDiscount } from '../facturation/devis.ts'
+import {
+  notifyBookingCancelled,
+  notifyBookingConfirmed,
+  notifyBookingRequestAccepted,
+  notifyBookingRequestRefused,
+} from '../notifications/declencheurs-reservations.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import { describeBusyBooking } from './occupation.ts'
 import {
@@ -16,6 +23,7 @@ import {
   BookingNotMovableError,
   ContractOccupationLockedError,
   InvalidRangeError,
+  QuoteDiscountError,
   assignBookingClient,
   cancelBooking,
   confirmBooking,
@@ -79,17 +87,28 @@ export async function createBookingAction(
   await requirePermission('reservations.gerer')
   const timeZone = await currentTimeZone()
   const values = Object.fromEntries(
-    ['date', 'startTime', 'endTime', 'title', 'clientId', 'contractId', 'notes'].map((key) => [
-      key,
-      text(formData, key),
-    ]),
+    [
+      'date',
+      'startTime',
+      'endTime',
+      'title',
+      'clientId',
+      'contractId',
+      'notes',
+      'discountKind',
+      'discountValue',
+    ].map((key) => [key, text(formData, key)]),
   )
+  // Usage interne : la réservation n'est pas chiffrée (R11, ADR 023).
+  const internal = formData.get('internal') === 'on'
+  const discount = parseQuoteDiscount(values.discountKind, values.discountValue)
   const resourceId = text(formData, 'resourceId')
   const fieldErrors: Record<string, string> = {}
 
   if (!resourceId) return { error: 'Choisir une ressource.', values }
   if (!values.title) fieldErrors.title = 'Indiquez l’objet de la réservation.'
   if (values.contractId && !isUuid(values.contractId)) fieldErrors.contractId = 'Contrat inconnu.'
+  if (!internal && !discount.ok) fieldErrors.discountValue = discount.message
 
   let startsAt: Date | undefined
   let endsAt: Date | undefined
@@ -119,11 +138,19 @@ export async function createBookingAction(
       // Facultatif : un contrat actif de ce client qui couvre le créneau (R05),
       // vérifié par `createBooking` dans la transaction qui écrit.
       contractId: values.contractId || null,
+      // Le devis est recalculé et figé dans la transaction qui écrit : le
+      // montant affiché par le formulaire n'est qu'une annonce.
+      pricing: internal
+        ? { mode: 'none' }
+        : { mode: 'grid', discount: discount.ok ? discount.discount : null },
     })
     createdId = created.id
   } catch (error) {
     if (error instanceof InvalidRangeError) {
       return { fieldErrors: { endTime: error.message }, values }
+    }
+    if (error instanceof QuoteDiscountError) {
+      return { fieldErrors: { discountValue: error.message }, values }
     }
     if (error instanceof BookingContractError) {
       return {
@@ -141,6 +168,8 @@ export async function createBookingAction(
 
   // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014).
   after(() => syncBookingToGoogleCalendar(createdId))
+  // Réservée pour une entreprise : elle en est prévenue (ADR 038).
+  if (isUuid(values.clientId)) after(() => notifyBookingConfirmed(createdId))
   const day = toIsoDate(startsAt, timeZone)
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')
@@ -195,13 +224,18 @@ export async function moveBookingAction(
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
   if (!id) return
-  await cancelBooking(id, text(formData, 'reason') || null)
+  // Lue avant : seule une réservation encore active d'une entreprise donne un
+  // message d'annulation (ADR 038).
+  const before = isUuid(id) ? await findBooking(id) : undefined
+  // L'auteur est tracé (ADR 036) : l'espace client dit « annulée par le centre ».
+  await cancelBooking(id, text(formData, 'reason') || null, member.id)
   // Retire l'événement de l'agenda Google de la ressource, pour qu'il ne montre
   // pas un créneau libéré comme occupé (ADR 014).
   after(() => syncBookingToGoogleCalendar(id))
+  if (before && before.status !== 'cancelled' && before.clientId) after(() => notifyBookingCancelled(id))
   revalidatePath('/')
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
   // deux repartir de la base, pas du cache de rendu.
@@ -219,35 +253,48 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
   await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
+  const before = isUuid(id) ? await findBooking(id) : undefined
   await confirmBooking(id)
   after(() => syncBookingToGoogleCalendar(id))
+  // Le client d'une demande validée en est prévenu (ADR 038).
+  if (before?.status === 'pending') after(() => notifyBookingRequestAccepted(id))
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }
 
 /** Refus d'une demande : annulation motivée, le créneau redevient libre. */
 export async function refuseBookingAction(formData: FormData): Promise<void> {
-  await requirePermission('demandes.traiter')
+  const { member } = await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
-  await refuseBooking(id, text(formData, 'reason') || null)
+  const before = isUuid(id) ? await findBooking(id) : undefined
+  await refuseBooking(id, text(formData, 'reason') || null, member.id)
+  if (before?.status === 'pending') after(() => notifyBookingRequestRefused(id))
   revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }
 
+export type AssignClientFormState = { error?: string; saved?: boolean } | null
+
 /**
  * Rattache une réservation à un client, ou l'en détache (ADR 015) : c'est ce
  * qui la fait apparaître dans son espace. Utile pour une demande déposée par
  * une personne qui gère plusieurs entreprises, et pour l'historique d'avant
- * l'espace client.
+ * l'espace client. Rend un état : enregistré, ou la raison du refus (client
+ * figé par l'espace client, un état des lieux ou une facture, ADR 041).
  */
-export async function assignBookingClientAction(formData: FormData): Promise<void> {
+export async function assignBookingClientAction(
+  _previous: AssignClientFormState,
+  formData: FormData,
+): Promise<AssignClientFormState> {
   await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
-  if (!isUuid(id)) return
+  if (!isUuid(id)) return { error: 'Réservation introuvable.' }
   const clientId = text(formData, 'clientId')
-  await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  const outcome = await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  if (!outcome.ok) return { error: outcome.message }
   revalidatePath(`/reservations/${id}`)
   revalidatePath('/compte/reservations')
+  return { saved: true }
 }

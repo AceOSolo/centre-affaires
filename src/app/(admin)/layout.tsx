@@ -5,7 +5,7 @@ import { staffRoleLabels } from '../../db/staff.ts'
 import { permissionsOf } from '../../lib/auth/permissions.ts'
 import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
-import { countOpeningRequests } from '../../modules/courrier/queries.ts'
+import { countPendingMailRequests } from '../../modules/courrier/demandes-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { Nav } from './nav.tsx'
@@ -34,7 +34,8 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const [tenant, pending, mailRequests] = await Promise.all([
     currentTenant(),
     listPendingBookings(),
-    countOpeningRequests(),
+    // Demandes de courrier à traiter, toutes natures (ADR 037).
+    countPendingMailRequests().then((counts) => counts.total),
   ])
 
   return (

@@ -49,10 +49,10 @@ export async function createBookingSeriesAction(_previous: BulkFormState, formDa
 }
 
 export async function cancelBookingSeriesAction(formData: FormData): Promise<void> {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const seriesId = String(formData.get('seriesId') ?? '')
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seriesId)) return
-  const cancelled = await withTenant(currentTenantId(), (tx) => cancelFutureSeries(tx, seriesId))
+  const cancelled = await withTenant(currentTenantId(), (tx) => cancelFutureSeries(tx, seriesId, member.id))
   after(() => syncBookingsToGoogleCalendar(cancelled.map((booking) => booking.id)))
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')

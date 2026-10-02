@@ -308,27 +308,79 @@ Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
 
 Les numérisations de courrier et le journal de leurs consultations ne se
 gardent que le temps fixé par le centre (12 mois par défaut, colonnes
-`mail_*_retention_months` de `tenants`, voir `infra/configurer-centre.mjs`).
+`mail_*_retention_months` de `tenants`).
 Les coordonnées des personnes qui ont déposé une demande sur la page publique
 (nom, adresse, téléphone) sont effacées au même rythme : 12 mois par défaut
 après la fin du créneau demandé, ou après l'annulation si elle précède
-(`public_request_retention_months`, même script, ADR 020). La réservation
-reste, anonymisée.
+(`public_request_retention_months`, ADR 020). La réservation reste,
+anonymisée.
+Les prospects sans suite, les clients partis et les traces des accès et des
+membres retirés sont anonymisés au terme de leur durée (R29, ADR 040), sauf
+exclusion (facture non soldée, contrat vivant…) ; les factures émises ne sont
+jamais touchées.
+Le journal des messages envoyés (ADR 038) est purgé au terme de sa durée
+(12 mois par défaut, `notification_log_retention_months`), les photos
+d'états des lieux et le journal de leurs consultations au terme des leurs
+(ADR 039) : le fichier est effacé du stockage, la ligne reste, marquée.
+Chaque purge et chaque anonymisation a sa propre transaction : une panne du
+stockage n'en retient aucune autre.
+Toutes ces durées se règlent à l'écran **Configuration du centre**
+(`/configuration`, exploitant), et non plus dans `infra/configurer-centre.mjs`.
 La purge est une route de l'application, appelée chaque nuit ; elle exige
 `MAINTENANCE_TOKEN` dans le `.env` du serveur.
 
 Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 
 ```cron
-# Purge du courrier échu et des coordonnées des demandes publiques échues,
-# chaque nuit à 3 h 15 (ADR 015, ADR 020).
+# Purge du courrier échu, des coordonnées des demandes publiques échues, du
+# journal des messages et des photos d'états des lieux échues, et
+# anonymisation RGPD, chaque nuit à 3 h 15 (ADR 015, 020, 038, 039, 040).
 15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
 La commande tourne dans le conteneur, qui a déjà le jeton dans son
 environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
-affiche le nombre de numérisations et de consultations purgées, et de demandes
-anonymisées : `{"scans":0,"views":0,"publicRequests":0}`.
+affiche le nombre de numérisations et de consultations purgées, de demandes
+anonymisées, d'entreprises anonymisées (avec leurs contacts, accès et plis),
+de personnes retirées anonymisées, de messages effacés du journal, de photos
+d'états des lieux et de consultations de ces photos purgées — des nombres,
+jamais un nom :
+`{"scans":0,"views":0,"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0},"notificationDeliveries":0,"inspectionPhotos":0,"inspectionPhotoViews":0}`.
+Le journal de l'application (`docker compose logs app`) en garde une ligne
+« Conservation (RGPD) : … » par nuit.
+
+## Reconduction tacite et lot de facturation planifiés
+
+Deux tâches de la facturation (R10, R13,
+[ADR 033](../../docs/decisions/033-taches-planifiees-de-la-facturation.md)),
+appelées comme la purge, avec le même `MAINTENANCE_TOKEN` :
+
+- **Chaque nuit**, la reconduction tacite des contrats : un contrat dont le
+  préavis ne peut plus mettre fin au contrat à son terme est prolongé d'une
+  période, et la prolongation est inscrite à son journal (fiche du contrat).
+  Avant la sauvegarde de 3 h 45, pour qu'elle contienne les nouveaux termes.
+- **Le 1er de chaque mois**, le lot de facturation du mois : les factures
+  brouillons de chaque client, comme le bouton « Préparer » de
+  `/factures/preparer`, au journal des lots sous « Tâche planifiée ». Rien
+  n'est émis : l'équipe relit, puis émet. Après la reconduction de la nuit,
+  pour que les contrats reconduits soient facturés.
+
+Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
+
+```cron
+# Reconduction tacite des contrats, chaque nuit à 3 h 05 (ADR 033).
+5 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/contrats',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
+# Lot de facturation du mois, le 1er à 6 h 00 (ADR 033).
+0 6 1 * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/facturation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
+```
+
+La reconduction répond `{"renewed":[…],"failures":[…]}` : un contrat dont la
+ressource est déjà prise après le terme n'est pas prolongé, et figure dans
+`failures` avec la cause, chaque nuit, jusqu'à ce que l'équipe libère la
+ressource ou résilie le contrat. Le lot répond son bilan (brouillons créés,
+complétés, lignes, avertissements), ou `409` si un lot tourne déjà : le
+relancer à la main une fois l'autre terminé. Pour rejouer un autre mois :
+`…/api/maintenance/facturation?mois=2026-10`.
 
 ## Chiffrement des documents
 
@@ -429,12 +481,16 @@ ou à intervalle fixé par le centre :
    portent le même numéro, l'application refuse de chiffrer comme de
    déchiffrer, plutôt que de se tromper de clé.
 3. Lancer le script comme ci-dessus, essai à blanc puis `--appliquer` : il
-   rechiffre avec la clé 2 tout ce qui l'était avec la clé 1.
-4. Quand l'essai à blanc ne trouve plus rien, retirer
+   rechiffre avec la clé 2 tout ce qui l'était avec la clé 1 — les
+   numérisations dans le stockage, et les IBAN des mandats SEPA en base
+   (ADR 034).
+4. Quand l'essai à blanc ne trouve plus rien (ni numérisation, ni IBAN de
+   mandat), retirer
    `DOCUMENTS_ENCRYPTION_KEY_1` du `.env` et relancer l'application.
 5. Garder l'ancienne clé dans le coffre-fort tant qu'existent des sauvegardes
-   du stockage antérieures à la rotation : elles ne se lisent qu'avec elle.
-   Après une fuite, ces sauvegardes sont à détruire.
+   du stockage ou de la base antérieures à la rotation : elles ne se lisent
+   qu'avec elle (les IBAN des mandats y sont chiffrés avec elle). Après une
+   fuite, ces sauvegardes sont à détruire.
 
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
 version précédente.

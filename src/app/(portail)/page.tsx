@@ -58,9 +58,9 @@ export default async function PortailPage({
 
   const [rawAvailability, tarifs, regles] = await Promise.all([
     listDayAvailability(isoDate, timeZone),
-    // Les prix affichés viennent de la grille par défaut : la page vitrine et la
-    // facturation ne peuvent pas diverger.
-    findDefaultRatePlan(),
+    // Les prix affichés viennent de la grille par défaut en vigueur ce jour-là :
+    // la page vitrine et la facturation ne peuvent pas diverger (R08, R11).
+    findDefaultRatePlan(isoDate),
     listOpeningHours(),
   ])
   const availability = rawAvailability.map((entry) => {
@@ -82,9 +82,9 @@ export default async function PortailPage({
     capacity: resource.capacity,
     photoPath: resource.photoPath,
     attributes: resource.attributes,
-    rates: (['hour', 'half_day', 'day'] as const).flatMap((unit) => {
-      const rate = resolveRate(tarifs?.items ?? [], {
-        resourceId: resource.id, resourceType: resource.resourceType, unit,
+    rates: (['hour', 'half_day', 'day', 'week'] as const).flatMap((unit) => {
+      const rate = resolveRate(tarifs, {
+        resourceId: resource.id, resourceType: resource.resourceType, unit, on: isoDate,
       })
       return rate ? [{ unit, amountCents: rate.amountCents }] : []
     }),
@@ -295,17 +295,19 @@ export default async function PortailPage({
                   )}
                   {(() => {
                     const demiJournee = tarifs
-                      ? resolveRate(tarifs.items, {
+                      ? resolveRate(tarifs, {
                           resourceId: resource.id,
                           resourceType: resource.resourceType,
                           unit: 'half_day',
+                          on: isoDate,
                         })
                       : undefined
                     const journee = tarifs
-                      ? resolveRate(tarifs.items, {
+                      ? resolveRate(tarifs, {
                           resourceId: resource.id,
                           resourceType: resource.resourceType,
                           unit: 'day',
+                          on: isoDate,
                         })
                       : undefined
                     if (!demiJournee && !journee) return <p className="mt-auto pt-5 text-sm text-muted-foreground">Contactez-nous pour les tarifs.</p>
@@ -570,7 +572,7 @@ export default async function PortailPage({
         <div className="flex gap-3">
           <Link
             href="#demande"
-            className="press flex-1 rounded-md bg-primary px-4 py-3 text-center font-medium text-primary-foreground"
+            className="press flex min-h-12 flex-1 items-center justify-center rounded-md bg-primary px-4 py-3 text-center font-medium text-primary-foreground"
           >
             Demander un créneau
           </Link>
@@ -578,7 +580,7 @@ export default async function PortailPage({
             <a
               href={`tel:${tenant.phone.replace(/\s/g, '')}`}
               aria-label={`Appeler le ${tenant.phone}`}
-              className="flex items-center justify-center rounded-md border border-primary px-4 text-primary"
+              className="flex min-h-12 min-w-12 items-center justify-center rounded-md border border-primary px-4 text-primary"
             >
               <PhoneIcon size={22} />
             </a>

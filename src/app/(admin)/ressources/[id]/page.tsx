@@ -3,9 +3,11 @@ import { Fragment } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
+import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
 import {
   bookingHref,
   bookingLabel,
@@ -26,12 +28,14 @@ import {
   formatAttributeValue,
   hasCapacity,
 } from '../../../../modules/ressources/attributs.ts'
+import { ClientBookingModeForm } from '../../../../modules/ressources/client-booking-mode-form.tsx'
 import {
   resourceStatusLabels,
   resourceStatusStyles,
   resourceTypeLabels,
 } from '../../../../modules/ressources/labels.ts'
 import { findResource } from '../../../../modules/ressources/queries.ts'
+import { clientBookingModeLabels } from '../../../../modules/ressources/reservation-client.ts'
 
 export const metadata = { title: 'Ressource' }
 
@@ -47,7 +51,7 @@ const HORIZON_DAYS = 14
  * modifie plus.
  */
 export default async function ResourcePage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission('ressources.gerer')
+  const { member } = await requirePermission('ressources.gerer')
   const { id } = await params
   // Un identifiant mal formé ferait échouer la requête en 22P02 : c'est une
   // page introuvable, pas une erreur serveur.
@@ -149,6 +153,9 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
           )
         })}
 
+        <dt className="text-muted-foreground">Espace client</dt>
+        <dd>{clientBookingModeLabels[resource.clientBookingMode]}</dd>
+
         <dt className="text-muted-foreground">Description</dt>
         <dd className="whitespace-pre-line">
           {resource.description || <span className="text-muted-foreground">Aucune</span>}
@@ -221,6 +228,28 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
           </div>
         )}
       </section>
+
+      {/* États des lieux d'entrée et de sortie de la ressource (R06, ADR 039). */}
+      {can(member.role, 'etats-des-lieux.gerer') && (
+        <InspectionsSection
+          filter={{ resourceId: resource.id }}
+          context={{ ressource: resource.id }}
+          timeZone={timeZone}
+          unavailable={archived ? 'Ressource archivée : plus d’état des lieux à ouvrir.' : undefined}
+        />
+      )}
+
+      {!archived && (
+        <section
+          className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4"
+          aria-labelledby="espace-client"
+        >
+          <h2 id="espace-client" className="text-sm font-semibold tracking-tight">
+            Réservation depuis l’espace client
+          </h2>
+          <ClientBookingModeForm resourceId={resource.id} mode={resource.clientBookingMode} />
+        </section>
+      )}
 
       {!archived && (
         <section

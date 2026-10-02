@@ -1,147 +1,64 @@
-import { formatDateTime } from '../../lib/dates.ts'
-import { appUrl, sendMessage, type Message } from '../../lib/courriel.ts'
-import { currentTenant } from '../../lib/tenant.ts'
-import { listClientMemberEmails } from '../clients/comptes.ts'
-import { mailKindLabels } from './labels.ts'
-import { findMail } from './queries.ts'
-import type { MailKind } from './schema.ts'
+import {
+  findPendingMailRequestId,
+  notifyMailReceived,
+  notifyMailRequestDone as notifyRequestDone,
+  notifyMailRequestRefused as notifyRequestRefused,
+  notifyMailRequestSubmitted as notifyRequestSubmitted,
+  notifyMailScanned as notifyScanned,
+} from '../notifications/declencheurs-courrier.ts'
 
 /**
- * Courriels du courrier (ADR 015).
+ * Courriels du courrier (ADR 015), envoyés par le moteur de notifications
+ * (ADR 038) : modèle du centre ou texte par défaut, préférences des
+ * personnes, journal des envois.
  *
  * Ils préviennent, ils ne transportent pas : ni le document, ni l'expéditeur
  * n'y figurent. Un courriel se transfère, s'archive chez un tiers et échappe
  * au journal d'accès ; le contenu reste dans l'espace client.
  *
- * Les textes sont construits par des fonctions pures, éprouvées seules ; les
- * `notify…` chargent les données et envoient, sans jamais lever.
+ * Les textes sont dans `notifications/catalogue.ts`, les déclencheurs dans
+ * `notifications/declencheurs-courrier.ts`. Ces fonctions gardent les noms
+ * qu'appellent les actions du courrier ; aucune ne lève.
  */
-
-type MailFacts = {
-  centreName: string
-  clientName: string
-  kind: MailKind
-  receivedAt: Date
-  timeZone: string
-  link?: string
-}
-
-const signature = (centreName: string) => `\n\n—\n${centreName}`
-const linkLine = (link: string | undefined, label: string) => (link ? `\n\n${label} : ${link}` : '')
-
-export function mailArrivedMessage(facts: MailFacts & { opened: boolean }): Omit<Message, 'to'> {
-  const kind = mailKindLabels[facts.kind].toLowerCase()
-  return {
-    subject: facts.opened
-      ? `Nouveau courrier numérisé pour ${facts.clientName}`
-      : `Nouveau courrier pour ${facts.clientName}`,
-    text:
-      `Bonjour,\n\nUn courrier (${kind}) est arrivé au centre pour ${facts.clientName}, ` +
-      `le ${formatDateTime(facts.receivedAt, facts.timeZone)}.\n\n` +
-      (facts.opened
-        ? 'Il a été ouvert et numérisé : vous pouvez le lire dans votre espace client.'
-        : 'Vous pouvez le voir dans votre espace client et, si vous le souhaitez, en demander l’ouverture et la numérisation.') +
-      linkLine(facts.link, 'Votre boîte aux lettres') +
-      '\n\nPar confidentialité, ce message ne contient pas le document.' +
-      signature(facts.centreName),
-  }
-}
-
-export function mailScannedMessage(facts: MailFacts): Omit<Message, 'to'> {
-  return {
-    subject: `Votre courrier a été numérisé — ${facts.clientName}`,
-    text:
-      `Bonjour,\n\nLe courrier reçu le ${formatDateTime(facts.receivedAt, facts.timeZone)} ` +
-      `pour ${facts.clientName} a été ouvert et numérisé. Vous pouvez le lire dans votre espace client.` +
-      linkLine(facts.link, 'Votre boîte aux lettres') +
-      '\n\nPar confidentialité, ce message ne contient pas le document.' +
-      signature(facts.centreName),
-  }
-}
-
-export function openingRequestedMessage(
-  facts: MailFacts & { requestedBy: string | null },
-): Omit<Message, 'to'> {
-  return {
-    subject: `Demande d’ouverture de courrier — ${facts.clientName}`,
-    text:
-      `${facts.requestedBy ?? 'Le client'} demande l’ouverture et la numérisation du courrier ` +
-      `reçu le ${formatDateTime(facts.receivedAt, facts.timeZone)} pour ${facts.clientName}.` +
-      linkLine(facts.link, 'Traiter la demande') +
-      signature(facts.centreName),
-  }
-}
-
-/** Charge le pli et le centre ; `undefined` si le pli a disparu entre-temps. */
-async function load(mailItemId: string) {
-  const [mail, tenant] = await Promise.all([findMail(mailItemId), currentTenant()])
-  if (!mail || mail.deletedAt) return undefined
-  return { mail, tenant }
-}
 
 /** Arrivée d'un pli : aux personnes de l'entreprise, inscrites ou déjà connectées. */
 export async function notifyMailRegistered(mailItemId: string): Promise<void> {
-  try {
-    const loaded = await load(mailItemId)
-    if (!loaded) return
-    const { mail, tenant } = loaded
-    await sendMessage({
-      to: await listClientMemberEmails(mail.clientId),
-      ...mailArrivedMessage({
-        centreName: tenant.name,
-        clientName: mail.clientName,
-        kind: mail.kind,
-        receivedAt: mail.receivedAt,
-        timeZone: tenant.timezone,
-        link: appUrl('/compte/courrier'),
-        opened: mail.status === 'opened',
-      }),
-    })
-  } catch (error) {
-    console.error('Notification d’arrivée de courrier impossible', error)
-  }
+  await notifyMailReceived(mailItemId)
 }
 
 export async function notifyMailScanned(mailItemId: string): Promise<void> {
-  try {
-    const loaded = await load(mailItemId)
-    if (!loaded) return
-    const { mail, tenant } = loaded
-    await sendMessage({
-      to: await listClientMemberEmails(mail.clientId),
-      ...mailScannedMessage({
-        centreName: tenant.name,
-        clientName: mail.clientName,
-        kind: mail.kind,
-        receivedAt: mail.receivedAt,
-        timeZone: tenant.timezone,
-        link: appUrl('/compte/courrier'),
-      }),
-    })
-  } catch (error) {
-    console.error('Notification de numérisation impossible', error)
-  }
+  await notifyScanned(mailItemId)
 }
 
 /** Demande d'ouverture : à l'adresse du centre, quand il en a une. */
 export async function notifyOpeningRequested(mailItemId: string): Promise<void> {
   try {
-    const loaded = await load(mailItemId)
-    if (!loaded || !loaded.tenant.email) return
-    const { mail, tenant } = loaded
-    await sendMessage({
-      to: [tenant.email as string],
-      ...openingRequestedMessage({
-        centreName: tenant.name,
-        clientName: mail.clientName,
-        kind: mail.kind,
-        receivedAt: mail.receivedAt,
-        timeZone: tenant.timezone,
-        link: appUrl(`/courrier/${mail.id}`),
-        requestedBy: mail.requestedBy,
-      }),
-    })
+    const requestId = await findPendingMailRequestId(mailItemId, 'open_and_scan')
+    if (requestId) await notifyRequestSubmitted(requestId)
   } catch (error) {
     console.error('Notification de demande d’ouverture impossible', error)
   }
+}
+
+/**
+ * Demande de numérisation ou de réexpédition déposée depuis l'espace client
+ * (ADR 037) : à l'adresse du centre.
+ */
+export async function notifyMailRequestSubmitted(mailRequestId: string): Promise<void> {
+  await notifyRequestSubmitted(mailRequestId)
+}
+
+/**
+ * Numérisation ou réexpédition faite par l'accueil (ADR 037) : aux personnes
+ * de l'entreprise, avec le numéro de suivi d'une réexpédition. Une demande
+ * d'ouverture faite ne passe pas ici : l'ouverture prévient déjà par
+ * « courrier numérisé ».
+ */
+export async function notifyMailRequestDone(mailRequestId: string): Promise<void> {
+  await notifyRequestDone(mailRequestId)
+}
+
+/** Demande refusée par l'accueil (ADR 037) : aux personnes de l'entreprise. */
+export async function notifyMailRequestRefused(mailRequestId: string): Promise<void> {
+  await notifyRequestRefused(mailRequestId)
 }

@@ -13,6 +13,7 @@ import {
   createBooking,
   createBookingRequest,
   findBooking,
+  findBookingClientLock,
   moveBooking,
 } from './queries.ts'
 import { BookingContractError } from './rattachement.ts'
@@ -229,10 +230,33 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
       await assignBookingClient(booking.id, ACME)
       assert.equal((await findBooking(booking.id))?.contractId, contractId)
 
-      await assignBookingClient(booking.id, BETA)
+      assert.deepEqual(await assignBookingClient(booking.id, BETA), { ok: true })
       const detail = await findBooking(booking.id)
       assert.equal(detail?.clientId, BETA)
       assert.equal(detail?.contractId, null)
+    })
+
+    it('refuse, avec sa raison, de changer le client d’une réservation faite depuis l’espace client', async () => {
+      const [row] = await asTenant(async (tx) => {
+        await tx.execute(sql`update resources set client_booking_mode = 'approval' where id = ${SALLE}`)
+        const [membre] = await tx.execute(sql`
+          insert into client_members (client_id, email, full_name, auth_user_id)
+          values (${ACME}, 'jeanne@acme.test', 'Jeanne Martin', 'u-jeanne') returning id`)
+        return tx.execute(sql`
+          insert into bookings (resource_id, client_id, channel, booked_by_member_id, starts_at, ends_at, title)
+          values (${SALLE}, ${ACME}, 'client', ${membre.id as string}, '2026-04-10T07:00:00Z', '2026-04-10T08:00:00Z', 'Atelier')
+          returning id`)
+      })
+      const id = row.id as string
+      for (const autre of [BETA, null]) {
+        const outcome = await assignBookingClient(id, autre)
+        assert.equal(outcome.ok, false)
+        assert.match(outcome.ok ? '' : outcome.message, /espace client/)
+      }
+      assert.equal(await findBookingClientLock(id), 'espace-client')
+      assert.equal((await findBooking(id))?.clientId, ACME)
+      // Le même client : rien à changer, rien de refusé.
+      assert.deepEqual(await assignBookingClient(id, ACME), { ok: true })
     })
   })
 

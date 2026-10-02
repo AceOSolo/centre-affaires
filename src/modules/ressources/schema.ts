@@ -43,6 +43,27 @@ export const resourceStatuses = ['active', 'maintenance', 'retired'] as const
 export type ResourceStatus = (typeof resourceStatuses)[number]
 export const resourceStatusEnum = pgEnum('resource_status', resourceStatuses)
 
+/**
+ * Réservation par un client connecté à son espace (R23, ADR 016 décision D4,
+ * ADR 036) : un réglage par ressource.
+ *
+ * - `instant` : confirmée d'emblée, sans l'accueil — à condition que le devis
+ *   soit figé sur la réservation ; sans devis, elle attend l'accueil ;
+ * - `approval` : demande, confirmée par l'accueil (valeur par défaut, la plus
+ *   prudente : rien ne s'engage sans l'équipe, comme une demande publique) ;
+ * - `closed` : pas de réservation depuis l'espace client (casier, boîte aux
+ *   lettres : ils se louent par contrat).
+ *
+ * Appliqué par la base (trigger `bookings_apply_client_booking_mode`) à toute
+ * réservation qui porte `booked_by_member_id` : le statut est posé selon la
+ * ressource, `closed` est refusé (SQLSTATE `CA009`). La page publique anonyme
+ * reste une demande validée par l'équipe (ADR 005) : elle ne pose pas de
+ * membre, ce réglage ne la concerne pas.
+ */
+export const clientBookingModes = ['instant', 'approval', 'closed'] as const
+export type ClientBookingMode = (typeof clientBookingModes)[number]
+export const clientBookingModeEnum = pgEnum('client_booking_mode', clientBookingModes)
+
 /** Champs propres à chaque type, stockés en JSONB. */
 export type ResourceAttributes = {
   salle: { superficieM2?: number; equipements?: string[] }
@@ -66,6 +87,8 @@ export const resources = pgTable(
     /** Nombre de personnes ; nul pour un casier ou une boîte aux lettres. */
     capacity: integer('capacity'),
     status: resourceStatusEnum('status').notNull().default('active'),
+    /** Réservation depuis l'espace client (R23, ADR 036) : voir `clientBookingModes`. */
+    clientBookingMode: clientBookingModeEnum('client_booking_mode').notNull().default('approval'),
     /**
      * Photo de l'espace, servie par l'application — jamais une URL externe, pour
      * la même raison que le logo du centre (ADR 004).

@@ -3,6 +3,8 @@ import { staffRoleLabels, staffRoles, type StaffRole } from '../../../db/staff.t
 import { findTeamMember, listTeamMembers } from '../../../lib/auth/equipe.ts'
 import { can, permissionLabels, permissions } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
+import { currentTimeZone } from '../../../lib/tenant.ts'
+import { RemovedStaffSection } from '../../../modules/rgpd/staff-section.tsx'
 import { TeamMemberForm } from './team-member-form.tsx'
 import { TeamRowActions } from './team-row-actions.tsx'
 
@@ -20,10 +22,10 @@ const otherRole: Record<StaffRole, StaffRole> = { admin: 'staff', staff: 'admin'
 export default async function EquipePage({
   searchParams,
 }: {
-  searchParams: Promise<{ retire?: string }>
+  searchParams: Promise<{ retire?: string; anonymise?: string }>
 }) {
   const { member: me } = await requirePermission('equipe.gerer')
-  const { retire } = await searchParams
+  const { retire, anonymise } = await searchParams
   const [team, removed] = await Promise.all([
     listTeamMembers(),
     retire ? findTeamMember(retire) : undefined,
@@ -121,6 +123,13 @@ export default async function EquipePage({
           </table>
         </div>
       </section>
+
+      {/* Membres retirés et leur anonymisation (R29, ADR 040). */}
+      <RemovedStaffSection
+        canAnonymize={can(me.role, 'rgpd.anonymiser')}
+        timeZone={await currentTimeZone()}
+        anonymized={anonymise === '1'}
+      />
 
       <section aria-labelledby="inscrire" className="flex flex-col gap-3">
         <h2 id="inscrire" className="text-sm font-semibold tracking-tight">

@@ -51,7 +51,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
 
   return (
     <div className="portail flex min-h-screen flex-col bg-background text-foreground">
-      <a href="#contenu" className="sr-only z-50 rounded-md bg-primary px-5 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Aller au contenu</a>
+      <a href="#contenu" className="sr-only z-50 rounded-md bg-primary px-5 py-3 text-white focus:not-sr-only focus:inline-flex focus:min-h-11 focus:items-center focus:fixed focus:left-4 focus:top-4">Aller au contenu</a>
       <ScrollState />
       {/* Sans JavaScript, rien ne viendra révéler les blocs : ils doivent
           s'afficher d'emblée plutôt que rester invisibles. */}
@@ -65,7 +65,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
             href={planUrl}
             target="_blank"
             rel="noreferrer"
-            className="flex items-center gap-1.5 transition-colors hover:text-white"
+            className="flex min-h-6 items-center gap-1.5 transition-colors hover:text-white"
           >
             <MapPinIcon size={16} />
             {[adresse, ville].filter(Boolean).join(' — ')}
@@ -79,7 +79,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
           {tenant.phone && telHref && (
             <a
               href={telHref}
-              className="ml-auto flex items-center gap-1.5 font-medium transition-colors hover:text-white"
+              className="ml-auto flex min-h-6 items-center gap-1.5 font-medium transition-colors hover:text-white"
             >
               <PhoneIcon size={16} />
               {tenant.phone}
@@ -92,7 +92,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
         <div className="mx-auto flex max-w-[1200px] items-center gap-6 px-5 py-3 sm:px-8">
           {/* Le logo garde son air autour de lui : la charte demande au moins la
               hauteur du « S » de clear space. */}
-          <Link href="/" className="shrink-0 py-1 pr-2" aria-label={`${tenant.name} — accueil`}>
+          <Link href="/" className="inline-flex min-h-11 shrink-0 items-center py-1 pr-2" aria-label={`${tenant.name} — accueil`}>
             {tenant.logoPath ? (
               <Image
                 src={tenant.logoPath}
@@ -121,14 +121,14 @@ export default async function PortailLayout({ children }: { children: React.Reac
               <a
                 href={telHref}
                 aria-label={`Appeler le ${tenant.phone}`}
-                className="rounded-md border border-border p-2.5 text-primary transition-colors hover:bg-muted lg:hidden"
+                className="inline-flex size-11 items-center justify-center rounded-md border border-border text-primary transition-colors hover:bg-muted lg:hidden"
               >
                 <PhoneIcon size={20} />
               </a>
             )}
             <Link
               href="/#demande"
-              className="press rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+              className="press inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
             >
               Réserver
             </Link>
@@ -165,7 +165,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
               {tenant.phone && telHref && (
                 <a
                   href={telHref}
-                  className="press inline-flex items-center justify-center gap-2 rounded-md bg-white px-6 py-3.5 font-medium text-primary transition-colors hover:bg-white/90"
+                  className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-white px-6 py-3.5 font-medium text-primary transition-colors hover:bg-white/90"
                 >
                   <PhoneIcon size={20} />
                   {tenant.phone}
@@ -173,7 +173,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
               )}
               <Link
                 href="/#demande"
-                className="press inline-flex items-center justify-center gap-2 rounded-md border border-white/40 px-6 py-3.5 font-medium transition-colors hover:bg-white/10"
+                className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-white/40 px-6 py-3.5 font-medium transition-colors hover:bg-white/10"
               >
                 Demander un créneau
                 <ArrowRightIcon size={20} />
@@ -207,7 +207,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
                       href={lien.url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-block rounded-md border border-white/25 px-3 py-1.5 text-xs font-medium transition-colors hover:bg-white/10"
+                      className="inline-flex min-h-11 items-center rounded-md border border-white/25 px-4 text-sm font-medium transition-colors hover:bg-white/10"
                     >
                       {lien.label}
                     </a>
@@ -227,7 +227,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
               href={planUrl}
               target="_blank"
               rel="noreferrer"
-              className="mt-3 inline-flex items-center gap-1.5 text-white/90 underline-offset-4 hover:underline"
+              className="mt-1 inline-flex min-h-11 items-center gap-1.5 text-white/90 underline-offset-4 hover:underline"
             >
               <MapPinIcon size={18} />
               Voir sur la carte
@@ -238,14 +238,14 @@ export default async function PortailLayout({ children }: { children: React.Reac
             <p className="font-semibold">Nous joindre</p>
             <div className="mt-3 flex flex-col gap-2 text-white/70">
               {tenant.phone && telHref && (
-                <a href={telHref} className="underline-offset-4 hover:underline hover:text-white">
+                <a href={telHref} className="inline-flex min-h-11 items-center break-all underline-offset-4 hover:underline hover:text-white">
                   {tenant.phone}
                 </a>
               )}
               {tenant.email && (
                 <a
                   href={`mailto:${tenant.email}`}
-                  className="underline-offset-4 hover:underline hover:text-white"
+                  className="inline-flex min-h-11 items-center break-all underline-offset-4 hover:underline hover:text-white"
                 >
                   {tenant.email}
                 </a>
@@ -255,7 +255,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
                   href={tenant.websiteUrl}
                   target="_blank"
                   rel="noreferrer"
-                  className="underline-offset-4 hover:underline hover:text-white"
+                  className="inline-flex min-h-11 items-center break-all underline-offset-4 hover:underline hover:text-white"
                 >
                   {tenant.websiteUrl.replace(/^https?:\/\//, '')}
                 </a>
@@ -283,10 +283,10 @@ export default async function PortailLayout({ children }: { children: React.Reac
             </p>
             {/* Les mentions légales restent à écrire. */}
             <div className="flex gap-4">
-              <Link href="/compte" className="underline-offset-4 hover:underline">
+              <Link href="/compte" className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
                 Espace client
               </Link>
-              <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
+              <Link href="/auth/connexion" className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
                 Accès équipe
               </Link>
             </div>

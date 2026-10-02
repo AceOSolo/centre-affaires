@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { smtpSettings } from './courriel.ts'
+import { normalizeRecipients, sendMessage, smtpSettings } from './courriel.ts'
 
 const brevo = {
   SMTP_HOST: 'smtp-relay.brevo.com',
@@ -44,5 +44,44 @@ describe('réglages SMTP', () => {
 
   it('refuse un port illisible plutôt que d’improviser', () => {
     assert.equal(smtpSettings({ ...brevo, SMTP_PORT: 'abc' }), undefined)
+  })
+})
+
+describe('issue d’un envoi', () => {
+  const variables = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM'] as const
+
+  /** Lance `run` sans configuration SMTP, puis rétablit l'environnement. */
+  async function sansSmtp<T>(run: () => Promise<T>): Promise<T> {
+    const saved = Object.fromEntries(variables.map((name) => [name, process.env[name]]))
+    for (const name of variables) delete process.env[name]
+    try {
+      return await run()
+    } finally {
+      for (const name of variables) {
+        if (saved[name] === undefined) delete process.env[name]
+        else process.env[name] = saved[name]
+      }
+    }
+  }
+
+  it('dit « non configuré » sans SMTP, avec les adresses qui auraient été servies', async () => {
+    const result = await sansSmtp(() =>
+      sendMessage({ to: ['Jeanne@Durand.fr ', 'jeanne@durand.fr'], subject: 'Objet', text: 'Texte' }),
+    )
+    assert.deepEqual(result, {
+      status: 'not_configured',
+      recipients: ['jeanne@durand.fr'],
+      failed: [],
+      error: null,
+    })
+  })
+
+  it('dit qu’il n’y avait personne à prévenir', async () => {
+    const result = await sansSmtp(() => sendMessage({ to: [' ', ''], subject: 'Objet', text: 'Texte' }))
+    assert.equal(result.status, 'no_recipient')
+  })
+
+  it('normalise les adresses : minuscules, sans blanc ni doublon', () => {
+    assert.deepEqual(normalizeRecipients([' A@B.fr', 'a@b.fr', '', 'c@d.fr']), ['a@b.fr', 'c@d.fr'])
   })
 })

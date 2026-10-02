@@ -1,7 +1,9 @@
 # ADR 006 — Clients, grilles tarifaires et contrats
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — prorata et unité entamée devenus des paramètres du
+centre (ADR 023) ; échéancier calculé depuis les versions du contrat, la
+facture émise figée (ADR 025, ADR 026)
 
 ## Contexte
 

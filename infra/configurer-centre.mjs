@@ -12,6 +12,10 @@
  */
 import postgres from 'postgres'
 
+// Module TypeScript importé tel quel : Node 24 retire les types à la volée,
+// comme pour `infra/chiffrer-documents.ts`.
+import { seedExpectedServices } from '../src/modules/facturation/services-attendus.ts'
+
 const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
 
 /**
@@ -41,15 +45,10 @@ const CENTRE = {
   ],
   timezone: 'Europe/Paris',
   currency: 'EUR',
-  // Conservation du courrier numérisé et du journal d'accès, en mois (RGPD,
-  // ADR 015). Validées par le centre le 2026-09-30 ; à reporter au contrat
-  // de domiciliation.
-  mailScanRetentionMonths: 12,
-  mailAccessLogRetentionMonths: 12,
-  // Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
-  // depuis la fin du créneau demandé. Douze mois par défaut, à faire valider
-  // par le centre (B4).
-  publicRequestRetentionMonths: 12,
+  // Les durées de conservation (courrier, demandes publiques, anonymisation,
+  // journaux, photos) ne sont plus posées ici : elles se règlent à l'écran
+  // Configuration du centre (R29, ADR 040). Rejouer ce script ne doit pas
+  // défaire le choix du centre. Valeurs par défaut : celles des colonnes.
 }
 
 /**
@@ -60,6 +59,23 @@ const CENTRE = {
  * que le site public propose comme créneaux.
  */
 const OUVERTURE = { opensAt: '08:00', closesAt: '18:00', weekdays: [1, 2, 3, 4, 5] }
+
+/**
+ * Prix HT, en centimes, des services que l'application retrouve par leur code
+ * (`src/modules/facturation/services-attendus.ts`, ADR 024) : l'ouverture et
+ * la numérisation d'un pli (R14), la numérisation seule d'un pli déjà ouvert
+ * et la réexpédition, frais d'affranchissement en sus (R21, ADR 037).
+ *
+ * Désignation, nature, unité et TVA (20 %, à valider avec l'expert-comptable)
+ * viennent du module. Le prix, non : aucun n'est inventé (ADR 009). `null` :
+ * le service n'est pas créé, et le script le signale. Un service déjà au
+ * catalogue est laissé tel quel — son prix se gère ensuite à l'écran Services.
+ */
+const PRIX_DES_SERVICES = {
+  'courrier.ouverture': null,
+  'courrier.numerisation': null,
+  'courrier.reexpedition': null,
+}
 
 const url = process.env.APP_DATABASE_URL
 if (!url) {
@@ -91,10 +107,7 @@ try {
         hero_image_path = ${CENTRE.heroImagePath},
         social_links    = ${sql.json(CENTRE.socialLinks)},
         timezone       = ${CENTRE.timezone},
-        currency       = ${CENTRE.currency},
-        mail_scan_retention_months       = ${CENTRE.mailScanRetentionMonths},
-        mail_access_log_retention_months = ${CENTRE.mailAccessLogRetentionMonths},
-        public_request_retention_months  = ${CENTRE.publicRequestRetentionMonths}
+        currency       = ${CENTRE.currency}
       where id = ${DEFAULT_TENANT_ID}
       returning name, city, phone, logo_path`
   })
@@ -117,7 +130,22 @@ try {
       returning weekday`
   })
 
+  const services = await sql.begin(async (tx) => {
+    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
+    return seedExpectedServices(tx, PRIX_DES_SERVICES)
+  })
+
   console.log(`Centre configuré : ${centre.name}, ${centre.city} — ${centre.phone}`)
+  for (const code of services.created) console.log(`Service créé : ${code}`)
+  for (const code of services.existing) {
+    console.log(`Service ${code} déjà au catalogue : laissé tel quel.`)
+  }
+  for (const code of services.withoutPrice) {
+    console.warn(
+      `Service ${code} non créé : prix à fixer dans PRIX_DES_SERVICES, ou à l’écran Services. ` +
+        "D'ici là, ces actes ne sont pas valorisés sur les factures.",
+    )
+  }
   console.log(
     `Ouverture : ${plages.length} jours, ${OUVERTURE.opensAt} – ${OUVERTURE.closesAt}`,
   )

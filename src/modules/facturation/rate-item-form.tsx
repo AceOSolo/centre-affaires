@@ -85,7 +85,13 @@ export function RateItemForm({
           <label className={labelClass} htmlFor="unit">
             Unité
           </label>
-          <select id="unit" name="unit" defaultValue="hour" className={`${fieldClass} mt-1`}>
+          <select
+            id="unit"
+            name="unit"
+            defaultValue="hour"
+            aria-describedby="unit-hint"
+            className={`${fieldClass} mt-1`}
+          >
             {rateUnits.map((unit) => (
               <option key={unit} value={unit}>
                 {rateUnitLabels[unit]}
@@ -111,6 +117,14 @@ export function RateItemForm({
           </div>
         </div>
       </div>
+
+      {/* Le devis d'une réservation choisit lui-même l'unité (R11) : le dire
+          évite de croire qu'une ligne « journée » s'applique à une heure. */}
+      <p id="unit-hint" className="text-xs text-muted-foreground">
+        L’heure, la demi-journée, la journée et la semaine chiffrent les réservations : le devis
+        retient, pour chaque créneau, l’unité la moins chère que la grille propose (unité entamée
+        due). Le mois et le forfait servent aux contrats et aux prestations.
+      </p>
 
       <button
         type="submit"

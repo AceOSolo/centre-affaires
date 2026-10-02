@@ -105,6 +105,28 @@ export function todayIsoDate(timeZone: string, now: Date = new Date()): string {
   return toIsoDate(now, timeZone)
 }
 
+const ISO_DATE = /^(\d{4})-(\d{2})-(\d{2})$/
+
+/**
+ * Une date de calendrier ISO qui existe : « 2026-02-30 » est refusée ici, pas
+ * en base. Une seule règle pour tous les formulaires et filtres d'URL.
+ */
+export function isCalendarDate(value: string | null | undefined): value is string {
+  if (!value) return false
+  const match = ISO_DATE.exec(value)
+  if (!match) return false
+  const [, year, month, day] = match.map(Number)
+  const date = new Date(Date.UTC(year, month - 1, day))
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  )
+}
+
+/** « 01/03/2026 » : une date de calendrier, identique dans tous les fuseaux. */
+export function formatCalendarDate(isoDate: string): string {
+  return `${isoDate.slice(8, 10)}/${isoDate.slice(5, 7)}/${isoDate.slice(0, 4)}`
+}
+
 /** Décale un jour ISO sans passer par un fuseau : arithmétique de calendrier pure. */
 export function addDaysToIsoDate(isoDate: string, days: number): string {
   const [year, month, day] = isoDate.split('-').map(Number)

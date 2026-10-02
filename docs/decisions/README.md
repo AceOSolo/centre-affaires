@@ -18,10 +18,10 @@ renuméroter casserait ces renvois sans rien gagner.
 | 003 | [Plateforme Neon et rôle applicatif sans BYPASSRLS](003-neon-et-role-applicatif.md) | 2026-09-18 | accepté |
 | 004 | [Socle d'interface](004-socle-ui.md) | 2026-09-18 | accepté |
 | 005 | [Demandes de réservation publiques](005-demandes-de-reservation-publiques.md) | 2026-09-18 | accepté |
-| 006 | [Clients, grilles tarifaires et contrats](006-clients-tarifs-contrats.md) | 2026-09-18 | accepté |
+| 006 | [Clients, grilles tarifaires et contrats](006-clients-tarifs-contrats.md) | 2026-09-18 | accepté ; prorata et unité entamée paramétrés par l'ADR 023, échéancier versionné par l'ADR 025 |
 | 007 | *absent* : numéro jamais attribué | — | — |
 | 008 | [Authentification et accès au back-office](008-authentification-et-acces-au-back-office.md) | 2026-09-18 | accepté |
-| 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté |
+| 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté ; durée de la demi-journée paramétrée par l'ADR 023 |
 | 010 | [Calendrier de sélection d'un créneau](010-calendrier-de-selection.md) | 2026-09-18 | accepté — **numéro en double** |
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
 | 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté ; vue semaine amendée par l'ADR 017 |
@@ -32,11 +32,29 @@ renuméroter casserait ces renvois sans rien gagner.
 | 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté |
 | 016 | [Tout le cahier des charges DOMOTOP entre dans le périmètre](016-perimetre-du-cahier-des-charges.md) | 2026-10-01 | accepté |
 | 017 | [Planning : semaine toutes ressources, vue mois et filtres](017-planning-toutes-ressources-et-vue-mois.md) | 2026-10-01 | accepté ; amende l'ADR 011 |
-| 018 | [Occupation des ressources sous contrat, canal et contrat des réservations](018-occupation-sous-contrat-et-canal.md) | 2026-10-01 | accepté |
+| 018 | [Occupation des ressources sous contrat, canal et contrat des réservations](018-occupation-sous-contrat-et-canal.md) | 2026-10-01 | accepté ; occupation par segments et changement de ressource par avenant : ADR 025 |
 | 019 | [Rôles de l'équipe et isolation des clients entre eux](019-roles-et-isolation-des-clients.md) | 2026-10-01 | accepté |
 | 020 | [Chiffrement et conservation des documents](020-chiffrement-et-conservation-des-documents.md) | 2026-10-01 | accepté ; mise en œuvre du chiffrement, du contrôle de région et de la purge ajoutée |
 | 021 | [Numérotation des documents](021-numerotation-des-documents.md) | 2026-10-01 | accepté |
 | 022 | [Sauvegardes et plan de reprise](022-sauvegardes-et-plan-de-reprise.md) | 2026-10-01 | accepté |
+| 023 | [Tarification paramétrable, remises, engagement et devis figé](023-tarification-parametrable-et-devis.md) | 2026-10-01 | accepté ; amende les ADR 006 et 009 ; mise en œuvre du devis, de l'échéancier et de la configuration ajoutée ; reconduction tacite mise en œuvre par l'ADR 033 ; grilles par défaut successives par l'ADR 035 |
+| 024 | [Catalogue de services, services souscrits et offres groupées](024-services-et-offres-groupees.md) | 2026-10-01 | accepté ; mise en œuvre des écrans, du prix des offres et des souscriptions ajoutée |
+| 025 | [Contrats versionnés : lignes, avenants, segments d'occupation, documents](025-contrats-versionnes-et-documents.md) | 2026-10-01 | accepté ; amende les ADR 006 et 018 ; mis en œuvre par l'ADR 028 |
+| 026 | [Factures structurées : modèle EN 16931, émission, avoirs, double facturation](026-factures-structurees.md) | 2026-10-01 | accepté ; précisé par les ADR 029 et 032 |
+| 027 | [Paiements, mandats SEPA chiffrés et export comptable](027-paiements-et-export-comptable.md) | 2026-10-01 | accepté ; précisé par l'ADR 030 |
+| 028 | [Contrats tirés d'une offre, avenants à l'écran, échéancier versionné et documents archivés](028-contrats-depuis-offre-avenants-documents.md) | 2026-10-01 | accepté ; choix à valider par le centre ; quantités d'offre alignées sur l'ADR 024 à l'intégration ; reconduction tacite mise en œuvre par l'ADR 033 |
+| 029 | [Lot de facturation périodique et écrans de facturation](029-lot-de-facturation-et-ecrans.md) | 2026-10-01 | accepté ; précise l'ADR 026 ; deux conséquences corrigées par l'ADR 032 ; lancement planifié ajouté par l'ADR 033 |
+| 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 ; contrôle BR-CO-17 d'un avoir précisé par l'ADR 032 ; journal des relances et rechiffrement des mandats par l'ADR 034 |
+| 031 | [Indicateurs : définitions de l'occupation et du chiffre d'affaires](031-indicateurs-occupation-et-chiffre-d-affaires.md) | 2026-10-01 | accepté ; définitions à valider par le centre |
+| 032 | [Correctifs de la facturation : avenants déjà facturés, avoirs au centime, forfaits sans prorata, motif d'exonération](032-correctifs-de-la-facturation.md) | 2026-10-02 | accepté ; corrige l'ADR 029, précise les ADR 026 et 030 ; choix à valider par l'expert-comptable |
+| 033 | [Tâches planifiées de la facturation : lot mensuel et reconduction tacite](033-taches-planifiees-de-la-facturation.md) | 2026-10-02 | accepté ; met en œuvre la reconduction de l'ADR 023 et le lancement planifié de R13 ; choix à valider par le centre |
+| 034 | [Règlements : journal des relances, rechiffrement des mandats, remises sans table](034-journal-des-relances-et-rechiffrement-des-mandats.md) | 2026-10-02 | accepté ; précise l'ADR 030 ; choix à valider par le centre |
+| 035 | [Suites de la vague 2 : grilles par défaut successives, devis d'une réservation facturée, et manques de schéma écartés](035-suites-de-la-vague-2-et-manques-ecartes.md) | 2026-10-02 | accepté ; amende l'ADR 023 ; choix à valider par le centre |
+| 036 | [Réservation par un client connecté : réglage par ressource, auteur et annulation tracés](036-reservation-par-le-client-connecte.md) | 2026-10-02 | accepté ; met en œuvre la décision D4 de l'ADR 016 ; précise l'ADR 015 ; mise en œuvre du portail (réservation, offres, contrats, factures, historique, revue mobile) ajoutée ; choix à valider par le centre |
+| 037 | [Demandes de courrier : ouverture, numérisation, réexpédition, historique et facturation](037-demandes-de-courrier-et-reexpedition.md) | 2026-10-02 | accepté ; précise les ADR 015 et 026 ; mise en œuvre des écrans et de la facturation ajoutée ; choix à valider par le centre |
+| 038 | [Notifications : événements, modèles éditables, journal des envois et préférences](038-modeles-et-journal-des-notifications.md) | 2026-10-02 | accepté ; étend l'ADR 015 ; mise en œuvre du moteur, des écrans et des déclencheurs ajoutée, relances inscrites telles qu'elles partent (précise l'ADR 034) ; choix à valider par le centre |
+| 039 | [États des lieux : modèles versionnés par type, état clos figé, photos chiffrées](039-etats-des-lieux.md) | 2026-10-02 | accepté ; met en œuvre la décision D8 de l'ADR 016, compression dans le navigateur ; mise en œuvre des écrans, des photos et de la purge ajoutée ; choix à valider par le centre |
+| 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; durées à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -56,17 +74,33 @@ ici, sans renuméroter (bloquant B5 de [`docs/roadmap.md`](../roadmap.md)) :
 Pour citer sans ambiguïté l'un des ADR en double, donner son sujet ou le nom
 de son fichier : « ADR 010 (calendrier de sélection) », « ADR 013 (séries) ».
 
+**Vague 2 : pas de doublon.** Trois tranches parallèles avaient chacune pris
+le 028 dans leur copie de travail. Aucune n'était encore intégrée : à
+l'intégration du 01/10/2026, les contrats gardent le 028, le lot de
+facturation devient le 029 et les règlements le 030, renvois du code compris.
+Aucun numéro déjà publié n'a été réattribué.
+
+**Vague 3 : numéros posés d'avance.** Le schéma de la vague (migrations 0039
+à 0043) est posé avant les écrans, avec ses cinq ADR (036 à 040). Les
+tranches parallèles qui construisent les écrans les complètent (section
+« Mise en œuvre ») et n'en ouvrent pas de nouveaux : pas de doublon possible.
+Intégrées le 02/10/2026 sans nouveau numéro ; le raccordement des six
+tranches (notifications par le moteur unique, historique, navigation, tâche
+de nuit) est consigné dans les ADR 036 à 039 (« Intégration de la vague »).
+
 ## Écarts connus avec `CLAUDE.md`
 
-`CLAUDE.md` mentionne encore PostgreSQL 17 : l'ADR 003 a aligné tous les
-environnements sur PostgreSQL 18 (Neon, CI, `docker-compose.yml`). La
-correction de `CLAUDE.md` revient au responsable du dépôt.
+- ~~`CLAUDE.md` mentionne PostgreSQL 17~~ : corrigé (commit `1d55ec2`), aligné
+  sur l'ADR 003.
+- ~~La section Facturation de `CLAUDE.md` dit « hors scope de la V1 »~~ :
+  corrigé (commit `cb859c2`), elle renvoie à l'ADR 016. La vague 2 (ADR 023 à
+  035) a construit la facturation.
 
 ## Écrire un nouvel ADR
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **023**.
+   `ListAgents`. Le prochain numéro libre est **041**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

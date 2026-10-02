@@ -1,11 +1,11 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import type { ResourceType } from '../ressources/schema.ts'
-import { resolveRate, type RateLookup } from './tarifs.ts'
+import { isRatePlanValidOn, resolveRate, type RateLookup } from './tarifs.ts'
 import {
   ratePlanItems,
   ratePlans,
@@ -40,16 +40,33 @@ export async function findRatePlan(id: string): Promise<RatePlanWithItems | unde
   })
 }
 
-/** Grille appliquée quand un contrat ou une réservation n'en désigne aucune. */
-export async function findDefaultRatePlan(): Promise<RatePlanWithItems | undefined> {
-  const [plan] = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .select()
-      .from(ratePlans)
-      .where(and(eq(ratePlans.isDefault, true), isNull(ratePlans.deletedAt)))
-      .limit(1),
+/**
+ * Grilles par défaut en vigueur le jour `day` (jour du centre, R08) : une au
+ * plus, la base refusant deux grilles par défaut sur les mêmes jours
+ * (`rate_plans_default_no_overlap`, ADR 035). Plusieurs se suivent dans le
+ * temps : celle de l'an prochain se prépare d'avance.
+ */
+export function defaultRatePlanOn(day: string) {
+  return and(
+    eq(ratePlans.isDefault, true),
+    isNull(ratePlans.deletedAt),
+    sql`(${ratePlans.validFrom} is null or ${ratePlans.validFrom} <= ${day}::date)`,
+    sql`(${ratePlans.validTo} is null or ${ratePlans.validTo} >= ${day}::date)`,
   )
-  return plan ? findRatePlan(plan.id) : undefined
+}
+
+/**
+ * Grille appliquée quand un contrat ou une réservation n'en désigne aucune :
+ * la grille par défaut en vigueur le jour `on` (jour du centre, R08). Un jour
+ * qu'aucune ne couvre, rien ne la remplace, et aucun prix n'est affiché ni
+ * calculé ce jour-là.
+ */
+export async function findDefaultRatePlan(on: string): Promise<RatePlanWithItems | undefined> {
+  const [plan] = await withTenant(currentTenantId(), (tx) =>
+    tx.select().from(ratePlans).where(defaultRatePlanOn(on)).limit(1),
+  )
+  if (!plan || !isRatePlanValidOn(plan, on)) return undefined
+  return findRatePlan(plan.id)
 }
 
 export type RatePlanInput = {
@@ -60,12 +77,20 @@ export type RatePlanInput = {
   validTo?: string | null
 }
 
-/** Levée quand une autre grille porte déjà le drapeau « par défaut ». */
+/** Levée quand une autre grille par défaut couvre déjà tout ou partie des mêmes jours. */
 export class DefaultRatePlanConflictError extends Error {
   constructor() {
-    super('Une autre grille est déjà la grille par défaut du centre.')
+    super(
+      'Une autre grille par défaut couvre déjà tout ou partie de ces dates : réglez leurs dates de validité pour qu’elles se suivent sans se recouvrir.',
+    )
     this.name = 'DefaultRatePlanConflictError'
   }
+}
+
+/** Refus de la base pour deux grilles par défaut sur les mêmes jours (ADR 035). */
+const isDefaultConflict = (error: unknown) => {
+  const code = pgErrorCode(error)
+  return code === PG_EXCLUSION_VIOLATION || code === PG_UNIQUE_VIOLATION
 }
 
 export async function createRatePlan(input: RatePlanInput): Promise<RatePlan> {
@@ -84,8 +109,37 @@ export async function createRatePlan(input: RatePlanInput): Promise<RatePlan> {
     )
     return created
   } catch (error) {
-    // L'index partiel garantit une seule grille par défaut à la fois.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new DefaultRatePlanConflictError()
+    // La contrainte d'exclusion garantit une seule grille par défaut par jour.
+    if (isDefaultConflict(error)) throw new DefaultRatePlanConflictError()
+    throw error
+  }
+}
+
+/**
+ * Modification d'une grille vivante : nom, dates de validité, rôle de grille
+ * par défaut. Les prix ne changent pas ici : ils se retirent et se remplacent
+ * ligne à ligne. Une grille archivée ne se modifie plus (décision 6).
+ *
+ * Rend `false` quand la grille est introuvable ou archivée.
+ */
+export async function updateRatePlan(id: string, input: RatePlanInput): Promise<boolean> {
+  if (!isUuid(id)) return false
+  try {
+    const updated = await withTenant(currentTenantId(), (tx) =>
+      tx
+        .update(ratePlans)
+        .set({
+          name: input.name,
+          isDefault: input.isDefault ?? false,
+          validFrom: input.validFrom || null,
+          validTo: input.validTo || null,
+        })
+        .where(and(eq(ratePlans.id, id), isNull(ratePlans.deletedAt)))
+        .returning({ id: ratePlans.id }),
+    )
+    return updated.length > 0
+  } catch (error) {
+    if (isDefaultConflict(error)) throw new DefaultRatePlanConflictError()
     throw error
   }
 }
@@ -185,15 +239,17 @@ export async function archiveRatePlan(id: string): Promise<void> {
 
 /**
  * Tarif applicable à une ressource, dans une grille donnée ou dans celle par
- * défaut. Renvoie `undefined` quand aucune grille ne couvre le besoin — au
- * lecteur de décider quoi en faire, pas à cette fonction d'inventer un prix.
+ * défaut, le jour `lookup.on`. Renvoie `undefined` quand aucune grille en
+ * vigueur ne couvre le besoin — au lecteur de décider quoi en faire, pas à
+ * cette fonction d'inventer un prix. Le devis d'une réservation passe par
+ * `quote()` (`devis-queries.ts`), qui choisit aussi l'unité.
  */
 export async function findApplicableRate(
   lookup: RateLookup,
   ratePlanId?: string | null,
 ): Promise<{ plan: RatePlan; item: RatePlanItem } | undefined> {
-  const plan = ratePlanId ? await findRatePlan(ratePlanId) : await findDefaultRatePlan()
+  const plan = ratePlanId ? await findRatePlan(ratePlanId) : await findDefaultRatePlan(lookup.on)
   if (!plan) return undefined
-  const item = resolveRate(plan.items, lookup)
+  const item = resolveRate(plan, lookup)
   return item ? { plan, item } : undefined
 }

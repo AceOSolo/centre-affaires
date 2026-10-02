@@ -2,18 +2,21 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { notifyContractActivated } from '../notifications/declencheurs-clients.ts'
 import { findResource } from '../ressources/queries.ts'
 import { occupationConflictMessage } from './conflits.ts'
 import { noticeEndsOn } from './echeancier.ts'
 import { isCalendarDate, readContractForm, type ContractField } from './formulaire.ts'
 import {
   ContractAlreadyStartedError,
+  ContractClientLockedError,
   ContractOccupationConflictError,
   DuplicateReferenceError,
   activateContract,
@@ -116,6 +119,9 @@ export async function updateContractAction(
     if (error instanceof DuplicateReferenceError) {
       return { fieldErrors: { reference: error.message }, values: read.values }
     }
+    if (error instanceof ContractClientLockedError) {
+      return { fieldErrors: { clientId: error.message }, values: read.values }
+    }
     throw error
   }
 
@@ -132,12 +138,13 @@ export async function activateContractAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requirePermission('contrats.activer')
+  const { member } = await requirePermission('contrats.activer')
   const id = text(formData, 'id')
   if (!isUuid(id)) return { error: 'Contrat introuvable.' }
 
   try {
-    if (!(await activateContract(id))) {
+    // Le document du contrat est archivé dans la même transaction (ADR 025).
+    if (!(await activateContract(id, member.id))) {
       return { error: 'Ce contrat n’est plus un brouillon : il ne peut pas être activé.' }
     }
   } catch (error) {
@@ -147,6 +154,8 @@ export async function activateContractAction(
     throw error
   }
 
+  // Le client est prévenu que son contrat est en vigueur (ADR 038).
+  after(() => notifyContractActivated(id))
   revalidateContract(id)
   redirect(`/contrats/${id}?fait=active`)
 }
@@ -155,8 +164,7 @@ export async function activateContractAction(
  * Changement de ressource d'un contrat en cours qui n'a pas commencé :
  * l'occupation suit (ADR 018). Vers une ressource déjà occupée, la base
  * refuse ; l'erreur revient sous le champ. Un contrat commencé ne change pas de
- * ressource : le message oriente vers la résiliation suivie d'un nouveau
- * contrat.
+ * ressource par ce chemin : le message oriente vers l'avenant (ADR 025).
  */
 export async function changeContractResourceAction(
   _previous: FormState,

@@ -1,7 +1,8 @@
 # ADR 018 — Occupation des ressources sous contrat, canal et contrat des réservations
 
 **Date** : 2026-10-01
-**Statut** : accepté
+**Statut** : accepté — une occupation par segment de ressource, et changement
+de ressource en cours de contrat par avenant (ADR 025)
 
 ## Contexte
 

@@ -33,11 +33,15 @@ import {
   contractTypeLabels,
 } from '../../../../modules/contrats/labels.ts'
 import { listContracts } from '../../../../modules/contrats/queries.ts'
+import { SepaMandatesSection } from '../../../../modules/facturation/mandats-section.tsx'
+import { ClientSubscriptionsSection } from '../../../../modules/facturation/souscriptions-section.tsx'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import {
   bookingStatusBadgeStyles,
   bookingStatusLabels,
 } from '../../../../modules/reservations/labels.ts'
+import { formatCentreDay } from '../../../../modules/rgpd/affichage.ts'
+import { ClientRetentionSection } from '../../../../modules/rgpd/client-section.tsx'
 
 export const metadata = { title: 'Client' }
 
@@ -56,10 +60,15 @@ export default async function ClientPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ contact?: string }>
+  searchParams: Promise<{ contact?: string; souscription?: string; rgpd?: string }>
 }) {
   const { member: staff } = await requirePermission('clients.gerer')
-  const [{ id }, { contact: contactNotice }] = await Promise.all([params, searchParams])
+  // Retour d'une anonymisation (R29) : lu à part, la section le confirme.
+  const { rgpd: rgpdNotice } = await searchParams
+  const [{ id }, { contact: contactNotice, souscription: subscriptionNotice }] = await Promise.all([
+    params,
+    searchParams,
+  ])
   // Un identifiant illisible ferait lever Postgres (22P02) : c'est une fiche
   // introuvable, pas une panne.
   if (!isUuid(id)) notFound()
@@ -95,6 +104,11 @@ export default async function ClientPage({
               Fiche archivée
             </span>
           )}
+          {client.anonymizedAt && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+              Anonymisée le {formatCentreDay(client.anonymizedAt, timeZone)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -109,12 +123,15 @@ export default async function ClientPage({
       )}
 
       <div className="flex flex-wrap gap-3">
-        <Link
-          href={`/clients/${client.id}/modifier`}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Modifier la fiche
-        </Link>
+        {/* Une fiche anonymisée ne change plus (CA012, ADR 040). */}
+        {!client.anonymizedAt && (
+          <Link
+            href={`/clients/${client.id}/modifier`}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Modifier la fiche
+          </Link>
+        )}
         {can(staff.role, 'contrats.creer') && (
           <Link
             href={`/contrats/nouveau?clientId=${client.id}`}
@@ -296,10 +313,21 @@ export default async function ClientPage({
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold tracking-tight">
-          Contrats{' '}
-          <span className="font-normal text-muted-foreground">({contracts.length})</span>
-        </h2>
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Contrats{' '}
+            <span className="font-normal text-muted-foreground">({contracts.length})</span>
+          </h2>
+          {/* Factures et avoirs du client (R13, ADR 029) : la liste filtrée. */}
+          {can(staff.role, 'facturation.consulter') && (
+            <Link
+              href={`/factures?client=${client.id}`}
+              className="text-sm text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Factures de ce client
+            </Link>
+          )}
+        </div>
 
         {contracts.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -411,22 +439,13 @@ export default async function ClientPage({
         )}
       </section>
 
-      {/* Place réservée aux services souscrits (R18, vague 2). Un tableau vide
-          dirait « aucun service » d'un client qui en a : le texte dit plutôt
-          que le suivi n'existe pas encore. */}
-      <section aria-labelledby="services-titre" className="flex flex-col gap-3">
-        <h2 id="services-titre" className="text-sm font-semibold tracking-tight">
-          Services souscrits
-        </h2>
-        <div className="rounded-lg border border-dashed border-border bg-white px-5 py-4 text-sm">
-          <p className="font-medium text-foreground">Pas encore suivis dans l’application</p>
-          <p className="mt-1 text-muted-foreground">
-            Les forfaits et les actes — standard, assistante, numérisation du courrier — seront
-            rattachés à la fiche avec la facturation. D’ici là, cette rubrique ne dit pas ce que le
-            client a souscrit : ses prestations récurrentes figurent dans ses contrats.
-          </p>
-        </div>
-      </section>
+      {/* Services souscrits (R07, R18) : en cours, à venir, historique. */}
+      <ClientSubscriptionsSection
+        clientId={client.id}
+        archivedClient={Boolean(client.deletedAt)}
+        canManage={can(staff.role, 'souscriptions.gerer')}
+        notice={typeof subscriptionNotice === 'string' ? subscriptionNotice : undefined}
+      />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -514,6 +533,24 @@ export default async function ClientPage({
           </div>
         )}
       </section>
+
+      {/* Mandats SEPA (R16, ADR 027) : lus avec les factures, gérés avec les paiements. */}
+      {can(staff.role, 'facturation.consulter') && (
+        <SepaMandatesSection
+          clientId={client.id}
+          clientName={client.name}
+          archived={Boolean(client.deletedAt)}
+          canManage={can(staff.role, 'paiements.gerer')}
+        />
+      )}
+
+      {/* Conservation et anonymisation (R29, ADR 040). */}
+      <ClientRetentionSection
+        client={client}
+        canAnonymize={can(staff.role, 'rgpd.anonymiser')}
+        timeZone={timeZone}
+        notice={typeof rgpdNotice === 'string' ? rgpdNotice : undefined}
+      />
 
       {!client.deletedAt && can(staff.role, 'clients.archiver') && (
         <form
