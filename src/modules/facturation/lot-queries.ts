@@ -9,7 +9,7 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { contractTypeLabels } from '../contrats/labels.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
-import { mailItems } from '../courrier/schema.ts'
+import { mailItems, mailRequests } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { frozenQuoteDisplay } from './devis.ts'
@@ -323,28 +323,90 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       ),
     )
 
-  const [actService] = await tx
-    .select()
-    .from(services)
-    .where(and(eq(services.code, serviceCodes.mailOpening), isNull(services.deletedAt)))
-    .limit(1)
-  const actSubscriptionRows = actService
-    ? await tx
-        .select()
-        .from(subscribedServices)
-        .where(
-          and(
-            eq(subscribedServices.serviceId, actService.id),
-            isNull(subscribedServices.deletedAt),
-            subscriptionContractIsLive(),
-            lte(subscribedServices.startsOn, windows.consumption.end),
-            or(
-              isNull(subscribedServices.endsOn),
-              gte(subscribedServices.endsOn, windows.consumption.start),
+  /** Service d'un acte, retrouvé par son code, et les souscriptions qui le couvrent dans la période. */
+  const actServiceByCode = async (code: string) => {
+    const [service] = await tx
+      .select()
+      .from(services)
+      .where(and(eq(services.code, code), isNull(services.deletedAt)))
+      .limit(1)
+    const subscriptions = service
+      ? await tx
+          .select()
+          .from(subscribedServices)
+          .where(
+            and(
+              eq(subscribedServices.serviceId, service.id),
+              isNull(subscribedServices.deletedAt),
+              subscriptionContractIsLive(),
+              lte(subscribedServices.startsOn, windows.consumption.end),
+              or(
+                isNull(subscribedServices.endsOn),
+                gte(subscribedServices.endsOn, windows.consumption.start),
+              ),
             ),
-          ),
-        )
-    : []
+          )
+      : []
+    return {
+      service: service
+        ? {
+            id: service.id,
+            name: service.name,
+            unitPriceCents: service.unitPriceCents,
+            vatRateBp: service.vatRateBp,
+            currency: service.currency,
+          }
+        : null,
+      subscriptions: subscriptions.map((subscription) => ({
+        id: subscription.id,
+        clientId: subscription.clientId,
+        includedQuantity: subscription.includedQuantity,
+        unitPriceCents: subscription.unitPriceCents,
+        discountBp: subscription.discountBp,
+        discountAmountCents: subscription.discountAmountCents,
+        vatRateBp: subscription.vatRateBp,
+        currency: subscription.currency,
+        startsOn: subscription.startsOn,
+        endsOn: subscription.endsOn,
+      })),
+    }
+  }
+  const opening = await actServiceByCode(serviceCodes.mailOpening)
+  const scanning = await actServiceByCode(serviceCodes.mailScan)
+  const forwarding = await actServiceByCode(serviceCodes.mailForwarding)
+
+  /*
+   * Demandes de courrier faites dans la période (ADR 037) : numérisations et
+   * réexpéditions, chacune tenue au plus une fois par ligne de son acte, et
+   * par ligne de ses frais d'affranchissement. Un pli retiré (enregistré par
+   * erreur) sort de la facturation avec elles.
+   */
+  const heldBy = (kind: 'act' | 'other') => sql<boolean>`exists (
+    select 1 from invoice_lines as l
+     where l.tenant_id = mail_requests.tenant_id and l.mail_request_id = mail_requests.id
+       and l.kind = ${kind} and l.deleted_at is null and l.released_at is null)`
+  const requestRows = await tx
+    .select({
+      id: mailRequests.id,
+      clientId: mailRequests.clientId,
+      kind: mailRequests.kind,
+      completedAt: mailRequests.completedAt,
+      postageCents: mailRequests.postageCents,
+      postageCurrency: mailRequests.postageCurrency,
+      held: heldBy('act'),
+      postageHeld: heldBy('other'),
+    })
+    .from(mailRequests)
+    .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
+    .where(
+      and(
+        eq(mailRequests.status, 'done'),
+        inArray(mailRequests.kind, ['scan', 'forward']),
+        isNull(mailItems.deletedAt),
+        gte(mailRequests.completedAt, consumption.startsAt),
+        lt(mailRequests.completedAt, consumption.endsAt),
+      ),
+    )
 
   const sources: RunSources = {
     contracts: billingContracts,
@@ -399,27 +461,29 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       day: toIsoDate(row.openedAt as Date, tenant.timezone),
       held: Boolean(row.held),
     })),
-    actService: actService
-      ? {
-          id: actService.id,
-          name: actService.name,
-          unitPriceCents: actService.unitPriceCents,
-          vatRateBp: actService.vatRateBp,
-          currency: actService.currency,
-        }
-      : null,
-    actSubscriptions: actSubscriptionRows.map((subscription) => ({
-      id: subscription.id,
-      clientId: subscription.clientId,
-      includedQuantity: subscription.includedQuantity,
-      unitPriceCents: subscription.unitPriceCents,
-      discountBp: subscription.discountBp,
-      discountAmountCents: subscription.discountAmountCents,
-      vatRateBp: subscription.vatRateBp,
-      currency: subscription.currency,
-      startsOn: subscription.startsOn,
-      endsOn: subscription.endsOn,
+    actService: opening.service,
+    actSubscriptions: opening.subscriptions,
+    mailRequests: requestRows.map((row) => ({
+      id: row.id,
+      clientId: row.clientId,
+      kind: row.kind as 'scan' | 'forward',
+      completedAt: row.completedAt as Date,
+      day: toIsoDate(row.completedAt as Date, tenant.timezone),
+      held: Boolean(row.held),
+      postageRecorded: row.kind === 'forward' ? row.postageCents !== null : undefined,
     })),
+    requestServices: { scan: scanning.service, forward: forwarding.service },
+    requestSubscriptions: { scan: scanning.subscriptions, forward: forwarding.subscriptions },
+    // Des frais nuls ne font pas de ligne ; des frais déjà tenus, pas deux.
+    postages: requestRows
+      .filter((row) => row.kind === 'forward' && (row.postageCents ?? 0) > 0 && !row.postageHeld)
+      .map((row) => ({
+        requestId: row.id,
+        clientId: row.clientId,
+        day: toIsoDate(row.completedAt as Date, tenant.timezone),
+        postageCents: row.postageCents as number,
+        currency: row.postageCurrency as string,
+      })),
   }
 
   const clientRows = await tx
@@ -566,6 +630,7 @@ function lineValues(invoiceId: string, line: InvoiceLineDraft, position: number)
     bookingId: line.bookingId,
     subscribedServiceId: line.subscribedServiceId,
     mailItemId: line.mailItemId,
+    mailRequestId: line.mailRequestId,
     serviceId: line.serviceId,
     resourceId: line.resourceId,
   }

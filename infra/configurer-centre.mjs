@@ -62,8 +62,9 @@ const OUVERTURE = { opensAt: '08:00', closesAt: '18:00', weekdays: [1, 2, 3, 4, 
 
 /**
  * Prix HT, en centimes, des services que l'application retrouve par leur code
- * (`src/modules/facturation/services-attendus.ts`, ADR 024) : aujourd'hui
- * l'ouverture et la numérisation d'un pli, valorisée sur la facture (R14).
+ * (`src/modules/facturation/services-attendus.ts`, ADR 024) : l'ouverture et
+ * la numérisation d'un pli (R14), la numérisation seule d'un pli déjà ouvert
+ * et la réexpédition, frais d'affranchissement en sus (R21, ADR 037).
  *
  * Désignation, nature, unité et TVA (20 %, à valider avec l'expert-comptable)
  * viennent du module. Le prix, non : aucun n'est inventé (ADR 009). `null` :
@@ -72,6 +73,8 @@ const OUVERTURE = { opensAt: '08:00', closesAt: '18:00', weekdays: [1, 2, 3, 4, 
  */
 const PRIX_DES_SERVICES = {
   'courrier.ouverture': null,
+  'courrier.numerisation': null,
+  'courrier.reexpedition': null,
 }
 
 const url = process.env.APP_DATABASE_URL

@@ -1,10 +1,13 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
+import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
+import { listRequestsForMail } from '../../../../modules/courrier/demandes-queries.ts'
 import {
   mailKindLabels,
   mailScanSideLabels,
@@ -26,13 +29,35 @@ function formatBytes(bytes: number): string {
     : `${format.format(Math.max(1, Math.round(bytes / 1024)))} ko`
 }
 
-export default async function CourrierDetailPage({ params }: { params: Promise<{ id: string }> }) {
+/** Confirmations, après le traitement d'une demande (`?fait=`). */
+const notices: Record<string, string> = {
+  'prise-en-charge': 'Demande prise en charge. Le client voit que le centre s’en occupe.',
+  refus: 'Demande refusée. Le client lit le motif dans son espace ; il est prévenu par courriel.',
+  annulation: 'Demande annulée à la demande du client, à votre nom.',
+  numerisee: 'Numérisation déposée et demande faite. Le client est prévenu par courriel.',
+  reexpediee: 'Réexpédition notée comme faite. Le client est prévenu par courriel.',
+  envoi: 'Suivi et frais d’affranchissement enregistrés.',
+}
+
+export default async function CourrierDetailPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ fait?: string }>
+}) {
   await requirePermission('courrier.gerer')
-  const { id } = await params
-  const [mail, timeZone] = await Promise.all([findMail(id), currentTimeZone()])
+  const [{ id }, { fait }] = await Promise.all([params, searchParams])
+  const [mail, timeZone, requests] = await Promise.all([
+    findMail(id),
+    currentTimeZone(),
+    listRequestsForMail(id),
+  ])
   if (!mail) notFound()
 
   const withdrawn = Boolean(mail.deletedAt)
+  const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
+  const scanOrigin = new Map(requests.map((request) => [request.id, request]))
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -54,6 +79,11 @@ export default async function CourrierDetailPage({ params }: { params: Promise<{
               Retiré
             </span>
           )}
+          {forwarded && (
+            <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
+              Réexpédié
+            </span>
+          )}
         </div>
         {withdrawn && (
           <p className="mt-2 text-sm text-muted-foreground">
@@ -62,6 +92,8 @@ export default async function CourrierDetailPage({ params }: { params: Promise<{
           </p>
         )}
       </div>
+
+      {fait && notices[fait] && <FlashNotice key={fait}>{notices[fait]}</FlashNotice>}
 
       <dl className="grid grid-cols-[11rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
         <dt className="text-muted-foreground">Destinataire</dt>
@@ -126,8 +158,12 @@ export default async function CourrierDetailPage({ params }: { params: Promise<{
                   className="inline-flex items-center gap-2 rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
                 >
                   {mailScanSideLabels[scan.side]}
-                  <span className="text-xs font-normal text-muted-foreground">
-                    {formatBytes(scan.byteSize)} · nouvel onglet
+                  {scan.mailRequestId && scanOrigin.get(scan.mailRequestId)?.kind === 'scan' && (
+                    <span className="font-normal"> — numérisation demandée</span>
+                  )}
+                  <span className="text-xs font-normal text-muted-foreground tabular">
+                    {formatDateTime(scan.createdAt, timeZone)} · {formatBytes(scan.byteSize)} · nouvel
+                    onglet
                   </span>
                 </a>
               </li>
@@ -139,9 +175,12 @@ export default async function CourrierDetailPage({ params }: { params: Promise<{
         </p>
       </section>
 
-      {!withdrawn && canOpen(mail.status) && (
+      {/* Un pli réexpédié a quitté le centre : il ne s'ouvre plus ici. */}
+      {!withdrawn && !forwarded && canOpen(mail.status) && (
         <OpenForm mailItemId={mail.id} requested={mail.status === 'opening_requested'} />
       )}
+
+      <MailRequestsSection requests={requests} timeZone={timeZone} withdrawn={withdrawn} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">

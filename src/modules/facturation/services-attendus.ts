@@ -5,8 +5,8 @@ import { serviceCodes, type RateUnit, type ServiceNature } from './schema.ts'
 /**
  * Services que le code retrouve par leur code stable (ADR 024) : ils doivent
  * exister au catalogue de chaque centre pour que la facturation valorise ce
- * qu'ils désignent. Aujourd'hui, l'ouverture d'un pli (R14) ; la réexpédition
- * (`courrier.reexpedition`) les rejoindra avec sa demande, en vague 3 (R21).
+ * qu'ils désignent. L'ouverture d'un pli (R14), et depuis la vague 3 la
+ * numérisation seule et la réexpédition demandées sur un pli (R21, ADR 037).
  *
  * La désignation, la nature, l'unité et la TVA sont données ici. **Le prix ne
  * l'est pas** : aucun prix n'est inventé (ADR 009). Le centre le fixe, à
@@ -39,6 +39,28 @@ export const expectedServices: readonly ExpectedService[] = [
     unit: 'unit',
     vatRateBp: 2_000,
     purpose: 'Chaque pli ouvert et numérisé est porté sur la facture du client à ce prix (R14).',
+  },
+  // Demandes sur un pli (R21, ADR 037) : chacune se facture par sa demande faite.
+  {
+    code: serviceCodes.mailScan,
+    name: 'Numérisation d’un pli déjà ouvert',
+    description:
+      'Numérisation, à la demande du client, d’un pli déjà ouvert : pages supplémentaires, numérisation effacée au terme de sa conservation.',
+    nature: 'act',
+    unit: 'unit',
+    vatRateBp: 2_000,
+    purpose: 'Chaque numérisation demandée et faite est portée sur la facture du client à ce prix (R21).',
+  },
+  {
+    code: serviceCodes.mailForwarding,
+    name: 'Réexpédition d’un pli',
+    description:
+      'Réexpédition d’un pli à l’adresse indiquée par le client. Les frais d’affranchissement réels s’y ajoutent, au centime relevé.',
+    nature: 'act',
+    unit: 'unit',
+    vatRateBp: 2_000,
+    purpose:
+      'Chaque réexpédition faite est portée sur la facture du client à ce prix, avec ses frais d’affranchissement relevés (R21).',
   },
 ]
 

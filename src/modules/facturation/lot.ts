@@ -52,6 +52,8 @@ export type InvoiceLineDraft = {
   bookingId: string | null
   subscribedServiceId: string | null
   mailItemId: string | null
+  /** Demande de courrier faite : numérisation ou réexpédition, et ses frais (ADR 037). */
+  mailRequestId: string | null
   serviceId: string | null
   resourceId: string | null
 }
@@ -73,6 +75,7 @@ const EMPTY_SOURCES = {
   bookingId: null,
   subscribedServiceId: null,
   mailItemId: null,
+  mailRequestId: null,
   serviceId: null,
   resourceId: null,
 } as const
@@ -586,62 +589,110 @@ export function mailActInvoiceLines(
   subscriptions: readonly BillingActSubscription[],
   settings: RunSettings,
 ): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
+  return actInvoiceLines(
+    items.map((item) => ({ ...item, at: item.openedAt })),
+    service,
+    subscriptions,
+    settings,
+    {
+      occurrence: (day) => `pli ouvert le ${day}`,
+      unvalued: (count) =>
+        `${count} pli${count > 1 ? 's' : ''} ouvert${count > 1 ? 's' : ''} non valorisé${count > 1 ? 's' : ''} : aucun service de code « courrier.ouverture » au catalogue.`,
+      foreignCurrency: (day) => `Pli ouvert le ${day}`,
+      source: (act) => ({ mailItemId: act.id }),
+    },
+  )
+}
+
+/** Un acte à valoriser : un pli ouvert, une numérisation ou une réexpédition faite. */
+type BillableAct = {
+  id: string
+  clientId: string
+  /** Instant de l'acte, pour l'ordre : les premiers de la période sont les inclus. */
+  at: Date
+  /** Jour du centre de l'acte. */
+  day: string
+  /** Déjà tenu par une ligne de facture. */
+  held: boolean
+}
+
+/** Ce qui change d'une nature d'acte à l'autre : les mots, et la source de la ligne. */
+type ActWording = {
+  /** « pli ouvert le 03/09/2026 », désignation de la ligne après le service. */
+  occurrence: (day: string) => string
+  /** Avertissement d'un client dont les actes ne sont pas valorisés, faute de service. */
+  unvalued: (count: number) => string
+  /** « Pli ouvert le 03/09/2026 », en tête d'un avertissement de devise. */
+  foreignCurrency: (day: string) => string
+  source: (act: BillableAct) => Partial<Pick<InvoiceLineDraft, 'mailItemId' | 'mailRequestId'>>
+}
+
+/**
+ * La règle unique des actes (`priceActs`, ADR 024), quelle que soit leur
+ * nature : par client, les inclus de la souscription en vigueur le jour de
+ * l'acte, à 0 €, puis son prix figé, sinon le catalogue. Le rang se compte sur
+ * tous les actes de la période, facturés ou non.
+ */
+function actInvoiceLines(
+  acts: readonly BillableAct[],
+  service: BillingActService | null,
+  subscriptions: readonly BillingActSubscription[],
+  settings: RunSettings,
+  wording: ActWording,
+): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
   const byClient = new Map<string, InvoiceLineDraft[]>()
   const warnings: RunWarning[] = []
 
-  const itemsByClient = new Map<string, BillingMailItem[]>()
-  for (const item of items) {
-    const clientItems = itemsByClient.get(item.clientId)
-    if (clientItems) clientItems.push(item)
-    else itemsByClient.set(item.clientId, [item])
+  const actsByClient = new Map<string, BillableAct[]>()
+  for (const act of acts) {
+    const clientActs = actsByClient.get(act.clientId)
+    if (clientActs) clientActs.push(act)
+    else actsByClient.set(act.clientId, [act])
   }
 
   if (!service) {
-    for (const [clientId, clientItems] of itemsByClient) {
-      const count = clientItems.filter((item) => !item.held).length
+    for (const [clientId, clientActs] of actsByClient) {
+      const count = clientActs.filter((act) => !act.held).length
       if (count === 0) continue
-      warnings.push({
-        clientId,
-        message: `${count} pli${count > 1 ? 's' : ''} ouvert${count > 1 ? 's' : ''} non valorisé${count > 1 ? 's' : ''} : aucun service de code « courrier.ouverture » au catalogue.`,
-      })
+      warnings.push({ clientId, message: wording.unvalued(count) })
     }
     return { byClient, warnings }
   }
 
-  for (const [clientId, clientItems] of itemsByClient) {
+  for (const [clientId, clientActs] of actsByClient) {
     const clientSubscriptions = subscriptions.filter((subscription) => subscription.clientId === clientId)
-    const itemById = new Map(clientItems.map((item) => [item.id, item]))
+    const actById = new Map(clientActs.map((act) => [act.id, act]))
     const priced = priceActs(
-      clientItems.map((item) => ({ id: item.id, day: item.day, at: item.openedAt })),
+      clientActs.map((act) => ({ id: act.id, day: act.day, at: act.at })),
       clientSubscriptions,
       service,
     )
-    for (const act of priced) {
-      const item = itemById.get(act.actId)
-      if (!item || item.held || act.source === 'unpriced') continue
-      if (act.currency !== settings.currency) {
+    for (const pricedAct of priced) {
+      const act = actById.get(pricedAct.actId)
+      if (!act || act.held || pricedAct.source === 'unpriced') continue
+      if (pricedAct.currency !== settings.currency) {
         warnings.push({
           clientId,
-          message: `Pli ouvert le ${dayLabel(item.day)} : prix en ${act.currency}, à facturer à la main.`,
+          message: `${wording.foreignCurrency(dayLabel(act.day))} : prix en ${pricedAct.currency}, à facturer à la main.`,
         })
         continue
       }
-      const included = act.source === 'included'
-      const unitPriceCents = included ? 0 : (act.unitPriceCents ?? 0)
-      const vatRateBp = act.vatRateBp ?? service.vatRateBp
+      const included = pricedAct.source === 'included'
+      const unitPriceCents = included ? 0 : (pricedAct.unitPriceCents ?? 0)
+      const vatRateBp = pricedAct.vatRateBp ?? service.vatRateBp
       const amountDiscount = clientSubscriptions.find(
-        (subscription) => subscription.id === act.subscriptionId,
+        (subscription) => subscription.id === pricedAct.subscriptionId,
       )?.discountAmountCents
       const line: InvoiceLineDraft = {
         ...EMPTY_SOURCES,
         kind: 'act',
-        description: `${service.name} — pli ouvert le ${dayLabel(item.day)}${included ? ', inclus' : ''}`,
-        periodStart: item.day,
-        periodEnd: item.day,
+        description: `${service.name} — ${wording.occurrence(dayLabel(act.day))}${included ? ', inclus' : ''}`,
+        periodStart: act.day,
+        periodEnd: act.day,
         quantity: 1,
         unit: 'unit',
         unitPriceCents,
-        discountBp: included ? null : act.discountBp,
+        discountBp: included ? null : pricedAct.discountBp,
         // Une remise en montant (que la saisie refuse sur un acte) se compte
         // par acte et ne dépasse pas son prix.
         discountAmountCents:
@@ -650,14 +701,176 @@ export function mailActInvoiceLines(
         prorataDenominator: null,
         vatRateBp,
         vatCategory: vatCategoryFor(vatRateBp),
-        subscribedServiceId: act.subscriptionId,
-        mailItemId: item.id,
+        subscribedServiceId: pricedAct.subscriptionId,
+        ...wording.source(act),
         serviceId: service.id,
       }
       const clientLines = byClient.get(clientId)
       if (clientLines) clientLines.push(line)
       else byClient.set(clientId, [line])
     }
+  }
+  return { byClient, warnings }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Demandes de courrier faites (R21, ADR 037)                                 */
+/* -------------------------------------------------------------------------- */
+
+/** Natures de demande facturées par elles-mêmes ; l'ouverture l'est par son pli. */
+export type BillableMailRequestKind = 'scan' | 'forward'
+
+/** Une numérisation seule ou une réexpédition faite dans la période. */
+export type BillingMailRequest = {
+  id: string
+  clientId: string
+  kind: BillableMailRequestKind
+  /** Instant où la demande a été faite, pour l'ordre des inclus. */
+  completedAt: Date
+  /** Jour du centre où elle a été faite. */
+  day: string
+  /** Son acte est déjà tenu par une ligne de facture. */
+  held: boolean
+  /**
+   * Réexpédition : frais d'affranchissement relevés (0 compris). Sans eux,
+   * elle attend : une fois l'acte facturé, la base fige les frais (CA008).
+   */
+  postageRecorded?: boolean
+}
+
+/**
+ * Frais d'affranchissement relevés d'une réexpédition faite dans la période,
+ * pas encore facturés : refacturés au centime relevé, une fois (ADR 037).
+ */
+export type BillingPostage = {
+  requestId: string
+  clientId: string
+  /** Jour du centre de la réexpédition. */
+  day: string
+  postageCents: number
+  currency: string
+}
+
+const requestWording: Record<BillableMailRequestKind, Omit<ActWording, 'source'>> = {
+  scan: {
+    occurrence: (day) => `numérisation du ${day}`,
+    unvalued: (count) =>
+      `${count} numérisation${count > 1 ? 's' : ''} non valorisée${count > 1 ? 's' : ''} : aucun service de code « courrier.numerisation » au catalogue.`,
+    foreignCurrency: (day) => `Numérisation du ${day}`,
+  },
+  forward: {
+    occurrence: (day) => `réexpédition du ${day}`,
+    unvalued: (count) =>
+      `${count} réexpédition${count > 1 ? 's' : ''} non valorisée${count > 1 ? 's' : ''} : aucun service de code « courrier.reexpedition » au catalogue.`,
+    foreignCurrency: (day) => `Réexpédition du ${day}`,
+  },
+}
+
+/**
+ * Numérisations ou réexpéditions faites dans la période, valorisées par la
+ * même règle que les plis ouverts, au service de leur nature
+ * (`courrier.numerisation`, `courrier.reexpedition`) et aux souscriptions à ce
+ * service : leurs inclus d'abord, par ordre de réalisation. Une demande déjà
+ * tenue par une ligne compte dans le rang mais n'est pas refacturée.
+ *
+ * Une réexpédition dont les frais d'affranchissement ne sont pas relevés
+ * attend, signalée : facturer son acte figerait ses frais (la base les refuse
+ * dès qu'une ligne tient la demande), et ils ne seraient jamais refacturés.
+ * Elle garde sa place dans le rang des inclus : notés ses frais — 0 s'il n'y
+ * en a pas —, le lot rejoué la facture comme si elle n'avait pas attendu.
+ */
+export function mailRequestInvoiceLines(
+  requests: readonly BillingMailRequest[],
+  kind: BillableMailRequestKind,
+  service: BillingActService | null,
+  subscriptions: readonly BillingActSubscription[],
+  settings: RunSettings,
+): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
+  const ofKind = requests.filter((request) => request.kind === kind)
+  const waiting = (request: BillingMailRequest) =>
+    kind === 'forward' && request.postageRecorded === false && !request.held
+  const result = actInvoiceLines(
+    ofKind.map((request) => ({
+      ...request,
+      at: request.completedAt,
+      // Sans service, rien n'est valorisé : elle est comptée avec les autres.
+      held: request.held || (service !== null && waiting(request)),
+    })),
+    service,
+    subscriptions,
+    settings,
+    { ...requestWording[kind], source: (act) => ({ mailRequestId: act.id }) },
+  )
+  if (service) {
+    const missing = new Map<string, number>()
+    for (const request of ofKind.filter(waiting)) {
+      missing.set(request.clientId, (missing.get(request.clientId) ?? 0) + 1)
+    }
+    for (const [clientId, count] of missing) {
+      result.warnings.push({
+        clientId,
+        message: `${count} réexpédition${count > 1 ? 's' : ''} non facturée${count > 1 ? 's' : ''} : frais d’affranchissement non relevés. Notez-les sur la demande (0 s’il n’y en a pas), puis relancez le lot.`,
+      })
+    }
+  }
+  return result
+}
+
+/**
+ * Frais d'affranchissement des réexpéditions, une ligne `other` chacun : au
+ * centime relevé, quantité 1, sans remise ni prorata, dans la devise de la
+ * facture — ce que la base exige (`invoice_lines_guard`, CA003). Leur TVA est
+ * celle du service de réexpédition : des frais accessoires suivent la
+ * prestation (*à valider* par l'expert-comptable, ADR 037). Sans ce service,
+ * rien n'est facturé et le client est signalé.
+ */
+export function postageInvoiceLines(
+  postages: readonly BillingPostage[],
+  forwardService: BillingActService | null,
+  settings: RunSettings,
+): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
+  const byClient = new Map<string, InvoiceLineDraft[]>()
+  const warnings: RunWarning[] = []
+  const sorted = [...postages].sort((a, b) => byText(a.day, b.day) || byText(a.requestId, b.requestId))
+  if (!forwardService) {
+    const counts = new Map<string, number>()
+    for (const postage of sorted) counts.set(postage.clientId, (counts.get(postage.clientId) ?? 0) + 1)
+    for (const [clientId, count] of counts) {
+      warnings.push({
+        clientId,
+        message: `Frais d’affranchissement de ${count} réexpédition${count > 1 ? 's' : ''} non facturés : aucun service de code « courrier.reexpedition » au catalogue pour en fixer la TVA.`,
+      })
+    }
+    return { byClient, warnings }
+  }
+  for (const postage of sorted) {
+    if (postage.currency !== settings.currency) {
+      warnings.push({
+        clientId: postage.clientId,
+        message: `Frais d’affranchissement de la réexpédition du ${dayLabel(postage.day)} en ${postage.currency} : à facturer à la main.`,
+      })
+      continue
+    }
+    const line: InvoiceLineDraft = {
+      ...EMPTY_SOURCES,
+      kind: 'other',
+      description: `Frais d’affranchissement — réexpédition du ${dayLabel(postage.day)}`,
+      periodStart: postage.day,
+      periodEnd: postage.day,
+      quantity: 1,
+      unit: 'unit',
+      unitPriceCents: postage.postageCents,
+      discountBp: null,
+      discountAmountCents: null,
+      prorataNumerator: null,
+      prorataDenominator: null,
+      vatRateBp: forwardService.vatRateBp,
+      vatCategory: vatCategoryFor(forwardService.vatRateBp),
+      mailRequestId: postage.requestId,
+    }
+    const clientLines = byClient.get(postage.clientId)
+    if (clientLines) clientLines.push(line)
+    else byClient.set(postage.clientId, [line])
   }
   return { byClient, warnings }
 }
@@ -677,6 +890,13 @@ export type RunSources = {
   mailItems: readonly BillingMailItem[]
   actService: BillingActService | null
   actSubscriptions: readonly BillingActSubscription[]
+  /** Numérisations et réexpéditions faites dans la période (ADR 037). */
+  mailRequests?: readonly BillingMailRequest[]
+  /** Service et souscriptions de chaque nature de demande facturée. */
+  requestServices?: Partial<Record<BillableMailRequestKind, BillingActService | null>>
+  requestSubscriptions?: Partial<Record<BillableMailRequestKind, readonly BillingActSubscription[]>>
+  /** Frais d'affranchissement relevés, pas encore facturés. */
+  postages?: readonly BillingPostage[]
 }
 
 export type ClientRun = { clientId: string; lines: InvoiceLineDraft[]; warnings: RunWarning[] }
@@ -685,8 +905,9 @@ const byText = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0)
 
 /**
  * Lignes de chaque client pour le lot, dans l'ordre de la facture : loyers et
- * lignes des contrats, forfaits souscrits, réservations, actes. Un client sans
- * ligne ni avertissement n'apparaît pas.
+ * lignes des contrats, forfaits souscrits, réservations, actes — plis ouverts,
+ * puis numérisations, réexpéditions et frais d'affranchissement. Un client
+ * sans ligne ni avertissement n'apparaît pas.
  */
 export function computeRun(sources: RunSources, settings: RunSettings): ClientRun[] {
   const runs = new Map<string, ClientRun>()
@@ -739,6 +960,23 @@ export function computeRun(sources: RunSources, settings: RunSettings): ClientRu
   const acts = mailActInvoiceLines(sources.mailItems, sources.actService, sources.actSubscriptions, settings)
   for (const [clientId, lines] of acts.byClient) add(clientId, lines, [])
   for (const warning of acts.warnings) add(warning.clientId ?? '', [], [warning])
+
+  // Puis les demandes faites : numérisations, réexpéditions, et les frais
+  // d'affranchissement relevés (ADR 037).
+  const requestRuns = (['scan', 'forward'] as const).map((kind) =>
+    mailRequestInvoiceLines(
+      sources.mailRequests ?? [],
+      kind,
+      sources.requestServices?.[kind] ?? null,
+      sources.requestSubscriptions?.[kind] ?? [],
+      settings,
+    ),
+  )
+  requestRuns.push(postageInvoiceLines(sources.postages ?? [], sources.requestServices?.forward ?? null, settings))
+  for (const requestRun of requestRuns) {
+    for (const [clientId, lines] of requestRun.byClient) add(clientId, lines, [])
+    for (const warning of requestRun.warnings) add(warning.clientId ?? '', [], [warning])
+  }
 
   return [...runs.values()]
 }
