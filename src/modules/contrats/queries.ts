@@ -1,11 +1,15 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gt, isNotNull, isNull, lt, ne, not, sql } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
-import { withTenant } from '../../db/index.ts'
+import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { tenants } from '../../db/tenants.ts'
+import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients, type Client } from '../clients/schema.ts'
 import { ratePlans, type RatePlan } from '../facturation/schema.ts'
+import { bookings, type Booking } from '../reservations/schema.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
+import { contractRange, formatCalendarDate, type ContractPeriod } from './occupation.ts'
 import {
   contracts,
   type BillingPeriod,
@@ -40,8 +44,12 @@ const hydrate = (row: {
   resource: row.resource,
 })
 
+/**
+ * Contrats du centre. Les archivés sont exclus par défaut (décision 6) ;
+ * `archived: true` ne rend qu'eux, pour les retrouver depuis la liste.
+ */
 export async function listContracts(
-  filters: { status?: ContractStatus; clientId?: string } = {},
+  filters: { status?: ContractStatus; clientId?: string; archived?: boolean } = {},
 ): Promise<ContractWithRelations[]> {
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
@@ -52,7 +60,7 @@ export async function listContracts(
       .leftJoin(resources, eq(resources.id, contracts.resourceId))
       .where(
         and(
-          isNull(contracts.deletedAt),
+          filters.archived ? isNotNull(contracts.deletedAt) : isNull(contracts.deletedAt),
           filters.status ? eq(contracts.status, filters.status) : undefined,
           filters.clientId ? eq(contracts.clientId, filters.clientId) : undefined,
         ),
@@ -78,7 +86,11 @@ export async function findContract(id: string): Promise<ContractWithRelations | 
 
 export type ContractInput = {
   clientId: string
-  reference: string
+  /**
+   * Omise (`undefined`) : la base attribue le numéro suivant de la série du
+   * centre, `CT-2026-0001` (ADR 021). Jamais une chaîne vide, refusée en base.
+   */
+  reference?: string
   contractType: ContractType
   startsOn: string
   endsOn?: string | null
@@ -109,6 +121,9 @@ export async function createContract(input: ContractInput): Promise<Contract> {
         .insert(contracts)
         .values({
           ...input,
+          // `undefined` laisse agir la valeur par défaut de la colonne,
+          // `next_contract_reference()` (ADR 021).
+          reference: input.reference || undefined,
           currency: input.currency || 'EUR',
           endsOn: input.endsOn || null,
           ratePlanId: input.ratePlanId || null,
@@ -119,6 +134,53 @@ export async function createContract(input: ContractInput): Promise<Contract> {
     )
     return created
   } catch (error) {
+    // Une référence attribuée par la base n'entre pas en collision : la
+    // fonction saute les numéros déjà portés. Seule une saisie manuelle le peut.
+    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && input.reference) {
+      throw new DuplicateReferenceError(input.reference)
+    }
+    throw error
+  }
+}
+
+/**
+ * Modification d'un brouillon, avec les mêmes champs que la création (R12).
+ *
+ * Seul un brouillon se modifie ainsi : un contrat actif engage le centre et le
+ * client, ses changements relèvent d'un avenant (vague 2). Rend `false` si le
+ * contrat n'est plus un brouillon ou a été archivé : le filtre est dans la
+ * requête, pas dans une lecture préalable qu'une écriture concurrente rendrait
+ * fausse.
+ */
+export async function updateDraftContract(
+  id: string,
+  input: ContractInput & { reference: string },
+): Promise<boolean> {
+  try {
+    const updated = await withTenant(currentTenantId(), (tx) =>
+      tx
+        .update(contracts)
+        .set({
+          clientId: input.clientId,
+          reference: input.reference,
+          contractType: input.contractType,
+          startsOn: input.startsOn,
+          endsOn: input.endsOn || null,
+          billingPeriod: input.billingPeriod,
+          amountCents: input.amountCents,
+          currency: input.currency || 'EUR',
+          ratePlanId: input.ratePlanId || null,
+          resourceId: input.resourceId || null,
+          noticeDays: input.noticeDays ?? 90,
+          notes: input.notes ?? null,
+        })
+        .where(
+          and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
+        )
+        .returning({ id: contracts.id }),
+    )
+    return updated.length > 0
+  } catch (error) {
     if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
       throw new DuplicateReferenceError(input.reference)
     }
@@ -126,19 +188,261 @@ export async function createContract(input: ContractInput): Promise<Contract> {
   }
 }
 
-/** Passage à l'état actif : le contrat devient facturable. */
-export async function activateContract(id: string): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
+/**
+ * La ressource du contrat est déjà occupée sur sa période : la contrainte
+ * d'exclusion a refusé l'occupation (ADR 018). Porte ce qui occupe la place,
+ * pour que l'écran le nomme au lieu d'afficher une erreur SQL.
+ */
+export class ContractOccupationConflictError extends Error {
+  // Champs déclarés puis affectés : le strip de types de Node ne compile pas
+  // les paramètres-propriétés.
+  readonly resourceId: string | null
+  readonly conflicts: Booking[]
+
+  constructor(resourceId: string | null, conflicts: Booking[]) {
+    super('La ressource est déjà occupée sur la période du contrat.')
+    this.name = 'ContractOccupationConflictError'
+    this.resourceId = resourceId
+    this.conflicts = conflicts
+  }
+}
+
+/** Fuseau du centre, lu dans la transaction : les dates d'un contrat en sont des jours. */
+async function centreTimeZone(tx: Transaction): Promise<string | undefined> {
+  const [tenant] = await tx
+    .select({ timezone: tenants.timezone })
+    .from(tenants)
+    .where(eq(tenants.id, currentTenantId()))
+  return tenant?.timezone
+}
+
+/**
+ * Ce qui occupe déjà `resourceId` sur la période du contrat, hors sa propre
+ * occupation. Reproduit le prédicat de `bookings_no_overlap` : bornes `[)`,
+ * annulées exclues. Sert à nommer le conflit, jamais à autoriser l'écriture :
+ * c'est la contrainte qui tranche (décision 3).
+ */
+async function selectOccupationConflicts(
+  tx: Transaction,
+  contractId: string,
+  candidate: ContractPeriod & { resourceId: string },
+): Promise<Booking[]> {
+  const timeZone = await centreTimeZone(tx)
+  if (!timeZone) return []
+  const range = contractRange(candidate, timeZone)
+  return tx
+    .select()
+    .from(bookings)
+    .where(
+      and(
+        eq(bookings.resourceId, candidate.resourceId),
+        ne(bookings.status, 'cancelled'),
+        lt(bookings.startsAt, range.endsAt),
+        gt(bookings.endsAt, range.startsAt),
+        // Parenthèses explicites : `not()` ne les pose pas autour d'un `sql`.
+        not(sql`(${bookings.kind} = 'contract' and ${bookings.contractId} = ${contractId})`),
+      ),
+    )
+    .orderBy(asc(bookings.startsAt))
+}
+
+/**
+ * Écrit un contrat et traduit le refus de son occupation.
+ *
+ * Le trigger `contracts_sync_occupation` recalcule l'occupation dans la même
+ * transaction : un chevauchement fait échouer l'écriture du contrat elle-même
+ * (`23P01`). On relit alors, dans une nouvelle transaction, ce qui occupe la
+ * ressource visée. `target` porte la ressource ou la date demandée quand elle
+ * diffère de celle en base, que le refus a laissée intacte.
+ */
+async function writeContract<T>(
+  id: string,
+  write: (tx: Transaction) => Promise<T>,
+  target: Partial<Pick<Contract, 'resourceId' | 'terminatedOn'>> = {},
+): Promise<T> {
+  try {
+    return await withTenant(currentTenantId(), write)
+  } catch (error) {
+    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
+    const [contract] = await withTenant(currentTenantId(), (tx) =>
+      tx.select().from(contracts).where(eq(contracts.id, id)).limit(1),
+    )
+    const candidate = contract ? { ...contract, ...target } : undefined
+    const resourceId = candidate?.resourceId ?? null
+    const conflicts =
+      candidate && resourceId
+        ? await withTenant(currentTenantId(), (tx) =>
+            selectOccupationConflicts(tx, id, { ...candidate, resourceId }),
+          )
+        : []
+    throw new ContractOccupationConflictError(resourceId, conflicts)
+  }
+}
+
+/**
+ * Occupation de la ressource par ce contrat (ADR 018) : la ligne de `bookings`
+ * tenue par le trigger, annulée comprise, car elle dit pourquoi la ressource a
+ * été libérée. `undefined` pour un contrat qui n'en a jamais eu.
+ */
+export async function findContractOccupation(contractId: string): Promise<Booking | undefined> {
+  const [occupation] = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .select()
+      .from(bookings)
+      .where(and(eq(bookings.contractId, contractId), eq(bookings.kind, 'contract')))
+      .limit(1),
+  )
+  return occupation
+}
+
+/**
+ * Passage à l'état actif : le contrat devient facturable et occupe sa
+ * ressource (ADR 018). Rend `false` si le contrat n'était plus un brouillon.
+ *
+ * @throws ContractOccupationConflictError si la ressource est déjà occupée sur
+ * la période : le contrat reste alors en brouillon.
+ */
+export async function activateContract(id: string): Promise<boolean> {
+  const activated = await writeContract(id, (tx) =>
     tx
       .update(contracts)
       .set({ status: 'active' })
-      .where(and(eq(contracts.id, id), eq(contracts.status, 'draft'))),
+      .where(
+        and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
+      )
+      .returning({ id: contracts.id }),
+  )
+  return activated.length > 0
+}
+
+/**
+ * Levée quand on veut changer la ressource d'un contrat déjà commencé : son
+ * occupation serait réécrite depuis le premier jour (ADR 018). Le message dit
+ * quoi faire à la place.
+ */
+export class ContractAlreadyStartedError extends Error {
+  readonly startsOn: string
+
+  constructor(startsOn: string) {
+    super(
+      `Ce contrat a commencé le ${formatCalendarDate(startsOn)} : sa ressource ne change plus. ` +
+        'Pour passer sur une autre ressource, résiliez-le, puis créez un nouveau contrat sur celle-ci.',
+    )
+    this.name = 'ContractAlreadyStartedError'
+    this.startsOn = startsOn
+  }
+}
+
+/**
+ * Changement de la ressource d'un contrat en cours qui n'a pas encore
+ * commencé : l'occupation suit (ADR 018). `null` retire la ressource et libère
+ * l'ancienne.
+ *
+ * Réservé aux contrats actifs : un brouillon se modifie en entier, et un
+ * contrat résilié garde la trace de ce qu'il a occupé. Rend `false` si le
+ * contrat n'est pas (ou plus) en cours.
+ *
+ * Un contrat commencé ne change pas de ressource (`canChangeContractResource`) :
+ * l'occupation, réécrite depuis le premier jour, effacerait la période écoulée
+ * sur l'ancienne ressource, et la nouvelle serait refusée pour une réservation
+ * passée. Le filtre est dans la requête ; la relecture ne sert qu'à le dire.
+ *
+ * @throws ContractAlreadyStartedError si le contrat a déjà commencé.
+ * @throws ContractOccupationConflictError si la nouvelle ressource est occupée.
+ */
+export async function changeContractResource(
+  id: string,
+  resourceId: string | null,
+): Promise<boolean> {
+  return writeContract(
+    id,
+    async (tx) => {
+      const timeZone = await centreTimeZone(tx)
+      if (!timeZone) return false
+      const changed = await tx
+        .update(contracts)
+        .set({ resourceId })
+        .where(
+          and(
+            eq(contracts.id, id),
+            eq(contracts.status, 'active'),
+            isNull(contracts.deletedAt),
+            // Le jour du centre, pas celui du serveur (décision 4).
+            gt(contracts.startsOn, todayIsoDate(timeZone)),
+          ),
+        )
+        .returning({ id: contracts.id })
+      if (changed.length > 0) return true
+
+      const [current] = await tx
+        .select({
+          status: contracts.status,
+          deletedAt: contracts.deletedAt,
+          startsOn: contracts.startsOn,
+        })
+        .from(contracts)
+        .where(eq(contracts.id, id))
+      if (current?.status === 'active' && current.deletedAt === null) {
+        throw new ContractAlreadyStartedError(current.startsOn)
+      }
+      return false
+    },
+    { resourceId },
   )
 }
 
 /**
- * Résiliation. La ligne est conservée et la date de fin effective est posée :
- * l'échéancier s'arrête là, même si le terme prévu était plus tard.
+ * Archivage : suppression logique (décision 6). Le contrat sort des listes et
+ * reste consultable ; son occupation passe à `cancelled` avec le motif
+ * « Contrat archivé », ce qui libère la ressource. Son numéro reste porté
+ * (ADR 021).
+ */
+export async function archiveContract(id: string): Promise<boolean> {
+  const archived = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .update(contracts)
+      .set({ deletedAt: sql`now()` })
+      .where(and(eq(contracts.id, id), isNull(contracts.deletedAt)))
+      .returning({ id: contracts.id }),
+  )
+  return archived.length > 0
+}
+
+/**
+ * Désarchivage : le contrat revient dans les listes et son occupation est
+ * rétablie (ADR 018).
+ *
+ * @throws ContractOccupationConflictError si la ressource a été prise depuis.
+ * @throws DuplicateReferenceError si sa référence a été reprise entre-temps.
+ */
+export async function restoreContract(id: string): Promise<boolean> {
+  try {
+    const restored = await writeContract(id, (tx) =>
+      tx
+        .update(contracts)
+        .set({ deletedAt: null })
+        .where(and(eq(contracts.id, id), isNotNull(contracts.deletedAt)))
+        .returning({ id: contracts.id }),
+    )
+    return restored.length > 0
+  } catch (error) {
+    if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) throw error
+    const [contract] = await withTenant(currentTenantId(), (tx) =>
+      tx.select({ reference: contracts.reference }).from(contracts).where(eq(contracts.id, id)),
+    )
+    throw new DuplicateReferenceError(contract?.reference ?? '')
+  }
+}
+
+/**
+ * Résiliation d'un contrat en cours. La ligne est conservée et la date de fin
+ * effective est posée : l'échéancier s'arrête là, même si le terme prévu était
+ * plus tard.
+ *
+ * Seul un contrat actif et non archivé se résilie. Un brouillon n'a engagé
+ * personne : le résilier le ferait occuper sa ressource jusqu'à la date de
+ * résiliation (le prédicat d'occupation retient `terminated`, ADR 018) ; il
+ * s'archive. Rend `false` pour tout autre contrat, sans rien écrire.
  *
  * `terminatedOn` et le statut sont écrits ensemble, comme l'exige la contrainte
  * `contracts_terminated_on_consistent`.
@@ -147,15 +451,25 @@ export async function terminateContract(
   id: string,
   terminatedOn: string,
   reason?: string | null,
-): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(contracts)
-      .set({
-        status: 'terminated',
-        terminatedOn,
-        terminationReason: reason?.trim() || null,
-      })
-      .where(and(eq(contracts.id, id), sql`${contracts.status} <> 'terminated'`)),
+): Promise<boolean> {
+  // Une résiliation ne fait que raccourcir l'occupation. Elle n'échoue en
+  // conflit que pour un contrat laissé sans occupation à la reprise (ADR 018) :
+  // `writeContract` nomme alors ce qui bloque au lieu d'une erreur brute.
+  const terminated = await writeContract(
+    id,
+    (tx) =>
+      tx
+        .update(contracts)
+        .set({
+          status: 'terminated',
+          terminatedOn,
+          terminationReason: reason?.trim() || null,
+        })
+        .where(
+          and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
+        )
+        .returning({ id: contracts.id }),
+    { terminatedOn },
   )
+  return terminated.length > 0
 }

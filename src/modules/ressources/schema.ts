@@ -47,7 +47,8 @@ export const resourceStatusEnum = pgEnum('resource_status', resourceStatuses)
 export type ResourceAttributes = {
   salle: { superficieM2?: number; equipements?: string[] }
   bureau: { superficieM2?: number; postes?: number }
-  casier: { taille?: 'S' | 'M' | 'L' }
+  /** `numero` : celui peint sur la porte, unique parmi les casiers vivants du centre. */
+  casier: { numero?: string; taille?: 'S' | 'M' | 'L' }
   vehicule: { immatriculation?: string; kilometrage?: number; places?: number }
   boite_aux_lettres: Record<string, never>
 }
@@ -93,6 +94,12 @@ export const resources = pgTable(
       .on(table.tenantId, table.code)
       .where(sql`deleted_at is null`),
     index('resources_tenant_type_idx').on(table.tenantId, table.resourceType),
+    // Deux casiers vivants ne portent pas le même numéro, à la casse près (R01).
+    // L'index tranche, y compris entre deux saisies simultanées ; un casier
+    // archivé rend son numéro.
+    uniqueIndex('resources_tenant_locker_numero_key')
+      .on(table.tenantId, sql`lower(attributes ->> 'numero')`)
+      .where(sql`resource_type = 'casier' and deleted_at is null`),
   ],
 )
 

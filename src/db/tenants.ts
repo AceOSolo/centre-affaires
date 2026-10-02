@@ -76,6 +76,13 @@ export const tenants = pgTable('tenants', {
   mailScanRetentionMonths: integer('mail_scan_retention_months').notNull().default(12),
   /** Journal des consultations. */
   mailAccessLogRetentionMonths: integer('mail_access_log_retention_months').notNull().default(12),
+  /**
+   * Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
+   * comptés depuis la fin du créneau demandé — ou son annulation, si elle est
+   * antérieure. Au terme, `anonymize_expired_public_requests()` les efface ; la
+   * réservation reste.
+   */
+  publicRequestRetentionMonths: integer('public_request_retention_months').notNull().default(12),
 
   ...timestamps(),
   deletedAt: deletedAt(),
@@ -84,6 +91,10 @@ export const tenants = pgTable('tenants', {
   check(
     'tenants_mail_retention_valid',
     sql`${table.mailScanRetentionMonths} between 1 and 120 and ${table.mailAccessLogRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_public_request_retention_valid',
+    sql`${table.publicRequestRetentionMonths} between 1 and 120`,
   ),
 ])
 

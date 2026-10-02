@@ -44,7 +44,7 @@ export async function insertBookingSeries(tx: Transaction, input: BulkBookingInp
 
   const seriesId = randomUUID()
   const created = await tx.insert(bookings).values(resourceIds.flatMap((resourceId) => ranges.map((range) => ({
-    ...range, resourceId, seriesId, kind: input.kind,
+    ...range, resourceId, seriesId, kind: input.kind, channel: 'staff' as const,
     title: input.kind === 'unavailability' ? `Indisponible — ${input.title.trim()}` : input.title.trim(),
     notes: input.notes?.trim() || null,
   })))).returning({ id: bookings.id })

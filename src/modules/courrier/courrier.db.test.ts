@@ -159,6 +159,33 @@ describe('courrier', { skip: raison }, () => {
       assert.equal(code, PG_CHECK_VIOLATION)
     })
 
+    it('distingue un objet stocké en clair d’un objet chiffré, et sa version de clé', async () => {
+      // R22, ADR 020 : nul = déposé en clair avant le chiffrement, encore
+      // lisible tel quel ; sinon la version de la clé qui l'a chiffré.
+      const id = await pli(DURAND)
+      const clair = await numeriser(id, 'envelope')
+      await asTenant((tx) =>
+        tx.execute(sql`
+          insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size, encryption_key_version)
+          values (${id}, 'content', 'courrier/test/chiffre.pdf', 'application/pdf', 1200, 1)`),
+      )
+      const rows = await asTenant((tx) =>
+        tx.execute(sql`
+          select id, encryption_key_version from mail_scans order by side`),
+      )
+      assert.deepEqual(
+        rows.map((row) => [row.id === clair, row.encryption_key_version]),
+        [
+          [true, null],
+          [false, 1],
+        ],
+      )
+      const code = await codeErreur(() =>
+        asTenant((tx) => tx.execute(sql`update mail_scans set encryption_key_version = 0`)),
+      )
+      assert.equal(code, PG_CHECK_VIOLATION)
+    })
+
     it('refuse une numérisation d’un type qui s’exécuterait dans le navigateur', async () => {
       const id = await pli(DURAND)
       const code = await codeErreur(() =>

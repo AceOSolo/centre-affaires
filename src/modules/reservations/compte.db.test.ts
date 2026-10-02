@@ -47,8 +47,8 @@ describe('réservations de l’espace client', { skip: raison }, () => {
   ): Promise<string> => {
     const [row] = await asTenant((tx) =>
       tx.execute(sql`
-        insert into bookings (resource_id, client_id, kind, status, title, starts_at, ends_at)
-        values (${SALLE}, ${clientId}, ${kind}, ${status}, 'Réunion',
+        insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
+        values (${SALLE}, ${clientId}, ${kind}, 'staff', ${status}, 'Réunion',
                 now() + make_interval(days => ${jours}),
                 now() + make_interval(days => ${jours}, hours => 1))
         returning id`),

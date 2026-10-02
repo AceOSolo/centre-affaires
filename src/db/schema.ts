@@ -4,6 +4,7 @@
  */
 export * from './tenants.ts'
 export * from './staff.ts'
+export * from './numerotation.ts'
 export * from '../modules/ressources/schema.ts'
 export * from '../modules/reservations/schema.ts'
 export * from '../modules/clients/schema.ts'

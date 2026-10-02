@@ -49,10 +49,10 @@ describe('demandes de réservation publiques', { skip: raison }, () => {
         (tx) =>
           tx.execute(sql`
             insert into bookings
-              (resource_id, starts_at, ends_at, title, status,
+              (resource_id, channel, starts_at, ends_at, title, status,
                requester_name, requester_email, requester_phone)
             values
-              (${RESOURCE_ID}, ${start}, ${end}, ${title}, 'pending',
+              (${RESOURCE_ID}, 'public', ${start}, ${end}, ${title}, 'pending',
                'Camille Rousseau', ${email}, '06 12 34 56 78')
           `),
         app.db,
@@ -113,8 +113,8 @@ describe('demandes de réservation publiques', { skip: raison }, () => {
             DEFAULT_TENANT_ID,
             (tx) =>
               tx.execute(sql`
-                insert into bookings (resource_id, starts_at, ends_at, title)
-                values (${RESOURCE_ID}, '2026-10-05T10:00:00Z', '2026-10-05T12:00:00Z', 'Interne')
+                insert into bookings (resource_id, channel, starts_at, ends_at, title)
+                values (${RESOURCE_ID}, 'staff', '2026-10-05T10:00:00Z', '2026-10-05T12:00:00Z', 'Interne')
               `),
             app.db,
           ),
@@ -212,8 +212,8 @@ describe('demandes de réservation publiques', { skip: raison }, () => {
           DEFAULT_TENANT_ID,
           (tx) =>
             tx.execute(sql`
-              insert into bookings (resource_id, starts_at, ends_at, title)
-              values (${RESOURCE_ID}, '2026-10-06T09:00:00Z', '2026-10-06T10:00:00Z', 'Interne')
+              insert into bookings (resource_id, channel, starts_at, ends_at, title)
+              values (${RESOURCE_ID}, 'staff', '2026-10-06T09:00:00Z', '2026-10-06T10:00:00Z', 'Interne')
             `),
           app.db,
         )

@@ -87,6 +87,11 @@ export const ratePlanItems = pgTable(
     /** Centimes, entier. Jamais de flottant pour de l'argent (décision 5). */
     amountCents: integer('amount_cents').notNull(),
     ...timestamps(),
+    /**
+     * Retrait d'un prix de la grille (décision 6) : il cesse de s'appliquer,
+     * la ligne reste pour expliquer un montant déjà calculé avec lui.
+     */
+    deletedAt: deletedAt(),
   },
   (table) => [
     foreignKey({
@@ -102,14 +107,15 @@ export const ratePlanItems = pgTable(
       foreignColumns: [resources.tenantId, resources.id],
     }).onDelete('restrict'),
     check('rate_plan_items_amount_positive', sql`${table.amountCents} >= 0`),
-    // Un seul prix par (grille, type, unité) et par (grille, ressource, unité) :
-    // sinon le tarif appliqué dépendrait de l'ordre de lecture.
+    // Un seul prix actif par (grille, type, unité) et par (grille, ressource,
+    // unité) : sinon le tarif appliqué dépendrait de l'ordre de lecture. Un prix
+    // retiré libère sa place pour celui qui le remplace.
     uniqueIndex('rate_plan_items_type_key')
       .on(table.ratePlanId, table.resourceType, table.unit)
-      .where(sql`resource_id is null`),
+      .where(sql`resource_id is null and deleted_at is null`),
     uniqueIndex('rate_plan_items_resource_key')
       .on(table.ratePlanId, table.resourceId, table.unit)
-      .where(sql`resource_id is not null`),
+      .where(sql`resource_id is not null and deleted_at is null`),
   ],
 )
 

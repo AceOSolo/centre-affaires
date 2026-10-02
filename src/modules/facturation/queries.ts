@@ -1,8 +1,9 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
-import { withTenant } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { isUuid } from '../../lib/uuid.ts'
 import type { ResourceType } from '../ressources/schema.ts'
 import { resolveRate, type RateLookup } from './tarifs.ts'
 import {
@@ -29,10 +30,11 @@ export async function findRatePlan(id: string): Promise<RatePlanWithItems | unde
   return withTenant(currentTenantId(), async (tx) => {
     const [plan] = await tx.select().from(ratePlans).where(eq(ratePlans.id, id)).limit(1)
     if (!plan) return undefined
+    // Un prix retiré ne s'applique plus (décision 6) : la ligne reste en base.
     const items = await tx
       .select()
       .from(ratePlanItems)
-      .where(eq(ratePlanItems.ratePlanId, id))
+      .where(and(eq(ratePlanItems.ratePlanId, id), isNull(ratePlanItems.deletedAt)))
       .orderBy(asc(ratePlanItems.resourceType), asc(ratePlanItems.unit))
     return { ...plan, items }
   })
@@ -104,14 +106,36 @@ export class DuplicateRateError extends Error {
   }
 }
 
+/** Levée quand on touche aux prix d'une grille archivée : ils sont figés. */
+export class ArchivedRatePlanError extends Error {
+  constructor() {
+    super('Cette grille est archivée : ses prix sont figés et ne se modifient plus.')
+    this.name = 'ArchivedRatePlanError'
+  }
+}
+
+/**
+ * Refuse d'écrire dans une grille archivée. La grille reste verrouillée en
+ * partage jusqu'à la fin de la transaction : un archivage simultané attend.
+ */
+async function assertRatePlanActive(tx: Transaction, ratePlanId: string): Promise<void> {
+  const [plan] = await tx
+    .select({ deletedAt: ratePlans.deletedAt })
+    .from(ratePlans)
+    .where(eq(ratePlans.id, ratePlanId))
+    .for('share')
+  if (plan?.deletedAt) throw new ArchivedRatePlanError()
+}
+
 export async function addRatePlanItem(input: RatePlanItemInput): Promise<RatePlanItem> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
+    const [created] = await withTenant(currentTenantId(), async (tx) => {
+      await assertRatePlanActive(tx, input.ratePlanId)
+      return tx
         .insert(ratePlanItems)
         .values({ ...input, resourceId: input.resourceId || null })
-        .returning(),
-    )
+        .returning()
+    })
     return created
   } catch (error) {
     if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new DuplicateRateError()
@@ -119,15 +143,36 @@ export async function addRatePlanItem(input: RatePlanItemInput): Promise<RatePla
   }
 }
 
-export async function removeRatePlanItem(id: string): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx.delete(ratePlanItems).where(eq(ratePlanItems.id, id)),
-  )
+/**
+ * Retrait d'un prix de la grille : suppression logique (décision 6). Le prix
+ * cesse de s'appliquer et libère sa place pour celui qui le remplace ; la
+ * ligne reste pour expliquer un montant calculé avec lui.
+ *
+ * Rend `false` quand il n'y avait rien à retirer (déjà retiré, inconnu). Lève
+ * `ArchivedRatePlanError` sur une grille archivée, dont les prix sont figés.
+ */
+export async function removeRatePlanItem(id: string): Promise<boolean> {
+  if (!isUuid(id)) return false
+  return withTenant(currentTenantId(), async (tx) => {
+    const [item] = await tx
+      .select({ ratePlanId: ratePlanItems.ratePlanId })
+      .from(ratePlanItems)
+      .where(and(eq(ratePlanItems.id, id), isNull(ratePlanItems.deletedAt)))
+      .limit(1)
+    if (!item) return false
+    await assertRatePlanActive(tx, item.ratePlanId)
+    const removed = await tx
+      .update(ratePlanItems)
+      .set({ deletedAt: sql`now()` })
+      .where(and(eq(ratePlanItems.id, id), isNull(ratePlanItems.deletedAt)))
+      .returning({ id: ratePlanItems.id })
+    return removed.length > 0
+  })
 }
 
 /**
- * Archivage d'une grille. Les lignes suivent par cascade côté base ; la grille
- * reste lisible depuis les contrats qui la désignaient (décision 6).
+ * Archivage d'une grille. Ses prix restent tels quels, figés : la grille reste
+ * lisible depuis les contrats qui la désignaient (décision 6).
  */
 export async function archiveRatePlan(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>

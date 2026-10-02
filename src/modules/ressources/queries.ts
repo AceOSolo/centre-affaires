@@ -1,8 +1,9 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
-import { withTenant } from '../../db/index.ts'
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { hasCapacity, mergeAttributes } from './attributs.ts'
 import { centreRanges } from './ouverture.ts'
 import {
   openingHours,
@@ -121,12 +122,114 @@ export async function createResource(input: CreateResourceInput): Promise<Resour
     })
     return created
   } catch (error) {
-    // L'unicité du code est tenue par un index partiel : la vérifier en amont
-    // laisserait passer deux créations simultanées.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
-      throw new DuplicateResourceCodeError(input.code)
-    }
-    throw error
+    // L'unicité du code et celle du numéro de casier sont tenues par des index
+    // partiels : les vérifier en amont laisserait passer deux créations
+    // simultanées.
+    throw uniquenessError(error, input.code, input.attributes) ?? error
+  }
+}
+
+/** Levée quand le numéro saisi est déjà porté par un autre casier du centre. */
+export class DuplicateLockerNumberError extends Error {
+  readonly numero: string
+
+  constructor(numero: string) {
+    super(`Le casier n° ${numero} existe déjà.`)
+    this.name = 'DuplicateLockerNumberError'
+    this.numero = numero
+  }
+}
+
+/** Index qui tient le numéro de casier unique (migration 0028). */
+const LOCKER_NUMBER_INDEX = 'resources_tenant_locker_numero_key'
+
+/**
+ * Traduit le refus d'un index unique de `resources` en erreur nommée, rattachée
+ * au champ qu'elle concerne. `undefined` pour toute autre erreur, à relever.
+ *
+ * Deux index : le code de la ressource (`resources_tenant_code_key`) et le
+ * numéro de casier, à la casse près (`resources_tenant_locker_numero_key`,
+ * R01). La base tranche, y compris entre deux saisies simultanées ; aucune
+ * lecture préalable ne le ferait.
+ */
+function uniquenessError(
+  error: unknown,
+  code: string,
+  attributes: object | undefined,
+): Error | undefined {
+  if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) return undefined
+  if (pgConstraintName(error) === LOCKER_NUMBER_INDEX) {
+    const numero = (attributes as { numero?: unknown } | undefined)?.numero
+    return new DuplicateLockerNumberError(typeof numero === 'string' ? numero.trim() : '')
+  }
+  return new DuplicateResourceCodeError(code)
+}
+
+/** Ce que l'écran de modification change. Le type, lui, ne change pas. */
+export type UpdateResourceInput = {
+  code: string
+  name: string
+  description: string | null
+  capacity: number | null
+  status: ResourceStatus
+  attributes: ResourceAttributes[ResourceType]
+}
+
+/**
+ * Modification d'une ressource vivante (R01), dans une transaction ouverte.
+ *
+ * La ligne est verrouillée le temps de fusionner les attributs : deux
+ * modifications simultanées ne doivent pas s'écraser en relisant chacune
+ * l'ancien JSONB. Rend `undefined` pour une ressource absente ou archivée —
+ * une ressource archivée reste lisible, pas modifiable (décision 6).
+ */
+export async function writeResourceUpdate(
+  tx: Transaction,
+  id: string,
+  input: UpdateResourceInput,
+): Promise<Resource | undefined> {
+  const [existing] = await tx
+    .select()
+    .from(resources)
+    .where(and(eq(resources.id, id), isNull(resources.deletedAt)))
+    .limit(1)
+    .for('update')
+  if (!existing) return undefined
+
+  const attributes = mergeAttributes(
+    existing.resourceType,
+    existing.attributes as Record<string, unknown>,
+    input.attributes as Record<string, unknown>,
+  )
+
+  const [updated] = await tx
+    .update(resources)
+    .set({
+      code: input.code,
+      name: input.name,
+      description: input.description,
+      capacity: hasCapacity(existing.resourceType) ? input.capacity : null,
+      status: input.status,
+      attributes: attributes as ResourceAttributes[ResourceType],
+    })
+    .where(eq(resources.id, id))
+    .returning()
+  return updated
+}
+
+/**
+ * Modification d'une ressource ; le code reste unique dans le centre, comme le
+ * numéro d'un casier.
+ */
+export async function updateResource(
+  id: string,
+  input: UpdateResourceInput,
+): Promise<Resource | undefined> {
+  try {
+    return await withTenant(currentTenantId(), (tx) => writeResourceUpdate(tx, id, input))
+  } catch (error) {
+    // Même garde que la création : les index partiels tranchent, pas une lecture.
+    throw uniquenessError(error, input.code, input.attributes) ?? error
   }
 }
 

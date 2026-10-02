@@ -15,6 +15,7 @@ import { primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clients } from '../clients/schema.ts'
+import { contracts } from '../contrats/schema.ts'
 import { resources } from '../ressources/schema.ts'
 
 /**
@@ -31,6 +32,50 @@ export const bookingStatuses = ['pending', 'confirmed', 'cancelled'] as const
 export type BookingStatus = (typeof bookingStatuses)[number]
 export const bookingStatusEnum = pgEnum('booking_status', bookingStatuses)
 
+/**
+ * Nature de la ligne.
+ *
+ * - `booking` : une réservation, horaire ou à la journée.
+ * - `unavailability` : un blocage posé par l'équipe (entretien, travaux).
+ * - `contract` : la période d'un contrat qui loue la ressource (ADR 018). Tenue
+ *   par le trigger `contracts_sync_occupation` à partir du contrat : l'écrire
+ *   directement est refusé par la base (SQLSTATE `CA001`).
+ *
+ * Les trois occupent la ressource sous la même contrainte d'exclusion : un
+ * bureau loué au mois ne peut pas être réservé à l'heure.
+ */
+export const bookingKinds = ['booking', 'unavailability', 'contract'] as const
+export type BookingKind = (typeof bookingKinds)[number]
+
+/**
+ * Par où la réservation est arrivée (R05, ADR 018).
+ *
+ * - `staff` : saisie par l'équipe dans le back-office, et occupations de contrat.
+ * - `client` : déposée par une personne connectée à son espace client.
+ * - `public` : demandée depuis la page publique, sans compte (ADR 005).
+ *
+ * Sans valeur par défaut : chaque chemin d'écriture dit d'où il vient, la base
+ * refuse une réservation qui ne le dit pas.
+ */
+export const bookingChannels = ['staff', 'client', 'public'] as const
+export type BookingChannel = (typeof bookingChannels)[number]
+export const bookingChannelEnum = pgEnum('booking_channel', bookingChannels)
+
+/**
+ * Fin d'une occupation sans terme : un contrat à durée indéterminée (ADR 018).
+ *
+ * Un instant très lointain plutôt que `infinity` : le pilote lit les
+ * `timestamptz` en `Date`, et `infinity` y deviendrait une `Invalid Date` qui
+ * casserait silencieusement tous les calculs de planning. La même valeur est
+ * rendue par la fonction SQL `booking_open_end()`.
+ */
+export const OPEN_ENDED_BOOKING_END = new Date('9999-12-31T00:00:00.000Z')
+
+/** Vrai pour une occupation sans terme, à afficher « sans date de fin ». */
+export function isOpenEndedBooking(booking: { endsAt: Date }): boolean {
+  return booking.endsAt.getTime() >= OPEN_ENDED_BOOKING_END.getTime()
+}
+
 export const bookings = pgTable(
   'bookings',
   {
@@ -39,7 +84,8 @@ export const bookings = pgTable(
     resourceId: uuid('resource_id').notNull(),
     /** Occurrences créées ensemble ; chacune reste déplaçable et annulable. */
     seriesId: uuid('series_id'),
-    kind: text('kind').$type<'booking' | 'unavailability'>().notNull().default('booking'),
+    kind: text('kind').$type<BookingKind>().notNull().default('booking'),
+    channel: bookingChannelEnum('channel').notNull(),
     /** Bornes `[)` : une réservation qui finit à 10h00 n'entre pas en conflit
      * avec une qui commence à 10h00. */
     startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
@@ -58,11 +104,22 @@ export const bookings = pgTable(
     requesterEmail: text('requester_email'),
     requesterPhone: text('requester_phone'),
     /**
+     * Date à laquelle les coordonnées du demandeur ont été effacées, au terme
+     * de la durée de conservation du centre (ADR 020). Posée par la fonction
+     * `anonymize_expired_public_requests()`, jamais par le code.
+     */
+    requesterAnonymizedAt: timestamp('requester_anonymized_at', { withTimezone: true }),
+    /**
      * Entreprise cliente pour laquelle la salle est réservée (ADR 015). Nulle
      * pour une indisponibilité, ou pour un visiteur qui n'est pas client. C'est
      * ce qui fait apparaître la réservation dans l'espace du client.
      */
     clientId: uuid('client_id'),
+    /**
+     * Contrat au titre duquel la ressource est occupée (R05). Toujours posé sur
+     * une occupation de contrat (`kind = 'contract'`) ; facultatif sinon.
+     */
+    contractId: uuid('contract_id'),
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancellationReason: text('cancellation_reason'),
     ...timestamps(),
@@ -78,12 +135,33 @@ export const bookings = pgTable(
       columns: [table.tenantId, table.clientId],
       foreignColumns: [clients.tenantId, clients.id],
     }).onDelete('restrict'),
+    foreignKey({
+      name: 'bookings_contract_fk',
+      columns: [table.tenantId, table.contractId],
+      foreignColumns: [contracts.tenantId, contracts.id],
+    }).onDelete('restrict'),
     // « Mes réservations » : celles d'un client, par date.
     index('bookings_client_starts_at_idx')
       .on(table.tenantId, table.clientId, table.startsAt)
       .where(sql`client_id is not null`),
+    // Réservations rattachées à un contrat, depuis sa fiche.
+    index('bookings_contract_idx')
+      .on(table.tenantId, table.contractId)
+      .where(sql`contract_id is not null`),
+    // Une seule occupation par contrat : le trigger la déplace, la prolonge ou
+    // l'annule, il n'en crée jamais une seconde (ADR 018).
+    uniqueIndex('bookings_contract_occupation_key')
+      .on(table.tenantId, table.contractId)
+      .where(sql`kind = 'contract'`),
     check('bookings_range_not_empty', sql`${table.endsAt} > ${table.startsAt}`),
-    check('bookings_kind_valid', sql`${table.kind} in ('booking', 'unavailability')`),
+    check(
+      'bookings_kind_valid',
+      sql`${table.kind} in ('booking', 'unavailability', 'contract')`,
+    ),
+    check(
+      'bookings_contract_kind_consistent',
+      sql`${table.kind} <> 'contract' or ${table.contractId} is not null`,
+    ),
     index('bookings_series_idx').on(table.tenantId, table.seriesId),
     check(
       'bookings_cancelled_at_consistent',

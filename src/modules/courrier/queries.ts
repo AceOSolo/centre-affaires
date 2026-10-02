@@ -5,11 +5,12 @@ import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 
 import { withTenant } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
+import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
-import type { ClientAccount } from '../clients/comptes.ts'
+import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
 import type { OpeningLine } from './regles.ts'
 import {
@@ -35,12 +36,16 @@ const displayName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
 /* Stockage                                                                   */
 /* -------------------------------------------------------------------------- */
 
-type StoredScan = { side: MailScanSide; key: string; scan: ScanFile }
+type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
 
 /**
  * Dépose les fichiers avant d'écrire en base : une ligne ne doit jamais
  * désigner un fichier absent. L'inverse — un fichier sans ligne, si l'écriture
  * échoue ensuite — est rattrapé par `discard`.
+ *
+ * Chaque fichier est chiffré avant de partir (R22, ADR 020) : le stockage ne
+ * reçoit jamais le document en clair. Sans clé configurée, le dépôt échoue
+ * avant le premier envoi.
  */
 async function store(
   tenantId: string,
@@ -53,8 +58,10 @@ async function store(
     // Clé sans rien de lisible : ni client ni expéditeur n'apparaissent dans
     // le stockage, seulement dans la base, derrière la RLS.
     const key = `courrier/${tenantId}/${randomUUID()}.${scanExtensions[scan.contentType]}`
-    await putObject(key, scan.bytes, scan.contentType)
-    stored.push({ side, key, scan })
+    const sealed = sealDocument(scan.bytes, key)
+    // Le type réel est en base ; l'objet, lui, n'est que du chiffré.
+    await putObject(key, sealed.bytes, 'application/octet-stream')
+    stored.push({ side, key, scan, encryptionKeyVersion: sealed.keyVersion })
   }
   return stored
 }
@@ -64,12 +71,14 @@ async function discard(stored: StoredScan[]): Promise<void> {
 }
 
 const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
-  stored.map(({ side, key, scan }) => ({
+  stored.map(({ side, key, scan, encryptionKeyVersion }) => ({
     mailItemId,
     side,
     storageKey: key,
+    // Le document en clair, celui que la lecture rend (ADR 020).
     contentType: scan.contentType,
     byteSize: scan.bytes.byteLength,
+    encryptionKeyVersion,
     uploadedBy,
   }))
 
@@ -347,7 +356,8 @@ export type ClientMailRow = Pick<
 
 /**
  * Boîte aux lettres : les plis des entreprises du compte, et d'elles seules.
- * Le filtre sur `client_id` est le verrou ; la RLS ne sépare que les centres.
+ * Deux verrous : le filtre sur `client_id`, et la portée client de la
+ * transaction (`inClientSpace`, ADR 019), qui tiendrait sans lui.
  */
 export async function listMailForAccounts(accounts: ClientAccount[]): Promise<ClientMailRow[]> {
   if (accounts.length === 0) return []
@@ -362,7 +372,7 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
       limit 1
     )`
 
-  return withTenant(currentTenantId(), (tx) =>
+  return inClientSpace(accounts, (tx) =>
     tx
       .select({
         id: mailItems.id,
@@ -393,7 +403,7 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
  */
 export async function requestOpening(id: string, accounts: ClientAccount[]): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
-  return withTenant(currentTenantId(), async (tx) => {
+  return inClientSpace(accounts, async (tx) => {
     const [item] = await tx
       .select({ clientId: mailItems.clientId })
       .from(mailItems)
@@ -427,7 +437,7 @@ export async function requestOpening(id: string, accounts: ClientAccount[]): Pro
 /** Annulation, par toute personne de l'entreprise, tant que le pli est fermé. */
 export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
-  const updated = await withTenant(currentTenantId(), (tx) =>
+  const updated = await inClientSpace(accounts, (tx) =>
     tx
       .update(mailItems)
       .set({ status: 'received', openingRequestedAt: null, openingRequestedBy: null })
@@ -451,7 +461,10 @@ export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]
 /* Consultation des numérisations                                             */
 /* -------------------------------------------------------------------------- */
 
-export type ScanToServe = Pick<MailScan, 'id' | 'side' | 'storageKey' | 'contentType'> & {
+export type ScanToServe = Pick<
+  MailScan,
+  'id' | 'side' | 'storageKey' | 'contentType' | 'encryptionKeyVersion'
+> & {
   receivedAt: Date
   clientId: string
 }
@@ -461,6 +474,7 @@ const scanToServe = {
   side: mailScans.side,
   storageKey: mailScans.storageKey,
   contentType: mailScans.contentType,
+  encryptionKeyVersion: mailScans.encryptionKeyVersion,
   receivedAt: mailItems.receivedAt,
   clientId: mailItems.clientId,
 }
@@ -484,7 +498,7 @@ export async function findScanForAccounts(
   accounts: ClientAccount[],
 ): Promise<ScanToServe | undefined> {
   if (accounts.length === 0 || !isUuid(scanId)) return undefined
-  const [scan] = await withTenant(currentTenantId(), (tx) =>
+  const [scan] = await inClientSpace(accounts, (tx) =>
     tx
       .select(scanToServe)
       .from(mailScans)
@@ -505,11 +519,28 @@ export async function findScanForAccounts(
   return scan
 }
 
-/** Inscription au journal d'accès. Appelée avant de servir le fichier. */
+/**
+ * Inscription au journal d'accès. Appelée avant de servir le fichier.
+ *
+ * La consultation d'un client s'inscrit sous la portée de l'entreprise
+ * destinataire du pli (ADR 019) : une ligne de journal pour le courrier d'une
+ * autre entreprise serait refusée par la base.
+ */
 export async function logScanView(
   view:
     | { viewer: 'staff'; mailScanId: string; staffMemberId: string; authUserId: string }
-    | { viewer: 'client'; mailScanId: string; clientMemberId: string; authUserId: string },
+    | {
+        viewer: 'client'
+        mailScanId: string
+        clientMemberId: string
+        authUserId: string
+        clientId: string
+      },
 ): Promise<void> {
+  if (view.viewer === 'client') {
+    const { clientId, ...row } = view
+    await inClientSpace([{ clientId }], (tx) => tx.insert(mailScanViews).values(row))
+    return
+  }
   await withTenant(currentTenantId(), (tx) => tx.insert(mailScanViews).values(view))
 }

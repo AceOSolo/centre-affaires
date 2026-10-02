@@ -1,15 +1,22 @@
 import { and, asc, eq, gt, gte, isNull, lt, ne, sql } from 'drizzle-orm'
 
 import { withTenant, type Transaction } from '../../db/index.ts'
-import { PG_EXCLUSION_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import {
+  PG_CONTRACT_OCCUPATION_LOCKED,
+  PG_EXCLUSION_VIOLATION,
+  pgErrorCode,
+} from '../../db/errors.ts'
+import { tenants } from '../../db/tenants.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { contracts, type Contract } from '../contrats/schema.ts'
 import { openingWindows } from '../ressources/ouverture.ts'
 import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange, occupiesResource, type TimeRange } from './availability.ts'
 import { freeMinutes, freeRanges } from './slots.ts'
+import { BookingContractError, bookingContractProblem } from './rattachement.ts'
 import { bookings, type Booking } from './schema.ts'
 
 /** Une réservation et la ressource qu'elle occupe, tel que le planning l'affiche. */
@@ -63,16 +70,76 @@ export async function listBookingsBetween(
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))
 }
 
-export async function findBooking(id: string): Promise<BookingWithResource | undefined> {
+/** Une réservation, sa ressource et le contrat auquel elle se rattache. */
+export type BookingDetail = BookingWithResource & {
+  contract: Pick<Contract, 'id' | 'reference' | 'status' | 'deletedAt'> | null
+}
+
+export async function findBooking(id: string): Promise<BookingDetail | undefined> {
   const [row] = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({ booking: bookings, resource: resources })
+      .select({
+        booking: bookings,
+        resource: resources,
+        contract: {
+          id: contracts.id,
+          reference: contracts.reference,
+          status: contracts.status,
+          deletedAt: contracts.deletedAt,
+        },
+      })
       .from(bookings)
       .innerJoin(resources, eq(resources.id, bookings.resourceId))
+      .leftJoin(contracts, eq(contracts.id, bookings.contractId))
       .where(eq(bookings.id, id))
       .limit(1),
   )
-  return row ? { ...row.booking, resource: row.resource } : undefined
+  return row ? { ...row.booking, resource: row.resource, contract: row.contract } : undefined
+}
+
+/**
+ * Vérifie, dans la transaction qui écrit, que la réservation peut se rattacher
+ * à son contrat (R05) : même client, contrat actif, période couverte. La base
+ * ne contrôle que l'appartenance au centre (ADR 018).
+ */
+async function assertBookingContract(
+  tx: Transaction,
+  contractId: string,
+  booking: TimeRange & { clientId: string | null },
+): Promise<void> {
+  const [contract] = await tx
+    .select({
+      clientId: contracts.clientId,
+      status: contracts.status,
+      deletedAt: contracts.deletedAt,
+      startsOn: contracts.startsOn,
+      endsOn: contracts.endsOn,
+      terminatedOn: contracts.terminatedOn,
+    })
+    .from(contracts)
+    .where(eq(contracts.id, contractId))
+    .limit(1)
+  if (!contract) throw new BookingContractError('introuvable')
+  const [tenant] = await tx
+    .select({ timezone: tenants.timezone })
+    .from(tenants)
+    .where(eq(tenants.id, currentTenantId()))
+  const problem = bookingContractProblem(contract, booking, tenant?.timezone ?? 'UTC')
+  if (problem) throw new BookingContractError(problem)
+}
+
+/**
+ * Écriture directe d'une occupation de contrat, refusée par la base (`CA001`,
+ * ADR 018) : elle ne se déplace, ne s'annule ni ne se rattache qu'à travers son
+ * contrat.
+ */
+export class ContractOccupationLockedError extends Error {
+  constructor() {
+    super(
+      'Cette occupation suit son contrat : modifiez le contrat (ressource, dates, résiliation ou archivage) pour la changer.',
+    )
+    this.name = 'ContractOccupationLockedError'
+  }
 }
 
 /**
@@ -132,14 +199,32 @@ export type CreateBookingInput = {
   notes?: string | null
   /** Entreprise cliente pour qui la ressource est réservée (ADR 015). */
   clientId?: string | null
+  /**
+   * Contrat au titre duquel la ressource est réservée (R05) : un contrat actif
+   * du même client, qui couvre le créneau. Vérifié avant l'écriture.
+   */
+  contractId?: string | null
 }
 
+/**
+ * Réservation saisie par l'équipe dans le back-office.
+ *
+ * @throws BookingContractError si le contrat demandé ne peut pas porter cette
+ * réservation : autre client, contrat pas en cours, créneau hors période.
+ */
 export async function createBooking(input: CreateBookingInput): Promise<Booking> {
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
+    const [created] = await withTenant(currentTenantId(), async (tx) => {
+      if (input.contractId) {
+        await assertBookingContract(tx, input.contractId, {
+          clientId: input.clientId ?? null,
+          startsAt: input.startsAt,
+          endsAt: input.endsAt,
+        })
+      }
+      return tx
         .insert(bookings)
         .values({
           resourceId: input.resourceId,
@@ -148,9 +233,12 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
           title: input.title,
           notes: input.notes ?? null,
           clientId: input.clientId ?? null,
+          contractId: input.contractId ?? null,
+          // Saisie du back-office (R05).
+          channel: 'staff',
         })
-        .returning(),
-    )
+        .returning()
+    })
     return created
   } catch (error) {
     if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
@@ -187,25 +275,46 @@ export type MoveBookingInput = {
  *
  * Le conflit s'évalue en excluant la réservation elle-même : sans cela, la
  * reculer d'un quart d'heure la ferait entrer en conflit avec sa propre place.
+ *
+ * Une occupation de contrat ne se déplace pas ici : elle suit son contrat
+ * (ADR 018). Une réservation rattachée à un contrat ne peut pas sortir de sa
+ * période (R05) : la règle est revérifiée dans la transaction du déplacement.
  */
 export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
-    const [moved] = await withTenant(currentTenantId(), (tx) =>
-      tx
+    const moved = await withTenant(currentTenantId(), async (tx) => {
+      const [row] = await tx
         .update(bookings)
         .set({
           resourceId: input.resourceId,
           startsAt: input.startsAt,
           endsAt: input.endsAt,
         })
-        .where(and(eq(bookings.id, input.id), ne(bookings.status, 'cancelled')))
-        .returning(),
-    )
-    if (!moved) throw new BookingNotMovableError()
+        .where(
+          and(
+            eq(bookings.id, input.id),
+            ne(bookings.status, 'cancelled'),
+            ne(bookings.kind, 'contract'),
+          ),
+        )
+        .returning()
+      if (!row) {
+        const [occupation] = await tx
+          .select({ id: bookings.id })
+          .from(bookings)
+          .where(and(eq(bookings.id, input.id), eq(bookings.kind, 'contract')))
+        throw occupation ? new ContractOccupationLockedError() : new BookingNotMovableError()
+      }
+      if (row.contractId) await assertBookingContract(tx, row.contractId, row)
+      return row
+    })
     return moved
   } catch (error) {
+    if (pgErrorCode(error) === PG_CONTRACT_OCCUPATION_LOCKED) {
+      throw new ContractOccupationLockedError()
+    }
     if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
     const conflicts = await withTenant(currentTenantId(), (tx) =>
       selectConflicts(tx, input, input.id),
@@ -218,6 +327,10 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
  * Annulation : la ligne est conservée, le créneau est libéré. `cancelled_at` est
  * posé dans le même ordre que la contrainte `bookings_cancelled_at_consistent`
  * l'exige.
+ *
+ * Une occupation de contrat est laissée intacte : l'annuler libérerait un
+ * bureau toujours loué (ADR 018). Elle s'annule en archivant ou en résiliant
+ * son contrat.
  */
 export async function cancelBooking(id: string, reason?: string | null): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
@@ -228,7 +341,13 @@ export async function cancelBooking(id: string, reason?: string | null): Promise
         cancelledAt: sql`now()`,
         cancellationReason: reason?.trim() || null,
       })
-      .where(and(eq(bookings.id, id), ne(bookings.status, 'cancelled'))),
+      .where(
+        and(
+          eq(bookings.id, id),
+          ne(bookings.status, 'cancelled'),
+          ne(bookings.kind, 'contract'),
+        ),
+      ),
   )
 }
 
@@ -338,6 +457,9 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
           requesterEmail: input.requesterEmail.trim().toLowerCase(),
           requesterPhone: input.requesterPhone.trim(),
           clientId: input.clientId ?? null,
+          // Rattachée à son entreprise, la demande vient d'une personne
+          // connectée à son espace (ADR 015) ; sinon d'un visiteur (ADR 005).
+          channel: input.clientId ? 'client' : 'public',
         })
         .returning(),
     )
@@ -395,9 +517,21 @@ export async function refuseBooking(id: string, reason?: string | null): Promise
 /**
  * Rattache une réservation à une entreprise cliente, ou l'en détache (ADR 015).
  * Elle apparaît alors — ou disparaît — dans l'espace de ce client.
+ *
+ * Le contrat suit le client (R05) : changer de client détache la réservation
+ * du contrat de l'ancien, qui ne la couvre plus. Une occupation de contrat
+ * n'est jamais touchée : son client est celui de son contrat (ADR 018).
  */
 export async function assignBookingClient(id: string, clientId: string | null): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
-    tx.update(bookings).set({ clientId }).where(eq(bookings.id, id)),
+    tx
+      .update(bookings)
+      .set({
+        clientId,
+        // Les expressions de `SET` lisent l'ancienne ligne : le contrat n'est
+        // gardé que si le client ne change pas.
+        contractId: sql`case when ${bookings.clientId} is not distinct from ${clientId}::uuid then ${bookings.contractId} end`,
+      })
+      .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract'))),
   )
 }

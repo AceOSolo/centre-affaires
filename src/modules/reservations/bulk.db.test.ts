@@ -37,7 +37,7 @@ describe('création et annulation atomiques des séries', { skip: !ownerUrl || !
     assert.ok(rows.every((row) => row.seriesId === result.seriesId && row.status === 'confirmed'))
   })
   it('refuse tout le lot si une seule occurrence est déjà occupée', async () => {
-    await asTenant((tx) => tx.insert(bookings).values({ resourceId, startsAt: new Date('2090-01-09T08:00:00Z'), endsAt: new Date('2090-01-09T09:00:00Z'), title: 'Occupée' }))
+    await asTenant((tx) => tx.insert(bookings).values({ resourceId, channel: 'staff', startsAt: new Date('2090-01-09T08:00:00Z'), endsAt: new Date('2090-01-09T09:00:00Z'), title: 'Occupée' }))
     await assert.rejects(asTenant((tx) => insertBookingSeries(tx, input(), 'Europe/Paris')))
     const rows = await asTenant((tx) => tx.select().from(bookings))
     assert.equal(rows.length, 1)
@@ -53,11 +53,11 @@ describe('création et annulation atomiques des séries', { skip: !ownerUrl || !
   })
   it('les indisponibilités empêchent aussi une réservation ordinaire', async () => {
     await asTenant((tx) => insertBookingSeries(tx, input({ kind: 'unavailability', title: 'Entretien' }), 'Europe/Paris'))
-    await assert.rejects(asTenant((tx) => tx.insert(bookings).values({ resourceId, startsAt: new Date('2090-01-09T08:30:00Z'), endsAt: new Date('2090-01-09T09:30:00Z'), title: 'Impossible' })))
+    await assert.rejects(asTenant((tx) => tx.insert(bookings).values({ resourceId, channel: 'staff', startsAt: new Date('2090-01-09T08:30:00Z'), endsAt: new Date('2090-01-09T09:30:00Z'), title: 'Impossible' })))
   })
   it('annule seulement les occurrences futures de la série et libère leurs créneaux', async () => {
     const series = await asTenant((tx) => insertBookingSeries(tx, input(), 'Europe/Paris'))
-    await asTenant((tx) => tx.insert(bookings).values({ resourceId, seriesId: series.seriesId, startsAt: new Date('2000-01-01T08:00:00Z'), endsAt: new Date('2000-01-01T09:00:00Z'), title: 'Passée' }))
+    await asTenant((tx) => tx.insert(bookings).values({ resourceId, channel: 'staff', seriesId: series.seriesId, startsAt: new Date('2000-01-01T08:00:00Z'), endsAt: new Date('2000-01-01T09:00:00Z'), title: 'Passée' }))
     assert.equal((await asTenant((tx) => cancelFutureSeries(tx, series.seriesId))).length, 2)
     const rows = await asTenant((tx) => tx.select().from(bookings))
     assert.equal(rows.find((row) => row.title === 'Passée')?.status, 'confirmed')

@@ -33,8 +33,10 @@ export const resourceStatusStyles: Record<ResourceStatus, string> = {
 /** Rend les champs JSONB lisibles sans connaître le type à l'avance. */
 export function describeAttributes(attributes: Record<string, unknown>): string {
   const labels: Record<string, (value: unknown) => string> = {
-    superficieM2: (value) => `${value} m²`,
+    // Format français : une superficie de 12,5 m² ne s'écrit pas « 12.5 ».
+    superficieM2: (value) => `${Number(value).toLocaleString('fr-FR')} m²`,
     postes: (value) => `${value} poste${Number(value) > 1 ? 's' : ''}`,
+    numero: (value) => `n° ${value}`,
     taille: (value) => `taille ${value}`,
     immatriculation: (value) => String(value),
     kilometrage: (value) => `${Number(value).toLocaleString('fr-FR')} km`,

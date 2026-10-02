@@ -1,15 +1,18 @@
-import { and, asc, eq, isNull, or, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
 import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { clientSearchCondition, clientSearchTerms } from './recherche.ts'
 import { clients, type Client, type ClientStatus } from './schema.ts'
 
 /** Clients vivants du centre, les supprimés exclus (décision 6). */
 export async function listClients(
   filters: { status?: ClientStatus; search?: string } = {},
 ): Promise<Client[]> {
-  const search = filters.search?.trim()
+  // Même recherche que la liste des clients (`recherche.ts`) : raison sociale,
+  // SIRET, nom d'un contact, ville.
+  const terms = clientSearchTerms(filters.search)
   return withTenant(currentTenantId(), (tx) =>
     tx
       .select()
@@ -18,13 +21,7 @@ export async function listClients(
         and(
           isNull(clients.deletedAt),
           filters.status ? eq(clients.status, filters.status) : undefined,
-          search
-            ? or(
-                sql`${clients.name} ilike ${`%${search}%`}`,
-                sql`${clients.siret} ilike ${`%${search}%`}`,
-                sql`${clients.city} ilike ${`%${search}%`}`,
-              )
-            : undefined,
+          terms ? clientSearchCondition(terms) : undefined,
         ),
       )
       .orderBy(asc(clients.name)),

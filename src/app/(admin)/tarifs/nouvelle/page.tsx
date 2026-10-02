@@ -1,10 +1,12 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { RatePlanForm } from '../../../../modules/facturation/rate-plan-form.tsx'
 
 export const metadata = { title: 'Nouvelle grille tarifaire' }
 
-export default function NewRatePlanPage() {
+export default async function NewRatePlanPage() {
+  await requirePermission('tarifs.gerer')
   return (
     <div className="flex flex-col gap-6">
       <div>

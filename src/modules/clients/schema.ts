@@ -1,6 +1,8 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   char,
+  check,
   foreignKey,
   index,
   pgEnum,
@@ -121,3 +123,56 @@ export const clientMembers = pgTable(
 
 export type ClientMember = typeof clientMembers.$inferSelect
 export type NewClientMember = typeof clientMembers.$inferInsert
+
+/**
+ * Contacts d'une entreprise cliente (R07, CRM) : les personnes à qui l'on parle
+ * — gérant, comptable, assistante — avec leur fonction et leurs coordonnées.
+ *
+ * Distincts de `client_members` : un contact n'a pas forcément de compte, et un
+ * compte n'est pas forcément un contact. Le comptable qui reçoit les factures
+ * n'a aucune raison d'ouvrir l'espace client ; l'assistante qui relève le
+ * courrier n'est pas celle qu'on appelle pour renégocier le bail.
+ *
+ * Données personnelles de tiers : elles suivent la fiche client, et partent
+ * avec elle au terme de sa conservation (registre RGPD, ADR 020).
+ */
+export const clientContacts = pgTable(
+  'client_contacts',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    clientId: uuid('client_id').notNull(),
+    fullName: text('full_name').notNull(),
+    /** Fonction dans l'entreprise : « gérante », « expert-comptable ». */
+    jobTitle: text('job_title'),
+    email: text('email'),
+    phone: text('phone'),
+    /** Interlocuteur principal de l'entreprise : un seul à la fois. */
+    isPrimary: boolean('is_primary').notNull().default(false),
+    /** Destinataire des factures. Plusieurs possibles (gérant et comptable). */
+    isBilling: boolean('is_billing').notNull().default(false),
+    notes: text('notes'),
+    ...timestamps(),
+    deletedAt: deletedAt(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'client_contacts_client_fk',
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [clients.tenantId, clients.id],
+    }).onDelete('restrict'),
+    // Cible des futures clés étrangères composites (destinataire d'une facture).
+    unique('client_contacts_tenant_id_id_key').on(table.tenantId, table.id),
+    // Au plus un contact principal actif par entreprise : deux rendraient
+    // « qui appeler » dépendant de l'ordre de lecture. Archivé, il libère la
+    // place.
+    uniqueIndex('client_contacts_primary_key')
+      .on(table.tenantId, table.clientId)
+      .where(sql`is_primary and deleted_at is null`),
+    index('client_contacts_client_idx').on(table.tenantId, table.clientId),
+    check('client_contacts_name_not_blank', sql`btrim(${table.fullName}) <> ''`),
+  ],
+)
+
+export type ClientContact = typeof clientContacts.$inferSelect
+export type NewClientContact = typeof clientContacts.$inferInsert

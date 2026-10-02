@@ -2,7 +2,7 @@ import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import type { NextRequest } from 'next/server'
 
-import { requireAdmin } from '../../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import {
   AGENDAS_PATH,
   CALLBACK_PATH,
@@ -16,7 +16,7 @@ import { completeGoogleCalendarConnection } from '../../../../../modules/reserva
  * `CALLBACK_PATH`.
  */
 export async function GET(request: NextRequest) {
-  const { member } = await requireAdmin()
+  const { member } = await requirePermission('agenda-google.gerer')
 
   const store = await cookies()
   const pending = store.get(OAUTH_COOKIE)?.value

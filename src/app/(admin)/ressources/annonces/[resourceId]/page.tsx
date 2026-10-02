@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { AnnonceForm } from '../../../../../modules/ressources/annonce-form.tsx'
 import { findListingForResource } from '../../../../../modules/ressources/annonces-queries.ts'
 import { findResource } from '../../../../../modules/ressources/queries.ts'
@@ -12,6 +13,7 @@ export default async function EditAnnoncePage({
 }: {
   params: Promise<{ resourceId: string }>
 }) {
+  await requirePermission('ressources.gerer')
   const { resourceId } = await params
   const [resource, listing] = await Promise.all([
     findResource(resourceId),

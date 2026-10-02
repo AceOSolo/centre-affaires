@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   archiveResourceAction,
   updateResourceStatusAction,
@@ -20,6 +21,7 @@ export default async function ResourcesPage({
 }: {
   searchParams: Promise<{ type?: string }>
 }) {
+  await requirePermission('ressources.gerer')
   const { type } = await searchParams
   const filter = resourceTypes.includes(type as ResourceType) ? (type as ResourceType) : undefined
   const resources = await listResources({ resourceType: filter })
@@ -77,7 +79,13 @@ export default async function ResourcesPage({
                       {resource.code}
                     </td>
                     <td className="px-4 py-3">
-                      <div className="font-medium">{resource.name}</div>
+                      {/* L'inventaire mène à la fiche, d'où l'on modifie (R01). */}
+                      <Link
+                        href={`/ressources/${resource.id}`}
+                        className="font-medium underline-offset-2 hover:underline"
+                      >
+                        {resource.name}
+                      </Link>
                       {details && (
                         <div className="text-xs text-muted-foreground">{details}</div>
                       )}

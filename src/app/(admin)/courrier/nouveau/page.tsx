@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { toWallClock } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
@@ -14,6 +15,7 @@ export default async function NouveauCourrierPage({
 }: {
   searchParams: Promise<{ clientId?: string; enregistre?: string }>
 }) {
+  await requirePermission('courrier.gerer')
   const { clientId, enregistre } = await searchParams
   const [timeZone, clients, registered] = await Promise.all([
     currentTimeZone(),

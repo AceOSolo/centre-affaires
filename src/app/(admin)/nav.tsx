@@ -3,21 +3,26 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-const sections = [
-  { href: '/reservations', label: 'Planning' },
+import type { Permission } from '../../lib/auth/permissions.ts'
+
+// Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
+// que ce que le rôle permet. La page revérifie de son côté.
+const sections: { href: string; label: string; permission: Permission }[] = [
+  { href: '/reservations', label: 'Planning', permission: 'reservations.gerer' },
   // Les demandes du site public bloquent un créneau tant qu'elles ne sont pas
   // traitées (ADR 005) : leur nombre est affiché en permanence.
-  { href: '/demandes', label: 'Demandes' },
-  { href: '/ressources', label: 'Ressources' },
-  { href: '/disponibilites', label: 'Disponibilités' },
-  { href: '/ressources/annonces', label: 'Annonces' },
-  { href: '/ressources/agendas', label: 'Agendas Google' },
-  { href: '/clients', label: 'Clients' },
-  { href: '/contrats', label: 'Contrats' },
-  { href: '/tarifs', label: 'Tarifs' },
+  { href: '/demandes', label: 'Demandes', permission: 'demandes.traiter' },
+  { href: '/ressources', label: 'Ressources', permission: 'ressources.gerer' },
+  { href: '/disponibilites', label: 'Disponibilités', permission: 'horaires.gerer' },
+  { href: '/ressources/annonces', label: 'Annonces', permission: 'ressources.gerer' },
+  { href: '/ressources/agendas', label: 'Agendas Google', permission: 'agenda-google.gerer' },
+  { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
+  { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
+  { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
-  { href: '/courrier', label: 'Courrier' },
+  { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
+  { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
 ]
 
 /**
@@ -27,15 +32,19 @@ const sections = [
 export function Nav({
   pendingCount = 0,
   mailRequestCount = 0,
+  allowed,
 }: {
   pendingCount?: number
   mailRequestCount?: number
+  /** Droits du membre connecté (`permissionsOf`). */
+  allowed: readonly Permission[]
 }) {
   const pathname = usePathname()
+  const visibles = sections.filter((section) => allowed.includes(section.permission))
 
   // Le plus long chemin qui correspond l'emporte : `/ressources/annonces` ne
   // doit pas allumer aussi l'onglet `/ressources`.
-  const actif = sections
+  const actif = visibles
     .filter(
       (section) => pathname === section.href || pathname.startsWith(`${section.href}/`),
     )
@@ -43,7 +52,7 @@ export function Nav({
 
   return (
     <nav className="flex gap-1">
-      {sections.map((section) => {
+      {visibles.map((section) => {
         const active = section.href === actif
         return (
           <Link

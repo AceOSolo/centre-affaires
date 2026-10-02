@@ -4,7 +4,16 @@ import { formatTime, toWallClock } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
 import type { TimeRange } from '../ressources/ouverture.ts'
 import type { Resource } from '../ressources/schema.ts'
-import { bookingBlockStyles, bookingStatusLabels } from './labels.ts'
+import {
+  bookingBlockClass,
+  bookingFocus,
+  bookingHref,
+  bookingLabel,
+  bookingTimeLabel,
+} from './affichage.ts'
+import { newBookingHref } from './filtres.ts'
+import { bookingStatusLabels } from './labels.ts'
+import { isOpenEndedBooking } from './schema.ts'
 import { blockGeometry, hourTicks, planningHeightPx, planningWindow } from './planning.ts'
 import type { BookingWithResource } from './queries.ts'
 
@@ -31,6 +40,7 @@ export function DayPlanning({
   resources,
   bookings,
   opening,
+  clientId,
 }: {
   isoDate: string
   timeZone: string
@@ -38,12 +48,22 @@ export function DayPlanning({
   bookings: BookingWithResource[]
   /** Plages d'ouverture du jour, par identifiant de ressource. */
   opening: Record<string, TimeRange[]>
+  /** Client filtré : ses réservations ressortent, il est pré-rempli au clic. */
+  clientId?: string
 }) {
   const occupying = bookings.filter((booking) => booking.status !== 'cancelled')
   // L'amplitude couvre toutes les colonnes : sans l'union, une ressource
   // ouverte plus tard que les autres sortirait de la grille.
   const toutesLesPlages = resources.flatMap((resource) => opening[resource.id] ?? [])
-  const window = planningWindow(isoDate, timeZone, occupying, toutesLesPlages)
+  // Une occupation de contrat couvre des jours entiers (ADR 018) : elle
+  // étirerait la grille de minuit à minuit. Elle est rognée sur l'amplitude
+  // comme le reste, sans la fixer.
+  const window = planningWindow(
+    isoDate,
+    timeZone,
+    occupying.filter((booking) => booking.kind !== 'contract'),
+    toutesLesPlages,
+  )
   const ticks = hourTicks(window)
   const height = planningHeightPx(window)
 
@@ -113,7 +133,12 @@ export function DayPlanning({
                 return (
                   <Link
                     key={tick.instant.toISOString()}
-                    href={`/reservations/nouvelle?date=${isoDate}&resourceId=${resource.id}&start=${startTime}`}
+                    href={newBookingHref({
+                      date: isoDate,
+                      resourceId: resource.id,
+                      start: startTime,
+                      client: clientId,
+                    })}
                     aria-label={`Réserver ${resource.name} à ${formatTime(tick.instant, timeZone)}`}
                     className="absolute inset-x-0 hover:bg-muted/70"
                     style={{
@@ -129,25 +154,33 @@ export function DayPlanning({
                 .map((booking) => {
                   const geometry = blockGeometry(booking, window)
                   if (!geometry) return null
-                  const status = booking.status as Exclude<typeof booking.status, 'cancelled'>
+                  // Filtré sur un client, les réservations des autres restent
+                  // dessinées — le créneau est pris — mais réduites à « Occupé ».
+                  const focus = bookingFocus(booking, clientId)
+                  const label = focus === 'autre' ? 'Occupé' : bookingLabel(booking)
+                  // Une occupation de contrat s'ouvre sur son contrat : on ne
+                  // l'annule ni ne la déplace depuis le planning (ADR 018).
                   return (
                     <Link
                       key={booking.id}
-                      href={`/reservations/${booking.id}`}
-                      className={`absolute inset-x-1 z-10 block overflow-hidden rounded border-l-4 px-2 py-1 text-xs shadow-sm hover:brightness-95 ${bookingBlockStyles[status]}`}
+                      href={bookingHref(booking)}
+                      title={label}
+                      className={`absolute inset-x-1 z-10 block overflow-hidden rounded border-l-4 px-2 py-1 text-xs shadow-sm hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-accent ${bookingBlockClass(booking, focus)}`}
                       style={{
                         top: `${geometry.topPercent}%`,
                         height: `${geometry.heightPercent}%`,
                       }}
                     >
-                      <div className="truncate font-medium">{booking.title}</div>
+                      <div className="truncate font-medium">{label}</div>
                       <div className="truncate tabular-nums opacity-80">
-                        {formatTime(booking.startsAt, timeZone)} –{' '}
-                        {formatTime(booking.endsAt, timeZone)}
+                        {bookingTimeLabel(booking, isoDate, timeZone)}
                       </div>
                       {/* Le statut est écrit, pas seulement coloré (ADR 004). */}
-                      {status === 'pending' && (
+                      {booking.status === 'pending' && (
                         <div className="truncate opacity-80">{bookingStatusLabels.pending}</div>
+                      )}
+                      {booking.kind === 'contract' && isOpenEndedBooking(booking) && (
+                        <div className="truncate opacity-80">Sans terme</div>
                       )}
                     </Link>
                   )

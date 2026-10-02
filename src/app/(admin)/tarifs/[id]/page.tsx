@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import {
   archiveRatePlanAction,
   removeRatePlanItemAction,
@@ -15,11 +16,13 @@ import { listResources } from '../../../../modules/ressources/queries.ts'
 export const metadata = { title: 'Grille tarifaire' }
 
 export default async function RatePlanPage({ params }: { params: Promise<{ id: string }> }) {
+  await requirePermission('tarifs.gerer')
   const { id } = await params
   const [plan, resources] = await Promise.all([findRatePlan(id), listResources()])
   if (!plan) notFound()
 
   const resourceNames = new Map(resources.map((resource) => [resource.id, resource]))
+  const archived = Boolean(plan.deletedAt)
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,6 +53,13 @@ export default async function RatePlanPage({ params }: { params: Promise<{ id: s
           Prix{' '}
           <span className="font-normal text-muted-foreground">({plan.items.length})</span>
         </h2>
+
+        {archived && (
+          <p id="grille-archivee" className="text-sm text-muted-foreground">
+            Grille archivée : ses prix sont figés. Ils restent affichés pour les contrats qui la
+            désignent et ne peuvent plus être retirés.
+          </p>
+        )}
 
         {plan.items.length === 0 ? (
           <p className="text-sm text-muted-foreground">
@@ -101,9 +111,13 @@ export default async function RatePlanPage({ params }: { params: Promise<{ id: s
                         <form action={removeRatePlanItemAction}>
                           <input type="hidden" name="id" value={item.id} />
                           <input type="hidden" name="ratePlanId" value={plan.id} />
+                          {/* Sur une grille archivée, désactivé et expliqué plus
+                              haut ; l'action le refuse de toute façon. */}
                           <button
                             type="submit"
-                            className="text-xs text-destructive underline-offset-2 hover:underline"
+                            disabled={archived}
+                            aria-describedby={archived ? 'grille-archivee' : undefined}
+                            className="text-xs text-destructive underline-offset-2 enabled:hover:underline disabled:cursor-not-allowed disabled:text-muted-foreground"
                           >
                             Retirer
                           </button>

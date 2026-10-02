@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatTime, todayIsoDate, toIsoDate } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
 import { occupiesResource } from '../../../../../modules/reservations/availability.ts'
@@ -29,6 +30,7 @@ export default async function MoveBookingPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ date?: string; resourceId?: string }>
 }) {
+  await requirePermission('reservations.gerer')
   const { id } = await params
   const { date, resourceId } = await searchParams
   const timeZone = await currentTimeZone()
@@ -41,6 +43,33 @@ export default async function MoveBookingPage({
 
   // Une réservation annulée ne se déplace pas : son créneau est libéré et sa
   // ligne ne subsiste que pour l'historique (décision 6).
+  // Une occupation de contrat ne se déplace pas ici : elle suit son contrat
+  // (ADR 018), et la base refuserait l'écriture.
+  if (booking.kind === 'contract') {
+    return (
+      <div className="flex flex-col gap-6">
+        <Link href={`/reservations/${id}`} className="text-sm text-muted-foreground hover:underline">
+          ← Réservation
+        </Link>
+        <h1 className="text-2xl font-semibold tracking-tight">Déplacer la réservation</h1>
+        <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
+          <p>
+            Cette ressource est occupée au titre d’un contrat : l’occupation suit le contrat et ne
+            se déplace pas comme une réservation.
+          </p>
+          {booking.contractId && (
+            <Link
+              href={`/contrats/${booking.contractId}`}
+              className="mt-4 inline-block rounded-md border border-primary px-4 py-2 font-medium text-primary hover:bg-muted"
+            >
+              Ouvrir le contrat
+            </Link>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   if (booking.status === 'cancelled') {
     return (
       <div className="flex flex-col gap-6">
@@ -85,6 +114,7 @@ export default async function MoveBookingPage({
     .map((autre) => ({
       id: autre.id,
       title: autre.title,
+      kind: autre.kind,
       startsAt: autre.startsAt,
       endsAt: autre.endsAt,
     }))

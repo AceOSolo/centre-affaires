@@ -4,7 +4,8 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
+import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { readScan, type ScanFile } from './fichiers.ts'
@@ -30,6 +31,14 @@ function text(formData: FormData, key: string): string {
 /** Une panne du stockage ne doit pas finir sur l'écran d'erreur générique. */
 function storageFailure(error: unknown): MailFormState {
   console.error('Dépôt de numérisation impossible', error)
+  // Jamais de dépôt en clair faute de clé (ADR 020) : le dire, pour que l'on
+  // ne réessaie pas en boucle une panne qui n'en est pas une.
+  if (error instanceof DocumentKeyError) {
+    return {
+      error:
+        'Le fichier n’a pas été déposé : le chiffrement des documents n’est pas configuré sur ce serveur. Prévenez la personne qui administre l’application.',
+    }
+  }
   return {
     error:
       'Le fichier n’a pas pu être déposé. Réessayez ; si le problème persiste, le stockage est peut-être indisponible.',
@@ -41,7 +50,7 @@ export async function registerMailAction(
   formData: FormData,
 ): Promise<MailFormState> {
   // Contrôle d'accès dans l'action elle-même (ADR 008).
-  const { member } = await requireStaff()
+  const { member } = await requirePermission('courrier.gerer')
   const timeZone = await currentTimeZone()
 
   const values = {
@@ -103,7 +112,7 @@ export async function openMailAction(
   _previous: MailFormState,
   formData: FormData,
 ): Promise<MailFormState> {
-  const { member } = await requireStaff()
+  const { member } = await requirePermission('courrier.gerer')
   const id = text(formData, 'id')
   if (!id) return { error: 'Courrier introuvable.' }
 
@@ -127,7 +136,7 @@ export async function openMailAction(
 }
 
 export async function withdrawMailAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('courrier.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await withdrawMail(id)

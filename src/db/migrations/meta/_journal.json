@@ -176,6 +176,34 @@
       "when": 1790774117912,
       "tag": "0024_purge_journal_courrier",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1790857416676,
+      "tag": "0025_canal_contrats_contacts_numerotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1790857427767,
+      "tag": "0026_occupation_isolation_numerotation",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1790857614571,
+      "tag": "0027_canal_obligatoire_et_reference_auto",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1790864121149,
+      "tag": "0028_casier_numero_unique",
+      "breakpoints": true
     }
   ]
 }

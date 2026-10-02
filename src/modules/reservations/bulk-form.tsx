@@ -10,11 +10,13 @@ import { expandRecurrence, MAX_BULK_BOOKINGS, MAX_WEEKLY_SLOTS, type WeeklySlot 
 const field = 'mt-1 w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40'
 const newSlot = (): WeeklySlot => ({ weekdays: [1], startTime: '09:00', endTime: '10:00' })
 
-export function BulkBookingForm({ resources, today, timeZone, defaultKind }: {
+export function BulkBookingForm({ resources, today, timeZone, defaultKind, canManageResources }: {
   resources: { id: string; name: string; code: string }[]
   today: string
   timeZone: string
   defaultKind: 'booking' | 'unavailability'
+  /** Droit `ressources.gerer`, qui ouvre la déclaration d'une ressource. */
+  canManageResources: boolean
 }) {
   const [state, action, pending] = useActionState(createBookingSeriesAction, null)
   const [kind, setKind] = useState(defaultKind)
@@ -38,7 +40,8 @@ export function BulkBookingForm({ resources, today, timeZone, defaultKind }: {
     setSlots((current) => current.map((slot, at) => at === index ? { ...slot, ...changes } : slot))
   }
 
-  if (!resources.length) return <p>Aucune ressource en service. <Link className="underline" href="/ressources/nouvelle">Ajouter une ressource</Link>.</p>
+  // L'accueil n'a pas accès aux fiches ressources (ADR 019) : pas de lien vers « Accès réservé ».
+  if (!resources.length) return <p>Aucune ressource en service. {canManageResources ? <><Link className="underline" href="/ressources/nouvelle">Ajouter une ressource</Link>.</> : 'Demandez à l’exploitant d’en déclarer une.'}</p>
 
   return (
     <form action={action} className="flex flex-col gap-6">

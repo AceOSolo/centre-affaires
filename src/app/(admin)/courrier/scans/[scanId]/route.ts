@@ -1,4 +1,4 @@
-import { requireStaff } from '../../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { findScanForStaff } from '../../../../../modules/courrier/queries.ts'
 import { serveScan } from '../../../../../modules/courrier/servir.ts'
 
@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ scanId: string }> },
 ) {
   // Une route ne passe pas par la coque du back-office : elle se protège seule.
-  const { user, member } = await requireStaff()
+  const { user, member } = await requirePermission('courrier.gerer')
   const { scanId } = await params
 
   const scan = await findScanForStaff(scanId)

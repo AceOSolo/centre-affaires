@@ -1,10 +1,14 @@
 import Link from 'next/link'
 
+import { can } from '../../../../lib/auth/permissions.ts'
+import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
+import { listContracts } from '../../../../modules/contrats/queries.ts'
 import { occupiesResource } from '../../../../modules/reservations/availability.ts'
 import { BookingForm } from '../../../../modules/reservations/booking-form.tsx'
+import { newBookingHref } from '../../../../modules/reservations/filtres.ts'
 import { loadWeekCalendar } from '../../../../modules/reservations/calendar-data.ts'
 import { listBookingsBetween } from '../../../../modules/reservations/queries.ts'
 import { weekDays, weekStart } from '../../../../modules/reservations/semaine.ts'
@@ -27,9 +31,10 @@ const WALL_TIME = /^\d{2}:\d{2}$/
 export default async function NewBookingPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; resourceId?: string; start?: string }>
+  searchParams: Promise<{ date?: string; resourceId?: string; start?: string; clientId?: string }>
 }) {
-  const { date, resourceId, start } = await searchParams
+  const { member } = await requirePermission('reservations.gerer')
+  const { date, resourceId, start, clientId } = await searchParams
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)
   const resources = await listBookableResources()
@@ -43,20 +48,29 @@ export default async function NewBookingPage({
         <h1 className="text-2xl font-semibold tracking-tight">Nouvelle réservation</h1>
         <p className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
           Aucune ressource en service.{' '}
-          <Link href="/ressources/nouvelle" className="underline underline-offset-2">
-            Déclarer une ressource
-          </Link>{' '}
-          avant de réserver.
+          {/* L'accueil voit le planning, pas les fiches ressources (ADR 019). */}
+          {can(member.role, 'ressources.gerer') ? (
+            <>
+              <Link href="/ressources/nouvelle" className="underline underline-offset-2">
+                Déclarer une ressource
+              </Link>{' '}
+              avant de réserver.
+            </>
+          ) : (
+            'Demandez à l’exploitant d’en déclarer une.'
+          )}
         </p>
       </div>
     )
   }
 
   const jours = weekDays(defaultDate)
-  const [days, bookings, clients] = await Promise.all([
+  const [days, bookings, clients, activeContracts] = await Promise.all([
     loadWeekCalendar({ resourceId: resource.id, anchor: defaultDate, timeZone }),
     listBookingsBetween(jours[0], jours[6], timeZone),
     listClients(),
+    // Contrats proposés au rattachement (R05) : seuls les actifs le peuvent.
+    listContracts({ status: 'active' }),
   ])
 
   // Le détail des réservations ne sort pas du back-office : le portail public
@@ -66,11 +80,14 @@ export default async function NewBookingPage({
     .map((booking) => ({
       id: booking.id,
       title: booking.title,
+      kind: booking.kind,
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
     }))
 
   const lundi = weekStart(defaultDate)
+  // Client pré-choisi depuis un planning filtré (ADR 017), s'il existe encore.
+  const defaultClientId = clients.some((client) => client.id === clientId) ? clientId : undefined
 
   return (
     <div className="flex flex-col gap-6">
@@ -106,6 +123,7 @@ export default async function NewBookingPage({
           </div>
           <input type="hidden" name="date" value={defaultDate} />
           {start && WALL_TIME.test(start) && <input type="hidden" name="start" value={start} />}
+          {defaultClientId && <input type="hidden" name="clientId" value={defaultClientId} />}
           <button
             type="submit"
             className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
@@ -118,17 +136,20 @@ export default async function NewBookingPage({
           <SemaineLink
             date={addDaysToIsoDate(lundi, -7)}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="← Semaine précédente"
           />
           <SemaineLink
             date={today}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="Cette semaine"
             active={weekStart(today) === lundi}
           />
           <SemaineLink
             date={addDaysToIsoDate(lundi, 7)}
             resourceId={resource.id}
+            clientId={defaultClientId}
             label="Semaine suivante →"
           />
         </nav>
@@ -144,6 +165,17 @@ export default async function NewBookingPage({
         defaultDate={defaultDate}
         defaultStartTime={start && WALL_TIME.test(start) ? start : undefined}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
+        defaultClientId={defaultClientId}
+        contracts={activeContracts.map((contract) => ({
+          id: contract.id,
+          reference: contract.reference,
+          clientId: contract.clientId,
+          status: contract.status,
+          deletedAt: contract.deletedAt,
+          startsOn: contract.startsOn,
+          endsOn: contract.endsOn,
+          terminatedOn: contract.terminatedOn,
+        }))}
       />
     </div>
   )
@@ -152,17 +184,19 @@ export default async function NewBookingPage({
 function SemaineLink({
   date,
   resourceId,
+  clientId,
   label,
   active,
 }: {
   date: string
   resourceId: string
+  clientId?: string
   label: string
   active?: boolean
 }) {
   return (
     <Link
-      href={`/reservations/nouvelle?date=${date}&resourceId=${resourceId}`}
+      href={newBookingHref({ date, resourceId, client: clientId })}
       aria-current={active ? 'date' : undefined}
       className={`rounded-md border px-3 py-1.5 text-sm ${
         active

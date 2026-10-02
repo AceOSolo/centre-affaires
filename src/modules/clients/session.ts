@@ -31,8 +31,14 @@ export const clientAccess = cache(async (): Promise<ClientAccess> => {
 
 /**
  * Porte d'entrée de l'espace client : à appeler dans chaque page, chaque route
- * et **chaque action serveur** — même raison que `requireStaff()`, une action
- * s'invoque depuis n'importe quel chemin (ADR 008).
+ * et **chaque action serveur** — même raison que `requirePermission()` au
+ * back-office, une action s'invoque depuis n'importe quel chemin (ADR 008).
+ *
+ * Les entreprises rendues ici sont la portée de tout ce qui suit : chaque
+ * lecture ou écriture de l'espace passe par `inClientSpace(accounts, …)`
+ * (`comptes.ts`, ADR 019). La résolution elle-même, dans `clientAccess`, est
+ * la seule requête de l'espace faite sous `withTenant()` : c'est elle qui dit
+ * quelle portée poser.
  */
 export async function requireClientAccount(): Promise<{
   user: AuthenticatedUser

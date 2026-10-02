@@ -1,17 +1,16 @@
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
 
-import { withTenant } from '../../db/index.ts'
-import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { clients } from '../clients/schema.ts'
-import type { ClientAccount } from '../clients/comptes.ts'
+import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { resources, type ResourceType } from '../ressources/schema.ts'
 import { bookings, type Booking } from './schema.ts'
 
 /**
  * Réservations vues depuis l'espace client (ADR 015) : celles des entreprises
- * du compte, et d'elles seules. Le filtre sur `client_id` est le verrou ; la
- * RLS ne sépare que les centres.
+ * du compte, et d'elles seules. Deux verrous : le filtre sur `client_id`, et
+ * la portée client de la transaction (`inClientSpace`, ADR 019), qui tiendrait
+ * sans lui.
  */
 export type ClientBookingRow = Pick<
   Booking,
@@ -29,7 +28,7 @@ export async function listBookingsForAccounts(accounts: ClientAccount[]): Promis
   if (accounts.length === 0) return []
   const since = new Date(Date.now() - HISTORY_DAYS * 86_400_000)
 
-  return withTenant(currentTenantId(), (tx) =>
+  return inClientSpace(accounts, (tx) =>
     tx
       .select({
         id: bookings.id,
@@ -71,7 +70,7 @@ export async function cancelRequestForAccounts(
   accounts: ClientAccount[],
 ): Promise<boolean> {
   if (accounts.length === 0 || !isUuid(id)) return false
-  const updated = await withTenant(currentTenantId(), (tx) =>
+  const updated = await inClientSpace(accounts, (tx) =>
     tx
       .update(bookings)
       .set({

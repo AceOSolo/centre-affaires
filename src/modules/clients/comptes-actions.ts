@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { after } from 'next/server'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { emailEnabled } from '../../lib/courriel.ts'
 import { DuplicateClientMemberError, addClientMember, removeClientMember } from './comptes.ts'
 import { sendInvitation } from './invitation.ts'
@@ -21,7 +21,7 @@ export async function addClientMemberAction(
   _previous: MemberFormState,
   formData: FormData,
 ): Promise<MemberFormState> {
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const clientId = String(formData.get('clientId') ?? '')
   const values = {
     email: String(formData.get('email') ?? '').trim().toLowerCase(),
@@ -51,7 +51,7 @@ export async function addClientMemberAction(
 }
 
 export async function removeClientMemberAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('clients.gerer')
   const clientId = String(formData.get('clientId') ?? '')
   const id = String(formData.get('id') ?? '')
   if (!id || !clientId) return

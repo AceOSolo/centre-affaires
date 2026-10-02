@@ -1,5 +1,5 @@
 import { isIsoMonth, monthRangeUtc } from '../../../../../lib/dates.ts'
-import { requireStaff } from '../../../../../lib/auth/staff.ts'
+import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
 import { listOpenings } from '../../../../../modules/courrier/queries.ts'
 import { groupOpeningsByClient } from '../../../../../modules/courrier/regles.ts'
@@ -7,7 +7,7 @@ import { openingsToCsv } from '../../../../../modules/courrier/releve.ts'
 
 /** Export CSV du relevé mensuel, pour la facturation. */
 export async function GET(request: Request) {
-  await requireStaff()
+  await requirePermission('courrier.releve')
   const month = new URL(request.url).searchParams.get('mois') ?? undefined
   if (!isIsoMonth(month)) return new Response('Mois attendu : ?mois=AAAA-MM', { status: 400 })
 

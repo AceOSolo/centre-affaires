@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { formatTime, toIsoDate } from '../../lib/dates.ts'
 import { withTenant } from '../../db/index.ts'
@@ -15,7 +15,7 @@ import { RecurrenceError, type WeeklySlot } from './recurrence.ts'
 export type BulkFormState = { error: string } | null
 
 export async function createBookingSeriesAction(_previous: BulkFormState, formData: FormData): Promise<BulkFormState> {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const timeZone = await currentTimeZone()
   let slots: WeeklySlot[]
   try { slots = JSON.parse(String(formData.get('slots') ?? '')) } catch {
@@ -49,7 +49,7 @@ export async function createBookingSeriesAction(_previous: BulkFormState, formDa
 }
 
 export async function cancelBookingSeriesAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('reservations.gerer')
   const seriesId = String(formData.get('seriesId') ?? '')
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(seriesId)) return
   const cancelled = await withTenant(currentTenantId(), (tx) => cancelFutureSeries(tx, seriesId))

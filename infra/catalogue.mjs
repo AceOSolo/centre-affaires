@@ -236,7 +236,7 @@ try {
       await tx`
         insert into rate_plan_items (rate_plan_id, resource_type, resource_id, unit, amount_cents)
         values (${grille.id}, ${type}, null, ${unite}, ${centimes})
-        on conflict (rate_plan_id, resource_type, unit) where resource_id is null
+        on conflict (rate_plan_id, resource_type, unit) where resource_id is null and deleted_at is null
         do update set amount_cents = excluded.amount_cents`
     }
 

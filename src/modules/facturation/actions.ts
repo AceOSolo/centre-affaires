@@ -3,10 +3,11 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { resourceTypes, type ResourceType } from '../ressources/schema.ts'
 import {
+  ArchivedRatePlanError,
   DefaultRatePlanConflictError,
   DuplicateRateError,
   addRatePlanItem,
@@ -32,7 +33,7 @@ export async function createRatePlanAction(
   // Contrôle d'accès dans l'action elle-même : une action serveur s'invoque
   // par son identifiant depuis n'importe quel chemin, le filtre de routes ne
   // la protège pas (ADR 008).
-  await requireStaff()
+  await requirePermission('tarifs.gerer')
   const name = text(formData, 'name')
   if (!name) return { error: 'Nommer la grille.' }
 
@@ -67,7 +68,7 @@ export async function addRatePlanItemAction(
   _previous: FormState,
   formData: FormData,
 ): Promise<FormState> {
-  await requireStaff()
+  await requirePermission('tarifs.gerer')
   const ratePlanId = text(formData, 'ratePlanId')
   const resourceType = text(formData, 'resourceType')
   const unit = text(formData, 'unit')
@@ -90,7 +91,9 @@ export async function addRatePlanItemAction(
       amountCents,
     })
   } catch (error) {
-    if (error instanceof DuplicateRateError) return { error: error.message }
+    if (error instanceof DuplicateRateError || error instanceof ArchivedRatePlanError) {
+      return { error: error.message }
+    }
     throw error
   }
 
@@ -99,19 +102,24 @@ export async function addRatePlanItemAction(
 }
 
 export async function removeRatePlanItemAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('tarifs.gerer')
   const id = text(formData, 'id')
   const ratePlanId = text(formData, 'ratePlanId')
   if (!id) return
-  // Une ligne de grille n'est pas une donnée métier à conserver : elle n'a ni
-  // historique ni portée légale, contrairement au contrat qui s'y réfère et qui
-  // porte, lui, son propre montant.
-  await removeRatePlanItem(id)
+  // Retrait logique (décision 6) : le prix cesse de s'appliquer, la ligne
+  // reste pour expliquer un montant déjà calculé avec lui. Sur une grille
+  // archivée, le bouton est désactivé ; une requête qui arrive quand même ne
+  // change rien.
+  try {
+    await removeRatePlanItem(id)
+  } catch (error) {
+    if (!(error instanceof ArchivedRatePlanError)) throw error
+  }
   revalidatePath(`/tarifs/${ratePlanId}`)
 }
 
 export async function archiveRatePlanAction(formData: FormData): Promise<void> {
-  await requireStaff()
+  await requirePermission('tarifs.gerer')
   const id = text(formData, 'id')
   if (!id) return
   await archiveRatePlan(id)
