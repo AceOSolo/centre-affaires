@@ -1,4 +1,5 @@
 import { CheckIcon } from '../../components/ui/icons.tsx'
+import { todayIsoDate } from '../../lib/dates.ts'
 import { anonymizeStaffMemberAction } from './actions.ts'
 import { listRemovedStaffMembers } from './anonymisation.ts'
 import { RemovedPeopleTable } from './removed-people.tsx'
@@ -46,6 +47,7 @@ export async function RemovedStaffSection({
         title="Anciens membres"
         people={removed}
         timeZone={timeZone}
+        today={todayIsoDate(timeZone)}
         anonymize={canAnonymize ? anonymizeStaffMemberAction : undefined}
         idField="staffMemberId"
         personLabel="ce membre"

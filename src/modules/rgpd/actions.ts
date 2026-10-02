@@ -19,6 +19,7 @@ import {
   recordLastContact,
 } from './anonymisation.ts'
 import { parseLastContact } from './dernier-contact.ts'
+import { parseAnonymizationRequest } from './fondement.ts'
 import {
   parseRetentionDurations,
   retentionDurations,
@@ -117,6 +118,23 @@ export async function recordLastContactAction(
 export type AnonymizeState = { error?: string } | null
 
 /**
+ * Le fondement saisi dans le dialogue (ADR 041) et le membre qui décide :
+ * une demande d'effacement est datée du jour où elle a été reçue.
+ */
+async function requestFrom(formData: FormData, staffMemberId: string) {
+  const tenant = await currentTenant()
+  const parsed = parseAnonymizationRequest(
+    { basis: text(formData, 'basis'), erasureRequestedOn: text(formData, 'erasureRequestedOn') },
+    todayIsoDate(tenant.timezone),
+  )
+  if (!parsed.ok) return parsed
+  return {
+    ok: true as const,
+    request: { staffMemberId, basis: parsed.basis, erasureRequestedOn: parsed.erasureRequestedOn },
+  }
+}
+
+/**
  * Droit à l'effacement d'une entreprise : anonymise sa fiche, ses contacts,
  * ses accès et leurs traces, sans attendre la durée de conservation. Refusé,
  * avec la liste des exclusions, tant qu'une facture n'est pas soldée, qu'un
@@ -126,11 +144,13 @@ export async function anonymizeClientAction(
   _previous: AnonymizeState,
   formData: FormData,
 ): Promise<AnonymizeState> {
-  await requirePermission('rgpd.anonymiser')
+  const { member: staff } = await requirePermission('rgpd.anonymiser')
   const clientId = text(formData, 'clientId')
   if (!isUuid(clientId)) return { error: 'Fiche introuvable.' }
+  const request = await requestFrom(formData, staff.id)
+  if (!request.ok) return { error: request.error }
 
-  const outcome = await anonymizeClientOnRequest(clientId)
+  const outcome = await anonymizeClientOnRequest(clientId, request.request)
   if (!outcome.ok) return { error: outcome.reason }
 
   revalidatePath('/clients')
@@ -147,9 +167,11 @@ export async function anonymizeClientMemberAction(
   _previous: AnonymizeState,
   formData: FormData,
 ): Promise<AnonymizeState> {
-  await requirePermission('rgpd.anonymiser')
+  const { member: staff } = await requirePermission('rgpd.anonymiser')
   const memberId = text(formData, 'memberId')
   if (!isUuid(memberId)) return { error: 'Accès introuvable.' }
+  const request = await requestFrom(formData, staff.id)
+  if (!request.ok) return { error: request.error }
 
   // L'entreprise vient de la base, pas du formulaire : c'est elle qu'on
   // rouvre ensuite.
@@ -162,7 +184,7 @@ export async function anonymizeClientMemberAction(
   )
   if (!member) return { error: 'Accès introuvable.' }
 
-  const outcome = await anonymizeClientMemberOnRequest(memberId)
+  const outcome = await anonymizeClientMemberOnRequest(memberId, request.request)
   if (!outcome.ok) return { error: outcome.reason }
 
   revalidatePath(`/clients/${member.clientId}`)
@@ -174,11 +196,13 @@ export async function anonymizeStaffMemberAction(
   _previous: AnonymizeState,
   formData: FormData,
 ): Promise<AnonymizeState> {
-  await requirePermission('rgpd.anonymiser')
+  const { member: staff } = await requirePermission('rgpd.anonymiser')
   const staffMemberId = text(formData, 'staffMemberId')
   if (!isUuid(staffMemberId)) return { error: 'Membre introuvable.' }
+  const request = await requestFrom(formData, staff.id)
+  if (!request.ok) return { error: request.error }
 
-  const outcome = await anonymizeStaffMemberOnRequest(staffMemberId)
+  const outcome = await anonymizeStaffMemberOnRequest(staffMemberId, request.request)
   if (!outcome.ok) return { error: outcome.reason }
 
   revalidatePath('/equipe')

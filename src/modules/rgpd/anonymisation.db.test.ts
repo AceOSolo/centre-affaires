@@ -7,6 +7,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 import { PG_CHECK_VIOLATION, pgErrorCode } from '../../db/errors.ts'
 import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID, tenants } from '../../db/tenants.ts'
+import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import {
   anonymizeClientMemberOnRequest,
   anonymizeClientOnRequest,
@@ -54,6 +55,10 @@ describe('anonymisation RGPD, côté application', { skip: raison }, () => {
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
     withTenant(DEFAULT_TENANT_ID, run, app.db)
+
+  /** Demande d'effacement reçue il y a trois jours, traitée par l'accueil (ADR 041). */
+  const RECUE_LE = addDaysToIsoDate(todayIsoDate('Europe/Paris'), -3)
+  const effacement = { staffMemberId: ACCUEIL, basis: 'erasure_request' as const, erasureRequestedOn: RECUE_LE }
 
   const defauts: RetentionDurations = Object.fromEntries(
     retentionDurations.map((duration) => [duration.key, duration.defaultMonths]),
@@ -276,7 +281,7 @@ describe('anonymisation RGPD, côté application', { skip: raison }, () => {
       const { id, numero } = await factureEmise(DURAND)
       const avant = await owner.client`select * from clients where id = ${DURAND}`
 
-      const refus = await anonymizeClientOnRequest(DURAND, app.db)
+      const refus = await anonymizeClientOnRequest(DURAND, effacement, app.db)
       assert.equal(refus.ok, false)
       const reason = refus.ok ? '' : refus.reason
       assert.match(reason, /^Anonymisation refusée : /)
@@ -286,21 +291,27 @@ describe('anonymisation RGPD, côté application', { skip: raison }, () => {
 
       await solder(id)
       const avantPieces = await pieces(id)
-      assert.deepEqual(await anonymizeClientOnRequest(DURAND, app.db), { ok: true })
+      assert.deepEqual(await anonymizeClientOnRequest(DURAND, effacement, app.db), { ok: true })
       assert.ok(await anonymisee(DURAND))
       assert.deepEqual(await pieces(id), avantPieces)
 
+      // Le fondement, sa date et son auteur restent sur la fiche (ADR 041).
+      const [trace] = await owner.client`
+        select anonymization_basis, erasure_requested_on::text as recue_le, anonymized_by
+          from clients where id = ${DURAND}`
+      assert.deepEqual(trace, { anonymization_basis: 'erasure_request', recue_le: RECUE_LE, anonymized_by: ACCUEIL })
+
       // Une seconde fois : la fiche l'est déjà.
-      const encore = await anonymizeClientOnRequest(DURAND, app.db)
+      const encore = await anonymizeClientOnRequest(DURAND, effacement, app.db)
       assert.equal(encore.ok, false)
       assert.match(encore.ok ? '' : encore.reason, /Fiche déjà anonymisée/)
     })
 
     it('n’anonymise un accès ou un membre de l’équipe que retiré', async () => {
-      const actif = await anonymizeClientMemberOnRequest(JEANNE, app.db)
+      const actif = await anonymizeClientMemberOnRequest(JEANNE, effacement, app.db)
       assert.equal(actif.ok, false)
       assert.match(actif.ok ? '' : actif.reason, /retirez-le d’abord|retirez-le d'abord/)
-      assert.equal((await anonymizeStaffMemberOnRequest(ACCUEIL, app.db)).ok, false)
+      assert.equal((await anonymizeStaffMemberOnRequest(ACCUEIL, effacement, app.db)).ok, false)
 
       await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now() where id = ${JEANNE}`))
       const [retire] = await asTenant((tx) => readRemovedClientMembers(tx, DURAND))
@@ -310,11 +321,41 @@ describe('anonymisation RGPD, côté application', { skip: raison }, () => {
       const ecart = retire.dueAfter.getTime() - retire.removedAt.getTime()
       assert.ok(ecart > 364 * 86_400_000 && ecart < 367 * 86_400_000, String(ecart))
 
-      assert.deepEqual(await anonymizeClientMemberOnRequest(JEANNE, app.db), { ok: true })
+      assert.deepEqual(await anonymizeClientMemberOnRequest(JEANNE, effacement, app.db), { ok: true })
       const [anonyme] = await asTenant((tx) => readRemovedClientMembers(tx, DURAND))
       assert.ok(anonyme.anonymizedAt)
       assert.equal(anonyme.fullName, 'Personne anonymisée')
       assert.match(anonyme.email, /@anonymise\.invalid$/)
+      assert.equal(anonyme.anonymizationBasis, 'erasure_request')
+      assert.equal(anonyme.erasureRequestedOn, RECUE_LE)
+      assert.ok(anonyme.anonymizedByName)
+    })
+
+    it('refuse une anonymisation à la demande sans fondement, sans auteur ou datée d’un jour à venir', async () => {
+      await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now() where id = ${JEANNE}`))
+      const demain = addDaysToIsoDate(todayIsoDate('Europe/Paris'), 1)
+      const refus = [
+        { ...effacement, erasureRequestedOn: null },
+        { ...effacement, erasureRequestedOn: demain },
+        { ...effacement, basis: 'retention' as unknown as 'erasure_request' },
+        { ...effacement, staffMemberId: JEANNE },
+        { staffMemberId: ACCUEIL, basis: 'relationship_ended' as const, erasureRequestedOn: RECUE_LE },
+      ]
+      for (const request of refus) {
+        const outcome = await anonymizeClientMemberOnRequest(JEANNE, request, app.db)
+        assert.equal(outcome.ok, false, JSON.stringify(request))
+      }
+      assert.deepEqual(
+        await anonymizeClientMemberOnRequest(
+          JEANNE,
+          { staffMemberId: ACCUEIL, basis: 'relationship_ended', erasureRequestedOn: null },
+          app.db,
+        ),
+        { ok: true },
+      )
+      const [anonyme] = await asTenant((tx) => readRemovedClientMembers(tx, DURAND))
+      assert.equal(anonyme.anonymizationBasis, 'relationship_ended')
+      assert.equal(anonyme.erasureRequestedOn, null)
     })
   })
 

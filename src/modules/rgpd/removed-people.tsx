@@ -2,6 +2,8 @@ import { ConfirmDialog } from '../../components/ui/confirm-dialog.tsx'
 import type { AnonymizeState } from './actions.ts'
 import type { RemovedPerson } from './anonymisation.ts'
 import { formatCentreDay } from './affichage.ts'
+import { AnonymizationBasisFields } from './basis-fields.tsx'
+import { anonymizationTraceLabel } from './fondement.ts'
 
 /**
  * Personnes retirées — accès à l'espace client d'une entreprise, ou membres
@@ -17,6 +19,7 @@ export function RemovedPeopleTable({
   title,
   people,
   timeZone,
+  today,
   anonymize,
   idField,
   personLabel,
@@ -26,6 +29,8 @@ export function RemovedPeopleTable({
   title: string
   people: RemovedPerson[]
   timeZone: string
+  /** Jour du centre : borne la date d'une demande d'effacement. */
+  today: string
   /** Action d'anonymisation à la demande ; absente sans le droit `rgpd.anonymiser`. */
   anonymize?: (previous: AnonymizeState, formData: FormData) => Promise<AnonymizeState>
   /** Nom du champ qui porte l'identifiant de la personne. */
@@ -76,7 +81,7 @@ export function RemovedPeopleTable({
                   </td>
                   <td className="px-4 py-3">
                     {person.anonymizedAt
-                      ? `Anonymisés le ${formatCentreDay(person.anonymizedAt, timeZone)}`
+                      ? `Anonymisés le ${formatCentreDay(person.anonymizedAt, timeZone)}${traceOf(person)}`
                       : `Conservés jusqu’au ${formatCentreDay(person.dueAfter, timeZone)}, puis anonymisés`}
                   </td>
                   <td className="px-4 py-3 text-right">
@@ -100,6 +105,7 @@ export function RemovedPeopleTable({
                           demandes, des ouvertures et des consultations passées. Rien ne se
                           rétablit ensuite.
                         </p>
+                        <AnonymizationBasisFields today={today} />
                       </ConfirmDialog>
                     )}
                   </td>
@@ -111,4 +117,14 @@ export function RemovedPeopleTable({
       </div>
     </div>
   )
+}
+
+/** « , à la demande d'effacement reçue le …, par … » : le fondement tracé (ADR 041). */
+function traceOf(person: RemovedPerson): string {
+  const trace = anonymizationTraceLabel({
+    basis: person.anonymizationBasis,
+    erasureRequestedOn: person.erasureRequestedOn,
+    byName: person.anonymizedByName,
+  })
+  return trace ? `, ${trace}` : ''
 }

@@ -1,14 +1,16 @@
 import { and, asc, desc, eq, isNotNull, sql, type AnyColumn } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 
 import { PG_ANONYMIZATION_REFUSED, pgErrorCode } from '../../db/errors.ts'
 import { withTenant, type Database, type Transaction } from '../../db/index.ts'
-import { staffMembers } from '../../db/staff.ts'
+import { staffMembers, type AnonymizationBasis } from '../../db/staff.ts'
 import { tenants } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
+import type { OnRequestBasis } from './fondement.ts'
 
 /**
- * Anonymisation RGPD (R29, ADR 040), côté application.
+ * Anonymisation RGPD (R29, ADR 040 et 041), côté application.
  *
  * La base décide de tout : ce qui part, ce qui reste, et les exclusions
  * (`client_anonymization_blockers()`). Le code déclenche les fonctions
@@ -128,23 +130,57 @@ async function attempt(
 }
 
 /**
+ * Ce qu'une anonymisation à la demande dit d'elle-même (ADR 041) : qui la
+ * décide, sur quel fondement, et pour une demande d'effacement le jour où le
+ * centre l'a reçue. La base le trace sur la ligne anonymisée.
+ */
+export type AnonymizationRequest = {
+  /** Membre de l'équipe, vivant, qui la décide. */
+  staffMemberId: string
+  basis: OnRequestBasis
+  /** Jour de réception d'une demande d'effacement ; nul pour une fin de relation. */
+  erasureRequestedOn: string | null
+}
+
+const requestArguments = (request: AnonymizationRequest) =>
+  sql`${request.staffMemberId}::uuid, ${request.basis}::anonymization_basis, ${request.erasureRequestedOn}::date`
+
+/**
  * Droit à l'effacement d'une entreprise (ou fin de relation constatée) : sans
  * attendre sa durée, jamais contre une exclusion. Le refus énumère ce qui
  * l'empêche.
  */
-export function anonymizeClientOnRequest(clientId: string, database?: Database) {
-  return attempt((tx) => tx.execute(sql`select anonymize_client(${clientId}::uuid)`), database)
+export function anonymizeClientOnRequest(
+  clientId: string,
+  request: AnonymizationRequest,
+  database?: Database,
+) {
+  return attempt(
+    (tx) => tx.execute(sql`select anonymize_client(${clientId}::uuid, ${requestArguments(request)})`),
+    database,
+  )
 }
 
 /** Un accès à l'espace client **déjà retiré**, à la demande de la personne. */
-export function anonymizeClientMemberOnRequest(memberId: string, database?: Database) {
-  return attempt((tx) => tx.execute(sql`select anonymize_client_member(${memberId}::uuid)`), database)
+export function anonymizeClientMemberOnRequest(
+  memberId: string,
+  request: AnonymizationRequest,
+  database?: Database,
+) {
+  return attempt(
+    (tx) => tx.execute(sql`select anonymize_client_member(${memberId}::uuid, ${requestArguments(request)})`),
+    database,
+  )
 }
 
 /** Un membre de l'équipe **déjà retiré**, à sa demande. */
-export function anonymizeStaffMemberOnRequest(staffMemberId: string, database?: Database) {
+export function anonymizeStaffMemberOnRequest(
+  staffMemberId: string,
+  request: AnonymizationRequest,
+  database?: Database,
+) {
   return attempt(
-    (tx) => tx.execute(sql`select anonymize_staff_member(${staffMemberId}::uuid)`),
+    (tx) => tx.execute(sql`select anonymize_staff_member(${staffMemberId}::uuid, ${requestArguments(request)})`),
     database,
   )
 }
@@ -207,9 +243,17 @@ export type RemovedPerson = {
   fullName: string | null
   removedAt: Date
   anonymizedAt: Date | null
+  /** Fondement de l'anonymisation, sa date de demande et son auteur (ADR 041). */
+  anonymizationBasis: AnonymizationBasis | null
+  erasureRequestedOn: string | null
+  anonymizedByName: string | null
   /** Instant après lequel la tâche de nuit l'anonymise. */
   dueAfter: Date
 }
+
+/** Le membre de l'équipe qui a décidé une anonymisation, par son nom (ou son adresse). */
+const anonymizer = alias(staffMembers, 'anonymizer')
+const anonymizerName = sql<string | null>`coalesce(${anonymizer.fullName}, ${anonymizer.email})`
 
 const dueAfter = (removedAt: AnyColumn) =>
   sql<Date>`${removedAt} + make_interval(months => ${tenants.removedMemberRetentionMonths})`
@@ -223,10 +267,14 @@ export function readRemovedClientMembers(tx: Transaction, clientId: string): Pro
       fullName: clientMembers.fullName,
       removedAt: sql<Date>`${clientMembers.deletedAt}`.mapWith(clientMembers.deletedAt),
       anonymizedAt: clientMembers.anonymizedAt,
+      anonymizationBasis: clientMembers.anonymizationBasis,
+      erasureRequestedOn: clientMembers.erasureRequestedOn,
+      anonymizedByName: anonymizerName,
       dueAfter: dueAfter(clientMembers.deletedAt).mapWith(clientMembers.deletedAt),
     })
     .from(clientMembers)
     .innerJoin(tenants, eq(tenants.id, clientMembers.tenantId))
+    .leftJoin(anonymizer, eq(anonymizer.id, clientMembers.anonymizedBy))
     .where(and(eq(clientMembers.clientId, clientId), isNotNull(clientMembers.deletedAt)))
     .orderBy(desc(clientMembers.deletedAt), asc(clientMembers.email))
 }
@@ -244,16 +292,33 @@ export function readRemovedStaffMembers(tx: Transaction): Promise<RemovedPerson[
       fullName: staffMembers.fullName,
       removedAt: sql<Date>`${staffMembers.deletedAt}`.mapWith(staffMembers.deletedAt),
       anonymizedAt: staffMembers.anonymizedAt,
+      anonymizationBasis: staffMembers.anonymizationBasis,
+      erasureRequestedOn: staffMembers.erasureRequestedOn,
+      anonymizedByName: anonymizerName,
       dueAfter: dueAfter(staffMembers.deletedAt).mapWith(staffMembers.deletedAt),
     })
     .from(staffMembers)
     .innerJoin(tenants, eq(tenants.id, staffMembers.tenantId))
+    .leftJoin(anonymizer, eq(anonymizer.id, staffMembers.anonymizedBy))
     .where(isNotNull(staffMembers.deletedAt))
     .orderBy(desc(staffMembers.deletedAt), asc(staffMembers.email))
 }
 
 export function listRemovedStaffMembers() {
   return withTenant(currentTenantId(), readRemovedStaffMembers)
+}
+
+/** Nom (ou adresse) du membre de l'équipe qui a décidé l'anonymisation d'une fiche. */
+export async function findClientAnonymizer(clientId: string): Promise<string | null> {
+  const [row] = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .select({ name: anonymizerName })
+      .from(clients)
+      .innerJoin(anonymizer, eq(anonymizer.id, clients.anonymizedBy))
+      .where(eq(clients.id, clientId))
+      .limit(1),
+  )
+  return row?.name ?? null
 }
 
 /** Une entreprise arrivée au terme de sa durée, mais qu'une exclusion retient. */

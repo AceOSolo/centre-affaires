@@ -4,8 +4,10 @@ import { todayIsoDate } from '../../lib/dates.ts'
 import type { Client } from '../clients/schema.ts'
 import { anonymizeClientAction, anonymizeClientMemberAction } from './actions.ts'
 import { formatCalendarDate, formatCentreDay } from './affichage.ts'
-import { findClientRetention, listRemovedClientMembers } from './anonymisation.ts'
+import { findClientAnonymizer, findClientRetention, listRemovedClientMembers } from './anonymisation.ts'
+import { AnonymizationBasisFields } from './basis-fields.tsx'
 import { formatRetentionMonths } from './durees.ts'
+import { anonymizationTraceLabel } from './fondement.ts'
 import { LastContactForm } from './last-contact-form.tsx'
 import { RemovedPeopleTable } from './removed-people.tsx'
 
@@ -31,19 +33,36 @@ export async function ClientRetentionSection({
   timeZone,
   notice,
 }: {
-  client: Pick<Client, 'id' | 'name' | 'status' | 'lastContactOn' | 'anonymizedAt'>
+  client: Pick<
+    Client,
+    | 'id'
+    | 'name'
+    | 'status'
+    | 'lastContactOn'
+    | 'anonymizedAt'
+    | 'anonymizedBy'
+    | 'anonymizationBasis'
+    | 'erasureRequestedOn'
+  >
   /** Droit `rgpd.anonymiser` (exploitant). */
   canAnonymize: boolean
   timeZone: string
   /** Valeur de `?rgpd=` au retour d'une anonymisation. */
   notice?: string
 }) {
-  const [retention, removed] = await Promise.all([
+  const [retention, removed, anonymizer] = await Promise.all([
     client.anonymizedAt ? undefined : findClientRetention(client.id),
     listRemovedClientMembers(client.id),
+    client.anonymizedBy ? findClientAnonymizer(client.id) : null,
   ])
   const message = notice ? notices.get(notice) : undefined
   const today = todayIsoDate(timeZone)
+  // Fondement, date de la demande et auteur (ADR 041) ; rien avant qu'ils ne soient tracés.
+  const trace = anonymizationTraceLabel({
+    basis: client.anonymizationBasis,
+    erasureRequestedOn: client.erasureRequestedOn,
+    byName: anonymizer,
+  })
 
   return (
     <section id="conservation" aria-labelledby="conservation-titre" className="flex flex-col gap-3">
@@ -63,7 +82,10 @@ export async function ClientRetentionSection({
 
       {client.anonymizedAt ? (
         <div className="rounded-lg border border-border bg-white px-5 py-4 text-sm">
-          <p className="font-medium">Fiche anonymisée le {formatCentreDay(client.anonymizedAt, timeZone)}.</p>
+          <p className="font-medium">
+            Fiche anonymisée le {formatCentreDay(client.anonymizedAt, timeZone)}
+            {trace ? `, ${trace}` : ''}.
+          </p>
           <p className="mt-1 max-w-[70ch] text-muted-foreground">
             Raison sociale, coordonnées, SIRET, notes, contacts et accès à l’espace client sont
             effacés, comme l’expéditeur des plis et les coordonnées des demandeurs. Restent les
@@ -145,6 +167,7 @@ export async function ClientRetentionSection({
                       auxiliaire.
                     </p>
                     <p className="font-medium">Rien ne se rétablit ensuite.</p>
+                    <AnonymizationBasisFields today={today} />
                   </ConfirmDialog>
                 </div>
               </div>
@@ -162,6 +185,7 @@ export async function ClientRetentionSection({
         title="Accès retirés"
         people={removed}
         timeZone={timeZone}
+        today={today}
         anonymize={canAnonymize ? anonymizeClientMemberAction : undefined}
         idField="memberId"
         personLabel="cette personne"
