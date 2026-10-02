@@ -2,8 +2,8 @@
 
 **Date** : 2026-10-02
 **Statut** : accepté — étend l'ADR 015 (courriels du courrier) à tous les
-événements du cahier des charges ; les choix marqués « à valider » attendent
-le centre
+événements du cahier des charges ; manques de schéma tranchés par l'ADR 041 ;
+les choix marqués « à valider » attendent le centre
 
 ## Contexte
 

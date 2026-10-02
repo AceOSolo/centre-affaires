@@ -322,8 +322,11 @@ Le journal des messages envoyés (ADR 038) est purgé au terme de sa durée
 (12 mois par défaut, `notification_log_retention_months`), les photos
 d'états des lieux et le journal de leurs consultations au terme des leurs
 (ADR 039) : le fichier est effacé du stockage, la ligne reste, marquée.
-Chaque purge et chaque anonymisation a sa propre transaction : une panne du
-stockage n'en retient aucune autre.
+Chaque purge et chaque anonymisation a sa propre transaction et son propre
+filet : l'échec de l'une (une panne du stockage, par exemple) n'en retient
+aucune autre, et ce qui ne dépend que de la base passe avant le stockage
+(ADR 041). Une étape en échec est nommée dans la réponse (`failed`), qui est
+alors un `500` : la tâche sort en erreur, et la nuit suivante la rejoue.
 Toutes ces durées se règlent à l'écran **Configuration du centre**
 (`/configuration`, exploitant), et non plus dans `infra/configurer-centre.mjs`.
 La purge est une route de l'application, appelée chaque nuit ; elle exige
@@ -345,9 +348,12 @@ anonymisées, d'entreprises anonymisées (avec leurs contacts, accès et plis),
 de personnes retirées anonymisées, de messages effacés du journal, de photos
 d'états des lieux et de consultations de ces photos purgées — des nombres,
 jamais un nom :
-`{"scans":0,"views":0,"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0},"notificationDeliveries":0,"inspectionPhotos":0,"inspectionPhotoViews":0}`.
+`{"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0},"notificationDeliveries":0,"views":0,"inspectionPhotoViews":0,"scans":0,"inspectionPhotos":0,"failed":[]}`.
+Une étape en échec vaut `null` et figure dans `failed` (`"scans":null,
+"failed":["scans"]`) : les autres ont eu lieu.
 Le journal de l'application (`docker compose logs app`) en garde une ligne
-« Conservation (RGPD) : … » par nuit.
+« Conservation (RGPD) : … » par nuit, et une ligne « Conservation : l'étape
+« … » a échoué » par étape à reprendre.
 
 ## Reconduction tacite et lot de facturation planifiés
 
@@ -384,8 +390,9 @@ relancer à la main une fois l'autre terminé. Pour rejouer un autre mois :
 
 ## Chiffrement des documents
 
-Les scans de courrier et les photos d'enveloppe sont chiffrés par
-l'application avant d'être déposés dans le stockage (AES-256-GCM, R22,
+Les scans de courrier, les photos d'enveloppe et les photos d'états des lieux
+sont chiffrés par l'application avant d'être déposés dans le stockage
+(AES-256-GCM, R22, R33,
 [ADR 020](../../docs/decisions/020-chiffrement-et-conservation-des-documents.md)).
 Le stockage, et toute branche Neon qui le copie, ne contiennent que du chiffré.
 Sans clé, l'application refuse de déposer un document plutôt que de le
@@ -482,10 +489,10 @@ ou à intervalle fixé par le centre :
    déchiffrer, plutôt que de se tromper de clé.
 3. Lancer le script comme ci-dessus, essai à blanc puis `--appliquer` : il
    rechiffre avec la clé 2 tout ce qui l'était avec la clé 1 — les
-   numérisations dans le stockage, et les IBAN des mandats SEPA en base
-   (ADR 034).
-4. Quand l'essai à blanc ne trouve plus rien (ni numérisation, ni IBAN de
-   mandat), retirer
+   numérisations et les photos d'états des lieux dans le stockage (ADR 041),
+   et les IBAN des mandats SEPA en base (ADR 034).
+4. Quand l'essai à blanc ne trouve plus rien (ni numérisation, ni photo
+   d'état des lieux, ni IBAN de mandat), retirer
    `DOCUMENTS_ENCRYPTION_KEY_1` du `.env` et relancer l'application.
 5. Garder l'ancienne clé dans le coffre-fort tant qu'existent des sauvegardes
    du stockage ou de la base antérieures à la rotation : elles ne se lisent

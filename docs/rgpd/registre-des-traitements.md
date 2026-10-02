@@ -109,7 +109,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Sous-traitants | Neon, OVHcloud. |
 | Transferts hors UE | Aucun prévu. |
 | Conservation | Prospects : 36 mois après leur dernière activité (création, dernier contact noté, réservation, courrier…). Clients : 60 mois après la fin de la relation (dernier contrat, réservation, pli, facture ou paiement). Au terme, la fiche, ses contacts, ses accès et leurs traces sont anonymisés chaque nuit ; les contrats restent, sans leurs notes. Jamais tant qu'une facture n'est pas soldée, qu'un contrat vit, qu'une réservation est à venir, qu'un service ou un mandat de prélèvement est actif. Factures, avoirs et paiements : 10 ans, jamais anonymisés (identité de l'acheteur figée à l'émission). **À valider** sauf les factures, imposées par la loi. |
-| Exercice des droits | Effacement : anonymisation à la demande sur la fiche client (exploitant), refusée et expliquée tant qu'une exclusion demeure (ADR 040). |
+| Exercice des droits | Effacement : anonymisation à la demande sur la fiche client (exploitant), refusée et expliquée tant qu'une exclusion demeure (ADR 040). Le fondement, la date de réception de la demande et le membre de l'équipe qui la traite restent sur la ligne anonymisée (ADR 041). |
 | Code | `src/modules/clients/`, `src/modules/contrats/`, `src/modules/rgpd/`, ADR 006, 021, 040 |
 
 ### T3. Accès des clients à leur espace
@@ -252,8 +252,10 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 8. **Organiser l'exercice des droits** : accès, rectification, effacement et
    opposition. L'effacement prend la forme d'une anonymisation (décision 6),
    sauf conservation imposée par la loi. L'outil est en place (fiche client,
-   écran Équipe, ADR 040) ; reste la procédure : qui reçoit la demande, la
-   réponse dans le mois (art. 12-3), la trace de la demande.
+   écran Équipe, ADR 040), et il trace la demande d'effacement : sa date de
+   réception, son traitement et son auteur (ADR 041). Reste la procédure :
+   qui reçoit la demande, et la réponse à la personne dans le mois
+   (art. 12-3).
 9. **Tenir le registre des violations de données** (art. 33-5). La procédure
    est dans le [plan de reprise](../exploitation/plan-de-reprise.md),
    étape 4.

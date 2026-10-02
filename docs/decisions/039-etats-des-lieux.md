@@ -3,7 +3,8 @@
 **Date** : 2026-10-02
 **Statut** : accepté — met en œuvre la décision D8 de l'ADR 016, sauf la
 compression par `sharp`, remplacée par une compression dans le navigateur ;
-les choix marqués « à valider » attendent le centre
+rechiffrement des photos à la rotation de clé et nom du modèle figé avec sa
+version par l'ADR 041 ; les choix marqués « à valider » attendent le centre
 
 ## Contexte
 

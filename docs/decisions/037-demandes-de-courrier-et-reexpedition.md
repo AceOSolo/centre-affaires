@@ -2,8 +2,9 @@
 
 **Date** : 2026-10-02
 **Statut** : accepté — précise l'ADR 015 (une table des demandes à côté du pli)
-et l'ADR 026 (une source de facturation de plus) ; les choix marqués « à
-valider » attendent le centre
+et l'ADR 026 (une source de facturation de plus) ; rattrapage des demandes
+non facturées par l'ADR 041 ; les choix marqués « à valider » attendent le
+centre
 
 ## Contexte
 

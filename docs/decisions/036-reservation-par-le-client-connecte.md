@@ -3,7 +3,8 @@
 **Date** : 2026-10-02
 **Statut** : accepté — met en œuvre la décision D4 de l'ADR 016 ; précise
 l'ADR 015 (annulation par le client) ; lève le manque « désignation des lignes
-d'offre » reporté par l'ADR 035 ; les choix marqués « à valider » attendent le
+d'offre » reporté par l'ADR 035 ; confirmation datée et demandes d'offre en
+table par l'ADR 041 ; les choix marqués « à valider » attendent le
 centre
 
 ## Contexte

@@ -152,37 +152,51 @@ déploiement recrée le conteneur.
 **M6. Journaux Apache.** `/etc/logrotate.d/apache2` sur le serveur
 (`rotate` × période).
 
-**M7. Anonymisation RGPD (ADR 040).**
+**M7. Anonymisation RGPD (ADR 040, complété par l'ADR 041).**
 
-- Ce qu'elle fait : les fonctions `SECURITY DEFINER` de la migration 0043.
+- Ce qu'elle fait : les fonctions `SECURITY DEFINER` des migrations 0043 et
+  0044.
   `anonymize_expired_clients()` anonymise les prospects et les clients au
   terme de leur durée, comptée depuis leur dernière activité ;
   `anonymize_removed_members()` les accès à l'espace client et les membres
   de l'équipe retirés depuis plus que la leur. La ligne reste, les champs
   personnels partent : fiche, contacts, accès, expéditeur et note des plis,
   consignes et adresses des demandes de courrier, coordonnées et notes des
-  réservations, notes des contrats, titulaire des mandats non actifs,
-  destinataires et objet des messages journalisés.
+  réservations, notes des contrats, titulaire des mandats non actifs, motif
+  d'une demande d'offre écartée, destinataires et objet des messages
+  journalisés. Le compte auxiliaire d'un client facturé est figé avant que sa
+  raison sociale ne parte : le livre des exercices passés ne change pas.
 - Exclusions (`client_anonymization_blockers()`) : une entreprise n'est
   jamais anonymisée tant qu'elle a une facture non soldée ou un brouillon de
   facture ou d'avoir, un contrat vivant, une réservation à venir ou en
   cours, un service souscrit en cours, un mandat de prélèvement actif, une
-  demande de courrier en cours ou un état des lieux en saisie.
+  demande de courrier en cours, une demande d'offre à traiter ou un état des
+  lieux en saisie.
 - Jamais touchés : factures, avoirs, lignes, paiements, instantanés de
   l'acheteur, relances, documents de contrat, états des lieux.
-- Quand : chaque nuit, par la route de M1, chacune dans sa transaction,
-  avant la purge du stockage. La réponse et le journal de l'application
-  n'en donnent que des nombres (`anonymizedClients`, `anonymizedMembers`).
+- Quand : chaque nuit, par la route de M1, chacune dans sa transaction et
+  avec son propre filet, avant la purge du stockage : l'échec d'une étape
+  ne retient pas les autres, et la route le signale (`failed`, réponse 500).
+  La réponse et le journal de l'application n'en donnent que des nombres
+  (`anonymizedClients`, `anonymizedMembers`).
 - À la demande (droit à l'effacement) : sur la fiche client pour une
   entreprise ou un accès retiré, sur l'écran Équipe pour un membre retiré
   (droit `rgpd.anonymiser`, exploitant). Mêmes exclusions : un refus les
   énumère.
+- Trace (art. 5-2 et 12-3) : chaque anonymisation garde son fondement
+  (`anonymization_basis` : au terme, demande d'effacement, fin de la
+  relation), le membre de l'équipe qui l'a décidée (`anonymized_by`, nul pour
+  la nuit) et, pour une demande d'effacement, le jour où le centre l'a reçue
+  (`erasure_requested_on`). Le fondement est une catégorie, jamais un texte
+  libre : il ne conserve rien de ce qu'il efface. La base refuse une
+  anonymisation à la demande sans eux (`CA012`).
 - Le dernier contact se note sur la fiche client : un prospect qu'on
   rappelle ne s'anonymise pas.
 - Preuve : `src/modules/clients/anonymisation.db.test.ts` (règles en base),
   `src/modules/rgpd/anonymisation.db.test.ts` (exclusions, idempotence,
-  factures intactes, refus motivé) et la route dans
-  `src/app/api/maintenance/conservation/conservation.db.test.ts`.
+  factures intactes, refus motivé, trace), l'export comptable inchangé dans
+  `src/modules/facturation/comptabilite-anonymisation.db.test.ts`, et la
+  route dans `src/app/api/maintenance/conservation/conservation.db.test.ts`.
 
 ## Reste à faire
 
