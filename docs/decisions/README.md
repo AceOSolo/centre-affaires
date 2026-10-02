@@ -79,10 +79,9 @@ Aucun numéro déjà publié n'a été réattribué.
 
 - ~~`CLAUDE.md` mentionne PostgreSQL 17~~ : corrigé (commit `1d55ec2`), aligné
   sur l'ADR 003.
-- La section Facturation de `CLAUDE.md` dit encore « hors scope de la V1 » :
-  l'ADR 016 l'a fait entrer dans le périmètre, et la vague 2 (ADR 023 à 030)
-  l'a construite. La correction de `CLAUDE.md` revient au responsable du
-  dépôt.
+- ~~La section Facturation de `CLAUDE.md` dit « hors scope de la V1 »~~ :
+  corrigé (commit `cb859c2`), elle renvoie à l'ADR 016. La vague 2 (ADR 023 à
+  035) a construit la facturation.
 
 ## Écrire un nouvel ADR
 
