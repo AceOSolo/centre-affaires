@@ -168,7 +168,8 @@ export type InvoiceRunResult = {
 
 /**
  * Lots de facturation périodique (R13, ADR 026) : une génération de
- * brouillons pour une période, par un membre de l'équipe, et son bilan.
+ * brouillons pour une période, par un membre de l'équipe ou par la tâche
+ * planifiée du serveur (ADR 033), et son bilan.
  *
  * Un seul lot `running` à la fois par centre (index unique partiel) : deux
  * générations simultanées se refusent au lieu de se marcher dessus. Rejouer un
@@ -187,9 +188,8 @@ export const invoiceRuns = pgTable(
     status: invoiceRunStatusEnum('status').notNull().default('running'),
     startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
     finishedAt: timestamp('finished_at', { withTimezone: true }),
-    createdBy: uuid('created_by')
-      .notNull()
-      .references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /** Membre de l'équipe qui l'a lancé ; nul : la tâche planifiée du serveur (ADR 033). */
+    createdBy: uuid('created_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
     result: jsonb('result').$type<InvoiceRunResult>().notNull().default({}),
     ...timestamps(),
   },

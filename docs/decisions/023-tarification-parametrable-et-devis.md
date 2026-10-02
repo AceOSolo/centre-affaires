@@ -4,7 +4,8 @@
 **Statut** : accepté — amende l'ADR 006 (prorata et unité entamée deviennent
 des paramètres du centre) et l'ADR 009 (durée de la demi-journée, choix de
 l'unité d'une réservation) ; mise en œuvre du moteur de devis, de
-l'échéancier et de la configuration ajoutée
+l'échéancier et de la configuration ajoutée ; reconduction tacite mise en
+œuvre par l'ADR 033
 
 ## Contexte
 
@@ -126,7 +127,9 @@ accord entre le centre et son client, que l'écran doit signaler.
 
 La reconduction tacite est une règle, pas une tâche : au terme, le code
 prolonge `ends_on` de `renewal_months` faute de préavis. Hors brouillon,
-l'engagement est figé comme le prix (ADR 025).
+l'engagement est figé comme le prix (ADR 025). *(Mise en œuvre par l'ADR 033 :
+la tâche nocturne inscrit la reconduction dès le dernier jour de préavis
+passé.)*
 
 ### Le devis d'une réservation est figé sur elle
 

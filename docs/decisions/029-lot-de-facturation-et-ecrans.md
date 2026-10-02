@@ -4,7 +4,7 @@
 **Statut** : accepté — précise l'ADR 026 ; les choix marqués « à valider »
 attendent le centre ou l'expert-comptable ; deux conséquences corrigées par
 l'ADR 032 (avenant signé après la facturation de sa période, loyer d'une
-version à frais ponctuels)
+version à frais ponctuels) ; lancement planifié ajouté par l'ADR 033
 
 ## Contexte
 
@@ -210,8 +210,10 @@ agréée refuserait (ADR 026).
 
 ## Conséquences
 
-- Le lot se lance depuis l'écran par un membre de l'équipe : il n'y a pas de
-  lancement planifié, `invoice_runs.created_by` étant obligatoire.
+- ~~Le lot se lance depuis l'écran par un membre de l'équipe : il n'y a pas de
+  lancement planifié, `invoice_runs.created_by` étant obligatoire.~~ Depuis
+  l'ADR 033, il se lance aussi par la tâche planifiée du serveur, le 1er du
+  mois (`created_by` nul).
 - ~~Une version de contrat qui n'a que des lignes ponctuelles et un montant
   saisi ne peut pas facturer son loyer (la base refuse un loyer global à côté
   de lignes) : le lot le signale, la facture se complète à la main.~~

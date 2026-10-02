@@ -32,10 +32,10 @@ la vague 2, intégrée le 01/10/2026 ; 11, 14 et 8 après la vague 1 ; l'audit d
 | R07 | CRM : fiche, contacts, historique | ✅ | — (vague 2 : services souscrits en cours, à venir et historique sur la fiche, mandats SEPA, lien vers les factures du client ; vague 1 : contacts CRM, historique des réservations, recherche par SIRET ou contact) | — | 2 |
 | R08 | Grilles jour / semaine / mois | ✅ | — (unité `week`, dates de validité appliquées au devis, écran de modification des grilles, ADR 023). Manque de schéma : une seule grille par défaut à la fois, la grille de l'an prochain ne se prépare pas d'avance | — | 2 |
 | R09 | Offres groupées ressources + services | ✅ | — (catalogue `/services`, offres `/offres` chiffrées par `priceOffer`, contrat tiré d'une offre, ADR 024 et 028). Manques de schéma : une offre à plusieurs ressources précises n'en occupe qu'une (`contracts.resource_id`), pas de désignation commerciale par ligne d'offre | — | 2 |
-| R10 | Remises, engagement, prorata paramétrables | ◐ | Fait : règles du centre à l'écran `/configuration`, prorata jours réels / base 30 / aucun, remises par ligne, engagement et fin possible, jeu de cas figé (`cas-tarifaires.ts`), ADR 023. Reste : faire valider le jeu de cas et les choix « à valider » par l'exploitation ; aucune tâche ne prolonge `ends_on` à la reconduction tacite | S | 2 |
+| R10 | Remises, engagement, prorata paramétrables | ◐ | Fait : règles du centre à l'écran `/configuration`, prorata jours réels / base 30 / aucun, remises par ligne, engagement et fin possible, jeu de cas figé (`cas-tarifaires.ts`), ADR 023 ; reconduction tacite inscrite chaque nuit, avec son journal (ADR 033). Reste : faire valider le jeu de cas et les choix « à valider » par l'exploitation ; poser la tâche nocturne sur le VPS | S | 2 |
 | R11 | Moteur tarifaire unique | ✅ | — (`quote()` partagé par le back-office et le portail, devis figé sur la réservation, grille du contrat avant la grille par défaut, ADR 023). Les séries posées en masse restent non chiffrées | — | 2 |
 | R12 | Contrat généré, PDF, avenants | ✅ | — (contrat tiré d'une offre, avenants de prix et de ressource, document imprimable archivé avec empreinte SHA-256, ADR 025 et 028). La signature reste manuelle : le document signé (scan) n'est pas stocké | — | 2 |
-| R13 | Facturation intégrée | ✅ | — (lot mensuel `/factures/preparer`, brouillons, émission numérotée sans trou, avoirs, vue imprimable, ADR 026 et 029). Reste : lancement planifié sur le VPS, impossible tant que `invoice_runs.created_by` exige un membre de l'équipe | S | 2 |
+| R13 | Facturation intégrée | ✅ | — (lot mensuel `/factures/preparer`, brouillons, émission numérotée sans trou, avoirs, vue imprimable, ADR 026 et 029 ; lot planifié le 1er du mois, ADR 033). Reste en production : poser la tâche dans la crontab du VPS (`infra/serveur/README.md`) | — | 2 |
 | R14 | Actes à l'acte sur la facture | ✅ | — (plis ouverts valorisés par `priceActs` : inclus à 0 €, puis prix de la souscription ou du catalogue ; le relevé CSV reste un contrôle). Prérequis en production : le prix du service `courrier.ouverture` | — | 2 |
 | R15 | Facture = location + forfaits + actes | ✅ | — (une facture par client et par mois : loyers et lignes de contrat à l'échéancier versionné, forfaits, réservations au devis figé, actes ; chaque ligne garde sa source) | — | 2 |
 | R16 | Export comptable, paiement, e-facturation | ◐ | Fait : pointage des paiements, relances imprimables, mandats SEPA chiffrés, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée (ADR 027 et 030). Reste : choisir et raccorder la plateforme agréée (émission obligatoire au 01/09/2027) ; journal des relances et des remises (tables absentes) ; rechiffrement des mandats à la rotation de clé | M–L | 2 |
@@ -142,9 +142,10 @@ Préalable : D1, D5, D7.
 030), corrigée le 02/10/2026 après revue (ADR 032 : avenant de prix refusé sur
 une période facturée, avoirs au centime du TTC, forfaits sans prorata, motif
 d'exonération exigé). Restes, suivis dans le tableau de synthèse : raccordement à la plateforme
-agréée (R16), reconduction tacite automatique et validation du jeu de cas
-tarifaires (R10), lancement planifié du lot (R13), journal des relances et des
-remises de prélèvement (R16). Manques de schéma relevés à l'intégration : voir
+agréée (R16), validation du jeu de cas tarifaires (R10), journal des relances
+et des remises de prélèvement (R16). Reconduction tacite (R10) et lancement
+planifié du lot (R13) faits le 02/10/2026 (ADR 033), crontab à poser sur le
+VPS. Manques de schéma relevés à l'intégration : voir
 ci-dessous.
 
 - R08 : unité semaine, dates de validité.
@@ -184,11 +185,12 @@ une migration de suivi :
   ressources n'en occupe qu'une) ; client d'un brouillon figé dès qu'il porte
   une souscription (clé composite) ; `contract_lines_sync_amount` ne remet rien
   à zéro quand la dernière ligne récurrente est retirée ;
-  `contract_version_lines_amount` ignore les lignes ponctuelles ; aucune tâche
-  ni journal de reconduction tacite ; pas de document signé ni d'état
+  `contract_version_lines_amount` ignore les lignes ponctuelles ; ~~aucune tâche
+  ni journal de reconduction tacite~~ (ADR 033) ; pas de document signé ni d'état
   « remis / signé » sur `contract_documents` ; pas de date « facturé
   jusqu'au » pour les contrats repris de l'existant.
-- **Factures** : `invoice_runs.created_by` obligatoire (pas de lot planifié) ;
+- **Factures** : ~~`invoice_runs.created_by` obligatoire (pas de lot planifié)~~
+  (migration 0033, ADR 033) ;
   ~~`invoice_lines_guard` refuse un loyer global à côté de lignes
   ponctuelles~~ ; ~~`vat_exemption_reason` ni exigé ni vérifié à l'émission~~ ;
   ~~le type `InvoiceRunResult` ignore `invoicesUpdated` et `linesCreated`~~

@@ -43,6 +43,7 @@ import {
   occupationDays,
 } from '../../../../modules/contrats/occupation.ts'
 import { findContract, findContractOccupation } from '../../../../modules/contrats/queries.ts'
+import { listContractRenewals } from '../../../../modules/contrats/reconduction-queries.ts'
 import { listContractSubscriptions } from '../../../../modules/contrats/souscriptions.ts'
 import { TerminateForm } from '../../../../modules/contrats/terminate-form.tsx'
 import {
@@ -82,7 +83,7 @@ export default async function ContractPage({
   const { id } = await params
   const { fait } = await searchParams
   if (!isUuid(id)) notFound()
-  const [contract, occupation, tenant, terms, amendments, documents, subscriptions, occupations] =
+  const [contract, occupation, tenant, terms, amendments, documents, subscriptions, occupations, renewals] =
     await Promise.all([
       findContract(id),
       findContractOccupation(id),
@@ -92,6 +93,7 @@ export default async function ContractPage({
       listContractDocuments(id),
       listContractSubscriptions(id),
       listContractOccupations(id),
+      listContractRenewals(id),
     ])
   if (!contract) notFound()
   const timeZone = tenant.timezone
@@ -251,6 +253,12 @@ export default async function ContractPage({
               — reconduction tacite par périodes de {contract.renewalMonths} mois
             </span>
           )}
+          {renewals.map((renewal) => (
+            <span key={renewal.id} className="block text-xs text-muted-foreground">
+              Reconduit tacitement le {formatCalendarDate(renewal.renewedOn)} : terme porté du{' '}
+              {formatCalendarDate(renewal.previousEndsOn)} au {formatCalendarDate(renewal.newEndsOn)}
+            </span>
+          ))}
         </dd>
 
         <dt className="text-muted-foreground">Engagement</dt>

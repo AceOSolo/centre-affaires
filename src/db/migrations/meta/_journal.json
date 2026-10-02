@@ -232,6 +232,20 @@
       "when": 1790923201933,
       "tag": "0032_correctifs_facturation",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1790924312970,
+      "tag": "0033_taches_planifiees",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790924337593,
+      "tag": "0034_rls_taches_planifiees",
+      "breakpoints": true
     }
   ]
 }

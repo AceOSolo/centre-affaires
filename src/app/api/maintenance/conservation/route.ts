@@ -1,6 +1,5 @@
-import { timingSafeEqual } from 'node:crypto'
-
 import { withTenant } from '../../../../db/index.ts'
+import { isMaintenanceRequest, maintenanceNotFound } from '../../../../lib/maintenance.ts'
 import { deleteObject } from '../../../../lib/stockage.ts'
 import { currentTenantId } from '../../../../lib/tenant.ts'
 import { purgeExpiredMail } from '../../../../modules/courrier/conservation.ts'
@@ -15,19 +14,8 @@ import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations
  * le jeton `MAINTENANCE_TOKEN`. Sans jeton configuré, la route n'existe pas :
  * elle ne doit jamais être joignable sans secret.
  */
-function authorized(request: Request): boolean {
-  const expected = process.env.MAINTENANCE_TOKEN
-  if (!expected) return false
-  const given = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
-  const a = Buffer.from(given)
-  const b = Buffer.from(expected)
-  // Comparaison à temps constant : la durée de la réponse ne doit pas
-  // renseigner sur le nombre de caractères justes.
-  return a.length === b.length && timingSafeEqual(a, b)
-}
-
 export async function POST(request: Request) {
-  if (!authorized(request)) return new Response('Introuvable.', { status: 404 })
+  if (!isMaintenanceRequest(request)) return maintenanceNotFound()
 
   const tenantId = currentTenantId()
   // Les coordonnées des demandes publiques échues d'abord (B4, ADR 020), dans

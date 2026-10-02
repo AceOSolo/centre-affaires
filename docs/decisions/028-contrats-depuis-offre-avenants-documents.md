@@ -3,7 +3,7 @@
 **Date** : 2026-10-01
 **Statut** : accepté — met en œuvre les ADR 024 (offres) et 025 (contrats
 versionnés) ; les choix marqués « à valider » attendent le centre et son
-expert-comptable
+expert-comptable ; reconduction tacite mise en œuvre par l'ADR 033
 
 ## Contexte
 
@@ -189,7 +189,8 @@ passée serait fausse dès le premier avenant.
 - Tant que le contrat est brouillon, ses actes inclus sont déjà souscrits : la
   valorisation des actes doit ignorer une souscription rattachée à un contrat
   brouillon ou archivé.
-- La reconduction tacite est saisie et imprimée, mais aucune tâche ne
-  prolonge encore `ends_on` au terme.
+- ~~La reconduction tacite est saisie et imprimée, mais aucune tâche ne
+  prolonge encore `ends_on` au terme.~~ Fait par l'ADR 033 : tâche nocturne
+  et journal des reconductions.
 - La signature électronique du document reste hors périmètre : le document
   s'imprime et se signe à la main.

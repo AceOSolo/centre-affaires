@@ -465,3 +465,37 @@ export const contractDocuments = pgTable(
 
 export type ContractDocument = typeof contractDocuments.$inferSelect
 export type NewContractDocument = typeof contractDocuments.$inferInsert
+
+/**
+ * Journal des reconductions tacites (R10, ADR 023, ADR 033) : chaque fois que
+ * la tâche nocturne prolonge un contrat (`ends_on`), faute de préavis donné à
+ * temps, l'ancien et le nouveau terme. Écrit par la tâche seule, jamais
+ * modifié ni supprimé : il dit pourquoi un terme a bougé.
+ */
+export const contractRenewals = pgTable(
+  'contract_renewals',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    contractId: uuid('contract_id').notNull(),
+    /** Terme avant la reconduction, compris. */
+    previousEndsOn: date('previous_ends_on', { mode: 'string' }).notNull(),
+    /** Nouveau terme, compris. */
+    newEndsOn: date('new_ends_on', { mode: 'string' }).notNull(),
+    /** Jour du centre où la reconduction a été inscrite. */
+    renewedOn: date('renewed_on', { mode: 'string' }).notNull(),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'contract_renewals_contract_fk',
+      columns: [table.tenantId, table.contractId],
+      foreignColumns: [contracts.tenantId, contracts.id],
+    }).onDelete('restrict'),
+    check('contract_renewals_extends', sql`${table.newEndsOn} > ${table.previousEndsOn}`),
+    index('contract_renewals_contract_idx').on(table.tenantId, table.contractId),
+  ],
+)
+
+export type ContractRenewal = typeof contractRenewals.$inferSelect
+export type NewContractRenewal = typeof contractRenewals.$inferInsert

@@ -587,10 +587,13 @@ function lineValues(invoiceId: string, line: InvoiceLineDraft, position: number)
  * - **Un client à la fois** : un refus de la base pour un client (source prise
  *   entre-temps, ligne incohérente) annule ce client seul, le lot continue et
  *   le note dans son bilan.
+ *
+ * `staffMemberId` nul : le lot est lancé par la tâche planifiée du serveur
+ * (`/api/maintenance/facturation`, ADR 033).
  */
 export async function runInvoicing(
   month: string,
-  staffMemberId: string,
+  staffMemberId: string | null,
 ): Promise<{ runId: string; report: InvoiceRunReport }> {
   const tenantId = currentTenantId()
   const period = monthRange(month)
@@ -719,19 +722,20 @@ export async function runInvoicing(
 
 export type InvoiceRunEntry = InvoiceRun & {
   report: InvoiceRunReport
+  /** Membre de l'équipe qui l'a lancé, ou « Tâche planifiée » (ADR 033). */
   createdByName: string
 }
+
+/** Auteur d'un lot : le membre de l'équipe, ou la tâche planifiée du serveur. */
+const runAuthor = sql<string>`coalesce(${staffMembers.fullName}, ${staffMembers.email}, 'Tâche planifiée')`
 
 /** Derniers lots du centre, le plus récent d'abord. */
 export async function listInvoiceRuns(limit = 12): Promise<InvoiceRunEntry[]> {
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({
-        run: invoiceRuns,
-        name: sql<string>`coalesce(${staffMembers.fullName}, ${staffMembers.email})`,
-      })
+      .select({ run: invoiceRuns, name: runAuthor })
       .from(invoiceRuns)
-      .innerJoin(staffMembers, eq(staffMembers.id, invoiceRuns.createdBy))
+      .leftJoin(staffMembers, eq(staffMembers.id, invoiceRuns.createdBy))
       .orderBy(desc(invoiceRuns.startedAt), asc(invoiceRuns.id))
       .limit(limit),
   )
@@ -741,12 +745,9 @@ export async function listInvoiceRuns(limit = 12): Promise<InvoiceRunEntry[]> {
 export async function findInvoiceRun(id: string): Promise<InvoiceRunEntry | undefined> {
   const [row] = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({
-        run: invoiceRuns,
-        name: sql<string>`coalesce(${staffMembers.fullName}, ${staffMembers.email})`,
-      })
+      .select({ run: invoiceRuns, name: runAuthor })
       .from(invoiceRuns)
-      .innerJoin(staffMembers, eq(staffMembers.id, invoiceRuns.createdBy))
+      .leftJoin(staffMembers, eq(staffMembers.id, invoiceRuns.createdBy))
       .where(eq(invoiceRuns.id, id))
       .limit(1),
   )
