@@ -101,7 +101,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Finalité | Gérer la relation avec les entreprises locataires et domiciliées : fiche, interlocuteurs, contrats, et facturation à partir de la vague 2. |
 | Base légale | Clients : exécution du contrat (art. 6-1-b). Prospects : mesures précontractuelles (art. 6-1-b). Interlocuteurs des entreprises : intérêt légitime (art. 6-1-f), pour joindre la bonne personne. Les justificatifs que la domiciliation impose au centre relèvent d'une obligation légale (art. R.123-168 du Code de commerce ; art. L.561-2 du Code monétaire et financier) ; l'application ne les stocke pas aujourd'hui. *À confirmer par le conseil du centre.* |
 | Personnes | Dirigeants et interlocuteurs des entreprises clientes et prospects. Entrepreneurs individuels, pour qui la fiche de l'entreprise est une donnée personnelle. |
-| Données | Fiche : raison sociale, forme, SIRET, n° de TVA, adresse, courriel, téléphone, statut, notes. Contacts : nom, fonction, courriel, téléphone, rôles (principal, facturation), notes. Contrats : référence, type, ressource, dates, montant, résiliation, notes. |
+| Données | Fiche : raison sociale, forme, SIRET, n° de TVA, adresse, courriel, téléphone, statut, notes. Contacts : nom, fonction, courriel, téléphone, rôles (principal, facturation), notes. Contrats : référence, type, ressource, dates, montant, résiliation, notes. Relances d'impayés : palier, canal, adresses des destinataires, texte de la lettre, auteur (ADR 034). |
 | Destinataires | Équipe du centre. Plateforme agréée de facturation électronique à partir de la vague 2 (à choisir, ADR 016). |
 | Sous-traitants | Neon, OVHcloud. |
 | Transferts hors UE | Aucun prévu. |

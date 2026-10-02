@@ -38,7 +38,7 @@ la vague 2, intégrée le 01/10/2026 ; 11, 14 et 8 après la vague 1 ; l'audit d
 | R13 | Facturation intégrée | ✅ | — (lot mensuel `/factures/preparer`, brouillons, émission numérotée sans trou, avoirs, vue imprimable, ADR 026 et 029 ; lot planifié le 1er du mois, ADR 033). Reste en production : poser la tâche dans la crontab du VPS (`infra/serveur/README.md`) | — | 2 |
 | R14 | Actes à l'acte sur la facture | ✅ | — (plis ouverts valorisés par `priceActs` : inclus à 0 €, puis prix de la souscription ou du catalogue ; le relevé CSV reste un contrôle). Prérequis en production : le prix du service `courrier.ouverture` | — | 2 |
 | R15 | Facture = location + forfaits + actes | ✅ | — (une facture par client et par mois : loyers et lignes de contrat à l'échéancier versionné, forfaits, réservations au devis figé, actes ; chaque ligne garde sa source) | — | 2 |
-| R16 | Export comptable, paiement, e-facturation | ◐ | Fait : pointage des paiements, relances imprimables, mandats SEPA chiffrés, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée (ADR 027 et 030). Reste : choisir et raccorder la plateforme agréée (émission obligatoire au 01/09/2027) ; journal des relances et des remises (tables absentes) ; rechiffrement des mandats à la rotation de clé | M–L | 2 |
+| R16 | Export comptable, paiement, e-facturation | ◐ | Fait : pointage des paiements, relances imprimables et journalisées (courriel et courrier), mandats SEPA chiffrés et rechiffrés à la rotation de clé, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée (ADR 027, 030 et 034). Reste : choisir et raccorder la plateforme agréée (émission obligatoire au 01/09/2027) | M–L | 2 |
 | R17 | Contrats et factures côté client | ○ | Pages « Mes contrats », « Mes factures » | S–M | 3 |
 | R18 | Forfaits de services souscrits | ✅ | — (souscriptions à prix figé, changement de conditions daté, fin, annulation, actes inclus, ADR 024). Les inclus se comptent par mois civil, faute de période de facturation sur `subscribed_services` | — | 2 |
 | R19 | Réception du courrier, photo d'enveloppe | ✅ | Photo facultative (à rendre obligatoire ?) | S | — |
@@ -142,10 +142,10 @@ Préalable : D1, D5, D7.
 030), corrigée le 02/10/2026 après revue (ADR 032 : avenant de prix refusé sur
 une période facturée, avoirs au centime du TTC, forfaits sans prorata, motif
 d'exonération exigé). Restes, suivis dans le tableau de synthèse : raccordement à la plateforme
-agréée (R16), validation du jeu de cas tarifaires (R10), journal des relances
-et des remises de prélèvement (R16). Reconduction tacite (R10) et lancement
-planifié du lot (R13) faits le 02/10/2026 (ADR 033), crontab à poser sur le
-VPS. Manques de schéma relevés à l'intégration : voir
+agréée (R16), validation du jeu de cas tarifaires (R10). Faits le 02/10/2026 :
+reconduction tacite (R10) et lancement planifié du lot (R13), crontab à poser
+sur le VPS (ADR 033) ; journal des relances et rechiffrement des mandats
+(R16, ADR 034), les remises de prélèvement restant sans table (ADR 034). Manques de schéma relevés à l'intégration : voir
 ci-dessous.
 
 - R08 : unité semaine, dates de validité.
@@ -195,8 +195,10 @@ une migration de suivi :
   ponctuelles~~ ; ~~`vat_exemption_reason` ni exigé ni vérifié à l'émission~~ ;
   ~~le type `InvoiceRunResult` ignore `invoicesUpdated` et `linesCreated`~~
   (résolus par la migration 0032, ADR 032).
-- **Règlements** : pas de journal des relances (`invoice_reminders`), pas de
-  table des remises de prélèvement ni de `payments.batch_id`, pas de marque
+- **Règlements** : ~~pas de journal des relances (`invoice_reminders`)~~
+  (migrations 0035 et 0036, ADR 034) ; pas de table des remises de
+  prélèvement ni de `payments.batch_id` (écarté, ADR 034 : la remise est
+  décrite par ses paiements) ; pas de marque
   « envoyée à la plateforme » sur une facture émise, fichier d'export
   comptable non stocké ; pas de mode de paiement préféré sur `clients`.
 - **Indicateurs** : `invoice_lines.resource_id` et `service_id` ne sont pas

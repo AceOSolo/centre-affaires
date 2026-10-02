@@ -4,18 +4,18 @@ import { notFound } from 'next/navigation'
 import { can } from '../../../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { emailEnabled } from '../../../../../../lib/courriel.ts'
-import { todayIsoDate } from '../../../../../../lib/dates.ts'
+import { formatDateTime, todayIsoDate } from '../../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../../lib/tenant.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { amountDueCents } from '../../../../../../modules/facturation/montants.ts'
-import {
-  dunningLevel,
-  dunningLevelLabels,
-  reminderMessage,
-} from '../../../../../../modules/facturation/paiements-regles.ts'
+import { dunningLevelLabels, type DunningLevel } from '../../../../../../modules/facturation/paiements-regles.ts'
+import { PostalReminderButton } from '../../../../../../modules/facturation/postal-reminder-button.tsx'
 import { PrintButton } from '../../../../../../modules/facturation/print-button.tsx'
-import { findReminderContexts } from '../../../../../../modules/facturation/reglements.ts'
+import { reminderChannelLabels } from '../../../../../../modules/facturation/reglements-labels.ts'
+import { findReminderContexts, reminderDraft } from '../../../../../../modules/facturation/reglements.ts'
+import { listInvoiceReminders } from '../../../../../../modules/facturation/relances.ts'
 import { SendReminderButton } from '../../../../../../modules/facturation/send-reminder-button.tsx'
+import { formatCents } from '../../../../../../modules/facturation/tarifs.ts'
 
 export const metadata = { title: 'Relance' }
 
@@ -40,26 +40,29 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
   const { member } = await requirePermission('facturation.consulter')
   const { id } = await params
   if (!isUuid(id)) notFound()
-  const [context] = await findReminderContexts([id])
+  const [[context], reminders, timeZone] = await Promise.all([
+    findReminderContexts([id]),
+    listInvoiceReminders(id),
+    currentTimeZone(),
+  ])
   if (!context || context.invoice.status === 'draft') notFound()
 
-  const today = todayIsoDate(await currentTimeZone())
-  const { invoice, client, tenant, recipients } = context
-  const due = amountDueCents(invoice)
-  const level = invoice.dueDate ? dunningLevel(invoice.dueDate, today) : 0
+  const today = todayIsoDate(timeZone)
+  const { invoice, tenant, recipients } = context
+  const draft = reminderDraft(context, today)
   const back = (
     <Link href={`/paiements/factures/${invoice.id}`} className="text-sm text-muted-foreground hover:underline print:hidden">
       ← Règlement de la facture {invoice.number}
     </Link>
   )
 
-  if (due <= 0 || level === 0 || !invoice.issueDate || !invoice.dueDate) {
+  if (!draft) {
     return (
       <div className="flex flex-col gap-4">
         {back}
         <h1 className="text-2xl font-semibold tracking-tight">Relance de la facture {invoice.number}</h1>
         <p className="rounded-lg border border-dashed border-border bg-white px-5 py-4 text-sm text-muted-foreground">
-          {due <= 0
+          {amountDueCents(invoice) <= 0
             ? 'Cette facture ne laisse rien à régler : il n’y a pas de relance à faire.'
             : 'Cette facture n’est pas encore échue : la relance se prépare à partir du lendemain de son échéance.'}
         </p>
@@ -67,22 +70,6 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
     )
   }
 
-  const message = reminderMessage({
-    sellerName: tenant.legalName ?? tenant.name,
-    clientName: client.name,
-    invoiceNumber: invoice.number as string,
-    issueDate: invoice.issueDate,
-    dueDate: invoice.dueDate,
-    today,
-    amountDueCents: due,
-    currency: invoice.currency,
-    level,
-    expectedPaymentMethod: invoice.expectedPaymentMethod,
-    bankIban: tenant.bankIban,
-    bankBic: tenant.bankBic,
-    latePaymentPenaltyText: invoice.legalMentions?.latePaymentPenaltyText ?? tenant.latePaymentPenaltyText,
-    recoveryIndemnityCents: invoice.legalMentions?.recoveryIndemnityCents ?? tenant.recoveryIndemnityCents,
-  })
   const canSend = can(member.role, 'paiements.gerer')
 
   return (
@@ -92,7 +79,7 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
         {back}
         <h1 className="text-2xl font-semibold tracking-tight">Relance de la facture {invoice.number}</h1>
         <p className="text-sm text-muted-foreground">
-          {dunningLevelLabels[level]} · datée du jour · à imprimer, ou à envoyer par courriel{' '}
+          {dunningLevelLabels[draft.level]} · datée du jour · à imprimer, ou à envoyer par courriel{' '}
           {recipients.length > 0
             ? `à ${recipients.join(', ')}`
             : '(aucune adresse : ni contact « destinataire des factures », ni courriel sur la fiche)'}
@@ -103,6 +90,7 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
           {canSend && emailEnabled() && recipients.length > 0 && (
             <SendReminderButton invoiceId={invoice.id} recipients={recipients} />
           )}
+          {canSend && <PostalReminderButton invoiceId={invoice.id} />}
         </div>
         {canSend && !emailEnabled() && (
           <p className="text-sm text-muted-foreground">
@@ -111,6 +99,50 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
         )}
       </div>
 
+      <section aria-labelledby="relances-titre" className="flex flex-col gap-2 print:hidden">
+        <h2 id="relances-titre" className="text-sm font-semibold tracking-tight">
+          Relances déjà faites
+        </h2>
+        {reminders.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Aucune relance inscrite pour cette facture. Un courriel envoyé d’ici s’inscrit seul ; une
+            lettre imprimée, notez-la avec « Noter l’envoi par courrier ».
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-border bg-white">
+            <table aria-labelledby="relances-titre" className="w-full text-left text-sm">
+              <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-4 py-3 font-medium">Le</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Palier</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Envoi</th>
+                  <th scope="col" className="px-4 py-3 text-right font-medium">Reste dû réclamé</th>
+                  <th scope="col" className="px-4 py-3 font-medium">Par</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {reminders.map((reminder) => (
+                  <tr key={reminder.id}>
+                    <td className="whitespace-nowrap px-4 py-3 tabular">{formatDateTime(reminder.sentAt, timeZone)}</td>
+                    <td className="px-4 py-3">{dunningLevelLabels[reminder.level as DunningLevel]}</td>
+                    <td className="px-4 py-3">
+                      {reminderChannelLabels[reminder.channel]}
+                      {reminder.recipients.length > 0 && (
+                        <span className="block text-xs text-muted-foreground">{reminder.recipients.join(', ')}</span>
+                      )}
+                    </td>
+                    <td className="whitespace-nowrap px-4 py-3 text-right tabular">
+                      {formatCents(reminder.amountDueCents, reminder.currency)}
+                    </td>
+                    <td className="px-4 py-3">{reminder.sentByName}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       <article
         id="lettre-relance"
         aria-labelledby="lettre-objet"
@@ -118,9 +150,9 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
       >
         <p className="font-semibold">{tenant.legalName ?? tenant.name}</p>
         <h2 id="lettre-objet" className="mt-6 font-semibold">
-          Objet : {message.subject}
+          Objet : {draft.subject}
         </h2>
-        <p className="mt-4 whitespace-pre-line">{message.text}</p>
+        <p className="mt-4 whitespace-pre-line">{draft.text}</p>
       </article>
     </div>
   )

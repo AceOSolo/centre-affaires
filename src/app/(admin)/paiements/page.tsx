@@ -7,9 +7,10 @@ import { formatDateTime, todayIsoDate } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { OpenInvoiceForm } from '../../../modules/facturation/open-invoice-form.tsx'
 import { OverdueTable } from '../../../modules/facturation/overdue-table.tsx'
-import { formatIsoDateFr } from '../../../modules/facturation/paiements-regles.ts'
+import { dunningLevelLabels, formatIsoDateFr, type DunningLevel } from '../../../modules/facturation/paiements-regles.ts'
 import { listOpenInvoices, listRecentPayments } from '../../../modules/facturation/reglements.ts'
-import { paymentMethodLabels } from '../../../modules/facturation/reglements-labels.ts'
+import { paymentMethodLabels, reminderChannelLabels } from '../../../modules/facturation/reglements-labels.ts'
+import { lastRemindersFor } from '../../../modules/facturation/relances.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 
 export const metadata = { title: 'Règlements' }
@@ -28,6 +29,14 @@ export default async function PaymentsPage() {
     listOpenInvoices({ today, overdue: false }),
     listRecentPayments(20),
   ])
+  const lastReminders = await lastRemindersFor(overdue.map((row) => row.id))
+  // « 05/10/2026 à 09:12 — relance amiable, par courriel » (ADR 034).
+  const lastReminderLabel = (invoiceId: string) => {
+    const last = lastReminders.get(invoiceId)
+    if (!last) return null
+    const level = dunningLevelLabels[last.level as DunningLevel].toLowerCase()
+    return `${formatDateTime(last.sentAt, timeZone)} — ${level}, ${reminderChannelLabels[last.channel]}`
+  }
   const canManage = can(member.role, 'paiements.gerer')
   const overdueTotal = overdue.reduce((total, row) => total + row.amountDueCents, 0)
 
@@ -92,6 +101,7 @@ export default async function PaymentsPage() {
             currency: row.currency,
             expectedPaymentMethod: row.expectedPaymentMethod,
             level: row.level,
+            lastReminder: lastReminderLabel(row.id),
           }))}
           canSend={canManage}
           emailOn={emailEnabled()}

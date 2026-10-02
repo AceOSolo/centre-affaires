@@ -1,6 +1,7 @@
 import type { PaymentMethod } from '../../db/tenants.ts'
 import type {
   InvoiceStatus,
+  ReminderChannel,
   SepaMandateStatus,
   SepaSequenceType,
 } from './schema-factures.ts'
@@ -64,4 +65,10 @@ export const mandateFieldLabels: Record<MandateField, string> = {
   bic: 'BIC',
   signedOn: 'Date de signature',
   sequenceType: 'Type de mandat',
+}
+
+/** Comment une relance est partie (ADR 034) : « par courriel », « par courrier ». */
+export const reminderChannelLabels: Record<ReminderChannel, string> = {
+  email: 'par courriel',
+  post: 'par courrier',
 }

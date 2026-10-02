@@ -44,10 +44,11 @@ renuméroter casserait ces renvois sans rien gagner.
 | 027 | [Paiements, mandats SEPA chiffrés et export comptable](027-paiements-et-export-comptable.md) | 2026-10-01 | accepté ; précisé par l'ADR 030 |
 | 028 | [Contrats tirés d'une offre, avenants à l'écran, échéancier versionné et documents archivés](028-contrats-depuis-offre-avenants-documents.md) | 2026-10-01 | accepté ; choix à valider par le centre ; quantités d'offre alignées sur l'ADR 024 à l'intégration ; reconduction tacite mise en œuvre par l'ADR 033 |
 | 029 | [Lot de facturation périodique et écrans de facturation](029-lot-de-facturation-et-ecrans.md) | 2026-10-01 | accepté ; précise l'ADR 026 ; deux conséquences corrigées par l'ADR 032 ; lancement planifié ajouté par l'ADR 033 |
-| 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 ; contrôle BR-CO-17 d'un avoir précisé par l'ADR 032 |
+| 030 | [Règlements : pointage, relances, remises de prélèvement, export FEC, représentation EN 16931](030-reglements-prelevements-export-et-en16931.md) | 2026-10-01 | accepté ; précise l'ADR 027 ; contrôle BR-CO-17 d'un avoir précisé par l'ADR 032 ; journal des relances et rechiffrement des mandats par l'ADR 034 |
 | 031 | [Indicateurs : définitions de l'occupation et du chiffre d'affaires](031-indicateurs-occupation-et-chiffre-d-affaires.md) | 2026-10-01 | accepté ; définitions à valider par le centre |
 | 032 | [Correctifs de la facturation : avenants déjà facturés, avoirs au centime, forfaits sans prorata, motif d'exonération](032-correctifs-de-la-facturation.md) | 2026-10-02 | accepté ; corrige l'ADR 029, précise les ADR 026 et 030 ; choix à valider par l'expert-comptable |
 | 033 | [Tâches planifiées de la facturation : lot mensuel et reconduction tacite](033-taches-planifiees-de-la-facturation.md) | 2026-10-02 | accepté ; met en œuvre la reconduction de l'ADR 023 et le lancement planifié de R13 ; choix à valider par le centre |
+| 034 | [Règlements : journal des relances, rechiffrement des mandats, remises sans table](034-journal-des-relances-et-rechiffrement-des-mandats.md) | 2026-10-02 | accepté ; précise l'ADR 030 ; choix à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -86,7 +87,7 @@ Aucun numéro déjà publié n'a été réattribué.
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **034**.
+   `ListAgents`. Le prochain numéro libre est **035**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

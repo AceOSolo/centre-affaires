@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-01
 **Statut** : accepté — précise l'ADR 027 (paiements, mandats, export) ; les
-choix marqués « à valider » attendent le centre ou son expert-comptable
+choix marqués « à valider » attendent le centre ou son expert-comptable ;
+journal des relances, rechiffrement des mandats et sort des remises tranchés
+par l'ADR 034
 
 ## Contexte
 
@@ -241,16 +243,18 @@ plateforme agréée, pas encore choisie.
 ## Conséquences
 
 - **Ce que le schéma ne porte pas encore** (à ajouter par une migration) :
-  - un **journal des relances** (facture, palier, date, destinataires, texte,
+  - ~~un **journal des relances** (facture, palier, date, destinataires, texte,
     auteur) : aujourd'hui une relance n'est pas tracée, l'écran ne peut pas
-    dire « relancée le … » ;
-  - une **table des remises** de prélèvement (identifiant, date, statut,
+    dire « relancée le … »~~ — fait par l'ADR 034 ;
+  - ~~une **table des remises** de prélèvement (identifiant, date, statut,
     auteur), et le lien des paiements vers elle : aujourd'hui la remise
-    n'existe que par la référence de ses paiements ;
+    n'existe que par la référence de ses paiements~~ — écartée par l'ADR 034 :
+    les paiements décrivent la remise ;
   - la **date d'envoi à la plateforme** et son retour, au raccordement.
-- `infra/chiffrer-documents.ts` doit rechiffrer `sepa_mandates` lors d'une
+- ~~`infra/chiffrer-documents.ts` doit rechiffrer `sepa_mandates` lors d'une
   rotation de clé (ADR 027) : sans elle, un mandat chiffré avec une clé
-  retirée bloque la remise (message explicite, rien n'est marqué).
+  retirée bloque la remise (message explicite, rien n'est marqué).~~ Fait par
+  l'ADR 034.
 - **À valider par le centre** : les paliers et le ton des relances, le délai
   entre dépôt et prélèvement, le choix de marquer réglée à la remise.
 - **À valider par l'expert-comptable** : la numérotation des écritures, les

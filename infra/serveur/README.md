@@ -462,12 +462,16 @@ ou à intervalle fixé par le centre :
    portent le même numéro, l'application refuse de chiffrer comme de
    déchiffrer, plutôt que de se tromper de clé.
 3. Lancer le script comme ci-dessus, essai à blanc puis `--appliquer` : il
-   rechiffre avec la clé 2 tout ce qui l'était avec la clé 1.
-4. Quand l'essai à blanc ne trouve plus rien, retirer
+   rechiffre avec la clé 2 tout ce qui l'était avec la clé 1 — les
+   numérisations dans le stockage, et les IBAN des mandats SEPA en base
+   (ADR 034).
+4. Quand l'essai à blanc ne trouve plus rien (ni numérisation, ni IBAN de
+   mandat), retirer
    `DOCUMENTS_ENCRYPTION_KEY_1` du `.env` et relancer l'application.
 5. Garder l'ancienne clé dans le coffre-fort tant qu'existent des sauvegardes
-   du stockage antérieures à la rotation : elles ne se lisent qu'avec elle.
-   Après une fuite, ces sauvegardes sont à détruire.
+   du stockage ou de la base antérieures à la rotation : elles ne se lisent
+   qu'avec elle (les IBAN des mandats y sont chiffrés avec elle). Après une
+   fuite, ces sauvegardes sont à détruire.
 
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
 version précédente.

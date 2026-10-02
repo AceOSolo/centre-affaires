@@ -814,6 +814,63 @@ export const payments = pgTable(
 export type Payment = typeof payments.$inferSelect
 export type NewPayment = typeof payments.$inferInsert
 
+/** Comment une relance est partie : par courriel depuis l'application, ou par courrier. */
+export const reminderChannels = ['email', 'post'] as const
+export type ReminderChannel = (typeof reminderChannels)[number]
+
+/**
+ * Journal des relances d'impayés (R16, ADR 030, ADR 034) : chaque relance
+ * faite par l'équipe — envoyée par courriel depuis l'application, ou notée
+ * comme partie par courrier —, avec son palier (1 relance amiable, 2 seconde
+ * relance, 3 mise en demeure), le reste dû réclamé, ses destinataires et son
+ * texte.
+ *
+ * Une preuve : jamais modifiée ni supprimée par l'application (migration
+ * 0036). Rien ne part sans un geste de l'équipe (ADR 030) : `sent_by` est
+ * toujours un membre.
+ */
+export const invoiceReminders = pgTable(
+  'invoice_reminders',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    invoiceId: uuid('invoice_id').notNull(),
+    /** Palier de relance atteint ce jour-là (`dunningLevel`). */
+    level: smallint('level').notNull(),
+    channel: text('channel').$type<ReminderChannel>().notNull(),
+    /** Adresses de courriel ; vide pour un courrier. */
+    recipients: text('recipients').array().notNull().default(sql`'{}'::text[]`),
+    /** Reste dû réclamé par la relance, en centimes (décision 5). */
+    amountDueCents: integer('amount_due_cents').notNull(),
+    currency: char('currency', { length: 3 }).notNull(),
+    /** Objet et texte de la lettre, tels qu'ils sont partis. */
+    subject: text('subject').notNull(),
+    body: text('body').notNull(),
+    sentBy: uuid('sent_by')
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: 'restrict' }),
+    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'invoice_reminders_invoice_fk',
+      columns: [table.tenantId, table.invoiceId],
+      foreignColumns: [invoices.tenantId, invoices.id],
+    }).onDelete('restrict'),
+    check('invoice_reminders_level_valid', sql`${table.level} between 1 and 3`),
+    check('invoice_reminders_channel_known', sql`${table.channel} in ('email', 'post')`),
+    check(
+      'invoice_reminders_recipients_consistent',
+      sql`(${table.channel} = 'email') = (cardinality(${table.recipients}) > 0)`,
+    ),
+    check('invoice_reminders_amount_positive', sql`${table.amountDueCents} > 0`),
+    index('invoice_reminders_invoice_idx').on(table.tenantId, table.invoiceId, table.sentAt),
+  ],
+)
+
+export type InvoiceReminder = typeof invoiceReminders.$inferSelect
+export type NewInvoiceReminder = typeof invoiceReminders.$inferInsert
+
 /**
  * Rôle d'un compte dans l'export comptable (ADR 027) :
  *

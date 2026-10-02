@@ -20,6 +20,8 @@ export type OverdueRow = {
   currency: string
   expectedPaymentMethod: PaymentMethod
   level: DunningLevel
+  /** Dernière relance inscrite au journal (ADR 034), déjà mise en mots ; nulle : aucune. */
+  lastReminder: string | null
 }
 
 /**
@@ -110,6 +112,7 @@ export function OverdueTable({
               <th scope="col" className="px-4 py-3 text-right font-medium">Reste dû</th>
               <th scope="col" className="px-4 py-3 font-medium">Mode</th>
               <th scope="col" className="px-4 py-3 font-medium">Palier</th>
+              <th scope="col" className="px-4 py-3 font-medium">Dernière relance</th>
               <th scope="col" className="px-4 py-3">
                 <span className="sr-only">Actions</span>
               </th>
@@ -153,6 +156,7 @@ export function OverdueTable({
                 </td>
                 <td className="px-4 py-3">{paymentMethodLabels[row.expectedPaymentMethod]}</td>
                 <td className="px-4 py-3">{dunningLevelLabels[row.level]}</td>
+                <td className="px-4 py-3 text-muted-foreground">{row.lastReminder ?? 'Aucune'}</td>
                 <td className="whitespace-nowrap px-4 py-3 text-right">
                   <Link
                     href={`/paiements/factures/${row.id}/relance`}

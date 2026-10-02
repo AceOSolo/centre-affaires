@@ -3,18 +3,16 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { withTenant } from '../../db/index.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { emailEnabled, sendMessage } from '../../lib/courriel.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
-import { currentTimeZone } from '../../lib/tenant.ts'
+import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
-import { amountDueCents } from './montants.ts'
 import {
-  dunningLevel,
   paymentFormValues,
   readCancellationReason,
   readPaymentForm,
-  reminderMessage,
   type PaymentFieldErrors,
   type PaymentFormValues,
 } from './paiements-regles.ts'
@@ -25,7 +23,9 @@ import {
   findInvoiceIdByNumber,
   findReminderContexts,
   recordPayment,
+  reminderDraft,
 } from './reglements.ts'
+import { recordReminder } from './relances.ts'
 
 /*
  * Actions des règlements (R16, ADR 027, ADR 030). Chacune vérifie son droit
@@ -129,7 +129,7 @@ export async function sendRemindersAction(
   _previous: ReminderState,
   formData: FormData,
 ): Promise<ReminderState> {
-  await requirePermission('paiements.gerer')
+  const { member } = await requirePermission('paiements.gerer')
   if (!emailEnabled()) {
     return {
       error:
@@ -143,11 +143,11 @@ export async function sendRemindersAction(
   const contexts = await findReminderContexts(ids)
   const skipped: string[] = []
   let sent = 0
-  for (const { invoice, client, tenant, recipients } of contexts) {
+  for (const context of contexts) {
+    const { invoice, client, recipients } = context
     const number = invoice.number ?? 'brouillon'
-    const due = amountDueCents(invoice)
-    const level = invoice.dueDate ? dunningLevel(invoice.dueDate, today) : 0
-    if (invoice.status === 'draft' || !invoice.issueDate || !invoice.dueDate || due <= 0 || level === 0) {
+    const draft = reminderDraft(context, today)
+    if (!draft) {
       skipped.push(`${number} : n’est plus en retard de paiement.`)
       continue
     }
@@ -155,24 +155,63 @@ export async function sendRemindersAction(
       skipped.push(`${number} : ${client.name} n’a ni contact « factures » ni adresse de courriel.`)
       continue
     }
-    const message = reminderMessage({
-      sellerName: tenant.legalName ?? tenant.name,
-      clientName: client.name,
-      invoiceNumber: number,
-      issueDate: invoice.issueDate,
-      dueDate: invoice.dueDate,
-      today,
-      amountDueCents: due,
-      currency: invoice.currency,
-      level,
-      expectedPaymentMethod: invoice.expectedPaymentMethod,
-      bankIban: tenant.bankIban,
-      bankBic: tenant.bankBic,
-      latePaymentPenaltyText: invoice.legalMentions?.latePaymentPenaltyText ?? tenant.latePaymentPenaltyText,
-      recoveryIndemnityCents: invoice.legalMentions?.recoveryIndemnityCents ?? tenant.recoveryIndemnityCents,
+    // Inscrite au journal dans la transaction de l'envoi : un courriel qui ne
+    // part pas n'y figure pas (ADR 034).
+    await withTenant(currentTenantId(), async (tx) => {
+      await recordReminder(tx, {
+        invoiceId: invoice.id,
+        level: draft.level,
+        channel: 'email',
+        recipients,
+        amountDueCents: draft.amountDueCents,
+        currency: invoice.currency,
+        subject: draft.subject,
+        body: draft.text,
+        sentBy: member.id,
+      })
+      await sendMessage({ to: recipients, subject: draft.subject, text: draft.text })
     })
-    await sendMessage({ to: recipients, ...message })
     sent++
   }
+  if (sent > 0) revalidatePath('/paiements', 'layout')
   return { sent, skipped }
+}
+
+export type PostalReminderState = { error?: string; recordedAt?: string } | null
+
+/**
+ * Note qu'une relance est partie par courrier — une mise en demeure en
+ * recommandé, une lettre imprimée (ADR 034) : au palier et au reste dû du
+ * jour, comme la lettre affichée.
+ */
+export async function recordPostalReminderAction(
+  _previous: PostalReminderState,
+  formData: FormData,
+): Promise<PostalReminderState> {
+  const { member } = await requirePermission('paiements.gerer')
+  const invoiceId = text(formData, 'invoiceId')
+  if (!isUuid(invoiceId)) return { error: 'Facture introuvable.' }
+
+  const today = todayIsoDate(await currentTimeZone())
+  const [context] = await findReminderContexts([invoiceId])
+  if (!context) return { error: 'Facture introuvable.' }
+  const draft = reminderDraft(context, today)
+  if (!draft) {
+    return { error: 'Cette facture n’est plus en retard de paiement : il n’y a pas de relance à noter.' }
+  }
+  const reminder = await withTenant(currentTenantId(), (tx) =>
+    recordReminder(tx, {
+      invoiceId,
+      level: draft.level,
+      channel: 'post',
+      recipients: [],
+      amountDueCents: draft.amountDueCents,
+      currency: context.invoice.currency,
+      subject: draft.subject,
+      body: draft.text,
+      sentBy: member.id,
+    }),
+  )
+  revalidatePath('/paiements', 'layout')
+  return { recordedAt: reminder.sentAt.toISOString() }
 }

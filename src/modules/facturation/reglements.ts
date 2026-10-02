@@ -10,7 +10,14 @@ import { isUuid } from '../../lib/uuid.ts'
 import { clientContacts, clients } from '../clients/schema.ts'
 import { guardMessage } from './erreurs-base.ts'
 import { amountDueCents } from './montants.ts'
-import { checkPaymentAmount, daysOverdue, dunningLevel, type DunningLevel, type PaymentInput } from './paiements-regles.ts'
+import {
+  checkPaymentAmount,
+  daysOverdue,
+  dunningLevel,
+  reminderMessage,
+  type DunningLevel,
+  type PaymentInput,
+} from './paiements-regles.ts'
 import {
   invoiceLines,
   invoices,
@@ -335,6 +342,45 @@ export type ReminderContext = {
   >
   /** Contacts « destinataire des factures », sinon l'adresse de la fiche. */
   recipients: string[]
+}
+
+/** La relance d'une facture au jour `today` : son palier, le reste dû et la lettre. */
+export type ReminderDraft = {
+  level: Exclude<DunningLevel, 0>
+  amountDueCents: number
+  subject: string
+  text: string
+}
+
+/**
+ * Relance due au jour `today`, ou nulle : facture brouillon, réglée, ou pas
+ * encore échue. La même lettre s'affiche, s'imprime, part par courriel et
+ * s'inscrit au journal (ADR 030, ADR 034).
+ */
+export function reminderDraft(context: ReminderContext, today: string): ReminderDraft | null {
+  const { invoice, client, tenant } = context
+  const due = amountDueCents(invoice)
+  const level = invoice.dueDate ? dunningLevel(invoice.dueDate, today) : 0
+  if (invoice.status === 'draft' || !invoice.number || !invoice.issueDate || !invoice.dueDate || due <= 0 || level === 0) {
+    return null
+  }
+  const message = reminderMessage({
+    sellerName: tenant.legalName ?? tenant.name,
+    clientName: client.name,
+    invoiceNumber: invoice.number,
+    issueDate: invoice.issueDate,
+    dueDate: invoice.dueDate,
+    today,
+    amountDueCents: due,
+    currency: invoice.currency,
+    level,
+    expectedPaymentMethod: invoice.expectedPaymentMethod,
+    bankIban: tenant.bankIban,
+    bankBic: tenant.bankBic,
+    latePaymentPenaltyText: invoice.legalMentions?.latePaymentPenaltyText ?? tenant.latePaymentPenaltyText,
+    recoveryIndemnityCents: invoice.legalMentions?.recoveryIndemnityCents ?? tenant.recoveryIndemnityCents,
+  })
+  return { level, amountDueCents: due, subject: message.subject, text: message.text }
 }
 
 export async function findReminderContexts(invoiceIds: readonly string[]): Promise<ReminderContext[]> {

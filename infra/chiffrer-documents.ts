@@ -1,9 +1,11 @@
 /**
- * Reprise du chiffrement des documents stockés (R22, ADR 020).
+ * Reprise du chiffrement des documents stockés (R22, ADR 020) et des IBAN des
+ * mandats SEPA (R16, ADR 034).
  *
  * Chiffre les numérisations de courrier déposées en clair avant le
  * chiffrement, et, après une rotation de clé, rechiffre avec la clé courante
- * celles de la clé précédente. Procédure complète : `infra/serveur/README.md`,
+ * celles de la clé précédente — ainsi que les IBAN des mandats, chiffrés en
+ * base avec la même clé. Procédure complète : `infra/serveur/README.md`,
  * « Chiffrement des documents ».
  *
  *   node --env-file=<fichier> infra/chiffrer-documents.ts              # essai à blanc
@@ -27,6 +29,7 @@ import { DEFAULT_TENANT_ID } from '../src/db/tenants.ts'
 import { documentKeyringFromEnv } from '../src/lib/chiffrement-documents.ts'
 import { putObject, readObjectBytes } from '../src/lib/stockage.ts'
 import { encryptStoredScans, type ObjectStore } from '../src/modules/courrier/reprise-chiffrement.ts'
+import { rekeyMandateIbans } from '../src/modules/facturation/mandats-rechiffrement.ts'
 
 const { values } = parseArgs({
   options: {
@@ -86,6 +89,25 @@ try {
     for (const id of report.missing) console.error(`Objet absent du stockage : mail_scans ${id}`)
     for (const { id, error } of report.failed) console.error(`Laissée telle quelle : mail_scans ${id} — ${error}`)
     if (report.missing.length > 0 || report.failed.length > 0) process.exitCode = 1
+  }
+
+  // Les IBAN des mandats SEPA, chiffrés en base avec la même clé (ADR 034).
+  const mandates = await rekeyMandateIbans({
+    database: db,
+    tenantId: values.centre,
+    keyring,
+    apply: values.appliquer,
+  })
+  const pendingMandates = Object.entries(mandates.pending)
+  console.log(
+    pendingMandates.length === 0
+      ? 'Aucun IBAN de mandat à rechiffrer.'
+      : `IBAN de mandats à rechiffrer : ${pendingMandates.map(([label, count]) => `${count} (${label})`).join(', ')}.`,
+  )
+  if (values.appliquer) {
+    console.log(`IBAN rechiffrés : ${mandates.rotated} · traités ailleurs : ${mandates.skipped}.`)
+    for (const { id, error } of mandates.failed) console.error(`Laissé tel quel : sepa_mandates ${id} — ${error}`)
+    if (mandates.failed.length > 0) process.exitCode = 1
   }
 } finally {
   await client.end()
