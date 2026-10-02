@@ -162,3 +162,136 @@ même garantie, que la fonction de validation donne sur du JSONB (D8).
   préviennent le client puis le centre.
 - *À valider par le centre* : l'échelle de note d'état, la durée des photos
   et du journal, la valeur de la validation en ligne comme signature.
+
+## Mise en œuvre
+
+Ajoutée le 2026-10-02 par la tranche « états des lieux » de la dernière
+vague, sans changer la décision : elle dit comment les écrans et le code
+l'appliquent, et les choix par défaut qu'ils ont dû faire. Code :
+`src/modules/etats-des-lieux/`.
+
+### Écrans et droits
+
+- **`/etats-des-lieux`** (`etats-des-lieux.gerer`, accueil et exploitant) :
+  tous les états des lieux, filtrables par étape — en saisie, à valider par
+  le client, validés. Un brouillon retiré sort de la liste.
+- **Fiches ressource, réservation et contrat** : une section « États des
+  lieux » liste ceux de la fiche et ouvre une entrée ou une sortie. Une
+  réservation sans client, ou annulée, et une ressource ou un contrat
+  archivés disent pourquoi rien ne s'ouvre.
+- **`/etats-des-lieux/nouveau`** : l'occupation se choisit parmi celles que
+  le serveur propose — la réservation ; les occupations du contrat (une par
+  ressource, avenants compris), ou sa ressource prévue s'il est en
+  brouillon ; depuis une ressource, les réservations d'un client de
+  120 jours avant à 60 jours après, et les contrats en brouillon. Le
+  formulaire ne transporte qu'une clé : ressource et client sont retrouvés
+  au serveur, jamais crus. Une sortie choisit l'entrée close sans sortie du
+  même client et de la même ressource, ou « aucune » (entrée faite hors de
+  l'application : pas de comparaison).
+- **`/etats-des-lieux/[id]`** : en brouillon, le formulaire généré depuis la
+  version du modèle, les photos de chaque champ et d'ensemble, la clôture,
+  le retrait du brouillon ; clos, la lecture, la validation du client et,
+  pour une sortie, la comparaison avec l'entrée. **Vue imprimable** :
+  `/etats-des-lieux/[id]/document`, hors de la coque, que le navigateur
+  imprime ou enregistre en PDF.
+- **`/etats-des-lieux/modeles`** et **`/etats-des-lieux/modeles/[type]`**
+  (`etats-des-lieux.modeles`, exploitant) : un modèle par type, son éditeur
+  (ajout, ordre par « Monter » / « Descendre », libellé, type, obligatoire,
+  unité, options, aide, retrait), l'historique des versions, chacune
+  consultable.
+- **Espace client** : rubrique « États des lieux »
+  (`/compte/etats-des-lieux`), sous la portée client (`inClientSpace`) en
+  plus des filtres : les états clos des entreprises du compte, leur relevé,
+  leurs photos, la comparaison d'une sortie, et la validation — la personne
+  connectée, au titre de l'entreprise de l'état des lieux, avec ses
+  réserves ; la base pose la date. Cartes et boutons pleine largeur, 44 px.
+
+### Modèles
+
+- **Modèles de départ** (`modeles-defaut.ts`, *à valider*) : véhicule —
+  kilométrage (km), niveau de carburant (vide, 1/4, 1/2, 3/4, plein),
+  propreté intérieure et extérieure, carrosserie, dommages, clés, papiers à
+  bord ; bureau, salle, casier, boîte aux lettres — état général,
+  équipements (ou serrure), clés et badges remis, propreté ou case propre au
+  type. Les observations ne sont pas un champ : chaque état des lieux a les
+  siennes.
+- **Publication** : une version n'est créée que si les champs changent ; un
+  nom seul se renomme sans version. Un type sans modèle reçoit son modèle de
+  départ, publié tel quel en version 1 **à la première saisie** (auteur : la
+  personne qui saisit), pour que l'accueil ne soit jamais bloqué.
+- **Identifiants de champ** : tirés du libellé à l'ajout (sans accents, `_`,
+  suffixe en cas de doublon), puis **jamais modifiés** par l'éditeur. C'est
+  par eux que la comparaison rapproche une sortie de son entrée saisies avec
+  deux versions différentes.
+- **Validation** : `champs.ts` est le miroir des fonctions SQL
+  (`inspection_fields_error`, `inspection_values_error`), mot pour mot ; il
+  relève toutes les erreurs, chacune à côté de son champ et dans le résumé.
+  `etats-des-lieux-ecrans.db.test.ts` éprouve l'accord du code et de la base.
+
+### Saisie et clôture
+
+- Note d'état, oui / non et choix de six options au plus : boutons radio
+  (plus : liste déroulante). **Oui / non non coché vaut « non renseigné »**,
+  pas « non » : un état des lieux dit ce qui a été constaté. Nombre saisi à
+  la française (« 12 345,5 »).
+- **Clôture** : une case de confirmation, puis « Enregistrer et clore », dans
+  le même envoi que la saisie. Une clôture refusée (champ obligatoire vide,
+  date à venir, case non cochée) **enregistre quand même le brouillon** et
+  liste ce qui manque. La date d'un état des lieux se saisit dans le fuseau
+  du centre, en UTC en base.
+- Retirer un brouillon retire d'abord ses photos — la base les fige dès que
+  l'état des lieux est retiré —, puis efface leurs fichiers.
+
+### Photos
+
+- **Navigateur** (`compression.ts`) : décodage avec l'orientation EXIF, plus
+  grand côté ramené à **1 920 px**, réencodage **JPEG qualité 0,8** sur fond
+  blanc ; les métadonnées (dont la position GPS) ne partent pas. Une photo
+  par requête : une connexion qui flanche ne perd que la photo en cours. Un
+  format que le navigateur ne décode pas (HEIC sur ordinateur) est refusé
+  avec un message.
+- **Serveur** (`photos.ts`) : type et dimensions lus dans les octets (JPEG,
+  PNG, WebP), 10 Mio et 10 000 px au plus, puis `sealDocument`, dépôt sous
+  une clé sans rien de lisible (`etats-des-lieux/<centre>/<uuid>.jpg`),
+  inscription ; un fichier sans ligne est effacé aussitôt.
+- **Lecture** (`servir.ts`) : routes `/etats-des-lieux/photos/[id]`
+  (équipe) et `/compte/etats-des-lieux/photos/[id]` (client), déchiffrement
+  authentifié, journal écrit avant l'envoi, aucune mise en cache. Chaque
+  vignette affichée est une consultation journalisée.
+- Retirer une photo d'un brouillon efface son fichier : elle ne prouve plus
+  rien. Les photos purgées d'un état clos sont comptées et signalées à
+  l'écran.
+
+### Conservation et clés
+
+- `/api/maintenance/conservation` purge, chacun dans sa transaction, le
+  journal des consultations (`purge_expired_inspection_photo_views`), puis
+  les photos échues (`expired_inspection_photos` → effacement du fichier →
+  `mark_inspection_photo_purged`). La réponse donne
+  `inspectionPhotoViews` et `inspectionPhotos`.
+- **Rotation de clé** : une photo ne se rechiffre pas — la garde
+  `inspection_photos_guard` fige sa version de clé, et rien ne la laisse
+  changer. `infra/chiffrer-documents.ts` compte donc les photos encore
+  chiffrées avec une clé précédente, pour qu'on garde
+  `DOCUMENTS_ENCRYPTION_KEY_<N>` jusqu'à leur purge. Manque de schéma
+  relevé pour l'intégration.
+
+### Comparaison (`comparaison.ts`)
+
+Ordre du modèle de la sortie, puis les champs que seule l'entrée
+connaissait. Chaque ligne dit son écart en toutes lettres : « Identique »,
+« Dégradé : Bon état → État d'usage », « Amélioré : … », « Écart : +480 km »,
+« Changé : Plein → 1/2 », « Renseigné à la sortie seulement », « Champ
+absent du modèle de l'entrée ». Les lignes en écart portent en plus une
+marque « Écart » ou « Dégradation », et un résumé compte les écarts.
+
+### Restes
+
+- **Notifications** : `inspection_to_sign` (à la clôture) et
+  `inspection_signed` (à la validation) ne sont pas envoyés par cette
+  tranche : le moteur de l'ADR 038 se construit en parallèle. Points
+  d'appel : la branche « clore » de `saveInspectionAction` (`actions.ts`) et
+  `signInspectionAction` (`compte-actions.ts`), après la réponse (`after`).
+- *À valider par le centre*, en plus de ce qui précède : les modèles de
+  départ, la taille et la qualité de compression, la fenêtre des
+  occupations proposées depuis une ressource.

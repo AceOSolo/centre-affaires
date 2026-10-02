@@ -96,7 +96,13 @@ describe('route de conservation', { skip: raison }, () => {
 
     const response = await appeler(`Bearer ${TOKEN}`)
     assert.equal(response.status, 200)
-    assert.deepEqual(await response.json(), { scans: 0, views: 0, publicRequests: 1 })
+    assert.deepEqual(await response.json(), {
+      scans: 0,
+      views: 0,
+      publicRequests: 1,
+      inspectionPhotos: 0,
+      inspectionPhotoViews: 0,
+    })
 
     const echue = await demandeur('Demande publique anonymisée')
     assert.equal(echue.requester_email, null)

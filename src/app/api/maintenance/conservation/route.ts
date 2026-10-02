@@ -3,6 +3,10 @@ import { isMaintenanceRequest, maintenanceNotFound } from '../../../../lib/maint
 import { deleteObject } from '../../../../lib/stockage.ts'
 import { currentTenantId } from '../../../../lib/tenant.ts'
 import { purgeExpiredMail } from '../../../../modules/courrier/conservation.ts'
+import {
+  purgeExpiredInspectionPhotos,
+  purgeExpiredInspectionPhotoViews,
+} from '../../../../modules/etats-des-lieux/conservation.ts'
 import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations/conservation.ts'
 
 /**
@@ -23,5 +27,12 @@ export async function POST(request: Request) {
   // du courrier, ne retient pas leur effacement.
   const publicRequests = await withTenant(tenantId, anonymizeExpiredPublicRequests)
   const mail = await withTenant(tenantId, (tx) => purgeExpiredMail(tx, deleteObject))
-  return Response.json({ ...mail, publicRequests })
+  // États des lieux (R33, ADR 039) : le journal des consultations des photos
+  // d'abord, dans sa transaction — il ne dépend pas du stockage —, puis les
+  // photos échues, fichier effacé avant que la base ne marque la ligne.
+  const inspectionPhotoViews = await withTenant(tenantId, purgeExpiredInspectionPhotoViews)
+  const inspectionPhotos = await withTenant(tenantId, (tx) =>
+    purgeExpiredInspectionPhotos(tx, deleteObject),
+  )
+  return Response.json({ ...mail, publicRequests, inspectionPhotos, inspectionPhotoViews })
 }

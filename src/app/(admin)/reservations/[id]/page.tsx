@@ -1,12 +1,14 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../modules/clients/queries.ts'
 import { contractStatusLabels } from '../../../../modules/contrats/labels.ts'
+import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
 import { frozenQuoteDisplay } from '../../../../modules/facturation/devis.ts'
 import { QuoteSummary } from '../../../../modules/facturation/devis-resume.tsx'
 import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
@@ -22,7 +24,7 @@ import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 export const metadata = { title: 'Réservation' }
 
 export default async function BookingPage({ params }: { params: Promise<{ id: string }> }) {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const { id } = await params
   if (!isUuid(id)) notFound()
   const timeZone = await currentTimeZone()
@@ -212,6 +214,22 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
             Déplacer la réservation
           </Link>
         </div>
+      )}
+
+      {/* États des lieux au titre de cette réservation (R06, ADR 039). */}
+      {can(member.role, 'etats-des-lieux.gerer') && (
+        <InspectionsSection
+          filter={{ bookingId: booking.id }}
+          context={{ reservation: booking.id }}
+          timeZone={timeZone}
+          unavailable={
+            cancelled
+              ? 'Réservation annulée : plus d’état des lieux à ouvrir.'
+              : !booking.clientId
+                ? 'Rattachez un client à la réservation pour en faire l’état des lieux.'
+                : undefined
+          }
+        />
       )}
 
       {booking.kind === 'booking' && clients.length > 0 && (
