@@ -3,21 +3,37 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
+/**
+ * Rubriques de l'espace client (R17, R21, R23, R24, R25, R26, R06). Les
+ * libellés restent courts : sur un téléphone, les huit tiennent en trois
+ * rangées sans défilement.
+ */
 const sections = [
-  { href: '/compte/courrier', label: 'Ma boîte aux lettres' },
-  { href: '/compte/reservations', label: 'Mes réservations' },
+  { href: '/compte/reservations', label: 'Réservations' },
   { href: '/compte/offres', label: 'Offres' },
+  { href: '/compte/courrier', label: 'Courrier' },
+  { href: '/compte/contrats', label: 'Contrats' },
+  { href: '/compte/factures', label: 'Factures' },
   { href: '/compte/etats-des-lieux', label: 'États des lieux' },
+  { href: '/compte/historique', label: 'Historique' },
+  { href: '/compte/preferences', label: 'Préférences' },
 ]
 
 /**
- * Rubriques de l'espace client. Client parce que l'onglet actif dépend de
- * l'URL ; l'état actif est dit par `aria-current`, pas par la seule couleur.
+ * Client parce que l'onglet actif dépend de l'URL ; l'état actif est dit par
+ * `aria-current`, pas par la seule couleur.
+ *
+ * Mobile d'abord (R25) : une grille de trois colonnes, chaque rubrique visible
+ * et haute de 44 px, à 8 px de sa voisine — une bande qui défile cacherait les
+ * dernières. À partir de `sm`, la barre d'onglets habituelle.
  */
 export function CompteNav() {
   const pathname = usePathname()
   return (
-    <nav aria-label="Espace client" className="flex gap-1 overflow-x-auto border-b border-border">
+    <nav
+      aria-label="Espace client"
+      className="grid grid-cols-3 gap-2 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-b sm:border-border"
+    >
       {sections.map((section) => {
         const active = pathname === section.href || pathname.startsWith(`${section.href}/`)
         return (
@@ -25,10 +41,10 @@ export function CompteNav() {
             key={section.href}
             href={section.href}
             aria-current={active ? 'page' : undefined}
-            className={`-mb-px inline-flex min-h-11 items-center whitespace-nowrap border-b-2 px-4 text-sm font-medium transition-colors ${
+            className={`inline-flex min-h-11 min-w-0 items-center justify-center rounded-md border px-1 text-center text-sm font-medium transition-colors sm:-mb-px sm:justify-start sm:whitespace-nowrap sm:rounded-none sm:border-0 sm:border-b-2 sm:px-4 ${
               active
-                ? 'border-primary text-primary'
-                : 'border-transparent text-muted-foreground hover:text-primary'
+                ? 'border-primary bg-primary text-primary-foreground sm:bg-transparent sm:text-primary'
+                : 'border-border bg-white text-muted-foreground hover:text-primary sm:border-transparent sm:bg-transparent'
             }`}
           >
             {section.label}

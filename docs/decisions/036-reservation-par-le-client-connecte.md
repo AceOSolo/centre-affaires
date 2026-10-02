@@ -316,3 +316,127 @@ statut selon le réglage, refus traduits, annulations tracées,
 « Demandes », message au centre) et `offres-portail.db.test.ts` (offres
 présentées et chiffrées, demande journalisée sans contrat, anti-doublon,
 traitement par le contrat, modèle désactivé).
+
+## Mise en œuvre — documents, historique et revue mobile du portail (R17, R24, R25)
+
+Tranche « portail-documents » de la vague 3. Aucune migration : tout se lit
+dans le schéma posé par les migrations 0039 à 0043 et dans celui de la
+vague 2.
+
+### Navigation de l'espace client
+
+`compte-nav.tsx` réunit, après l'intégration de la vague, huit rubriques,
+dans cet ordre : Réservations, Offres, Courrier, Contrats, Factures, États
+des lieux, Historique, Préférences (Offres vient de la tranche
+« portail-réservation », États des lieux de l'ADR 039, Préférences de
+l'ADR 038). Sur téléphone, une grille de trois colonnes : les huit rubriques
+restent visibles, en trois rangées, hautes de 44 px et espacées de 8 px — une
+bande qui défile cachait les dernières. À partir de `sm`, la barre d'onglets
+habituelle. L'onglet actif est dit par `aria-current`, pas par la seule
+couleur. Le test `cibles-tactiles.test.ts` vérifie l'ordre et qu'aucune
+rubrique ne mène à une page absente.
+
+### Mes contrats (R17)
+
+`/compte/contrats` (`contrats/compte-queries.ts`, `compte-regles.ts`) : les
+contrats des entreprises du compte, **jamais un brouillon ni un contrat
+archivé**, avec leur état dit pour le client (à venir, en cours, résilié et
+en cours jusqu'à son terme, arrivé à terme, résilié), leur période, la
+ressource et le prix en vigueur le jour du centre (`contract_segments`,
+`contract_price_versions`, ADR 025), l'engagement, le préavis, la
+reconduction, les **seuls avenants signés**, et chaque version archivée du
+document. Celle-ci s'ouvre en vue imprimable,
+`/compte/contrats/[id]/document?version=N`, avec la même vue que le
+back-office (`ContractDocumentView`) et l'empreinte SHA-256 vérifiée par la
+base. Le client ne voit jamais un aperçu (données du jour, sans valeur
+contractuelle), et le nom du membre de l'équipe qui a archivé le document
+reste au back-office.
+
+### Mes factures (R17)
+
+`/compte/factures` (`facturation/compte-queries.ts`, `compte-regles.ts`) :
+factures et avoirs émis, montant TTC, échéance, état pour le client (à
+régler, échue, payée en partie, payée, annulée par avoir, avoir) et reste à
+régler, avec un résumé par devise en tête. Coordonnées de virement du centre
+(titulaire, IBAN, BIC) et référence à indiquer : le numéro de la facture,
+repris sur chaque carte. Chaque document s'ouvre en vue imprimable,
+`/compte/factures/[id]`, **identique à celle du back-office** : la feuille a
+été extraite dans `facturation/invoice-sheet.tsx` et sert les deux pages,
+avec les mêmes règles d'impression (`invoiceSheetPrintStyles`). Elle se lit
+dans les instantanés figés à l'émission (vendeur, acheteur, mentions, IBAN).
+
+Trois verrous contre un brouillon ou la facture d'un autre : le filtre
+`client_id`, le filtre `status <> 'draft'` et `deleted_at is null`, et la
+portée client en RLS (`invoices_client_scope`, migration 0031), qui tient
+seule. `facturation/compte.db.test.ts` le prouve sous `app_centre`, y compris
+par une requête sans aucun filtre ; `contrats/compte.db.test.ts` fait de même
+pour les contrats et leurs documents.
+
+Les pages imprimables de l'espace client sont dans le groupe `(impression)`,
+hors de la coque du site, comme celle des contrats du back-office : elles
+revérifient le compte (`requireClientAccount`) et répondent 404 de la même
+façon pour « n'existe pas », « brouillon » et « pas à vous ».
+`src/lib/auth/gardes-espace-client.test.ts` relit les sources et refuse
+toute page ou route de `(portail)/compte` ou `(impression)/compte` sans
+`requireClientAccount()`, pendant de la garde du back-office.
+
+### Historique du compte (R24)
+
+`/compte/historique` (`clients/historique-compte.ts`, pur, et
+`historique-compte-queries.ts`) : demandes de réservation et leur issue
+(auteur depuis l'espace, annulation datée par la personne ou par le centre,
+motif), demandes de courrier et chacune de leurs étapes (dépôt, prise en
+charge, réalisation, refus et motif, annulation, numéro de suivi), documents
+de contrat archivés, factures et avoirs émis. Rien n'est écarté parce qu'il a
+été annulé ou refusé : l'historique se lit dans `bookings` (ADR 036) et
+`mail_requests` (ADR 037), qui gardent la trace. Regroupé par mois du centre,
+filtrable par rubrique, et **lu par année du centre** : chaque année reste
+accessible, rien n'est caché derrière une limite (500 lignes par rubrique et
+par année, signalées si elles sont atteintes). L'expéditeur d'un pli retiré
+par le centre n'est plus montré : le pli n'était peut-être pas celui de
+l'entreprise.
+
+### Revue mobile (R25)
+
+Cibles portées à 44 px au moins, à 8 px d'écart : bouton Réserver et
+téléphone de l'en-tête, logo, liens du pied de page (coordonnées, carte,
+Espace client, Accès équipe) et des réseaux sociaux, lien d'évitement au
+focus, barre d'action du téléphone sur l'accueil, pastilles de créneau,
+bouton d'action et lien retour de `annonces/[slug]`, bouton « Voir » et
+titre des annonces. Les liens du bandeau supérieur, affiché au seul grand
+écran, ont 24 px (cible minimale du web). Marges des annonces alignées sur
+la coque (20 px sur téléphone). Tableaux : la feuille de facture et le
+document de contrat gardent leurs tableaux dans `overflow-x-auto` et
+réduisent leurs marges sur téléphone ; les listes de l'espace client sont
+des cartes.
+
+Vérification : `src/app/(portail)/cibles-tactiles.test.ts` parcourt toutes
+les pages de `(portail)` et de `(impression)/compte` (analyse des sources
+par le compilateur TypeScript, déjà en dépendance) et échoue sur tout lien ou
+bouton sans classe de 44 px — hors lien au fil d'une phrase (WCAG 2.5.8) et
+élément réservé au grand écran — et sur toute largeur fixe plus grande
+qu'un écran de 375 px moins ses marges. Il vérifie aussi les six rubriques du
+compte. Sans navigateur dans la CI, l'absence de défilement horizontal à
+375 px reste à constater à l'écran (outils de développement, 375 × 812) à
+chaque tranche ; la règle de largeur et les `overflow-x-auto` en sont la
+garde statique. Les composants des modules affichés dans le portail
+(formulaires, actions) ne sont pas parcourus : ils suivent la même règle,
+relue à chaque tranche.
+
+### Manques et limites
+
+- La confirmation d'une réservation n'est pas datée en base (ni
+  `confirmed_at` ni auteur) : l'historique dit « Confirmée » sans date.
+- Le journal des relances est réservé au back-office (RLS,
+  `invoice_reminders_back_office_only`) : l'historique du client ne montre
+  pas les relances envoyées.
+- Le document de contrat **signé** (scan) n'est pas stocké (reporté à la
+  vague 4, ADR 035) : le client voit le document établi et archivé, pas son
+  exemplaire signé.
+
+### À valider par le centre
+
+- Les libellés d'état présentés au client (« Échue », « Arrivé à terme »,
+  « Résilié, en cours jusqu'à son terme ») ;
+- la référence de virement demandée : le numéro de la facture, une facture
+  par virement.

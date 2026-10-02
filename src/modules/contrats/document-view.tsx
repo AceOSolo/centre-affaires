@@ -330,7 +330,7 @@ export function ContractDocumentView({
       ]
 
   return (
-    <article className="mx-auto w-full max-w-[210mm] bg-white px-[16mm] py-[14mm] text-[13px] leading-relaxed text-foreground shadow-sm print:max-w-none print:p-0 print:shadow-none">
+    <article className="mx-auto w-full max-w-[210mm] bg-white px-4 py-6 text-[13px] sm:px-[16mm] sm:py-[14mm] leading-relaxed text-foreground shadow-sm print:max-w-none print:p-0 print:shadow-none">
       {provenance.kind === 'preview' && (
         <p className="mb-6 rounded-md border-2 border-dashed border-brand-fonce/50 px-4 py-2 text-center text-sm font-semibold uppercase tracking-wide text-brand-fonce">
           Projet — aperçu non archivé, sans valeur contractuelle
