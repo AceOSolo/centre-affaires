@@ -572,7 +572,7 @@ export default async function PortailPage({
         <div className="flex gap-3">
           <Link
             href="#demande"
-            className="press flex-1 rounded-md bg-primary px-4 py-3 text-center font-medium text-primary-foreground"
+            className="press flex min-h-12 flex-1 items-center justify-center rounded-md bg-primary px-4 py-3 text-center font-medium text-primary-foreground"
           >
             Demander un créneau
           </Link>
@@ -580,7 +580,7 @@ export default async function PortailPage({
             <a
               href={`tel:${tenant.phone.replace(/\s/g, '')}`}
               aria-label={`Appeler le ${tenant.phone}`}
-              className="flex items-center justify-center rounded-md border border-primary px-4 text-primary"
+              className="flex min-h-12 min-w-12 items-center justify-center rounded-md border border-primary px-4 text-primary"
             >
               <PhoneIcon size={22} />
             </a>

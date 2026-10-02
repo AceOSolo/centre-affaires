@@ -85,9 +85,9 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
   const details = describeAttributes(listing.resource.attributes ?? {})
 
   return (
-    <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-6 py-10">
+    <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-5 py-10 sm:px-8">
       <div>
-        <Link href="/annonces" className="text-sm text-muted-foreground hover:underline">
+        <Link href="/annonces" className="inline-flex min-h-11 items-center text-sm text-muted-foreground hover:underline">
           ← Tous nos espaces
         </Link>
         <div className="mt-2 flex flex-wrap items-center gap-3">
@@ -182,7 +182,7 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
                     <Link
                       key={creneau.startsAt.toISOString()}
                       href={`/?date=${jour.isoDate}`}
-                      className="rounded-full bg-accent/15 px-3 py-0.5 text-sm tabular-nums text-primary hover:bg-accent/25"
+                      className="inline-flex min-h-11 items-center rounded-full bg-accent/15 px-4 text-sm tabular-nums text-primary hover:bg-accent/25"
                     >
                       {formatTime(creneau.startsAt, timeZone)} –{' '}
                       {formatTime(creneau.endsAt, timeZone)}
@@ -202,7 +202,7 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
       <div>
         <Link
           href={`/?date=${today}`}
-          className="inline-block rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-hover"
+          className="inline-flex min-h-11 items-center rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-white hover:bg-primary-hover"
         >
           Demander un créneau
         </Link>
