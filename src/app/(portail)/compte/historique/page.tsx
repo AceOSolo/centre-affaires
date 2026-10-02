@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import {
+  BuildingIcon,
   CalendarIcon,
   CheckIcon,
   ClockIcon,
@@ -50,6 +51,7 @@ const categoryIcons: Record<HistoryCategory, typeof CheckIcon> = {
   courrier: MailIcon,
   contrats: FileTextIcon,
   factures: CreditCardIcon,
+  'etats-des-lieux': BuildingIcon,
 }
 
 const YEAR = /^\d{4}$/

@@ -1,13 +1,13 @@
 import { and, asc, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
-import { appUrl } from '../../lib/courriel.ts'
-import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
+import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { clients } from '../clients/schema.ts'
 import { contracts } from '../contrats/schema.ts'
-import { sendCentreMessage } from '../notifications/message-centre.ts'
+import { notifyOfferRequested } from '../notifications/declencheurs-clients.ts'
+import type { NotifyOptions } from '../notifications/moteur.ts'
 import { notificationDeliveries } from '../notifications/schema.ts'
 import { priceOffer, type OfferQuote } from './offres-prix.ts'
 import { loadOfferCatalogueInTransaction, toOfferInput, type OfferWithItems } from './offres-queries.ts'
@@ -115,32 +115,6 @@ export async function recentOfferRequest(clientId: string, offerId: string): Pro
   return row?.sentAt
 }
 
-/** Message à l'accueil : qui demande quelle offre, et où préparer le contrat. */
-export function offerRequestedMessage(facts: {
-  centreName: string
-  clientName: string
-  memberName: string
-  offerName: string
-  link?: string
-}): { subject: string; text: string; variables: Record<string, string> } {
-  return {
-    subject: `Offre demandée : ${facts.offerName} — ${facts.clientName}`,
-    text:
-      `${facts.memberName} (${facts.clientName}) demande l’offre « ${facts.offerName} » depuis son ` +
-      'espace client.\n\nPréparez le contrat depuis l’offre et revenez vers le client : rien ne ' +
-      'l’engage tant que le contrat n’est pas signé.' +
-      (facts.link ? `\n\nPréparer le contrat : ${facts.link}` : '') +
-      `\n\n—\n${facts.centreName}`,
-    variables: {
-      centre: facts.centreName,
-      client: facts.clientName,
-      personne: facts.memberName,
-      offre: facts.offerName,
-      lien: facts.link ?? '',
-    },
-  }
-}
-
 /** Une offre présentée dans l'espace, relue sous la portée du compte. */
 export async function findPortalOffer(
   accounts: readonly ClientAccount[],
@@ -158,30 +132,19 @@ export async function findPortalOffer(
 }
 
 /**
- * Transmet la demande d'une offre à l'accueil et la journalise. Le journal
- * est la trace de la demande : son écriture qui échoue fait échouer la
- * demande, que le client recommencera.
+ * Transmet la demande d'une offre à l'accueil par le moteur de notifications
+ * (`offer_requested`, ADR 038), qui la journalise. Le journal est la trace de
+ * la demande : non écrit, la demande échoue, et le client la recommencera.
  */
-export async function requestOffer(input: {
-  account: ClientAccount
-  memberName: string
-  offer: { id: string; name: string }
-}): Promise<void> {
-  const tenant = await currentTenant()
-  const query = new URLSearchParams({ offre: input.offer.id, client: input.account.clientId })
-  const message = offerRequestedMessage({
-    centreName: tenant.name,
-    clientName: input.account.clientName,
-    memberName: input.memberName,
-    offerName: input.offer.name,
-    link: appUrl(`/contrats/nouveau/offre?${query.toString()}`),
-  })
-  await sendCentreMessage({
-    event: 'offer_requested',
-    clientId: input.account.clientId,
-    related: { type: 'offer', id: input.offer.id },
-    ...message,
-  })
+export async function requestOffer(
+  input: { account: ClientAccount; offer: { id: string; name: string } },
+  options: NotifyOptions = {},
+): Promise<void> {
+  const outcome = await notifyOfferRequested(
+    { offerId: input.offer.id, clientId: input.account.clientId, memberId: input.account.memberId },
+    options,
+  )
+  if (!outcome?.logged) throw new Error('Demande d’offre non inscrite au journal des envois.')
 }
 
 /** Une demande d'offre, telle que l'accueil la traite dans « Demandes ». */

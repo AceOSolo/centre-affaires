@@ -268,7 +268,78 @@ describe('historique du compte', { skip: raison }, () => {
     assert.deepEqual(sources.mailRequests, [])
     assert.deepEqual(sources.contractDocuments, [])
     assert.deepEqual(sources.invoices, [])
+    assert.deepEqual(sources.inspections, [])
     const entries = buildAccountHistory(sources, { timeZone: TZ, today: todayIsoDate(TZ) })
+    assert.ok(entries.every((entry) => entry.clientId === DURAND))
+  })
+
+  it('reprend les états des lieux clos de l’entreprise, validation comprise, jamais un brouillon', async () => {
+    await owner.client`truncate table inspection_templates cascade`
+    const [reservationDurand, reservationPetit] = await asTenant(async (tx) => {
+      const rows = await tx.execute(sql`
+        insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
+          (${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Atelier', now() - interval '3 days',
+           now() - interval '3 days' + interval '2 hours'),
+          (${SALLE}, ${PETIT}, 'booking', 'staff', 'confirmed', 'Atelier', now() - interval '2 days',
+           now() - interval '2 days' + interval '2 hours')
+        returning id, client_id`)
+      const byClient = new Map(rows.map((row) => [row.client_id as string, row.id as string]))
+      return [byClient.get(DURAND) as string, byClient.get(PETIT) as string]
+    })
+    const version = await asTenant(async (tx) => {
+      const [modele] = await tx.execute(sql`
+        insert into inspection_templates (resource_type, name) values ('salle', 'Salle') returning id`)
+      const [row] = await tx.execute(sql`
+        insert into inspection_template_versions (template_id, version, fields, created_by)
+        values (${modele.id as string}, 1,
+                '[{"id":"murs","label":"Murs","type":"condition","required":true}]'::jsonb, ${CAMILLE})
+        returning id`)
+      return row.id as string
+    })
+    const etat = async (clientId: string, bookingId: string, clore: boolean): Promise<string> => {
+      const [row] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into inspections (kind, resource_id, client_id, booking_id, template_version_id, created_by,
+                                   performed_at)
+          values ('entry', ${SALLE}, ${clientId}, ${bookingId}, ${version}, ${CAMILLE}, now() - interval '1 day')
+          returning id`),
+      )
+      const id = row.id as string
+      if (clore) {
+        await asTenant((tx) =>
+          tx.execute(sql`
+            update inspections set status = 'closed', closed_by = ${CAMILLE}, values = '{"murs":"bon"}'::jsonb
+             where id = ${id}`),
+        )
+      }
+      return id
+    }
+    await etat(DURAND, reservationDurand, false)
+    const clos = await etat(DURAND, reservationDurand, true)
+    await etat(PETIT, reservationPetit, true)
+
+    const avant = await loadAccountHistory(durand, { year: year(), timeZone: TZ, category: 'etats-des-lieux' })
+    assert.deepEqual(
+      avant.sources.inspections.map((row) => [row.id, row.signedAt]),
+      [[clos, null]],
+    )
+    assert.equal(avant.sources.bookings.length, 0)
+    assert.ok(avant.sources.inspections[0].closedAt instanceof Date)
+
+    await asTenant((tx) =>
+      tx.execute(sql`
+        update inspections set signed_by_member_id = ${JEANNE}, client_remarks = 'Rayure sur la porte'
+         where id = ${clos}`),
+    )
+    const { sources } = await loadAccountHistory(durand, { year: year(), timeZone: TZ })
+    const [ligne] = sources.inspections
+    assert.equal(sources.inspections.length, 1)
+    assert.equal(ligne.signedByName, 'Jeanne Durand')
+    assert.equal(ligne.hasRemarks, true)
+    assert.ok(ligne.signedAt instanceof Date)
+    const entries = buildAccountHistory(sources, { timeZone: TZ, today: todayIsoDate(TZ) })
+    const entree = entries.find((entry) => entry.category === 'etats-des-lieux')
+    assert.equal(entree?.outcome.label, 'Validé')
     assert.ok(entries.every((entry) => entry.clientId === DURAND))
   })
 

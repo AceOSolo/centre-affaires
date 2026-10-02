@@ -24,8 +24,7 @@ import {
   requestFiltersQuery,
 } from './demandes-regles.ts'
 import { readScan } from './fichiers.ts'
-import { notifyMailScanned } from './notifications.ts'
-import { notifyMailForwarded, notifyMailRequestRefused } from './notifications-demandes.ts'
+import { notifyMailRequestDone, notifyMailRequestRefused } from './notifications.ts'
 
 /**
  * Traitement des demandes par l'accueil (R21, ADR 037). Chaque action se
@@ -165,7 +164,7 @@ export async function completeForwardRequestAction(
   } catch (error) {
     return { ...refusal(error), values: read.values }
   }
-  after(() => notifyMailForwarded(result.id))
+  after(() => notifyMailRequestDone(result.id))
   done(result.mailItemId, 'reexpediee')
 }
 
@@ -209,7 +208,7 @@ export async function completeScanRequestAction(
           : 'Le fichier n’a pas pu être déposé. Réessayez ; si le problème persiste, le stockage est peut-être indisponible.',
     }
   }
-  // Même message que l'ouverture : la numérisation est dans l'espace.
-  after(() => notifyMailScanned(result.mailItemId))
+  // « Demande traitée » (ADR 038) : la numérisation est dans l'espace.
+  after(() => notifyMailRequestDone(result.id))
   done(result.mailItemId, 'numerisee')
 }

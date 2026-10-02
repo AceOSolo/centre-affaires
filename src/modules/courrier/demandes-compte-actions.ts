@@ -13,7 +13,7 @@ import {
   requestScan,
 } from './demandes-queries.ts'
 import { forwardAddressFieldLabels, readClientNote, readForwardAddress } from './demandes-regles.ts'
-import { notifyMailRequestSubmitted } from './notifications-demandes.ts'
+import { notifyMailRequestSubmitted } from './notifications.ts'
 
 /**
  * Demandes déposées et annulées depuis l'espace client (R21, R24, ADR 037).

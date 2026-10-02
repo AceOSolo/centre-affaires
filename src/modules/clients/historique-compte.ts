@@ -1,5 +1,7 @@
 import { formatDateTime, formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import type { MailKind, MailRequestKind, MailRequestStatus } from '../courrier/schema.ts'
+import { inspectionKindTitles } from '../etats-des-lieux/labels.ts'
+import type { InspectionKind } from '../etats-des-lieux/schema.ts'
 import { clientInvoiceState, type ClientInvoiceTone } from '../facturation/compte-regles.ts'
 import type { Invoice } from '../facturation/schema-factures.ts'
 import { formatCents } from '../facturation/tarifs.ts'
@@ -13,13 +15,14 @@ import type { BookingChannel, BookingStatus } from '../reservations/schema.ts'
  * réservation annulée garde son créneau, sa date et son auteur d'annulation
  * (ADR 036) ; une demande de courrier annulée ou refusée reste une demande,
  * avec chaque transition datée (ADR 037) ; un document de contrat ne se
- * réécrit pas (ADR 025) ; une facture émise ne s'efface jamais (ADR 026).
+ * réécrit pas (ADR 025) ; une facture émise ne s'efface jamais (ADR 026) ; un
+ * état des lieux clos est figé, sa validation par le client aussi (ADR 039).
  *
  * Ce module est pur : il met en forme des lignes déjà lues, pour être éprouvé
  * sans base. La lecture est dans `historique-compte-queries.ts`.
  */
 
-export const historyCategories = ['reservations', 'courrier', 'contrats', 'factures'] as const
+export const historyCategories = ['reservations', 'courrier', 'contrats', 'factures', 'etats-des-lieux'] as const
 export type HistoryCategory = (typeof historyCategories)[number]
 
 export const historyCategoryLabels: Record<HistoryCategory, string> = {
@@ -27,6 +30,7 @@ export const historyCategoryLabels: Record<HistoryCategory, string> = {
   courrier: 'Courrier',
   contrats: 'Contrats',
   factures: 'Factures',
+  'etats-des-lieux': 'États des lieux',
 }
 
 export function isHistoryCategory(value: string | undefined): value is HistoryCategory {
@@ -35,7 +39,8 @@ export function isHistoryCategory(value: string | undefined): value is HistoryCa
 
 /**
  * Où en est ce que l'entrée retrace, pour la pastille :
- * - `waiting` : une demande attend le centre ;
+ * - `waiting` : une demande attend le centre, ou un état des lieux attend la
+ *   validation du client ;
  * - `progress` : le centre s'en occupe ;
  * - `done` : faite, confirmée, émise ;
  * - `closed` : annulée, refusée, arrivée à son terme ;
@@ -345,6 +350,52 @@ export function invoiceHistoryEntry(row: HistoryInvoiceRow, today: string): Hist
 }
 
 /* -------------------------------------------------------------------------- */
+/* États des lieux                                                            */
+/* -------------------------------------------------------------------------- */
+
+/** Un état des lieux clos d'une entreprise du compte : seuls les clos lui sont montrés (ADR 039). */
+export type HistoryInspectionRow = {
+  id: string
+  clientId: string
+  clientName: string
+  kind: InspectionKind
+  resourceName: string
+  /** Date de l'état des lieux, sur place. */
+  performedAt: Date
+  /** Clôture par le centre : l'état des lieux est alors montré au client. */
+  closedAt: Date | null
+  signedAt: Date | null
+  /** La personne de l'entreprise qui l'a validé. */
+  signedByName: string | null
+  /** Des réserves ont été saisies à la validation ; leur texte se lit sur l'état des lieux. */
+  hasRemarks: boolean
+}
+
+export function inspectionHistoryEntry(row: HistoryInspectionRow, timeZone: string): HistoryEntry {
+  const closedAt = row.closedAt ?? row.performedAt
+  const steps: HistoryStep[] = [{ label: 'Établi et clos par le centre', at: closedAt }]
+  if (row.signedAt) {
+    steps.push({
+      label: row.signedByName ? `Validé par ${row.signedByName}` : 'Validé depuis l’espace client',
+      at: row.signedAt,
+    })
+  }
+  return {
+    key: `etats-des-lieux:${row.id}`,
+    category: 'etats-des-lieux',
+    at: closedAt,
+    title: `${inspectionKindTitles[row.kind]} — ${row.resourceName}`,
+    detail: `Fait le ${formatDateTime(row.performedAt, timeZone)}`,
+    clientId: row.clientId,
+    clientName: row.clientName,
+    outcome: row.signedAt ? { label: 'Validé', tone: 'done' } : { label: 'À valider', tone: 'waiting' },
+    steps,
+    notes: row.hasRemarks ? ['Réserves ajoutées à la validation'] : [],
+    link: { href: `/compte/etats-des-lieux/${row.id}`, label: 'Voir l’état des lieux' },
+  }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Assemblage                                                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -353,6 +404,7 @@ export type AccountHistorySources = {
   mailRequests: readonly HistoryMailRequestRow[]
   contractDocuments: readonly HistoryContractDocumentRow[]
   invoices: readonly HistoryInvoiceRow[]
+  inspections: readonly HistoryInspectionRow[]
 }
 
 /**
@@ -369,6 +421,7 @@ export function buildAccountHistory(
     ...sources.mailRequests.map((row) => mailRequestHistoryEntry(row, options.timeZone)),
     ...sources.contractDocuments.map(contractDocumentHistoryEntry),
     ...sources.invoices.map((row) => invoiceHistoryEntry(row, options.today)),
+    ...sources.inspections.map((row) => inspectionHistoryEntry(row, options.timeZone)),
   ]
   return entries.sort(
     (a, b) => b.at.getTime() - a.at.getTime() || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),

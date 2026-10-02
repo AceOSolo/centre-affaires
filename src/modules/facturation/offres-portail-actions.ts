@@ -23,7 +23,7 @@ export async function requestOfferAction(
   _previous: OfferRequestState,
   formData: FormData,
 ): Promise<OfferRequestState> {
-  const { user, accounts } = await requireClientAccount()
+  const { accounts } = await requireClientAccount()
   const offerId = String(formData.get('offerId') ?? '')
   const clientId = String(formData.get('clientId') ?? '')
   const account =
@@ -48,7 +48,7 @@ export async function requestOfferAction(
     }
   }
 
-  await requestOffer({ account, memberName: user.name?.trim() || user.email, offer })
+  await requestOffer({ account, offer })
   revalidatePath('/demandes')
   return {
     status: 'sent',

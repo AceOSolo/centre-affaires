@@ -2,12 +2,14 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { notifyInspectionToSign } from '../notifications/declencheurs-etats-des-lieux.ts'
 import { resourceTypes, type ResourceType } from '../ressources/schema.ts'
 import {
   FIELD_ID_PATTERN,
@@ -278,6 +280,9 @@ export async function saveInspectionAction(
   } catch (error) {
     return { error: refusal(error), values: raw }
   }
+  // Clos : le client est invité à le valider (`inspection_to_sign`, ADR 038),
+  // après la réponse ; le message ne contient ni le relevé ni les photos.
+  if (close) after(() => notifyInspectionToSign(id))
 
   revalidatePath('/etats-des-lieux')
   revalidatePath(`/etats-des-lieux/${id}`)

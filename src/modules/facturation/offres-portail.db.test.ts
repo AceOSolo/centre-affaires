@@ -54,7 +54,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
     withTenant(DEFAULT_TENANT_ID, run, app.db)
   const journal = () => asTenant((tx) => tx.select().from(notificationDeliveries))
   const demander = () =>
-    requestOffer({ account: durand[0], memberName: 'Jeanne Martin', offer: { id: PREMIUM, name: 'Domiciliation Premium' } })
+    requestOffer({ account: durand[0], offer: { id: PREMIUM, name: 'Domiciliation Premium' } })
 
   let centreEmail: string | null = null
 
@@ -133,7 +133,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
     assert.equal(ligne.relatedId, PREMIUM)
     assert.equal(ligne.status, 'not_configured')
     assert.deepEqual(ligne.recipients, ['accueil@centre.test'])
-    assert.equal(ligne.subject, 'Offre demandée : Domiciliation Premium — Atelier Durand')
+    assert.equal(ligne.subject, 'Offre demandée — Domiciliation Premium, Atelier Durand')
     const [{ total }] = await asTenant((tx) => tx.execute(sql`select count(*)::int as total from contracts`))
     assert.equal(total, 0)
   })
@@ -170,7 +170,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
     await asTenant((tx) =>
       tx.execute(sql`
         insert into notification_templates (event, subject, body, active)
-        values ('offer_requested', 'Nouvelle demande : {{offre}} pour {{client}}', 'Rappeler {{personne}}.', true)`),
+        values ('offer_requested', 'Nouvelle demande : {{offre}} pour {{client}}', 'Rappeler {{demandeur}}.', true)`),
     )
     await demander()
     await asTenant((tx) =>
@@ -180,7 +180,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
     const lignes = (await journal()).sort((a, b) => a.sentAt.getTime() - b.sentAt.getTime())
     assert.equal(lignes[0].subject, 'Nouvelle demande : Domiciliation Premium pour Atelier Durand')
     assert.equal(lignes[1].status, 'skipped')
-    assert.equal(lignes[1].error, 'Modèle désactivé par le centre.')
+    assert.match(lignes[1].error ?? '', /^Modèle désactivé par le centre/)
     assert.deepEqual(lignes[1].recipients, [])
   })
 

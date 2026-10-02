@@ -4,6 +4,7 @@ import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { contractAmendments, contractDocuments, contracts } from '../contrats/schema.ts'
 import { mailItems, mailRequests } from '../courrier/schema.ts'
+import { inspections } from '../etats-des-lieux/schema.ts'
 import { invoices } from '../facturation/schema-factures.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
@@ -13,6 +14,7 @@ import type {
   HistoryBookingRow,
   HistoryCategory,
   HistoryContractDocumentRow,
+  HistoryInspectionRow,
   HistoryInvoiceRow,
   HistoryMailRequestRow,
 } from './historique-compte.ts'
@@ -47,7 +49,13 @@ export async function loadAccountHistory(
   accounts: readonly ClientAccount[],
   options: { year: number; timeZone: string; category?: HistoryCategory },
 ): Promise<{ sources: AccountHistorySources; truncated: boolean }> {
-  const empty: AccountHistorySources = { bookings: [], mailRequests: [], contractDocuments: [], invoices: [] }
+  const empty: AccountHistorySources = {
+    bookings: [],
+    mailRequests: [],
+    contractDocuments: [],
+    invoices: [],
+    inspections: [],
+  }
   if (accounts.length === 0) return { sources: empty, truncated: false }
   const clientIds = accounts.map((account) => account.clientId)
   const { from, to } = yearRange(options.year, options.timeZone)
@@ -203,7 +211,44 @@ export async function loadAccountHistory(
         .limit(HISTORY_SOURCE_LIMIT + 1)
     }
 
-    const truncated = [bookingRows, mailRequestRows, documentRows, invoiceRows].some(
+    let inspectionRows: HistoryInspectionRow[] = []
+    if (wants('etats-des-lieux')) {
+      const signedBy = alias(clientMembers, 'signed_by')
+      // Seuls les états clos sont montrés au client (ADR 039) ; la base le
+      // garantit aussi sous la portée client. Datés à leur clôture : c'est
+      // alors qu'ils entrent dans l'espace.
+      const shownAt = sql<Date>`coalesce(${inspections.closedAt}, ${inspections.performedAt})`
+      inspectionRows = await tx
+        .select({
+          id: inspections.id,
+          clientId: clients.id,
+          clientName: clients.name,
+          kind: inspections.kind,
+          resourceName: resources.name,
+          performedAt: inspections.performedAt,
+          closedAt: inspections.closedAt,
+          signedAt: inspections.signedAt,
+          signedByName: memberName(signedBy),
+          hasRemarks: sql<boolean>`coalesce(btrim(${inspections.clientRemarks}), '') <> ''`,
+        })
+        .from(inspections)
+        .innerJoin(clients, eq(clients.id, inspections.clientId))
+        .innerJoin(resources, eq(resources.id, inspections.resourceId))
+        .leftJoin(signedBy, eq(signedBy.id, inspections.signedByMemberId))
+        .where(
+          and(
+            inArray(inspections.clientId, clientIds),
+            eq(inspections.status, 'closed'),
+            isNull(inspections.deletedAt),
+            sql`${shownAt} >= ${from.toISOString()}::timestamptz`,
+            sql`${shownAt} < ${to.toISOString()}::timestamptz`,
+          ),
+        )
+        .orderBy(desc(shownAt))
+        .limit(HISTORY_SOURCE_LIMIT + 1)
+    }
+
+    const truncated = [bookingRows, mailRequestRows, documentRows, invoiceRows, inspectionRows].some(
       (rows) => rows.length > HISTORY_SOURCE_LIMIT,
     )
     return {
@@ -212,6 +257,7 @@ export async function loadAccountHistory(
         mailRequests: mailRequestRows.slice(0, HISTORY_SOURCE_LIMIT),
         contractDocuments: documentRows.slice(0, HISTORY_SOURCE_LIMIT),
         invoices: invoiceRows.slice(0, HISTORY_SOURCE_LIMIT),
+        inspections: inspectionRows.slice(0, HISTORY_SOURCE_LIMIT),
       },
       truncated,
     }
@@ -240,7 +286,9 @@ export async function findAccountHistoryStart(accounts: readonly ClientAccount[]
            join contracts as k on k.id = d.contract_id
           where k.client_id in (${ids}) and k.status <> 'draft' and k.deleted_at is null),
         (select min(coalesce(i.issued_at, i.created_at)) from invoices as i
-          where i.client_id in (${ids}) and i.status <> 'draft' and i.deleted_at is null)
+          where i.client_id in (${ids}) and i.status <> 'draft' and i.deleted_at is null),
+        (select min(coalesce(e.closed_at, e.performed_at)) from inspections as e
+          where e.client_id in (${ids}) and e.status = 'closed' and e.deleted_at is null)
       ) as first_at`),
   )
   // `execute` rend les instants en chaînes (ADR 019, pièges du schéma).

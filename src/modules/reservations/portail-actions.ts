@@ -9,8 +9,11 @@ import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
 import type { QuoteDisplay } from '../facturation/devis.ts'
 import { formatCents } from '../facturation/tarifs.ts'
+import {
+  notifyBookingConfirmed,
+  notifyBookingRequestSubmitted,
+} from '../notifications/declencheurs-reservations.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
-import { notifyPortalBookingRequest } from './portail-notifications.ts'
 import {
   PortalBookingError,
   createPortalBooking,
@@ -186,11 +189,13 @@ export async function bookFromPortalAction(
 
   const bookingId = created.id
   if (created.status === 'confirmed') {
-    // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014).
+    // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014),
+    // et confirmée par courriel à la personne (`booking_confirmed`, ADR 038).
     after(() => syncBookingToGoogleCalendar(bookingId))
+    after(() => notifyBookingConfirmed(bookingId))
   } else {
     // L'accueil est prévenu qu'un créneau attend sa réponse (ADR 038).
-    after(() => notifyPortalBookingRequest(bookingId))
+    after(() => notifyBookingRequestSubmitted(bookingId))
   }
   revalidatePath('/compte/reservations', 'layout')
   revalidatePath('/reservations', 'layout')

@@ -10,12 +10,12 @@ import { addDaysToIsoDate, todayIsoDate, wallClockToUtc } from '../../lib/dates.
 import type { ClientAccount } from '../clients/comptes.ts'
 import { contracts } from '../contrats/schema.ts'
 import { frozenQuoteDisplay } from '../facturation/devis.ts'
+import { notifyBookingRequestSubmitted } from '../notifications/declencheurs-reservations.ts'
 import { notificationDeliveries } from '../notifications/schema.ts'
 import { createResource, updateClientBookingMode } from '../ressources/queries.ts'
 import { defaultClientBookingMode } from '../ressources/reservation-client.ts'
 import { cancelRequestForAccounts, listBookingsForAccounts } from './compte-queries.ts'
 import { findBookingAuthors, listPendingRequests } from './demandes-queries.ts'
-import { notifyPortalBookingRequest } from './portail-notifications.ts'
 import {
   PortalBookingError,
   createPortalBooking,
@@ -368,8 +368,8 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
     it('prévient l’accueil d’une demande, et pas d’une réservation confirmée d’emblée', async () => {
       const demande = await reserver(durand, SALLE)
       const confirmee = await reserver(durand, VEHICULE)
-      await notifyPortalBookingRequest(demande.id)
-      await notifyPortalBookingRequest(confirmee.id)
+      await notifyBookingRequestSubmitted(demande.id)
+      await notifyBookingRequestSubmitted(confirmee.id)
       const journal = await asTenant((tx) => tx.select().from(notificationDeliveries))
       assert.equal(journal.length, 1)
       assert.equal(journal[0].event, 'booking_request_submitted')
@@ -380,7 +380,7 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
       // SMTP non configuré : rien n'est parti, l'adresse du centre est notée.
       assert.equal(journal[0].status, 'not_configured')
       assert.deepEqual(journal[0].recipients, ['accueil@centre.test'])
-      assert.match(journal[0].subject, /Atelier Durand/)
+      assert.match(journal[0].subject, /^Demande de réservation — Salle Europe, /)
     })
   })
 })

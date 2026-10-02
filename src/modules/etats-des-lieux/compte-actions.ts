@@ -2,9 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
+import { notifyInspectionSigned } from '../notifications/declencheurs-etats-des-lieux.ts'
 import { inspectionRefusalMessage } from './erreurs.ts'
 import { signInspection } from './queries.ts'
 
@@ -45,6 +47,9 @@ export async function signInspectionAction(
   if (outcome === 'already_signed') {
     return { error: 'Cet état des lieux a déjà été validé. Rechargez la page.' }
   }
+  // Le centre apprend la validation (`inspection_signed`, ADR 038), sans le
+  // texte des réserves, qui se lit à l'écran.
+  after(() => notifyInspectionSigned(id))
 
   revalidatePath('/compte/etats-des-lieux')
   revalidatePath(`/compte/etats-des-lieux/${id}`)

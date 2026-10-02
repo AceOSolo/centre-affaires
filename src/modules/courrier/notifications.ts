@@ -1,7 +1,9 @@
 import {
   findPendingMailRequestId,
   notifyMailReceived,
-  notifyMailRequestSubmitted,
+  notifyMailRequestDone as notifyRequestDone,
+  notifyMailRequestRefused as notifyRequestRefused,
+  notifyMailRequestSubmitted as notifyRequestSubmitted,
   notifyMailScanned as notifyScanned,
 } from '../notifications/declencheurs-courrier.ts'
 
@@ -32,8 +34,31 @@ export async function notifyMailScanned(mailItemId: string): Promise<void> {
 export async function notifyOpeningRequested(mailItemId: string): Promise<void> {
   try {
     const requestId = await findPendingMailRequestId(mailItemId, 'open_and_scan')
-    if (requestId) await notifyMailRequestSubmitted(requestId)
+    if (requestId) await notifyRequestSubmitted(requestId)
   } catch (error) {
     console.error('Notification de demande d’ouverture impossible', error)
   }
+}
+
+/**
+ * Demande de numérisation ou de réexpédition déposée depuis l'espace client
+ * (ADR 037) : à l'adresse du centre.
+ */
+export async function notifyMailRequestSubmitted(mailRequestId: string): Promise<void> {
+  await notifyRequestSubmitted(mailRequestId)
+}
+
+/**
+ * Numérisation ou réexpédition faite par l'accueil (ADR 037) : aux personnes
+ * de l'entreprise, avec le numéro de suivi d'une réexpédition. Une demande
+ * d'ouverture faite ne passe pas ici : l'ouverture prévient déjà par
+ * « courrier numérisé ».
+ */
+export async function notifyMailRequestDone(mailRequestId: string): Promise<void> {
+  await notifyRequestDone(mailRequestId)
+}
+
+/** Demande refusée par l'accueil (ADR 037) : aux personnes de l'entreprise. */
+export async function notifyMailRequestRefused(mailRequestId: string): Promise<void> {
+  await notifyRequestRefused(mailRequestId)
 }

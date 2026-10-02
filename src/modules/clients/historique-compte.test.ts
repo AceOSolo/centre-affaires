@@ -7,10 +7,12 @@ import {
   buildAccountHistory,
   contractDocumentHistoryEntry,
   groupHistoryByMonth,
+  inspectionHistoryEntry,
   invoiceHistoryEntry,
   isHistoryCategory,
   mailRequestHistoryEntry,
   type HistoryBookingRow,
+  type HistoryInspectionRow,
   type HistoryInvoiceRow,
   type HistoryMailRequestRow,
 } from './historique-compte.ts'
@@ -76,6 +78,23 @@ const facture = (overrides: Partial<HistoryInvoiceRow> = {}): HistoryInvoiceRow 
   issuedAt: new Date('2026-10-01T10:00:00Z'),
   ...overrides,
 })
+
+
+function etatDesLieux(overrides: Partial<HistoryInspectionRow> = {}): HistoryInspectionRow {
+  return {
+    id: 'e1',
+    clientId: DURAND,
+    clientName: 'Atelier Durand',
+    kind: 'entry',
+    resourceName: 'Bureau 3',
+    performedAt: new Date('2026-10-01T08:00:00Z'),
+    closedAt: new Date('2026-10-01T09:00:00Z'),
+    signedAt: null,
+    signedByName: null,
+    hasRemarks: false,
+    ...overrides,
+  }
+}
 
 describe('historique du compte : réservations', () => {
   it('dit qui a demandé la réservation depuis l’espace client, et qu’elle attend', () => {
@@ -233,6 +252,45 @@ describe('historique du compte : documents et factures', () => {
   })
 })
 
+describe('historique du compte : états des lieux', () => {
+  it('montre un état des lieux clos à valider, daté à sa clôture, avec son lien', () => {
+    const entry = inspectionHistoryEntry(etatDesLieux(), TZ)
+    assert.equal(entry.key, 'etats-des-lieux:e1')
+    assert.equal(entry.category, 'etats-des-lieux')
+    assert.equal(entry.title, 'État des lieux d’entrée — Bureau 3')
+    assert.equal(entry.at.toISOString(), '2026-10-01T09:00:00.000Z')
+    assert.deepEqual(entry.outcome, { label: 'À valider', tone: 'waiting' })
+    assert.deepEqual(
+      entry.steps.map((step) => step.label),
+      ['Établi et clos par le centre'],
+    )
+    assert.deepEqual(entry.notes, [])
+    assert.equal(entry.link?.href, '/compte/etats-des-lieux/e1')
+  })
+
+  it('dit qui l’a validé et s’il a laissé des réserves, sans leur texte', () => {
+    const entry = inspectionHistoryEntry(
+      etatDesLieux({
+        kind: 'exit',
+        signedAt: new Date('2026-10-02T07:15:00Z'),
+        signedByName: 'Jeanne Durand',
+        hasRemarks: true,
+      }),
+      TZ,
+    )
+    assert.equal(entry.title, 'État des lieux de sortie — Bureau 3')
+    assert.deepEqual(entry.outcome, { label: 'Validé', tone: 'done' })
+    assert.deepEqual(
+      entry.steps.map((step) => [step.label, step.at?.toISOString()]),
+      [
+        ['Établi et clos par le centre', '2026-10-01T09:00:00.000Z'],
+        ['Validé par Jeanne Durand', '2026-10-02T07:15:00.000Z'],
+      ],
+    )
+    assert.deepEqual(entry.notes, ['Réserves ajoutées à la validation'])
+  })
+})
+
 describe('historique du compte : assemblage', () => {
   it('range tout du plus récent au plus ancien, toutes rubriques confondues', () => {
     const entries = buildAccountHistory(
@@ -251,12 +309,13 @@ describe('historique du compte : assemblage', () => {
           },
         ],
         invoices: [facture({ issuedAt: new Date('2026-10-01T10:00:00Z') })],
+        inspections: [etatDesLieux({ closedAt: new Date('2026-10-01T09:00:00Z') })],
       },
       { timeZone: TZ, today: TODAY },
     )
     assert.deepEqual(
       entries.map((entry) => entry.key),
-      ['courrier:m1', 'factures:f1', 'reservations:b1', 'contrats:c1:1'],
+      ['courrier:m1', 'factures:f1', 'etats-des-lieux:e1', 'reservations:b1', 'contrats:c1:1'],
     )
   })
 
@@ -271,6 +330,7 @@ describe('historique du compte : assemblage', () => {
         mailRequests: [],
         contractDocuments: [],
         invoices: [],
+        inspections: [],
       },
       { timeZone: TZ, today: TODAY },
     )
@@ -283,8 +343,9 @@ describe('historique du compte : assemblage', () => {
     )
   })
 
-  it('ne connaît que ses quatre rubriques', () => {
+  it('ne connaît que ses cinq rubriques', () => {
     assert.equal(isHistoryCategory('factures'), true)
+    assert.equal(isHistoryCategory('etats-des-lieux'), true)
     assert.equal(isHistoryCategory('brouillons'), false)
     assert.equal(isHistoryCategory(undefined), false)
   })
