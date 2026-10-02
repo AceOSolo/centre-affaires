@@ -45,6 +45,7 @@ import {
 import { findContract, findContractOccupation } from '../../../../modules/contrats/queries.ts'
 import { listContractRenewals } from '../../../../modules/contrats/reconduction-queries.ts'
 import { listContractSubscriptions } from '../../../../modules/contrats/souscriptions.ts'
+import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
 import { TerminateForm } from '../../../../modules/contrats/terminate-form.tsx'
 import {
   findContractTerms,
@@ -531,6 +532,17 @@ export default async function ContractPage({
           )
         )}
       </section>
+
+      {/* États des lieux d'entrée et de sortie au titre du contrat (R06, ADR 039). */}
+      {can(member.role, 'etats-des-lieux.gerer') && (
+        <InspectionsSection
+          filter={{ contractId: contract.id }}
+          context={{ contrat: contract.id }}
+          timeZone={timeZone}
+          showResource
+          unavailable={archived ? 'Contrat archivé : plus d’état des lieux à ouvrir.' : undefined}
+        />
+      )}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Échéancier prévisionnel</h2>

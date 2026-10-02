@@ -29,6 +29,7 @@ import { DEFAULT_TENANT_ID } from '../src/db/tenants.ts'
 import { documentKeyringFromEnv } from '../src/lib/chiffrement-documents.ts'
 import { putObject, readObjectBytes } from '../src/lib/stockage.ts'
 import { encryptStoredScans, type ObjectStore } from '../src/modules/courrier/reprise-chiffrement.ts'
+import { inspectionPhotosOnPreviousKeys } from '../src/modules/etats-des-lieux/conservation.ts'
 import { rekeyMandateIbans } from '../src/modules/facturation/mandats-rechiffrement.ts'
 
 const { values } = parseArgs({
@@ -108,6 +109,25 @@ try {
     console.log(`IBAN rechiffrés : ${mandates.rotated} · traités ailleurs : ${mandates.skipped}.`)
     for (const { id, error } of mandates.failed) console.error(`Laissé tel quel : sepa_mandates ${id} — ${error}`)
     if (mandates.failed.length > 0) process.exitCode = 1
+  }
+
+  // Les photos d'états des lieux ne se rechiffrent pas : la base fige la clé
+  // d'une photo déposée (ADR 039). On dit seulement quelles clés précédentes
+  // doivent rester dans l'environnement tant qu'elles existent.
+  const photos = Object.entries(
+    await inspectionPhotosOnPreviousKeys({
+      database: db,
+      tenantId: values.centre,
+      currentVersion: keyring.currentVersion,
+    }),
+  )
+  if (photos.length > 0) {
+    console.log(
+      `Photos d’états des lieux chiffrées avec une clé précédente : ${photos
+        .map(([version, count]) => `${count} (clé ${version})`)
+        .join(', ')}. Elles restent lisibles tant que ces clés restent configurées ` +
+        '(DOCUMENTS_ENCRYPTION_KEY_<N>) ; ne les retirez qu’une fois ces photos purgées.',
+    )
   }
 } finally {
   await client.end()

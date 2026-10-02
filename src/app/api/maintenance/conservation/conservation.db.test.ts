@@ -105,6 +105,8 @@ describe('route de conservation', { skip: raison }, () => {
       publicRequests: 1,
       anonymizedClients: { clients: 0, contacts: 0, accesses: 0, mailSenders: 0 },
       anonymizedMembers: { accesses: 0, staff: 0 },
+      inspectionPhotos: 0,
+      inspectionPhotoViews: 0,
     })
 
     const echue = await demandeur('Demande publique anonymisée')

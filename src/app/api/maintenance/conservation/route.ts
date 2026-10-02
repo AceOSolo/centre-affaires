@@ -3,6 +3,10 @@ import { isMaintenanceRequest, maintenanceNotFound } from '../../../../lib/maint
 import { deleteObject } from '../../../../lib/stockage.ts'
 import { currentTenantId } from '../../../../lib/tenant.ts'
 import { purgeExpiredMail } from '../../../../modules/courrier/conservation.ts'
+import {
+  purgeExpiredInspectionPhotos,
+  purgeExpiredInspectionPhotoViews,
+} from '../../../../modules/etats-des-lieux/conservation.ts'
 import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations/conservation.ts'
 import {
   anonymizeExpiredClients,
@@ -14,7 +18,9 @@ import { anonymizationLogLine } from '../../../../modules/rgpd/bilan.ts'
  * Purge planifiée de ce qui est arrivé au terme de sa conservation : le
  * courrier et son journal d'accès (ADR 015), les coordonnées des demandeurs de
  * la page publique (ADR 020), les entreprises et les personnes retirées à
- * anonymiser (R29, ADR 040). Les durées sont celles du centre (`tenants`).
+ * anonymiser (R29, ADR 040), les photos d'états des lieux et le journal de
+ * leurs consultations (R33, ADR 039). Les durées sont celles du centre
+ * (`tenants`).
  *
  * Appelée chaque nuit par une tâche du serveur (infra/serveur/README.md), avec
  * le jeton `MAINTENANCE_TOKEN`. Sans jeton configuré, la route n'existe pas :
@@ -35,5 +41,19 @@ export async function POST(request: Request) {
   const anonymizedMembers = await withTenant(tenantId, anonymizeRemovedMembers)
   console.info(anonymizationLogLine(anonymizedClients, anonymizedMembers))
   const mail = await withTenant(tenantId, (tx) => purgeExpiredMail(tx, deleteObject))
-  return Response.json({ ...mail, publicRequests, anonymizedClients, anonymizedMembers })
+  // États des lieux (R33, ADR 039) : le journal des consultations des photos
+  // d'abord, dans sa transaction — il ne dépend pas du stockage —, puis les
+  // photos échues, fichier effacé avant que la base ne marque la ligne.
+  const inspectionPhotoViews = await withTenant(tenantId, purgeExpiredInspectionPhotoViews)
+  const inspectionPhotos = await withTenant(tenantId, (tx) =>
+    purgeExpiredInspectionPhotos(tx, deleteObject),
+  )
+  return Response.json({
+    ...mail,
+    publicRequests,
+    anonymizedClients,
+    anonymizedMembers,
+    inspectionPhotos,
+    inspectionPhotoViews,
+  })
 }
