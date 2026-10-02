@@ -330,3 +330,32 @@ préférences sous portée client), et la route de conservation.
   servies.
 - La durée du journal reste celle du centre (`notification_log_retention_months`) ;
   son réglage à l'écran relève de la configuration des durées.
+
+### Intégration de la vague (02/10/2026)
+
+Les déclencheurs marqués **prêts** ci-dessus sont branchés ; plus aucun
+envoi ne contourne `notify()` (`sendMessage()` n'est appelé que par le
+moteur) :
+
+| Événement | Branché dans |
+|---|---|
+| `mail_request_submitted` (numérisation, réexpédition) | `courrier/demandes-compte-actions.ts`, par `courrier/notifications.ts` |
+| `mail_request_done` (numérisation, réexpédition), `mail_request_refused` | `courrier/demandes-actions.ts`, par `courrier/notifications.ts` |
+| `booking_request_submitted` (espace client, « accord de l'accueil ») | `reservations/portail-actions.ts` |
+| `booking_confirmed` (espace client, « confirmation immédiate ») | `reservations/portail-actions.ts` |
+| `offer_requested` | `facturation/offres-portail.ts` (`requestOffer`), qui échoue si le journal n'est pas écrit : il est la trace de la demande |
+| `inspection_to_sign` | clôture d'un état des lieux (`etats-des-lieux/actions.ts`) |
+| `inspection_signed` | validation par le client (`etats-des-lieux/compte-actions.ts`) |
+
+Les chemins parallèles des autres tranches sont retirés
+(`notifications/message-centre.ts`, `reservations/portail-notifications.ts`,
+`courrier/notifications-demandes.ts`). Le refus d'une demande de courrier
+porte son motif et la réexpédition faite son numéro de suivi, comme les
+textes par défaut ci-dessus : la tranche courrier les laissait hors du
+message (ADR 037), le choix est **à valider par le centre**, qui peut
+retirer ces lignes de ses modèles.
+
+La tâche de nuit appelle, chacune dans sa transaction : demandes publiques,
+anonymisation des entreprises puis des personnes retirées (ADR 040), journal
+des messages, courrier, journal des consultations des photos puis photos
+d'états des lieux (ADR 039).

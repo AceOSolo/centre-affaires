@@ -292,6 +292,10 @@ marque « Écart » ou « Dégradation », et un résumé compte les écarts.
   tranche : le moteur de l'ADR 038 se construit en parallèle. Points
   d'appel : la branche « clore » de `saveInspectionAction` (`actions.ts`) et
   `signInspectionAction` (`compte-actions.ts`), après la réponse (`after`).
+  *Branchés à l'intégration de la vague (02/10/2026)*, à ces deux points :
+  le client est invité à valider, le centre apprend la validation, sans le
+  relevé, les photos ni le texte des réserves. L'historique du compte
+  (R24) montre aussi les états des lieux clos et leur validation.
 - *À valider par le centre*, en plus de ce qui précède : les modèles de
   départ, la taille et la qualité de compression, la fenêtre des
   occupations proposées depuis une ressource.

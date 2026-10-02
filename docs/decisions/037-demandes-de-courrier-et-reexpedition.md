@@ -304,7 +304,31 @@ d'une numérisation ou d'une réexpédition → au centre
 client (`notifyMailForwarded`, `notifyMailRequestRefused`,
 `courrier/notifications-demandes.ts`). Ils ne transportent ni document, ni
 adresse, ni motif (ADR 015). La tranche des notifications les fait passer
-par les modèles, les préférences et le journal.
+par les modèles, les préférences et le journal : voir « Intégration de la
+vague » ci-dessous.
+
+### Intégration de la vague (02/10/2026)
+
+Les courriels des demandes passent par le moteur de l'ADR 038, comme ceux du
+courrier : `courrier/notifications.ts` garde les noms appelés par les
+actions et délègue aux déclencheurs (`notifications/declencheurs-courrier.ts`).
+`notifications-demandes.ts` et son test sont retirés.
+
+- Dépôt d'une numérisation ou d'une réexpédition → `mail_request_submitted`
+  au centre (comme l'ouverture) ;
+- numérisation ou réexpédition faite → `mail_request_done` au client, avec
+  le numéro de suivi d'une réexpédition ; une ouverture faite ne donne que
+  `mail_scanned` (pas de second message) ;
+- refus → `mail_request_refused` au client.
+
+Le moteur suit les préférences des personnes et inscrit chaque envoi au
+journal. Deux écarts avec le paragraphe précédent, tranchés par le texte par
+défaut de l'ADR 038 et **à valider par le centre** : le refus porte son
+motif, et la réexpédition son numéro de suivi. Ni l'un ni l'autre n'est un
+document (ADR 015), et l'adresse de réexpédition n'est jamais dans le
+message ; le centre peut retirer ces lignes de ses modèles
+(`/notifications/modeles`). L'annulation d'une demande par le client ne
+prévient pas le centre : aucun événement ne la porte (manque relevé).
 
 ### Choix par défaut, à valider par le centre
 

@@ -291,7 +291,8 @@ demande). Modèle du centre s'il existe, variables `{{centre}}`,
 `{{montant}}`, `{{lien}}` ; modèle désactivé ou centre sans adresse : rien
 ne part, journalisé `skipped`. `sendMessage` rend désormais l'issue de
 l'envoi (`SendReport`) pour le journal. À l'intégration avec le moteur de
-la tranche notifications (ADR 038), ces deux appels passent par lui.
+la tranche notifications (ADR 038), ces deux appels passent par lui : voir
+« Intégration de la vague » en fin d'ADR.
 
 ### Manque de schéma relevé
 
@@ -415,8 +416,8 @@ les pages de `(portail)` et de `(impression)/compte` (analyse des sources
 par le compilateur TypeScript, déjà en dépendance) et échoue sur tout lien ou
 bouton sans classe de 44 px — hors lien au fil d'une phrase (WCAG 2.5.8) et
 élément réservé au grand écran — et sur toute largeur fixe plus grande
-qu'un écran de 375 px moins ses marges. Il vérifie aussi les six rubriques du
-compte. Sans navigateur dans la CI, l'absence de défilement horizontal à
+qu'un écran de 375 px moins ses marges. Il vérifie aussi les rubriques du
+compte (huit après l'intégration) et qu'aucune ne mène à une page absente. Sans navigateur dans la CI, l'absence de défilement horizontal à
 375 px reste à constater à l'écran (outils de développement, 375 × 812) à
 chaque tranche ; la règle de largeur et les `overflow-x-auto` en sont la
 garde statique. Les composants des modules affichés dans le portail
@@ -440,3 +441,30 @@ relue à chaque tranche.
   « Résilié, en cours jusqu'à son terme ») ;
 - la référence de virement demandée : le numéro de la facture, une facture
   par virement.
+
+## Intégration de la vague (02/10/2026)
+
+Les six tranches de la vague, construites en parallèle, sont réunies sur
+`feat/cdc-vague-3`. Ce qui change pour cet ADR :
+
+- **Messages par le moteur unique (ADR 038).** `message-centre.ts`,
+  `portail-notifications.ts` et leurs tests sont retirés. Une demande
+  déposée depuis l'espace (ressource « accord de l'accueil ») appelle
+  `notifyBookingRequestSubmitted` ; une réservation confirmée d'emblée
+  (« confirmation immédiate ») appelle `notifyBookingConfirmed`, qui
+  confirme à la personne qui a réservé — ce que la tranche avait laissé au
+  moteur. Une offre demandée part par `notifyOfferRequested` : le journal
+  reste la trace de la demande, et `requestOffer` échoue si la ligne n'est
+  pas écrite (`logged`), comme avant.
+- **Textes et variables** : ceux du catalogue du moteur (`catalogue.ts`).
+  Le modèle d'un centre nomme la personne `{{demandeur}}` (et non plus
+  `{{personne}}`), le créneau `{{creneau}}` ; le lien de `offer_requested`
+  mène à la fiche du client, « Demandes » gardant « Préparer le contrat ».
+  `sendMessage()` rend l'issue du moteur (`SendResult`), et non plus
+  `SendReport`.
+- **Navigation du compte** : huit rubriques — Réservations, Offres,
+  Courrier, Contrats, Factures, États des lieux, Historique, Préférences —
+  en trois rangées sur téléphone.
+- **Historique du compte** : une cinquième rubrique, « États des lieux »
+  (états clos des entreprises du compte, datés à leur clôture ; validation,
+  auteur, et la seule mention de réserves, jamais leur texte).

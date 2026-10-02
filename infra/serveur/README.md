@@ -318,6 +318,12 @@ Les prospects sans suite, les clients partis et les traces des accès et des
 membres retirés sont anonymisés au terme de leur durée (R29, ADR 040), sauf
 exclusion (facture non soldée, contrat vivant…) ; les factures émises ne sont
 jamais touchées.
+Le journal des messages envoyés (ADR 038) est purgé au terme de sa durée
+(12 mois par défaut, `notification_log_retention_months`), les photos
+d'états des lieux et le journal de leurs consultations au terme des leurs
+(ADR 039) : le fichier est effacé du stockage, la ligne reste, marquée.
+Chaque purge et chaque anonymisation a sa propre transaction : une panne du
+stockage n'en retient aucune autre.
 Toutes ces durées se règlent à l'écran **Configuration du centre**
 (`/configuration`, exploitant), et non plus dans `infra/configurer-centre.mjs`.
 La purge est une route de l'application, appelée chaque nuit ; elle exige
@@ -326,17 +332,20 @@ La purge est une route de l'application, appelée chaque nuit ; elle exige
 Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 
 ```cron
-# Purge du courrier échu, des coordonnées des demandes publiques échues et
-# anonymisation RGPD, chaque nuit à 3 h 15 (ADR 015, ADR 020, ADR 040).
+# Purge du courrier échu, des coordonnées des demandes publiques échues, du
+# journal des messages et des photos d'états des lieux échues, et
+# anonymisation RGPD, chaque nuit à 3 h 15 (ADR 015, 020, 038, 039, 040).
 15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
 La commande tourne dans le conteneur, qui a déjà le jeton dans son
 environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
 affiche le nombre de numérisations et de consultations purgées, de demandes
-anonymisées, d'entreprises anonymisées (avec leurs contacts, accès et plis)
-et de personnes retirées anonymisées — des nombres, jamais un nom :
-`{"scans":0,"views":0,"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0}}`.
+anonymisées, d'entreprises anonymisées (avec leurs contacts, accès et plis),
+de personnes retirées anonymisées, de messages effacés du journal, de photos
+d'états des lieux et de consultations de ces photos purgées — des nombres,
+jamais un nom :
+`{"scans":0,"views":0,"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0},"notificationDeliveries":0,"inspectionPhotos":0,"inspectionPhotoViews":0}`.
 Le journal de l'application (`docker compose logs app`) en garde une ligne
 « Conservation (RGPD) : … » par nuit.
 
