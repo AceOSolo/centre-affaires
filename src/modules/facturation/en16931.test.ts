@@ -325,6 +325,33 @@ describe('vérification de complétude', () => {
     assert.deepEqual(failing(withExempt('Exonération, art. 261 du CGI')), [])
   })
 
+  it('n’exige pas de motif au taux zéro (BR-Z-10)', () => {
+    const zero = line({ vatRateBp: 0, vatCategory: 'Z', netAmountCents: 90_000, vatAmountCents: 0 })
+    const doc = toEn16931(source({ totalTaxCents: 0, totalExclTaxCents: 90_000, totalInclTaxCents: 90_000 }, [zero]))
+    assert.ok(!failing(doc).includes('BT-120'))
+  })
+
+  it('tolère sur un avoir l’écart d’un centime par ligne que laisse la TVA exacte d’une ligne soldée (ADR 032)', () => {
+    // 33,33 € HT à 20 % : 6,67 € sur sa base, 6,66 € quand la ligne d'origine
+    // portait l'écart d'arrondi de sa facture.
+    const soldee = line({ netAmountCents: 3_333, unitPriceCents: 3_333, vatAmountCents: 666 })
+    const totaux = { totalExclTaxCents: 3_333, totalTaxCents: 666, totalInclTaxCents: 3_999 }
+    const avoir = toEn16931({
+      ...source({ ...totaux, kind: 'credit_note', number: 'AV-2026-0001' }, [soldee]),
+      precedingInvoice: { number: 'FA-2026-0001', issueDate: '2026-10-01' },
+    })
+    assert.ok(!failing(avoir).includes('BR-CO-17'))
+    // Une facture, elle, tombe au centime de base × taux.
+    assert.ok(failing(toEn16931(source(totaux, [soldee]))).includes('BR-CO-17'))
+    // Et l'avoir ne s'écarte pas de plus d'un centime par ligne.
+    const ecart = line({ netAmountCents: 3_333, unitPriceCents: 3_333, vatAmountCents: 665 })
+    const avoirFaux = toEn16931({
+      ...source({ ...totaux, totalTaxCents: 665, totalInclTaxCents: 3_998, kind: 'credit_note', number: 'AV-2026-0002' }, [ecart]),
+      precedingInvoice: { number: 'FA-2026-0001', issueDate: '2026-10-01' },
+    })
+    assert.ok(failing(avoirFaux).includes('BR-CO-17'))
+  })
+
   it('vérifie les totaux au centime (BR-CO-*)', () => {
     const doc = toEn16931(source({ totalTaxCents: 11_478, totalInclTaxCents: 68_862 }))
     assert.deepEqual(failing(doc), ['BR-CO-14'])

@@ -288,6 +288,53 @@ describe('contrats versionnés', { skip: raison }, () => {
       )
     })
 
+    it('refusent un nouveau prix sur une période déjà facturée, pas un changement de ressource (ADR 032)', async () => {
+      const id = await contrat()
+      await activer(id)
+      // Mai facturé au loyer du contrat, sur un brouillon de facture.
+      const [facture] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into invoices (client_id, period_start, period_end)
+          values (${CLIENT}, '2026-05-01', '2026-05-31') returning id`),
+      )
+      await asTenant((tx) =>
+        tx.execute(sql`
+          insert into invoice_lines (invoice_id, kind, description, contract_id, period_start, period_end,
+                                     unit_price_cents, vat_rate_bp)
+          values (${facture.id as string}, 'rent', 'Loyer de mai', ${id}, '2026-05-01', '2026-05-31', 90000, 2000)`),
+      )
+      const factureJusquAu = async () => {
+        const [row] = await asTenant((tx) =>
+          tx.execute(sql`select contract_billed_through(${id}::uuid)::text as jour`),
+        )
+        return row.jour
+      }
+      assert.equal(await factureJusquAu(), '2026-05-31')
+
+      // Un changement de ressource seule ne change pas ce qui est dû.
+      await signer((await avenant(id, { effectiveOn: '2026-05-10', changesResource: true, resourceId: AUTRE_BUREAU })).id)
+
+      // Un nouveau prix au 15 mai ferait facturer deux fois la fin du mois.
+      const hausse = await avenant(id, { effectiveOn: '2026-05-15', amountCents: 95_000 })
+      let message = ''
+      try {
+        await signer(hausse.id)
+      } catch (error) {
+        assert.equal(pgErrorCode(error), PG_AMENDMENT_INVALID)
+        for (let cause: unknown = error; cause; cause = (cause as { cause?: unknown }).cause) {
+          message += String((cause as { message?: unknown }).message ?? '')
+        }
+      }
+      assert.match(message, /facturé jusqu.au 31\/05\/2026.*au plus tôt le 01\/06\/2026/)
+
+      // La ligne retirée du brouillon ne tient plus la période : l'avenant se signe.
+      await asTenant((tx) =>
+        tx.execute(sql`update invoices set deleted_at = now() where id = ${facture.id as string}`),
+      )
+      assert.equal(await factureJusquAu(), null)
+      await signer(hausse.id)
+    })
+
     it('donnent les versions de prix du contrat, chacune de sa date d’effet à la veille de la suivante', async () => {
       const id = await contrat({ endsOn: '2026-12-31' })
       await ligne(id, { unitPriceCents: 90_000 })

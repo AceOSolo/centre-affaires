@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-01
 **Statut** : accepté — précise l'ADR 026 ; les choix marqués « à valider »
-attendent le centre ou l'expert-comptable
+attendent le centre ou l'expert-comptable ; deux conséquences corrigées par
+l'ADR 032 (avenant signé après la facturation de sa période, loyer d'une
+version à frais ponctuels)
 
 ## Contexte
 
@@ -153,7 +155,8 @@ Par catégorie et par taux sur la somme des bases (ADR 026, BR-CO-17) : c'est
 la base qui la calcule ; l'aperçu d'un lot l'annonce par le jumeau TypeScript
 (`invoiceAmounts`). Testé : trois lignes de 0,33 € HT à 20 % font 0,20 € de TVA,
 pas 0,21 € (arrondi ligne à ligne). Un taux nul est classé en exonération
-(`E`) ; son motif (BT-120) se complète sur le brouillon.
+(`E`) ; son motif (BT-120) se complète sur le brouillon, et l'émission
+l'exige (ADR 032).
 
 ### Écrans
 
@@ -209,12 +212,16 @@ agréée refuserait (ADR 026).
 
 - Le lot se lance depuis l'écran par un membre de l'équipe : il n'y a pas de
   lancement planifié, `invoice_runs.created_by` étant obligatoire.
-- Une version de contrat qui n'a que des lignes ponctuelles et un montant saisi
-  ne peut pas facturer son loyer (la base refuse un loyer global à côté de
-  lignes) : le lot le signale, la facture se complète à la main.
-- Un avenant signé après la facturation de sa période ne refacture rien : la
+- ~~Une version de contrat qui n'a que des lignes ponctuelles et un montant
+  saisi ne peut pas facturer son loyer (la base refuse un loyer global à côté
+  de lignes) : le lot le signale, la facture se complète à la main.~~
+  Corrigé par l'ADR 032 : ce loyer se facture par le lot, à côté des frais.
+- ~~Un avenant signé après la facturation de sa période ne refacture rien : la
   période est déjà facturée à l'ancien prix ; la différence passe par un avoir
-  et une ligne ajoutée à la main.
+  et une ligne ajoutée à la main.~~ Faux : le lot refacturait la période aux
+  lignes de la nouvelle version. Corrigé par l'ADR 032 : un avenant de prix ne
+  se signe plus sur une période facturée (avoir d'abord), et ni le lot ni la
+  base ne laissent une version refacturer les jours d'une autre.
 - **À valider par le centre** : les trois périodes du lot, l'absence de
   rattrapage automatique, l'ordre des lignes, l'inclusion des N premiers actes
   par ordre d'ouverture, la facturation des réservations au jour de leur

@@ -154,6 +154,10 @@ export const invoiceRunStatusEnum = pgEnum('invoice_run_status', invoiceRunStatu
 export type InvoiceRunResult = {
   /** Factures créées en brouillon par le lot. */
   invoicesCreated?: number
+  /** Brouillons du lot déjà présents, complétés par un lot rejoué. */
+  invoicesUpdated?: number
+  /** Lignes écrites par le lot. */
+  linesCreated?: number
   /** Clients sans rien à facturer sur la période. */
   clientsSkipped?: number
   /** Ce que le lot n'a pas pu valoriser, à reprendre à la main. */
@@ -555,7 +559,8 @@ export const invoiceLineKindEnum = pgEnum('invoice_line_kind', invoiceLineKinds)
  * Catégorie de TVA (EN 16931, BT-151, liste UNCL5305) : `S` taux normal ou
  * réduit, `Z` taux zéro, `E` exonéré, `AE` autoliquidation, `K` livraison
  * intracommunautaire, `G` export, `O` hors champ. Toute autre que `S` a un
- * taux nul et appelle un motif (`vat_exemption_reason`).
+ * taux nul ; toute autre que `S` et `Z` appelle un motif
+ * (`vat_exemption_reason`), exigé à l'émission (ADR 032).
  */
 export const vatCategories = ['S', 'Z', 'E', 'AE', 'K', 'G', 'O'] as const
 export type VatCategory = (typeof vatCategories)[number]

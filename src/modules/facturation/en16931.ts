@@ -437,9 +437,24 @@ function addressComplete(address: Address): boolean {
 }
 
 /**
+ * Une ligne de cette catégorie de TVA porte-t-elle un motif d'exonération
+ * (BT-120) ? Oui pour E, AE, K, G et O (BR-E-10, BR-AE-10, BR-IC-10, BR-G-10,
+ * BR-O-10) ; non au taux normal (BR-S-10) ni au taux zéro (BR-Z-10), qui n'en
+ * portent pas. `issue_invoice()` applique la même règle (migration 0032).
+ */
+export function requiresExemptionReason(category: VatCategory): boolean {
+  return category !== 'S' && category !== 'Z'
+}
+
+/**
  * Contrôles de complétude et de cohérence : les données obligatoires de la
  * norme et de la réforme française, puis les règles arithmétiques (BR-CO-*).
  * Rend tous les contrôles, réussis compris : l'écran les montre en liste.
+ *
+ * TVA d'un avoir (BR-CO-17) : un avoir qui solde une ligne en crédite
+ * exactement la TVA restante (ADR 032), arrondie sur la ligne d'origine et
+ * non sur sa propre base ; elle peut s'écarter de base × taux d'un centime
+ * par ligne du taux, pas plus.
  */
 export function checkEn16931(doc: En16931Invoice): En16931Check[] {
   const checks: En16931Check[] = []
@@ -533,7 +548,9 @@ export function checkEn16931(doc: En16931Invoice): En16931Check[] {
     incomplete.length === 0,
     `Ligne${incomplete.length > 1 ? 's' : ''} ${incomplete.map((line) => line['BT-126']).join(', ')}.`,
   )
-  const exempted = doc['BG-23'].filter((group) => group['BT-118'] !== 'S' && !group['BT-120'])
+  const exempted = doc['BG-23'].filter(
+    (group) => requiresExemptionReason(group['BT-118']) && !group['BT-120'],
+  )
   check(
     'BT-120',
     'Motif d’exonération de TVA',
@@ -565,11 +582,18 @@ export function checkEn16931(doc: En16931Invoice): En16931Check[] {
     'Net à payer = TTC − acomptes + arrondi',
     cents(totals['BT-115']) === cents(totals['BT-112']) - cents(totals['BT-113']) + cents(totals['BT-114']),
   )
-  const wrongVat = doc['BG-23'].filter(
-    (group) =>
-      cents(group['BT-117']) !==
-      rounded(cents(group['BT-116']) * percentToBasisPoints(group['BT-119']), 10_000),
-  )
+  const linesPerRate = new Map<string, number>()
+  for (const line of doc['BG-25']) {
+    const key = `${line['BG-30']['BT-151']}|${line['BG-30']['BT-152']}`
+    linesPerRate.set(key, (linesPerRate.get(key) ?? 0) + 1)
+  }
+  const wrongVat = doc['BG-23'].filter((group) => {
+    const gap = Math.abs(
+      cents(group['BT-117']) - rounded(cents(group['BT-116']) * percentToBasisPoints(group['BT-119']), 10_000),
+    )
+    const tolerance = isCredit ? (linesPerRate.get(`${group['BT-118']}|${group['BT-119']}`) ?? 0) : 0
+    return gap > tolerance
+  })
   check(
     'BR-CO-17',
     'TVA de chaque taux = base × taux, arrondie au centime',

@@ -88,7 +88,7 @@ export default async function InvoicePage({
   const money = (cents: number) => formatCents(cents, currency)
   const breakdown = vatBreakdownOf(lines)
   const missing = isDraft
-    ? missingForIssue(invoice, tenant, client, detail.activeMandate !== null)
+    ? missingForIssue(invoice, tenant, client, detail.activeMandate !== null, lines)
     : []
   const openCreditNote = detail.creditNotes.find((note) => note.status === 'draft')
   const title = isDraft

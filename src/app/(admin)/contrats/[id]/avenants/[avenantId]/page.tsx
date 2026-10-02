@@ -17,6 +17,7 @@ import {
   versionAmountLabel,
   versionLinesForForm,
 } from '../../../../../../modules/contrats/avenant-ecran.ts'
+import { billedPeriodRefusal } from '../../../../../../modules/contrats/avenant-formulaire.ts'
 import { findAmendment } from '../../../../../../modules/contrats/avenants.ts'
 import { listContractDocuments } from '../../../../../../modules/contrats/documents.ts'
 import {
@@ -82,8 +83,12 @@ export default async function AmendmentPage({
   )
 
   let form: React.ReactNode = null
+  // Un avenant de prix ne se signe pas sur une période déjà facturée (ADR 032).
+  let billedRefusal: string | null = null
   if (editable) {
     const [terms, resources] = await Promise.all([findContractTerms(id), listResources()])
+    const changesPrice = amendment.amountCents !== null || amendment.lines.length > 0
+    billedRefusal = changesPrice ? billedPeriodRefusal(amendment.effectiveOn, terms.billedThrough) : null
     const base = segmentOn(
       terms.versions.filter((version) => version.amendmentId !== amendment.id),
       amendment.effectiveOn,
@@ -126,6 +131,7 @@ export default async function AmendmentPage({
           )}
           periodSuffix={billingPeriodSuffixes[contract.billingPeriod]}
           currency={contract.currency}
+          billedThrough={terms.billedThrough}
         />
       </section>
     )
@@ -200,6 +206,12 @@ export default async function AmendmentPage({
       {editable && (
         <div className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
           <p className="text-sm font-medium">Signer ou abandonner</p>
+          {billedRefusal && (
+            <p className="rounded-md border border-border bg-muted px-3 py-2 text-sm">
+              <span className="font-medium">Signature impossible à cette date.</span> {billedRefusal} Modifiez
+              la date d’effet ci-dessous.
+            </p>
+          )}
           <p className="text-xs text-muted-foreground">
             La signature vérifie la date d’effet et, pour un changement de ressource, que la nouvelle
             ressource est libre à partir de cette date.{' '}

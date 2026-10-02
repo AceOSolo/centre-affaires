@@ -1,5 +1,6 @@
 import type { PaymentMethod, Tenant } from '../../db/tenants.ts'
 import type { Client } from '../clients/schema.ts'
+import { requiresExemptionReason } from './en16931.ts'
 import { missingSellerIdentity } from './parametres.ts'
 import type {
   Invoice,
@@ -187,8 +188,9 @@ export function invoiceDocument(
 
 /**
  * Ce qu'`issue_invoice()` exigera, dit avant de cliquer : les mentions
- * obligatoires du vendeur et de l'acheteur, et de quoi payer (ADR 026, 027).
- * La base revérifie à l'émission ; cette liste n'est qu'un avertissement.
+ * obligatoires du vendeur et de l'acheteur, le motif d'exonération d'une
+ * ligne sans TVA (ADR 032), et de quoi payer (ADR 026, 027). La base
+ * revérifie à l'émission ; cette liste n'est qu'un avertissement.
  */
 export function missingForIssue(
   invoice: Pick<Invoice, 'kind' | 'expectedPaymentMethod' | 'sepaMandateId'>,
@@ -198,11 +200,19 @@ export function missingForIssue(
   >,
   client: Pick<Client, 'addressLine1' | 'postalCode' | 'city'>,
   hasActiveMandate: boolean,
+  lines: readonly Pick<InvoiceLine, 'description' | 'vatCategory' | 'vatExemptionReason'>[] = [],
 ): string[] {
   const blank = (value: string | null) => !value || value.trim() === ''
   const missing = missingSellerIdentity(tenant).map((item) => `${item} du centre`)
   if (blank(client.addressLine1) || blank(client.postalCode) || blank(client.city)) {
     missing.push('adresse du client')
+  }
+  const unexplained = lines.filter(
+    (line) => requiresExemptionReason(line.vatCategory) && blank(line.vatExemptionReason),
+  )
+  if (unexplained.length > 0) {
+    const names = unexplained.map((line) => `« ${line.description} »`).join(', ')
+    missing.push(`motif d’exonération de TVA de ${names}`)
   }
   if (invoice.kind === 'invoice') {
     if (invoice.expectedPaymentMethod === 'transfer' && blank(tenant.bankIban)) {

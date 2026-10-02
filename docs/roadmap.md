@@ -1,6 +1,7 @@
 # Roadmap — couverture du cahier des charges DOMOTOP
 
-État au 01/10/2026, après l'intégration de la vague 2. Audit initial du
+État au 02/10/2026, après l'intégration de la vague 2 et ses correctifs
+(ADR 032). Audit initial du
 30/09/2026 de l'arbre de travail (fichiers non commités compris) face aux deux
 documents du 18/09/2026 :
 
@@ -138,7 +139,9 @@ testée et documentée) ; R33 (contrôle de la région UE au démarrage).
 Préalable : D1, D5, D7.
 
 **Faite** : vague 2 intégrée le 01/10/2026 (six tranches parallèles, ADR 023 à
-030). Restes, suivis dans le tableau de synthèse : raccordement à la plateforme
+030), corrigée le 02/10/2026 après revue (ADR 032 : avenant de prix refusé sur
+une période facturée, avoirs au centime du TTC, forfaits sans prorata, motif
+d'exonération exigé). Restes, suivis dans le tableau de synthèse : raccordement à la plateforme
 agréée (R16), reconduction tacite automatique et validation du jeu de cas
 tarifaires (R10), lancement planifié du lot (R13), journal des relances et des
 remises de prélèvement (R16). Manques de schéma relevés à l'intégration : voir
@@ -186,9 +189,10 @@ une migration de suivi :
   « remis / signé » sur `contract_documents` ; pas de date « facturé
   jusqu'au » pour les contrats repris de l'existant.
 - **Factures** : `invoice_runs.created_by` obligatoire (pas de lot planifié) ;
-  `invoice_lines_guard` refuse un loyer global à côté de lignes ponctuelles ;
-  `vat_exemption_reason` ni exigé ni vérifié à l'émission ; le type
-  `InvoiceRunResult` ignore `invoicesUpdated` et `linesCreated`.
+  ~~`invoice_lines_guard` refuse un loyer global à côté de lignes
+  ponctuelles~~ ; ~~`vat_exemption_reason` ni exigé ni vérifié à l'émission~~ ;
+  ~~le type `InvoiceRunResult` ignore `invoicesUpdated` et `linesCreated`~~
+  (résolus par la migration 0032, ADR 032).
 - **Règlements** : pas de journal des relances (`invoice_reminders`), pas de
   table des remises de prélèvement ni de `payments.batch_id`, pas de marque
   « envoyée à la plateforme » sur une facture émise, fichier d'export

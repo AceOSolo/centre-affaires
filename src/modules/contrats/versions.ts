@@ -190,6 +190,24 @@ export type ContractTerms = {
   segments: ContractSegment[]
   /** Nom de l'offre d'origine (archivée comprise) ; nul sans offre. */
   offerName: string | null
+  /** Dernier jour déjà facturé (`contract_billed_through`) ; nul : rien. */
+  billedThrough: string | null
+}
+
+/**
+ * Dernier jour du contrat que tient une facture, émise ou brouillon (loyers
+ * et lignes du contrat, ni retirés ni libérés par un avoir) : un avenant de
+ * prix prend effet au plus tôt le lendemain (ADR 032). Nul : rien de facturé.
+ */
+export async function selectBilledThrough(tx: Transaction, contractId: string): Promise<string | null> {
+  const [row] = await tx.execute<{ billed_through: string | null }>(
+    sql`select contract_billed_through(${contractId}::uuid)::text as billed_through`,
+  )
+  return row?.billed_through ?? null
+}
+
+export async function findContractBilledThrough(contractId: string): Promise<string | null> {
+  return withTenant(currentTenantId(), (tx) => selectBilledThrough(tx, contractId))
 }
 
 /** Versions de prix et segments de ressource d'un contrat, en une transaction. */
@@ -204,6 +222,7 @@ export async function findContractTerms(contractId: string): Promise<ContractTer
       versions: await selectPriceVersions(tx, contractId),
       segments: await selectSegments(tx, contractId),
       offerName: offer?.name ?? null,
+      billedThrough: await selectBilledThrough(tx, contractId),
     }
   })
 }

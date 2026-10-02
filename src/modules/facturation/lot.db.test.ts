@@ -317,6 +317,37 @@ describe('lot de facturation', { skip: raison }, () => {
       assert.deepEqual(lots.map((lot) => lot.status).sort(), ['completed', 'failed'])
     })
 
+    it('facture le loyer d’un contrat à montant à côté de ses frais ponctuels (ADR 032)', async () => {
+      const MARTIN = '01a00000-0000-7000-8000-0000000f1c03'
+      await asTenant(async (tx) => {
+        await tx.execute(sql`
+          insert into clients (id, name, status, address_line1, postal_code, city)
+          values (${MARTIN}, 'Cabinet Martin', 'active', '4 quai Perrière', '38000', 'Grenoble')`)
+        const [k] = await tx.execute(sql`
+          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
+          values (${MARTIN}, 'CT-MARTIN', 'domiciliation', '2026-10-01', 4500) returning id`)
+        await tx.execute(sql`
+          insert into contract_lines (contract_id, description, quantity, unit, unit_price_cents,
+                                      vat_rate_bp, is_recurring, position)
+          values (${k.id as string}, 'Frais de dossier', 1, 'unit', 6000, 2000, false, 0)`)
+        await tx.execute(sql`update contracts set status = 'active' where id = ${k.id as string}`)
+      })
+
+      const { report } = await runInvoicing(OCTOBRE, ACCUEIL)
+      assert.deepEqual(
+        (report.warnings ?? []).filter((warning) => warning.clientId === MARTIN),
+        [],
+      )
+      const martin = await factureDuLot(MARTIN)
+      assert.deepEqual(
+        martin.lines.map((line) => [line.kind, line.contractLineId === null, line.periodStart, line.periodEnd, line.netAmountCents]),
+        [
+          ['rent', true, '2026-10-01', '2026-10-31', 4_500],
+          ['rent', false, '2026-10-01', '2026-10-01', 6_000],
+        ],
+      )
+    })
+
     it('facture le récurrent du mois écoulé quand le centre facture à terme échu', async () => {
       await owner.client`update tenants set recurring_billing_timing = 'in_arrears' where id = ${DEFAULT_TENANT_ID}`
       await runInvoicing(OCTOBRE, ACCUEIL)

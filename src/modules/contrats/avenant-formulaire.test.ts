@@ -25,7 +25,7 @@ const ligne = (overrides: Partial<LineDraft> = {}): LineDraft => ({
   ...overrides,
 })
 
-const lire = (fields: Record<string, string>, lignes: LineDraft[] = []) => {
+const lire = (fields: Record<string, string>, lignes: LineDraft[] = [], billedThrough: string | null = null) => {
   const all = new Map(Object.entries(fields))
   const keys = lignes.map((_, index) => String(index))
   lignes.forEach((line, index) => {
@@ -33,7 +33,7 @@ const lire = (fields: Record<string, string>, lignes: LineDraft[] = []) => {
       if (field !== 'key') all.set(lineFieldName(String(index), field as never), value)
     }
   })
-  return readAmendmentForm((name) => all.get(name) ?? '', keys, periode)
+  return readAmendmentForm((name) => all.get(name) ?? '', keys, { ...periode, billedThrough })
 }
 
 describe('formulaire d’avenant', () => {
@@ -88,6 +88,26 @@ describe('formulaire d’avenant', () => {
     }
   })
 
+  it('refuse un nouveau prix sur une période déjà facturée, pas un changement de ressource (ADR 032)', () => {
+    // Facturé jusqu'au 31 octobre : le prix change au plus tôt le 1er novembre.
+    for (const fields of [
+      { effectiveOn: '2026-10-15', priceMode: 'amount', amount: '950,00' },
+      { effectiveOn: '2026-10-31', priceMode: 'amount', amount: '950,00' },
+    ]) {
+      const result = lire(fields, [], '2026-10-31')
+      assert.ok(!result.ok, fields.effectiveOn)
+      assert.match(result.fieldErrors.effectiveOn, /facturé jusqu’au 31\/10\/2026.*au plus tôt le 01\/11\/2026/)
+    }
+    const lignes = lire({ effectiveOn: '2026-10-15', priceMode: 'lines' }, [ligne()], '2026-10-31')
+    assert.ok(!lignes.ok)
+    assert.ok(lignes.fieldErrors.effectiveOn)
+
+    assert.ok(lire({ effectiveOn: '2026-11-01', priceMode: 'amount', amount: '950,00' }, [], '2026-10-31').ok)
+    assert.ok(
+      lire({ effectiveOn: '2026-10-15', priceMode: 'unchanged', changesResource: 'on', resourceId: BUREAU }, [], '2026-10-31').ok,
+    )
+  })
+
   it('propose le premier du mois suivant, après le début et le dernier avenant signé', () => {
     assert.equal(defaultEffectiveOn('2026-10-01', '2026-03-01', null), '2026-11-01')
     assert.equal(defaultEffectiveOn('2026-12-15', '2026-03-01', null), '2027-01-01')
@@ -95,6 +115,9 @@ describe('formulaire d’avenant', () => {
     assert.equal(defaultEffectiveOn('2026-10-01', '2027-02-01', null), '2027-02-02')
     // Avenant signé au 1er décembre : le 2 décembre au plus tôt.
     assert.equal(defaultEffectiveOn('2026-10-01', '2026-03-01', '2026-12-01'), '2026-12-02')
+    // Trimestre facturé jusqu'au 31 décembre : le 1er janvier au plus tôt.
+    assert.equal(defaultEffectiveOn('2026-10-01', '2026-03-01', null, '2026-12-31'), '2027-01-01')
+    assert.equal(defaultEffectiveOn('2026-10-01', '2026-03-01', '2026-12-01', '2026-10-31'), '2026-12-02')
   })
 
   it('rattache les erreurs de lignes à leur champ', () => {

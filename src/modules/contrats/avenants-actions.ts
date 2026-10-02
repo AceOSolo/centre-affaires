@@ -20,6 +20,7 @@ import { occupationConflictMessage } from './conflits.ts'
 import { ContractLinesRefusedError } from './lignes-queries.ts'
 import { formatCalendarDate, lastContractDay } from './occupation.ts'
 import { ContractOccupationConflictError, findContract } from './queries.ts'
+import { findContractBilledThrough } from './versions.ts'
 
 /** État rendu au formulaire d'avenant, et aux dialogues de signature et d'abandon. */
 export type AmendmentFormState = {
@@ -36,12 +37,16 @@ function revalidateContract(contractId: string) {
 
 /** Lit et contrôle le formulaire ; rend l'avenant à écrire ou les erreurs. */
 async function readForm(contractId: string, formData: FormData) {
-  const contract = await findContract(contractId)
+  const [contract, billedThrough] = await Promise.all([
+    findContract(contractId),
+    findContractBilledThrough(contractId),
+  ])
   if (!contract) return { error: 'Contrat introuvable.' } as const
   const keys = formData.getAll('ligne').map(String)
   const read = readAmendmentForm((name) => String(formData.get(name) ?? ''), keys, {
     startsOn: contract.startsOn,
     lastDay: lastContractDay(contract),
+    billedThrough,
   })
   return { read } as const
 }

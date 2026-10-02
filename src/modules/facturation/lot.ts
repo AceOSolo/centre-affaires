@@ -4,6 +4,7 @@ import { invoiceAmounts, lineNetAmountCents, type InvoiceAmounts } from './monta
 import {
   billablePieces,
   containsDay,
+  intersect,
   OPEN_END,
   prorataFor,
   subtractRanges,
@@ -78,8 +79,9 @@ const EMPTY_SOURCES = {
 
 /**
  * Catégorie de TVA d'un taux (EN 16931, BT-151) : `S` dès qu'il y a un taux ;
- * un taux nul est traité comme une exonération (`E`), dont le motif se
- * complète sur le brouillon.
+ * un taux nul est traité comme une exonération (`E`), dont le motif (BT-120)
+ * se complète sur le brouillon : `issue_invoice()` refuse d'émettre sans lui
+ * (ADR 032).
  */
 export function vatCategoryFor(vatRateBp: number): VatCategory {
   return vatRateBp > 0 ? 'S' : 'E'
@@ -142,6 +144,46 @@ export function contractKey(contractId: string, contractLineId: string | null): 
   return `${contractId}|${contractLineId ?? ''}`
 }
 
+/**
+ * Jours qu'un morceau de la version `version` ne facture plus sous la clé
+ * `key` (ADR 032) : ceux que sa propre clé a déjà facturés, et tous ceux
+ * qu'une **autre version** du contrat a facturés, quelle que soit leur clé.
+ *
+ * Deux lignes d'une même version se facturent chacune pour son compte : un
+ * avoir qui ne crédite que l'une la rend seule facturable à nouveau. Mais une
+ * version ne refacture jamais un jour qu'une autre a déjà facturé — un avenant
+ * signé après la facturation de sa période, ou un lot rejoué après un avenant
+ * rétroactif, sans quoi la période serait due deux fois.
+ *
+ * Propriétaire d'une clé : la version de sa ligne de contrat ; une ligne
+ * inconnue est réputée d'une autre version. Le loyer global (clé sans ligne)
+ * est celui d'une version sans ligne récurrente : il appartient à `version`
+ * quand elle n'en a pas, à une autre sinon.
+ */
+function takenFor(
+  contract: BillingContract,
+  billed: BilledRanges,
+  version: BillingPriceVersion,
+  key: string,
+): DateRange[] {
+  const prefix = `${contract.id}|`
+  const owners = new Map(contract.lines.map((line) => [line.id, line.amendmentId]))
+  const ownsGlobalRent = !contract.lines.some(
+    (line) => line.amendmentId === version.amendmentId && line.isRecurring,
+  )
+  const taken: DateRange[] = []
+  for (const [candidate, ranges] of billed) {
+    if (!candidate.startsWith(prefix)) continue
+    const lineId = candidate.slice(prefix.length)
+    const sameVersion =
+      lineId === ''
+        ? ownsGlobalRent
+        : owners.has(lineId) && owners.get(lineId) === version.amendmentId
+    if (candidate === key || !sameVersion) taken.push(...ranges)
+  }
+  return taken
+}
+
 const versionSuffix = (version: BillingPriceVersion) =>
   version.amendmentNumber ? `, avenant n° ${version.amendmentNumber}` : ''
 
@@ -156,9 +198,11 @@ function resourceAt(segments: readonly BillingSegment[], day: string): string | 
 /**
  * Échéances d'un contrat engagé dans la fenêtre du lot. Chaque période civile
  * est coupée aux dates d'effet des avenants ; chaque morceau est facturé aux
- * lignes de sa version, ou à son montant pour une version sans ligne, au
- * prorata d'une période partielle. Une ligne ponctuelle (frais de dossier) est
- * facturée une fois, avec le premier morceau de sa version.
+ * lignes récurrentes de sa version, ou à son montant pour une version sans
+ * ligne récurrente, au prorata d'une période partielle. Une ligne ponctuelle
+ * (frais de dossier) est facturée une fois, avec le premier morceau de sa
+ * version. Un jour déjà facturé, par cette version ou par une autre, ne l'est
+ * pas une seconde fois (`takenFor`).
  */
 export function contractInvoiceLines(
   contract: BillingContract,
@@ -197,10 +241,13 @@ export function contractInvoiceLines(
     // du contrat (`contractSchedule`) — sans quoi la période serait due deux fois.
     const firstCovered = contractStart && contractStart > civil.start ? contractStart : civil.start
     const recurringDue = settings.prorataRule !== 'none' || piece.start === firstCovered
+    const recurring = versionLines.filter((line) => line.isRecurring)
 
-    if (versionLines.length === 0) {
-      if (version.amountCents <= 0 || !recurringDue) continue
-      for (const rest of subtractRanges(piece, billed.get(contractKey(contract.id, null)) ?? [])) {
+    // Sans ligne récurrente, la version se facture de son montant (loyer
+    // global), à côté de ses éventuelles lignes ponctuelles.
+    if (recurring.length === 0 && version.amountCents > 0 && recurringDue) {
+      const key = contractKey(contract.id, null)
+      for (const rest of subtractRanges(piece, takenFor(contract, billed, version, key))) {
         const fraction = prorata(rest)
         // En base 30, un 31 isolé ne doit rien (0/30) : pas de ligne.
         if (fraction?.numerator === 0) continue
@@ -223,20 +270,11 @@ export function contractInvoiceLines(
           resourceId: resourceAt(contract.segments, rest.start),
         })
       }
-      continue
     }
 
-    const recurring = versionLines.filter((line) => line.isRecurring)
-    if (recurring.length === 0 && version.amountCents > 0) {
-      // La base refuse un loyer global à côté de lignes, même ponctuelles :
-      // le montant saisi d'une telle version n'a pas de chemin vers la facture.
-      warnings.push({
-        clientId: contract.clientId,
-        message: `Contrat ${contract.reference}${versionSuffix(version)} : la version n’a que des lignes ponctuelles, son loyer n’est pas facturable par le lot. À facturer à la main.`,
-      })
-    }
     for (const line of recurringDue ? recurring : []) {
-      for (const rest of subtractRanges(piece, billed.get(contractKey(contract.id, line.id)) ?? [])) {
+      const key = contractKey(contract.id, line.id)
+      for (const rest of subtractRanges(piece, takenFor(contract, billed, version, key))) {
         const fraction = prorata(rest)
         if (fraction?.numerator === 0) continue
         lines.push(contractLineDraft(contract, version, line, rest, fraction))
@@ -311,15 +349,35 @@ export type BillingSubscription = {
 }
 
 /**
+ * Chaîne d'une souscription : celles du même client, au même service, pour le
+ * même contrat (ou sans contrat). Un changement de conditions (ADR 024) coupe
+ * une souscription la veille de sa date d'effet et en ouvre une autre dans la
+ * même chaîne ; `subscribed_services_no_overlap` interdit qu'elles se
+ * recouvrent.
+ */
+export function subscriptionChainKey(
+  subscription: Pick<BillingSubscription, 'clientId' | 'serviceId' | 'contractId'>,
+): string {
+  return `${subscription.clientId}|${subscription.serviceId}|${subscription.contractId ?? ''}`
+}
+
+/**
  * Un forfait souscrit, au prix figé de la souscription. Mensuel : chaque mois
  * civil de la fenêtre, au prorata des jours souscrits. À la prestation : une
  * fois, dans le lot de son premier jour. Les autres unités ne se facturent
  * pas par un lot (ADR 029).
+ *
+ * Sans prorata (règle `none`), un mois entamé est dû en entier, une seule fois
+ * par chaîne (`chain`, la souscription comprise) : au prix de la souscription
+ * en vigueur sur le premier jour couvert du mois. Celle qui prend la suite en
+ * cours de mois compte à partir du mois suivant, comme une version de contrat
+ * (ADR 032).
  */
 export function subscriptionInvoiceLines(
   subscription: BillingSubscription,
   billed: BilledRanges,
   settings: RunSettings,
+  chain: readonly BillingSubscription[] = [subscription],
 ): { lines: InvoiceLineDraft[]; warnings: RunWarning[] } {
   const lines: InvoiceLineDraft[] = []
   const warnings: RunWarning[] = []
@@ -359,7 +417,9 @@ export function subscriptionInvoiceLines(
       settings.windows.recurring,
       settings.timing,
     )
+    const monthly = chain.filter((member) => member.unit === 'month')
     for (const { civil, piece } of pieces) {
+      if (settings.prorataRule === 'none' && piece.start !== firstCoveredDay(monthly, civil)) continue
       for (const rest of subtractRanges(piece, taken)) {
         const fraction = prorataFor(settings.prorataRule, rest, civil, 'monthly')
         if (fraction?.numerator === 0) continue
@@ -381,6 +441,16 @@ export function subscriptionInvoiceLines(
     })
   }
   return { lines, warnings }
+}
+
+/** Premier jour de la période civile couvert par l'une des souscriptions de la chaîne. */
+function firstCoveredDay(chain: readonly BillingSubscription[], civil: DateRange): string | null {
+  let first: string | null = null
+  for (const member of chain) {
+    const covered = intersect(civil, { start: member.startsOn, end: member.endsOn ?? OPEN_END })
+    if (covered && (first === null || covered.start < first)) first = covered.start
+  }
+  return first
 }
 
 /* -------------------------------------------------------------------------- */
@@ -643,8 +713,18 @@ export function computeRun(sources: RunSources, settings: RunSettings): ClientRu
   const subscriptions = [...sources.subscriptions].sort(
     (a, b) => byText(a.serviceName, b.serviceName) || byText(a.startsOn, b.startsOn),
   )
+  const chains = new Map<string, BillingSubscription[]>()
   for (const subscription of subscriptions) {
-    const { lines, warnings } = subscriptionInvoiceLines(subscription, sources.subscriptionBilled, settings)
+    const key = subscriptionChainKey(subscription)
+    chains.set(key, [...(chains.get(key) ?? []), subscription])
+  }
+  for (const subscription of subscriptions) {
+    const { lines, warnings } = subscriptionInvoiceLines(
+      subscription,
+      sources.subscriptionBilled,
+      settings,
+      chains.get(subscriptionChainKey(subscription)),
+    )
     add(subscription.clientId, lines, warnings)
   }
 

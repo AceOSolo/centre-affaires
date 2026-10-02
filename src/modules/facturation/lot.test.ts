@@ -216,14 +216,110 @@ describe('contrat à lignes (ADR 025)', () => {
     )
   })
 
-  it('signale une version qui n’a que des lignes ponctuelles et un loyer', () => {
-    const { lines, warnings } = contractInvoiceLines(
-      contrat({ lines: [ligne({ id: 'l3', isRecurring: false })] }),
-      new Map([[contractKey('k1', 'l3'), [{ start: '2026-01-01', end: '2026-01-01' }]]]),
-      octobre,
+  it('facture le loyer d’une version qui n’a que des lignes ponctuelles, à côté d’elles (ADR 032)', () => {
+    const fraisSeuls = contrat({
+      versions: [{ amendmentId: null, amendmentNumber: null, startsOn: '2026-10-10', endsOn: null, amountCents: 65_000 }],
+      lines: [ligne({ id: 'l3', description: 'Frais de dossier', unit: 'unit', unitPriceCents: 15_000, isRecurring: false })],
+    })
+    const { lines, warnings } = contractInvoiceLines(fraisSeuls, new Map(), octobre)
+    assert.deepEqual(warnings, [])
+    assert.deepEqual(
+      lines.map((line) => [line.kind, line.contractLineId, line.periodStart, line.periodEnd, line.unitPriceCents]),
+      [
+        ['rent', null, '2026-10-10', '2026-10-31', 65_000],
+        ['rent', 'l3', '2026-10-10', '2026-10-10', 15_000],
+      ],
     )
-    assert.deepEqual(lines, [])
-    assert.match(warnings[0].message, /lignes ponctuelles/)
+    // Le mois suivant, le loyer seul.
+    const novembre = contractInvoiceLines(fraisSeuls, new Map(), { ...octobre, windows: runWindows('2026-11', 'in_advance') })
+    assert.deepEqual(
+      novembre.lines.map((line) => [line.contractLineId, line.periodStart]),
+      [[null, '2026-11-01']],
+    )
+  })
+
+  it('facture chaque ligne d’une même version pour son compte : celle qu’un avoir a libérée revient seule', () => {
+    // l1 tient octobre ; l2 a été créditée (libérée) : elle seule est à refacturer.
+    const billed = new Map([[contractKey('k1', 'l1'), [{ start: '2026-10-10', end: '2026-10-31' }]]])
+    const { lines } = contractInvoiceLines(aLignes, billed, octobre)
+    assert.deepEqual(
+      lines.map((line) => line.contractLineId),
+      ['l2', 'l3'],
+    )
+  })
+})
+
+describe('avenant signé après la facturation de sa période (ADR 032)', () => {
+  const ligneDe = (id: string, amendmentId: string | null, unitPriceCents: number): BillingContract['lines'][number] => ({
+    id,
+    amendmentId,
+    description: 'Bureau 3',
+    quantity: 3,
+    unit: 'month',
+    unitPriceCents,
+    discountBp: null,
+    discountAmountCents: null,
+    vatRateBp: 2000,
+    isRecurring: true,
+    serviceId: null,
+    resourceId: 'r3',
+    position: 0,
+  })
+
+  it('ne refacture pas le trimestre à échoir déjà facturé aux lignes de l’ancienne version', () => {
+    // T1 facturé en janvier avec L0 (01/01–31/03) ; avenant à lignes au 01/03, signé en février.
+    const trimestriel = contrat({
+      billingPeriod: 'quarterly',
+      versions: [
+        { amendmentId: null, amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-02-28', amountCents: 270_000 },
+        { amendmentId: 'a1', amendmentNumber: 1, startsOn: '2026-03-01', endsOn: null, amountCents: 297_000 },
+      ],
+      lines: [ligneDe('L0', null, 90_000), ligneDe('L1', 'a1', 99_000)],
+    })
+    const billed = new Map([[contractKey('k1', 'L0'), [{ start: '2026-01-01', end: '2026-03-31' }]]])
+    const mars = { ...octobre, windows: runWindows('2026-03', 'in_advance') }
+    assert.deepEqual(contractInvoiceLines(trimestriel, billed, mars).lines, [])
+    // Le trimestre suivant se facture à la nouvelle version.
+    const avril = contractInvoiceLines(trimestriel, billed, { ...mars, windows: runWindows('2026-04', 'in_advance') }).lines
+    assert.deepEqual(
+      avril.map((line) => [line.contractLineId, line.periodStart, line.periodEnd, line.prorataNumerator]),
+      [['L1', '2026-04-01', '2026-06-30', null]],
+    )
+  })
+
+  it('ne refacture rien quand on rejoue le mois après un avenant pris en cours de mois', () => {
+    const mensuel = contrat({
+      versions: [
+        { amendmentId: null, amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-10-14', amountCents: 90_000 },
+        { amendmentId: 'a1', amendmentNumber: 1, startsOn: '2026-10-15', endsOn: null, amountCents: 99_000 },
+      ],
+      lines: [ligneDe('L0', null, 30_000), ligneDe('L1', 'a1', 33_000)],
+    })
+    const octobreFacture = new Map([[contractKey('k1', 'L0'), [{ start: '2026-10-01', end: '2026-10-31' }]]])
+    for (const prorataRule of ['calendar_days', 'thirty_day_month', 'none'] as const) {
+      assert.deepEqual(contractInvoiceLines(mensuel, octobreFacture, { ...octobre, prorataRule }).lines, [], prorataRule)
+    }
+    // Seuls les jours qu'aucune version n'a facturés restent dus.
+    const moitie = new Map([[contractKey('k1', 'L0'), [{ start: '2026-10-01', end: '2026-10-20' }]]])
+    assert.deepEqual(
+      contractInvoiceLines(mensuel, moitie, octobre).lines.map((line) => [line.contractLineId, line.periodStart, line.periodEnd]),
+      [['L1', '2026-10-21', '2026-10-31']],
+    )
+  })
+
+  it('ne refacture pas entre une version à montant et une version à lignes, dans les deux sens', () => {
+    const versions = [
+      { amendmentId: null, amendmentNumber: null, startsOn: '2026-01-01', endsOn: '2026-10-14', amountCents: 90_000 },
+      { amendmentId: 'a1', amendmentNumber: 1, startsOn: '2026-10-15', endsOn: null, amountCents: 99_000 },
+    ]
+    // Version initiale à montant (loyer global), avenant à lignes.
+    const versLignes = contrat({ versions, lines: [ligneDe('L1', 'a1', 33_000)] })
+    const loyerGlobal = new Map([[contractKey('k1', null), [{ start: '2026-10-01', end: '2026-10-31' }]]])
+    assert.deepEqual(contractInvoiceLines(versLignes, loyerGlobal, octobre).lines, [])
+    // Version initiale à lignes, avenant à montant.
+    const versMontant = contrat({ versions, lines: [ligneDe('L0', null, 30_000)] })
+    const ligneInitiale = new Map([[contractKey('k1', 'L0'), [{ start: '2026-10-01', end: '2026-10-31' }]]])
+    assert.deepEqual(contractInvoiceLines(versMontant, ligneInitiale, octobre).lines, [])
   })
 })
 
@@ -275,6 +371,58 @@ describe('forfaits souscrits (ADR 024)', () => {
     const { lines, warnings } = subscriptionInvoiceLines(standard({ unit: 'day' }), new Map(), octobre)
     assert.deepEqual(lines, [])
     assert.equal(warnings.length, 1)
+  })
+
+  describe('changement de conditions en cours de mois (ADR 032)', () => {
+    // S1 du 01/01 au 14/10 à 100 €, S2 à partir du 15/10 à 120 € : la même chaîne.
+    const s1 = standard({ id: 'S1', quantity: 1, discountBp: null, unitPriceCents: 10_000, startsOn: '2026-01-01', endsOn: '2026-10-14' })
+    const s2 = standard({ id: 'S2', quantity: 1, discountBp: null, unitPriceCents: 12_000, startsOn: '2026-10-15', endsOn: null })
+    const sources = (subscriptionBilled: Map<string, { start: string; end: string }[]> = new Map()) => ({
+      contracts: [],
+      contractBilled: new Map(),
+      subscriptions: [s2, s1],
+      subscriptionBilled,
+      bookings: [],
+      mailItems: [],
+      actService: null,
+      actSubscriptions: [],
+    })
+    const forfaits = (runs: ReturnType<typeof computeRun>) =>
+      runs.flatMap((run) => run.lines).map((line) => [line.subscribedServiceId, line.periodStart, line.periodEnd, net(line)])
+    const sansProrata = { ...octobre, prorataRule: 'none' as const }
+
+    it('sans prorata, facture le mois une seule fois, au prix de la souscription de son premier jour', () => {
+      assert.deepEqual(forfaits(computeRun(sources(), sansProrata)), [['S1', '2026-10-01', '2026-10-14', 10_000]])
+      // La nouvelle souscription compte à partir du mois suivant.
+      assert.deepEqual(
+        forfaits(computeRun(sources(), { ...sansProrata, windows: runWindows('2026-11', 'in_advance') })),
+        [['S2', '2026-11-01', '2026-11-30', 12_000]],
+      )
+      // Rejoué, le mois déjà facturé ne revient pas.
+      const facture = new Map([['S1', [{ start: '2026-10-01', end: '2026-10-14' }]]])
+      assert.deepEqual(forfaits(computeRun(sources(facture), sansProrata)), [])
+    })
+
+    it('à terme échu aussi', () => {
+      const echu = { ...sansProrata, windows: runWindows('2026-11', 'in_arrears'), timing: 'in_arrears' as const }
+      assert.deepEqual(forfaits(computeRun(sources(), echu)), [['S1', '2026-10-01', '2026-10-14', 10_000]])
+    })
+
+    it('au prorata, chaque souscription pour ses jours', () => {
+      assert.deepEqual(forfaits(computeRun(sources(), octobre)), [
+        ['S1', '2026-10-01', '2026-10-14', 4_516],
+        ['S2', '2026-10-15', '2026-10-31', 6_581],
+      ])
+    })
+
+    it('ne lie pas deux services différents', () => {
+      const autre = { ...s2, id: 'S3', serviceId: 's2' }
+      const runs = computeRun({ ...sources(), subscriptions: [s1, autre] }, sansProrata)
+      assert.deepEqual(forfaits(runs), [
+        ['S1', '2026-10-01', '2026-10-14', 10_000],
+        ['S3', '2026-10-15', '2026-10-31', 12_000],
+      ])
+    })
   })
 })
 

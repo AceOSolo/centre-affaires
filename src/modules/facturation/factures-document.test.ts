@@ -169,6 +169,24 @@ describe('ce qui manque pour émettre (ADR 026, 027)', () => {
     ])
   })
 
+  it('exige le motif d’exonération d’une ligne sans TVA, pas au taux zéro (ADR 032)', () => {
+    const lignes = [
+      ligne({ description: 'Loyer', vatCategory: 'S' }),
+      ligne({ description: 'Débours', vatCategory: 'E', vatRateBp: 0, vatExemptionReason: '  ' }),
+      ligne({ description: 'Hors champ', vatCategory: 'O', vatRateBp: 0, vatExemptionReason: null }),
+      ligne({ description: 'Taux zéro', vatCategory: 'Z', vatRateBp: 0, vatExemptionReason: null }),
+    ]
+    assert.deepEqual(missingForIssue(brouillon, centre, client, false, lignes), [
+      'motif d’exonération de TVA de « Débours », « Hors champ »',
+    ])
+    const motivees = lignes.map((line) =>
+      line.vatCategory === 'S' || line.vatCategory === 'Z'
+        ? line
+        : { ...line, vatExemptionReason: 'Exonération, art. 261 D du CGI' },
+    )
+    assert.deepEqual(missingForIssue(brouillon, centre, client, false, motivees), [])
+  })
+
   it('n’exige pas de moyen de paiement pour un avoir', () => {
     const avoir = { ...brouillon, kind: 'credit_note' } as Invoice
     assert.deepEqual(missingForIssue(avoir, { ...centre, bankIban: null } as Tenant, client, false), [])

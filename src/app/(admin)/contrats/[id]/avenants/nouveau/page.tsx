@@ -77,11 +77,18 @@ export default async function NewAmendmentPage({
       (latest, amendment) => (latest && latest > amendment.effectiveOn ? latest : amendment.effectiveOn),
       null,
     )
-  const effectiveOn = defaultEffectiveOn(todayIsoDate(timeZone), contract.startsOn, lastSigned)
+  const changesResource = ressource === '1'
+  // Un avenant de prix ne prend pas effet sur une période déjà facturée
+  // (ADR 032) ; un changement de ressource seule, si.
+  const effectiveOn = defaultEffectiveOn(
+    todayIsoDate(timeZone),
+    contract.startsOn,
+    lastSigned,
+    changesResource ? null : terms.billedThrough,
+  )
   const version = segmentOn(terms.versions, effectiveOn)
   const initialLines = versionLinesForForm(version, contract)
   const catalog = await loadLinesCatalog(version?.lines ?? [])
-  const changesResource = ressource === '1'
 
   return (
     <div className="flex flex-col gap-6">
@@ -110,6 +117,7 @@ export default async function NewAmendmentPage({
         currentAmountLabel={versionAmountLabel(terms.versions, effectiveOn, contract)}
         periodSuffix={billingPeriodSuffixes[contract.billingPeriod]}
         currency={contract.currency}
+        billedThrough={terms.billedThrough}
       />
     </div>
   )

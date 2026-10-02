@@ -46,13 +46,8 @@ import { serviceCodes, services } from './schema.ts'
  * Le lot n'émet rien : l'équipe relit les brouillons, puis émet.
  */
 
-/** Bilan d'un lot : celui du schéma, et ce que l'écran en dit de plus. */
-export type InvoiceRunReport = InvoiceRunResult & {
-  /** Brouillons du lot déjà présents, complétés par un lot rejoué. */
-  invoicesUpdated?: number
-  /** Lignes écrites par le lot. */
-  linesCreated?: number
-}
+/** Bilan d'un lot, tel que le schéma le déclare (`invoice_runs.result`). */
+export type InvoiceRunReport = InvoiceRunResult
 
 /** Facture de lot déjà présente pour un client et la période. */
 type ExistingRunInvoice = {

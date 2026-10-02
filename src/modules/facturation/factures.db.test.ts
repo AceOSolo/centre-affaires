@@ -422,6 +422,33 @@ describe('factures', { skip: raison }, () => {
       assert.equal((await facture(id)).status, 'draft')
     })
 
+    it('exige le motif d’exonération d’une ligne sans TVA, pas au taux zéro (ADR 032)', async () => {
+      const id = await brouillon()
+      await ligne(id)
+      const exoneree = await ligne(id, { description: 'Débours', vatRateBp: 0, vatCategory: 'E', unitPriceCents: 500 })
+      await ligne(id, { description: 'Taux zéro', vatRateBp: 0, vatCategory: 'Z', unitPriceCents: 300 })
+      const refus = await errorOf(() => emettre(id))
+      assert.equal(pgErrorCode(refus), PG_INVOICE_INVALID)
+      assert.match(messageOf(refus), /motif d'exonération de TVA/)
+      assert.equal((await facture(id)).number, null)
+
+      await asTenant((tx) =>
+        tx
+          .update(invoiceLines)
+          .set({ vatExemptionReason: '   ' })
+          .where(eq(invoiceLines.id, exoneree.id)),
+      )
+      assert.equal(await errorCode(() => emettre(id)), PG_INVOICE_INVALID)
+
+      await asTenant((tx) =>
+        tx
+          .update(invoiceLines)
+          .set({ vatExemptionReason: 'Débours, art. 267 II 2° du CGI' })
+          .where(eq(invoiceLines.id, exoneree.id)),
+      )
+      assert.match(await emettre(id), /^FA-/)
+    })
+
     it('refuse une facture vide ou négative', async () => {
       const vide = await brouillon()
       assert.equal(await errorCode(() => emettre(vide)), PG_INVOICE_INVALID)
@@ -739,6 +766,101 @@ describe('factures', { skip: raison }, () => {
       )
     })
 
+    it('facture le loyer d’une version à côté de ses lignes ponctuelles (ADR 032)', async () => {
+      const [k] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
+          values (${DURAND}, 'DOM-FRAIS', 'domiciliation', '2026-09-01', 3000) returning id`),
+      )
+      const contratId = k.id as string
+      const [frais] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contract_lines (contract_id, description, unit, unit_price_cents, is_recurring)
+          values (${contratId}, 'Frais de dossier', 'unit', 5000, false) returning id`),
+      )
+      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`))
+      const id = await brouillon()
+      await ligne(id, {
+        kind: 'rent',
+        contractId: contratId,
+        periodStart: '2026-09-01',
+        periodEnd: '2026-09-30',
+        unitPriceCents: 3_000,
+      })
+      await ligne(id, {
+        kind: 'rent',
+        contractId: contratId,
+        contractLineId: frais.id as string,
+        periodStart: '2026-09-01',
+        periodEnd: '2026-09-01',
+        unitPriceCents: 5_000,
+      })
+      assert.equal((await facture(id)).totalExclTaxCents, 8_000)
+    })
+
+    it('refuse un loyer sur des jours qu’une autre version du contrat tient déjà (ADR 032)', async () => {
+      const [k] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
+          values (${DURAND}, 'BUR-REPRISE', 'bureau', '2026-01-01', 0) returning id`),
+      )
+      const contratId = k.id as string
+      const [initiale] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contract_lines (contract_id, description, unit_price_cents)
+          values (${contratId}, 'Bureau', 90000) returning id`),
+      )
+      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`))
+      const [avenant] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contract_amendments (contract_id, effective_on, reason)
+          values (${contratId}, '2026-07-15', 'Indexation') returning id`),
+      )
+      const [indexee] = await asTenant((tx) =>
+        tx.execute(sql`
+          insert into contract_lines (contract_id, amendment_id, description, unit_price_cents)
+          values (${contratId}, ${avenant.id as string}, 'Bureau', 92000) returning id`),
+      )
+      // Juillet facturé à l'ancienne version, puis l'avenant au 15 juillet.
+      await ligne(await brouillon({ periodStart: '2026-07-01', periodEnd: '2026-07-31' }), {
+        kind: 'rent',
+        contractId: contratId,
+        contractLineId: initiale.id as string,
+        periodStart: '2026-07-01',
+        periodEnd: '2026-07-31',
+        unitPriceCents: 90_000,
+      })
+      // La signature le refuse désormais (avenants.db.test.ts) ; un avenant
+      // signé avant cette garde, ou en concurrence, laisse cet état : on le pose
+      // sans les gardes de la base.
+      await owner.client.begin(async (tx) => {
+        await tx`set local session_replication_role = replica`
+        await tx`update contract_amendments set status = 'signed', signed_at = now() where id = ${avenant.id as string}`
+      })
+
+      const refus = await errorOf(async () =>
+        ligne(await brouillon({ periodStart: '2026-08-01', periodEnd: '2026-08-31' }), {
+          kind: 'rent',
+          contractId: contratId,
+          contractLineId: indexee.id as string,
+          periodStart: '2026-07-15',
+          periodEnd: '2026-07-31',
+          unitPriceCents: 92_000,
+        }),
+      )
+      assert.equal(pgErrorCode(refus), PG_INVOICE_INVALID)
+      assert.match(messageOf(refus), /autre version/)
+      // Août, que rien ne tient, se facture à la nouvelle version.
+      await ligne(await brouillon({ periodStart: '2026-08-01', periodEnd: '2026-08-31' }), {
+        kind: 'rent',
+        contractId: contratId,
+        contractLineId: indexee.id as string,
+        periodStart: '2026-08-01',
+        periodEnd: '2026-08-31',
+        unitPriceCents: 92_000,
+      })
+    })
+
     it('facture une ligne ponctuelle de contrat une seule fois, au premier jour de sa version', async () => {
       const [k] = await asTenant((tx) =>
         tx.execute(sql`
@@ -832,6 +954,66 @@ describe('factures', { skip: raison }, () => {
         tx.update(invoiceLines).set({ unitPriceCents: 9_000 }).where(eq(invoiceLines.id, ligneExcessive.id)),
       )
       assert.equal(await errorCode(() => emettre(excessif)), PG_INVOICE_INVALID)
+    })
+
+    it('annule par deux avoirs ligne à ligne, au centime du TTC de la facture (ADR 032)', async () => {
+      // 2 × 33,33 € HT à 20 % : 66,66 € HT, 13,33 € de TVA, 79,99 € TTC.
+      const id = await brouillon()
+      await ligne(id, { description: 'A', unitPriceCents: 3_333, position: 0 })
+      await ligne(id, { description: 'B', unitPriceCents: 3_333, position: 1 })
+      await emettre(id)
+      assert.equal((await facture(id)).totalInclTaxCents, 7_999)
+
+      // Premier avoir : la ligne A seule.
+      const premier = await brouillonAvoir(id)
+      const [, repriseB] = await lignes(premier)
+      await asTenant((tx) =>
+        tx.update(invoiceLines).set({ deletedAt: new Date() }).where(eq(invoiceLines.id, repriseB.id)),
+      )
+      await emettre(premier)
+      // Second avoir : ce qui reste, la ligne B.
+      const second = await brouillonAvoir(id)
+      assert.equal((await lignes(second)).length, 1)
+      await emettre(second)
+
+      const avoirs = [await facture(premier), await facture(second)]
+      assert.equal(avoirs[0].totalInclTaxCents + avoirs[1].totalInclTaxCents, 7_999)
+      const annulee = await facture(id)
+      assert.equal(annulee.status, 'cancelled')
+      assert.equal(annulee.creditedCents, annulee.totalInclTaxCents)
+      for (const line of await lignes(id)) assert.ok(line.releasedAt, line.description)
+      // Chaque ligne d'avoir crédite exactement la TVA de sa ligne.
+      const origine = await lignes(id)
+      const credits = [...(await lignes(premier)), ...(await lignes(second))]
+      for (const line of origine) {
+        const credit = credits.find((candidate) => candidate.creditedLineId === line.id)
+        assert.equal(credit?.vatAmountCents, line.vatAmountCents, line.description)
+      }
+    })
+
+    it('solde une ligne créditée en deux fois au centime de sa TVA (ADR 032)', async () => {
+      // 100,03 € HT à 20 % : 20,01 € de TVA, 120,04 € TTC.
+      const id = await brouillon()
+      await ligne(id, { unitPriceCents: 10_003 })
+      await emettre(id)
+      const partiel = await brouillonAvoir(id, 'Geste commercial')
+      const [reprise] = await lignes(partiel)
+      await asTenant((tx) =>
+        tx.update(invoiceLines).set({ unitPriceCents: 5_001 }).where(eq(invoiceLines.id, reprise.id)),
+      )
+      await emettre(partiel)
+      // 50,01 € HT : sa propre TVA, 10,00 €.
+      assert.equal((await facture(partiel)).totalInclTaxCents, 6_001)
+      assert.equal((await facture(id)).status, 'issued')
+
+      // Le reliquat, 50,02 € HT, crédite la TVA qui reste : 10,01 €.
+      const reliquat = await brouillonAvoir(id)
+      await emettre(reliquat)
+      assert.equal((await facture(reliquat)).totalInclTaxCents, 6_003)
+      const annulee = await facture(id)
+      assert.equal(annulee.status, 'cancelled')
+      assert.equal(annulee.creditedCents, 12_004)
+      assert.ok((await lignes(id))[0].releasedAt)
     })
 
     it('ne corrige qu’une facture émise, et une ligne d’avoir ne porte pas de source', async () => {

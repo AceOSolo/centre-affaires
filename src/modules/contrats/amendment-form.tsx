@@ -5,6 +5,7 @@ import { useActionState, useState } from 'react'
 import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
+import { addDaysToIsoDate, formatCalendarDate } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
 import { amendmentFieldLabels, type AmendmentField } from './avenant-formulaire.ts'
 import {
@@ -50,6 +51,7 @@ export function AmendmentForm({
   currentAmountLabel,
   periodSuffix,
   currency,
+  billedThrough = null,
 }: {
   contractId: string
   /** Avenant brouillon à modifier ; absent en création. */
@@ -62,6 +64,8 @@ export function AmendmentForm({
   currentAmountLabel: string
   periodSuffix: string
   currency: string
+  /** Dernier jour déjà facturé du contrat : un nouveau prix prend effet après (ADR 032). */
+  billedThrough?: string | null
 }) {
   const [state, formAction, pending] = useActionState<AmendmentFormState, FormData>(
     amendmentId ? updateAmendmentAction : createAmendmentAction,
@@ -110,6 +114,14 @@ export function AmendmentForm({
           />
           <p id="effectiveOn-hint" className="mt-1 text-xs text-muted-foreground">
             Premier jour de la nouvelle version.
+            {billedThrough && (
+              <>
+                {' '}
+                Contrat facturé jusqu’au <span className="tabular">{formatCalendarDate(billedThrough)}</span> : un
+                nouveau prix prend effet au plus tôt le{' '}
+                <span className="tabular">{formatCalendarDate(addDaysToIsoDate(billedThrough, 1))}</span>.
+              </>
+            )}
           </p>
           <FieldError name="effectiveOn" error={errors.effectiveOn} />
         </div>
