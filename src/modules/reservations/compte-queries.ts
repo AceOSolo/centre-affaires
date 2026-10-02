@@ -1,0 +1,96 @@
+import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+
+import { withTenant } from '../../db/index.ts'
+import { currentTenantId } from '../../lib/tenant.ts'
+import { isUuid } from '../../lib/uuid.ts'
+import { clients } from '../clients/schema.ts'
+import type { ClientAccount } from '../clients/comptes.ts'
+import { resources, type ResourceType } from '../ressources/schema.ts'
+import { bookings, type Booking } from './schema.ts'
+
+/**
+ * Réservations vues depuis l'espace client (ADR 015) : celles des entreprises
+ * du compte, et d'elles seules. Le filtre sur `client_id` est le verrou ; la
+ * RLS ne sépare que les centres.
+ */
+export type ClientBookingRow = Pick<
+  Booking,
+  'id' | 'status' | 'startsAt' | 'endsAt' | 'title' | 'cancellationReason' | 'clientId'
+> & {
+  resourceName: string
+  resourceType: ResourceType
+  clientName: string
+}
+
+/** Historique limité aux six derniers mois : l'espace sert à ce qui vient. */
+const HISTORY_DAYS = 183
+
+export async function listBookingsForAccounts(accounts: ClientAccount[]): Promise<ClientBookingRow[]> {
+  if (accounts.length === 0) return []
+  const since = new Date(Date.now() - HISTORY_DAYS * 86_400_000)
+
+  return withTenant(currentTenantId(), (tx) =>
+    tx
+      .select({
+        id: bookings.id,
+        status: bookings.status,
+        startsAt: bookings.startsAt,
+        endsAt: bookings.endsAt,
+        title: bookings.title,
+        cancellationReason: bookings.cancellationReason,
+        clientId: bookings.clientId,
+        resourceName: resources.name,
+        resourceType: resources.resourceType,
+        clientName: clients.name,
+      })
+      .from(bookings)
+      .innerJoin(resources, eq(resources.id, bookings.resourceId))
+      .innerJoin(clients, eq(clients.id, bookings.clientId))
+      .where(
+        and(
+          inArray(
+            bookings.clientId,
+            accounts.map((account) => account.clientId),
+          ),
+          eq(bookings.kind, 'booking'),
+          gte(bookings.endsAt, since),
+        ),
+      )
+      .orderBy(desc(bookings.startsAt))
+      .limit(300),
+  )
+}
+
+/**
+ * Annulation d'une demande par le client : seulement en attente, pas commencée,
+ * et pour l'une de ses entreprises — les trois conditions dans le `where`, pour
+ * qu'une validation simultanée par le centre l'emporte proprement.
+ */
+export async function cancelRequestForAccounts(
+  id: string,
+  accounts: ClientAccount[],
+): Promise<boolean> {
+  if (accounts.length === 0 || !isUuid(id)) return false
+  const updated = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .update(bookings)
+      .set({
+        status: 'cancelled',
+        cancelledAt: sql`now()`,
+        cancellationReason: 'Annulée par le client',
+      })
+      .where(
+        and(
+          eq(bookings.id, id),
+          eq(bookings.status, 'pending'),
+          sql`${bookings.startsAt} > now()`,
+          inArray(
+            bookings.clientId,
+            accounts.map((account) => account.clientId),
+          ),
+        ),
+      )
+      .returning({ id: bookings.id }),
+  )
+  return updated.length > 0
+}

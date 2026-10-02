@@ -13,6 +13,8 @@ const sections = [
   { href: '/#espaces', label: 'Nos espaces' },
   { href: '/#disponibilites', label: 'Disponibilités' },
   { href: '/#services', label: 'Services' },
+  // Pas une ancre : l'accès des entreprises clientes à leur courrier (ADR 015).
+  { href: '/compte', label: 'Espace client' },
 ]
 
 /**
@@ -48,7 +50,8 @@ export default async function PortailLayout({ children }: { children: React.Reac
   )}`
 
   return (
-    <div className="flex min-h-screen flex-col bg-background text-foreground">
+    <div className="portail flex min-h-screen flex-col bg-background text-foreground">
+      <a href="#contenu" className="sr-only z-50 rounded-md bg-primary px-5 py-3 text-white focus:not-sr-only focus:fixed focus:left-4 focus:top-4">Aller au contenu</a>
       <ScrollState />
       {/* Sans JavaScript, rien ne viendra révéler les blocs : ils doivent
           s'afficher d'emblée plutôt que rester invisibles. */}
@@ -96,7 +99,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
                 alt={tenant.name}
                 width={600}
                 height={191}
-                priority
+                preload
                 className="h-9 w-auto sm:h-10"
               />
             ) : (
@@ -137,12 +140,12 @@ export default async function PortailLayout({ children }: { children: React.Reac
         <SectionNav
           sections={sections}
           className="flex gap-1 overflow-x-auto border-t border-border px-5 py-2 lg:hidden"
-          linkClassName="whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
+          linkClassName="inline-flex min-h-11 items-center whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-primary"
           activeClassName="bg-muted text-primary"
         />
       </header>
 
-      <main className="flex-1">{children}</main>
+      <main id="contenu" tabIndex={-1} className="min-w-0 flex-1 scroll-mt-36 lg:scroll-mt-24">{children}</main>
 
       <footer className="bg-primary text-white">
         {/* Dernier appel : posé ici plutôt qu'en fin de page, pour qu'il vaille
@@ -278,11 +281,15 @@ export default async function PortailLayout({ children }: { children: React.Reac
                 ? `${tenant.name} est exploité par ${tenant.legalName}.`
                 : tenant.name}
             </p>
-            {/* Espace client et mentions légales arrivent avec le portail
-                authentifié ; l'accès équipe existe déjà. */}
-            <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
-              Accès équipe
-            </Link>
+            {/* Les mentions légales restent à écrire. */}
+            <div className="flex gap-4">
+              <Link href="/compte" className="underline-offset-4 hover:underline">
+                Espace client
+              </Link>
+              <Link href="/auth/connexion" className="underline-offset-4 hover:underline">
+                Accès équipe
+              </Link>
+            </div>
           </div>
         </div>
       </footer>

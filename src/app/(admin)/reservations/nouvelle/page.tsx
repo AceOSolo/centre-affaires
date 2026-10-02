@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
+import { listClients } from '../../../../modules/clients/queries.ts'
 import { occupiesResource } from '../../../../modules/reservations/availability.ts'
 import { BookingForm } from '../../../../modules/reservations/booking-form.tsx'
 import { loadWeekCalendar } from '../../../../modules/reservations/calendar-data.ts'
@@ -52,9 +53,10 @@ export default async function NewBookingPage({
   }
 
   const jours = weekDays(defaultDate)
-  const [days, bookings] = await Promise.all([
+  const [days, bookings, clients] = await Promise.all([
     loadWeekCalendar({ resourceId: resource.id, anchor: defaultDate, timeZone }),
     listBookingsBetween(jours[0], jours[6], timeZone),
+    listClients(),
   ])
 
   // Le détail des réservations ne sort pas du back-office : le portail public
@@ -141,6 +143,7 @@ export default async function NewBookingPage({
         today={today}
         defaultDate={defaultDate}
         defaultStartTime={start && WALL_TIME.test(start) ? start : undefined}
+        clients={clients.map((client) => ({ id: client.id, name: client.name }))}
       />
     </div>
   )

@@ -78,12 +78,15 @@ export default async function WeekPage({
             {formatLongDate(jours[0], timeZone)} → {formatLongDate(jours[6], timeZone)}
           </p>
         </div>
-        <Link
-          href={`/reservations?date=${anchor}`}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Vue jour
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/reservations/en-masse" className="rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-white">Ajouter en masse</Link>
+          <Link
+            href={`/reservations?date=${anchor}`}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Vue jour
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

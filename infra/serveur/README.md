@@ -125,7 +125,8 @@ Supprimer toutes les autres lignes A, AAAA et CNAME de ces deux noms (ancien
 hébergement, GitHub Pages). Un AAAA oublié envoie les visiteurs en IPv6 vers
 l'ancien site. `www` suit le domaine nu : un seul endroit à changer. Vérifier
 aussi l'onglet « Redirection ». **Ne pas toucher aux MX, SPF, DKIM et DMARC** :
-ils portent les e-mails du domaine.
+ils portent les e-mails du domaine. Les enregistrements de Brevo s'y
+ajoutent, sans les remplacer (étape 8).
 
 L'IPv4 du serveur figure dans l'espace client OVH (Bare Metal Cloud → VPS), ou
 dans la zone DNS d'un autre domaine déjà hébergé dessus.
@@ -162,6 +163,38 @@ Le fichier Apache est redéposé dans `/home/deploy/centre-affaires/` à chaque
 déploiement. S'il change dans le dépôt, le recopier dans `sites-available` et
 recharger Apache.
 
+## 8. Courriels avec Brevo
+
+L'application prévient les clients à l'arrivée et à la numérisation de leur
+courrier, et le centre à chaque demande d'ouverture (ADR 015). L'envoi passe
+par le SMTP de Brevo, prestataire français hébergé en Europe.
+
+**Authentifier le domaine expéditeur**, sans quoi les messages finissent en
+indésirables. Dans Brevo : Expéditeurs, domaines et IP dédiées → Domaines →
+ajouter `handfield.fr`. Brevo affiche les enregistrements à créer (code de
+vérification, DKIM, DMARC) : les ajouter dans la zone DNS OVH (étape 6),
+**sans modifier ni supprimer ceux qui existent** — ils portent les e-mails
+actuels du domaine. S'il existe déjà un enregistrement SPF (`v=spf1 …`), y
+ajouter `include:spf.brevo.com` dans la même ligne : un domaine n'a qu'un seul
+SPF. Attendre que Brevo affiche le domaine comme authentifié.
+
+**Créer la clé SMTP** : SMTP & API → onglet SMTP → générer une clé. Dans le
+`.env` du serveur : `SMTP_USER` reçoit l'identifiant affiché par Brevo (il
+contient un `@`, c'est normal), `SMTP_PASSWORD` la clé SMTP — pas la clé
+d'API. `MAIL_FROM` utilise une adresse du domaine authentifié.
+
+**Désactiver le suivi** des ouvertures et des clics dans les réglages des
+e-mails transactionnels : il ajouterait un pixel espion aux messages et
+ferait passer les liens vers l'espace client par un domaine de Brevo.
+
+**RGPD** : Brevo est sous-traitant des adresses des clients. Accepter son
+accord de traitement des données (DPA, dans les paramètres du compte) et
+l'inscrire au registre des traitements du centre.
+
+Vérifier : relancer l'application (`docker compose up -d`), puis sur la fiche
+d'un client de test, donner l'accès à sa propre adresse — le courriel
+d'invitation doit arriver.
+
 ## Au quotidien
 
 Sur le serveur, dans `/home/deploy/centre-affaires` :
@@ -172,6 +205,25 @@ docker compose logs -f app    # journaux de l'application
 ```
 
 Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
+
+## Conservation du courrier
+
+Les numérisations de courrier et le journal de leurs consultations ne se
+gardent que le temps fixé par le centre (12 mois par défaut, colonnes
+`mail_*_retention_months` de `tenants`, voir `infra/configurer-centre.mjs`).
+La purge est une route de l'application, appelée chaque nuit ; elle exige
+`MAINTENANCE_TOKEN` dans le `.env` du serveur.
+
+Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
+
+```cron
+# Purge du courrier échu, chaque nuit à 3 h 15 (ADR 015).
+15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
+```
+
+La commande tourne dans le conteneur, qui a déjà le jeton dans son
+environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
+affiche le nombre de numérisations et de consultations purgées.
 
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
 version précédente.

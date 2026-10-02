@@ -164,6 +164,11 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Le parcours possède ses propres actions une fois la salle choisie. */
+body:has([data-booking-active='true']) .booking-mobile-cta {
+  display: none;
+}
+
 /*
   Élévation de l'en-tête une fois la page défilée. `data-scrolled` est posé sur
   la racine, ce qui évite de rendre la coque entière côté client pour un ombrage.
@@ -194,4 +199,10 @@ html[data-scrolled='true'] header {
 
 .press:active {
   transform: scale(0.98);
+}
+
+/* Un repère clavier commun à toutes les actions du portail public. */
+.portail :where(a, button, input, select, textarea, summary):focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 4px;
 }

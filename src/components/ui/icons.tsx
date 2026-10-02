@@ -126,3 +126,29 @@ export function SparkleIcon(props: IconProps) {
     </Svg>
   )
 }
+
+export function CreditCardIcon(props: IconProps) {
+  return <Svg {...props}><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3 10h18M7 15h3" /></Svg>
+}
+
+export function FileTextIcon(props: IconProps) {
+  return <Svg {...props}><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" /><path d="M14 3v6h6M8 13h8M8 17h5" /></Svg>
+}
+
+export function MailIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="5.5" width="18" height="13" rx="2.5" />
+      <path d="m3.5 7 8.5 6 8.5-6" />
+    </Svg>
+  )
+}
+
+export function MailOpenIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 10.5V18a2.5 2.5 0 0 0 2.5 2.5h13A2.5 2.5 0 0 0 21 18v-7.5L12 4z" />
+      <path d="m3.5 11 8.5 5.5 8.5-5.5" />
+    </Svg>
+  )
+}

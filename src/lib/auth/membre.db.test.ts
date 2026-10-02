@@ -62,7 +62,10 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
     })
 
     beforeEach(async () => {
-      await owner.client`truncate table staff_members`
+      // `cascade` : le courrier référence les membres de l'équipe (qui l'a
+      // enregistré, ouvert, consulté), et Postgres refuse de vider une table
+      // référencée, même quand les tables qui la visent sont vides.
+      await owner.client`truncate table staff_members cascade`
       await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
     })
 

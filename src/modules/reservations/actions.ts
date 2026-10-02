@@ -2,18 +2,23 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requireStaff } from '../../lib/auth/staff.ts'
 
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
+import { isUuid } from '../../lib/uuid.ts'
+import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import {
   BookingConflictError,
   BookingNotMovableError,
   InvalidRangeError,
+  assignBookingClient,
   cancelBooking,
   confirmBooking,
   createBooking,
+  findBooking,
   moveBooking,
   refuseBooking,
 } from './queries.ts'
@@ -74,22 +79,29 @@ export async function createBookingAction(
     return { error: 'Date ou horaires illisibles.' }
   }
 
+  let createdId: string
   try {
-    await createBooking({
+    const created = await createBooking({
       resourceId,
       startsAt,
       endsAt,
       title,
       notes: text(formData, 'notes') || null,
+      // Facultatif : la réservation apparaît alors dans l'espace du client.
+      clientId: isUuid(text(formData, 'clientId')) ? text(formData, 'clientId') : null,
     })
+    createdId = created.id
   } catch (error) {
     const message = describeBookingError(error, timeZone)
     if (message) return { error: message }
     throw error
   }
 
+  // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014).
+  after(() => syncBookingToGoogleCalendar(createdId))
   const day = toIsoDate(startsAt, timeZone)
-  revalidatePath('/reservations')
+  revalidatePath('/reservations', 'layout')
+  revalidatePath('/')
   redirect(`/reservations?date=${day}`)
 }
 
@@ -122,6 +134,9 @@ export async function moveBookingAction(
     return { error: 'Date ou horaires illisibles.' }
   }
 
+  // Lue avant le déplacement : changée de salle, la réservation doit quitter
+  // l'agenda Google de l'ancienne (ADR 014).
+  const previousResourceId = (await findBooking(id))?.resourceId
   try {
     await moveBooking({ id, resourceId, startsAt, endsAt })
   } catch (error) {
@@ -130,7 +145,9 @@ export async function moveBookingAction(
     throw error
   }
 
-  revalidatePath('/reservations')
+  after(() => syncBookingToGoogleCalendar(id, previousResourceId))
+  revalidatePath('/reservations', 'layout')
+  revalidatePath('/')
   revalidatePath(`/reservations/${id}`)
   redirect(`/reservations/${id}`)
 }
@@ -140,6 +157,10 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   await cancelBooking(id, text(formData, 'reason') || null)
+  // Retire l'événement de l'agenda Google de la ressource, pour qu'il ne montre
+  // pas un créneau libéré comme occupé (ADR 014).
+  after(() => syncBookingToGoogleCalendar(id))
+  revalidatePath('/')
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
   // deux repartir de la base, pas du cache de rendu.
   revalidatePath('/reservations', 'layout')
@@ -148,12 +169,16 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
 /**
  * Validation d'une demande publique (ADR 005). Le créneau était bloqué depuis
  * le dépôt : confirmer ne peut pas échouer sur un conflit.
+ *
+ * L'écriture dans Google Agenda part après la réponse (ADR 014) : la
+ * validation est acquise en base, que Google réponde ou non.
  */
 export async function confirmBookingAction(formData: FormData): Promise<void> {
   await requireStaff()
   const id = text(formData, 'id')
   if (!id) return
   await confirmBooking(id)
+  after(() => syncBookingToGoogleCalendar(id))
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }
@@ -164,6 +189,23 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   await refuseBooking(id, text(formData, 'reason') || null)
+  revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
+}
+
+/**
+ * Rattache une réservation à un client, ou l'en détache (ADR 015) : c'est ce
+ * qui la fait apparaître dans son espace. Utile pour une demande déposée par
+ * une personne qui gère plusieurs entreprises, et pour l'historique d'avant
+ * l'espace client.
+ */
+export async function assignBookingClientAction(formData: FormData): Promise<void> {
+  await requireStaff()
+  const id = text(formData, 'id')
+  if (!isUuid(id)) return
+  const clientId = text(formData, 'clientId')
+  await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  revalidatePath(`/reservations/${id}`)
+  revalidatePath('/compte/reservations')
 }

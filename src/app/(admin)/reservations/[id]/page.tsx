@@ -3,7 +3,11 @@ import { notFound } from 'next/navigation'
 
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
-import { cancelBookingAction } from '../../../../modules/reservations/actions.ts'
+import { findClient, listClients } from '../../../../modules/clients/queries.ts'
+import {
+  assignBookingClientAction,
+  cancelBookingAction,
+} from '../../../../modules/reservations/actions.ts'
 import { findBooking } from '../../../../modules/reservations/queries.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 
@@ -14,6 +18,11 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   const timeZone = await currentTimeZone()
   const booking = await findBooking(id)
   if (!booking) notFound()
+  // `findClient` et non la liste : une fiche archivée reste nommée ici.
+  const [clients, client] = await Promise.all([
+    listClients(),
+    booking.clientId ? findClient(booking.clientId) : undefined,
+  ])
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
   const cancelled = booking.status === 'cancelled'
@@ -28,6 +37,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           ← Planning
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{booking.title}</h1>
+        {booking.seriesId && <Link href={`/reservations/series/${booking.seriesId}`} className="mt-2 inline-block text-sm text-primary underline underline-offset-2">Voir la série et gérer les occurrences à venir</Link>}
         {cancelled && (
           <p className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
             Annulée — le créneau est libre
@@ -53,6 +63,19 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           <span className="text-muted-foreground">
             ({formatDuration(booking.startsAt, booking.endsAt)})
           </span>
+        </dd>
+
+        <dt className="text-muted-foreground">Client</dt>
+        <dd>
+          {client ? (
+            <Link href={`/clients/${client.id}`} className="underline-offset-2 hover:underline">
+              {client.name}
+            </Link>
+          ) : (
+            <span className="text-muted-foreground">
+              {booking.requesterName ? `Aucun — demandé par ${booking.requesterName}` : 'Aucun'}
+            </span>
+          )}
         </dd>
 
         {booking.notes && (
@@ -85,6 +108,43 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
             Déplacer la réservation
           </Link>
         </div>
+      )}
+
+      {booking.kind === 'booking' && clients.length > 0 && (
+        <form
+          action={assignBookingClientAction}
+          className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4 sm:flex-row sm:items-end"
+        >
+          <input type="hidden" name="id" value={booking.id} />
+          <div className="flex-1">
+            <label className="block text-sm font-medium text-foreground" htmlFor="clientId">
+              Client rattaché
+            </label>
+            <select
+              id="clientId"
+              name="clientId"
+              defaultValue={booking.clientId ?? ''}
+              aria-describedby="clientId-hint"
+              className="mt-1 w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40"
+            >
+              <option value="">Aucun</option>
+              {clients.map((candidate) => (
+                <option key={candidate.id} value={candidate.id}>
+                  {candidate.name}
+                </option>
+              ))}
+            </select>
+            <p id="clientId-hint" className="mt-1 text-xs text-muted-foreground">
+              La réservation apparaît dans l’espace de ce client.
+            </p>
+          </div>
+          <button
+            type="submit"
+            className="self-start rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted sm:self-auto"
+          >
+            Enregistrer
+          </button>
+        </form>
       )}
 
       {/* Pas de suppression : la réservation reste consultable, l'annulation est

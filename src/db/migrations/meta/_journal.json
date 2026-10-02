@@ -127,6 +127,55 @@
       "when": 1789737893814,
       "tag": "0017_identite_complements",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1789996905322,
+      "tag": "0018_regles_et_series_reservations",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1790770802399,
+      "tag": "0019_comptes_clients_et_courrier",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "7",
+      "when": 1790770812986,
+      "tag": "0020_rls_comptes_clients_et_courrier",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1790773732490,
+      "tag": "0021_agenda_google",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1790773734641,
+      "tag": "0022_rls_agenda_google",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1790774098859,
+      "tag": "0023_reservations_clients_et_conservation",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790774117912,
+      "tag": "0024_purge_journal_courrier",
+      "breakpoints": true
     }
   ]
 }

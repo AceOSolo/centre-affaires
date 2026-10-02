@@ -69,12 +69,17 @@ export default async function PlanningPage({
             {formatLongDate(isoDate, timeZone)}
           </p>
         </div>
-        <Link
-          href={`/reservations/nouvelle?date=${isoDate}`}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-        >
-          Nouvelle réservation
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/reservations/en-masse" className="rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-white">
+            Ajouter en masse
+          </Link>
+          <Link
+            href={`/reservations/nouvelle?date=${isoDate}`}
+            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            Nouvelle réservation
+          </Link>
+        </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

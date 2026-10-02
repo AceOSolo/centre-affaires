@@ -6,7 +6,7 @@ import { withTenant } from '../../db/index.ts'
 import type { StaffMember } from '../../db/staff.ts'
 import { resolveStaffMember, type AuthenticatedUser } from './membre.ts'
 import { currentTenantId } from '../tenant.ts'
-import { getAuth } from './server.ts'
+import { sessionUser } from './session.ts'
 
 /**
  * Du compte connecté au membre de l'équipe (ADR 008).
@@ -26,21 +26,12 @@ export type StaffAccess =
  * page et l'action qu'elle déclenche interrogent la même session une fois.
  */
 export const staffAccess = cache(async (): Promise<StaffAccess> => {
-  const { data: session } = await getAuth().getSession()
-  const sessionUser = session?.user as
-    | { id?: string; email?: string; name?: string | null; emailVerified?: boolean }
-    | undefined
-
-  if (!sessionUser?.id || !sessionUser.email) return { status: 'anonyme' }
-
-  const user: AuthenticatedUser = {
-    id: sessionUser.id,
-    email: sessionUser.email.trim().toLowerCase(),
-    name: sessionUser.name ?? null,
-  }
+  const session = await sessionUser()
+  if (!session) return { status: 'anonyme' }
+  const { user, emailVerified } = session
 
   const member = await withTenant(currentTenantId(), (tx) =>
-    resolveStaffMember(tx, user, { emailVerified: sessionUser.emailVerified }),
+    resolveStaffMember(tx, user, { emailVerified }),
   )
 
   return member ? { status: 'membre', user, member } : { status: 'refuse', user }

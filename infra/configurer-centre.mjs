@@ -41,6 +41,11 @@ const CENTRE = {
   ],
   timezone: 'Europe/Paris',
   currency: 'EUR',
+  // Conservation du courrier numérisé et du journal d'accès, en mois (RGPD,
+  // ADR 015). Validées par le centre le 2026-09-30 ; à reporter au contrat
+  // de domiciliation.
+  mailScanRetentionMonths: 12,
+  mailAccessLogRetentionMonths: 12,
 }
 
 /**
@@ -82,7 +87,9 @@ try {
         hero_image_path = ${CENTRE.heroImagePath},
         social_links    = ${sql.json(CENTRE.socialLinks)},
         timezone       = ${CENTRE.timezone},
-        currency       = ${CENTRE.currency}
+        currency       = ${CENTRE.currency},
+        mail_scan_retention_months       = ${CENTRE.mailScanRetentionMonths},
+        mail_access_log_retention_months = ${CENTRE.mailAccessLogRetentionMonths}
       where id = ${DEFAULT_TENANT_ID}
       returning name, city, phone, logo_path`
   })

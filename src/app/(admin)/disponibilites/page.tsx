@@ -1,7 +1,8 @@
 import Link from 'next/link'
 
 import { todayIsoDate } from '../../../lib/dates.ts'
-import { currentTimeZone } from '../../../lib/tenant.ts'
+import { currentTenant } from '../../../lib/tenant.ts'
+import { RequestPolicyForm } from '../../../modules/reservations/policy-form.tsx'
 import {
   formatWallTime,
   resourceTypeLabels,
@@ -27,7 +28,8 @@ import { listResources } from '../../../modules/ressources/queries.ts'
 export const metadata = { title: 'Disponibilités' }
 
 export default async function DisponibilitesPage() {
-  const timeZone = await currentTimeZone()
+  const tenant = await currentTenant()
+  const timeZone = tenant.timezone
   const today = todayIsoDate(timeZone)
 
   const [rules, closures, resources] = await Promise.all([
@@ -58,6 +60,17 @@ export default async function DisponibilitesPage() {
           proposée nulle part.
         </p>
       </div>
+
+      <section className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4">
+        <h2 className="text-sm font-semibold">Délai des demandes de réservation</h2>
+        <RequestPolicyForm policy={{ bookingLeadHours: tenant.bookingLeadHours, bookingHorizonDays: tenant.bookingHorizonDays }} />
+      </section>
+
+      <section className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
+        <h2 className="text-sm font-semibold">Indisponibilités récurrentes</h2>
+        <p className="text-sm text-muted-foreground">Bloquez des plages horaires chaque semaine sur une ou plusieurs ressources, avec une date de fin. Elles apparaissent dans le planning et ne sont plus proposées au public.</p>
+        <Link href="/reservations/en-masse?type=indisponibilite" className="self-start rounded-md border border-primary px-4 py-2 text-sm font-medium text-primary hover:bg-muted">Ajouter des indisponibilités</Link>
+      </section>
 
       <section className="flex flex-col gap-4">
         <div>

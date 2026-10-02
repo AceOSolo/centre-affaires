@@ -2,6 +2,9 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { archiveClientAction } from '../../../../modules/clients/actions.ts'
+import { listClientMembers } from '../../../../modules/clients/comptes.ts'
+import { removeClientMemberAction } from '../../../../modules/clients/comptes-actions.ts'
+import { MemberForm } from '../../../../modules/clients/member-form.tsx'
 import {
   clientStatusLabels,
   clientStatusStyles,
@@ -25,7 +28,10 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
   const client = await findClient(id)
   if (!client) notFound()
 
-  const contracts = await listContracts({ clientId: client.id })
+  const [contracts, members] = await Promise.all([
+    listContracts({ clientId: client.id }),
+    listClientMembers(client.id),
+  ])
   const address = formatAddress(client)
 
   return (
@@ -155,6 +161,91 @@ export default async function ClientPage({ params }: { params: Promise<{ id: str
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section className="flex flex-col gap-3">
+        <div className="flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="text-sm font-semibold tracking-tight">
+            Accès à l’espace client{' '}
+            <span className="font-normal text-muted-foreground">({members.length})</span>
+          </h2>
+          <div className="flex gap-4 text-sm">
+            <Link
+              href={`/courrier?client=${client.id}`}
+              className="text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Courrier de ce client
+            </Link>
+            {!client.deletedAt && (
+              <Link
+                href={`/courrier/nouveau?clientId=${client.id}`}
+                className="text-muted-foreground underline-offset-2 hover:underline"
+              >
+                Enregistrer un courrier
+              </Link>
+            )}
+          </div>
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Ces personnes consultent le courrier de l’entreprise et en demandent l’ouverture. Chacune
+          crée son accès depuis la page de connexion du site, avec l’adresse inscrite ici.
+        </p>
+
+        {members.length > 0 && (
+          <div className="overflow-x-auto rounded-lg border border-border bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th className="px-4 py-3 font-medium">Adresse</th>
+                  <th className="px-4 py-3 font-medium">Nom</th>
+                  <th className="px-4 py-3 font-medium">Accès</th>
+                  <th className="px-4 py-3">
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {members.map((member) => (
+                  <tr key={member.id}>
+                    <td className="px-4 py-3">{member.email}</td>
+                    <td className="px-4 py-3 text-muted-foreground">{member.fullName ?? '—'}</td>
+                    <td className="px-4 py-3">
+                      {/* Libellé et couleur : l'état ne se lit pas qu'à la teinte. */}
+                      <span
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                          member.authUserId
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-accent/15 text-primary'
+                        }`}
+                      >
+                        {member.authUserId ? 'Compte activé' : 'En attente de connexion'}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      <form action={removeClientMemberAction}>
+                        <input type="hidden" name="id" value={member.id} />
+                        <input type="hidden" name="clientId" value={client.id} />
+                        <button
+                          type="submit"
+                          aria-label={`Retirer l’accès de ${member.email}`}
+                          className="rounded-md border border-destructive/30 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/5"
+                        >
+                          Retirer l’accès
+                        </button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {!client.deletedAt && (
+          <div className="rounded-lg border border-border bg-white px-5 py-4">
+            <MemberForm clientId={client.id} />
           </div>
         )}
       </section>
