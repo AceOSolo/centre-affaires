@@ -18,6 +18,7 @@ import { invoicePaymentSetup } from './mandats.ts'
 import {
   computeRun,
   contractKey,
+  issuedInvoiceWarning,
   previewAmounts,
   type BillingContract,
   type ClientRun,
@@ -323,13 +324,17 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       ),
     )
 
-  /** Service d'un acte, retrouvé par son code, et les souscriptions qui le couvrent dans la période. */
-  const actServiceByCode = async (code: string) => {
+  /** Service d'un acte, retrouvé par son code ; nul s'il n'est pas (ou plus) au catalogue. */
+  const actServiceRow = async (code: string) => {
     const [service] = await tx
       .select()
       .from(services)
       .where(and(eq(services.code, code), isNull(services.deletedAt)))
       .limit(1)
+    return service ?? null
+  }
+  /** Le service, et les souscriptions qui le couvrent entre `from` et la fin de la période. */
+  const actService = async (service: typeof services.$inferSelect | null, from: string) => {
     const subscriptions = service
       ? await tx
           .select()
@@ -340,10 +345,7 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
               isNull(subscribedServices.deletedAt),
               subscriptionContractIsLive(),
               lte(subscribedServices.startsOn, windows.consumption.end),
-              or(
-                isNull(subscribedServices.endsOn),
-                gte(subscribedServices.endsOn, windows.consumption.start),
-              ),
+              or(isNull(subscribedServices.endsOn), gte(subscribedServices.endsOn, from)),
             ),
           )
       : []
@@ -371,20 +373,56 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       })),
     }
   }
-  const opening = await actServiceByCode(serviceCodes.mailOpening)
-  const scanning = await actServiceByCode(serviceCodes.mailScan)
-  const forwarding = await actServiceByCode(serviceCodes.mailForwarding)
+  const opening = await actService(await actServiceRow(serviceCodes.mailOpening), windows.consumption.start)
+  const requestServiceRows = {
+    scan: await actServiceRow(serviceCodes.mailScan),
+    forward: await actServiceRow(serviceCodes.mailForwarding),
+  }
 
   /*
    * Demandes de courrier faites dans la période (ADR 037) : numérisations et
    * réexpéditions, chacune tenue au plus une fois par ligne de son acte, et
    * par ligne de ses frais d'affranchissement. Un pli retiré (enregistré par
    * erreur) sort de la facturation avec elles.
+   *
+   * Rattrapage : une demande faite avant la période et jamais tenue par une
+   * ligne d'acte — une réexpédition qui attendait ses frais, la demande d'un
+   * client dont la facture était déjà émise — est reprise par ce lot. Seules
+   * celles faites quand leur service était au catalogue : le rattrapage
+   * reprend ce qu'un lot a laissé de côté, pas ce que le centre n'a jamais
+   * facturé. Les mois concernés sont chargés en entier, facturé ou non, pour
+   * que le rang des inclus soit celui du mois de la demande (ADR 035).
    */
   const heldBy = (kind: 'act' | 'other') => sql<boolean>`exists (
     select 1 from invoice_lines as l
      where l.tenant_id = mail_requests.tenant_id and l.mail_request_id = mail_requests.id
        and l.kind = ${kind} and l.deleted_at is null and l.released_at is null)`
+  const sinceService = (['scan', 'forward'] as const).flatMap((kind) => {
+    const service = requestServiceRows[kind]
+    return service ? [and(eq(mailRequests.kind, kind), gte(mailRequests.completedAt, service.createdAt))] : []
+  })
+  const [pending] = sinceService.length
+    ? await tx
+        .select({
+          month: sql<string | null>`to_char(min(${mailRequests.completedAt} at time zone ${tenant.timezone}), 'YYYY-MM')`,
+        })
+        .from(mailRequests)
+        .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
+        .where(
+          and(
+            eq(mailRequests.status, 'done'),
+            isNull(mailItems.deletedAt),
+            lt(mailRequests.completedAt, consumption.startsAt),
+            or(...sinceService),
+            sql`not ${heldBy('act')}`,
+          ),
+        )
+    : []
+  const requestsFrom = pending?.month ? `${pending.month}-01` : windows.consumption.start
+  const requestsStartAt = dayRangeUtc(requestsFrom, tenant.timezone).startsAt
+  const scanning = await actService(requestServiceRows.scan, requestsFrom)
+  const forwarding = await actService(requestServiceRows.forward, requestsFrom)
+
   const requestRows = await tx
     .select({
       id: mailRequests.id,
@@ -403,10 +441,17 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
         eq(mailRequests.status, 'done'),
         inArray(mailRequests.kind, ['scan', 'forward']),
         isNull(mailItems.deletedAt),
-        gte(mailRequests.completedAt, consumption.startsAt),
+        gte(mailRequests.completedAt, requestsStartAt),
         lt(mailRequests.completedAt, consumption.endsAt),
       ),
     )
+  /** Faite dans la période, ou reprise par le rattrapage. */
+  const billableRequest = (row: (typeof requestRows)[number]) => {
+    const completedAt = row.completedAt as Date
+    if (completedAt >= consumption.startsAt) return true
+    const service = requestServiceRows[row.kind as 'scan' | 'forward']
+    return service !== null && completedAt >= service.createdAt
+  }
 
   const sources: RunSources = {
     contracts: billingContracts,
@@ -471,12 +516,20 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
       day: toIsoDate(row.completedAt as Date, tenant.timezone),
       held: Boolean(row.held),
       postageRecorded: row.kind === 'forward' ? row.postageCents !== null : undefined,
+      ...(billableRequest(row) ? {} : { billable: false }),
     })),
     requestServices: { scan: scanning.service, forward: forwarding.service },
     requestSubscriptions: { scan: scanning.subscriptions, forward: forwarding.subscriptions },
     // Des frais nuls ne font pas de ligne ; des frais déjà tenus, pas deux.
+    // Ceux d'un mois antérieur suivent leur acte rattrapé, jamais seuls.
     postages: requestRows
-      .filter((row) => row.kind === 'forward' && (row.postageCents ?? 0) > 0 && !row.postageHeld)
+      .filter(
+        (row) =>
+          row.kind === 'forward' &&
+          (row.postageCents ?? 0) > 0 &&
+          !row.postageHeld &&
+          ((row.completedAt as Date) >= consumption.startsAt || (billableRequest(row) && !row.held)),
+      )
       .map((row) => ({
         requestId: row.id,
         clientId: row.clientId,
@@ -713,10 +766,7 @@ export async function runInvoicing(
         if (run.lines.length === 0) continue
         const existing = loaded.existing.get(run.clientId)
         if (existing && existing.status !== 'draft') {
-          warnings.push({
-            clientId: run.clientId,
-            message: `La facture ${existing.number} de la période est déjà émise : ${run.lines.length} élément${run.lines.length > 1 ? 's restent' : ' reste'} à facturer à part.`,
-          })
+          warnings.push({ clientId: run.clientId, message: issuedInvoiceWarning(existing.number, run.lines) })
           continue
         }
         try {

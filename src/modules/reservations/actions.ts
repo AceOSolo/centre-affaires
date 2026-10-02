@@ -275,18 +275,26 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   revalidatePath('/reservations', 'layout')
 }
 
+export type AssignClientFormState = { error?: string; saved?: boolean } | null
+
 /**
  * Rattache une réservation à un client, ou l'en détache (ADR 015) : c'est ce
  * qui la fait apparaître dans son espace. Utile pour une demande déposée par
  * une personne qui gère plusieurs entreprises, et pour l'historique d'avant
- * l'espace client.
+ * l'espace client. Rend un état : enregistré, ou la raison du refus (client
+ * figé par l'espace client, un état des lieux ou une facture, ADR 041).
  */
-export async function assignBookingClientAction(formData: FormData): Promise<void> {
+export async function assignBookingClientAction(
+  _previous: AssignClientFormState,
+  formData: FormData,
+): Promise<AssignClientFormState> {
   await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
-  if (!isUuid(id)) return
+  if (!isUuid(id)) return { error: 'Réservation introuvable.' }
   const clientId = text(formData, 'clientId')
-  await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  const outcome = await assignBookingClient(id, isUuid(clientId) ? clientId : null)
+  if (!outcome.ok) return { error: outcome.message }
   revalidatePath(`/reservations/${id}`)
   revalidatePath('/compte/reservations')
+  return { saved: true }
 }

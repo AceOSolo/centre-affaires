@@ -101,6 +101,14 @@ function chartOf(accounts: readonly AccountingAccount[]): FecChart {
   return { ...chart, vat }
 }
 
+/**
+ * Nom de l'acheteur figé à l'émission (toute pièce émise a son instantané,
+ * contrainte `invoices_issued_complete`). Les libellés du fichier le lisent,
+ * jamais `clients.name` : renommer ou anonymiser une fiche (ADR 040) ne
+ * réécrit pas le livre d'une période passée.
+ */
+const buyerNameAtIssue = sql<string>`${invoices.buyerSnapshot}->>'name'`
+
 /** Factures et avoirs émis dans la période, paiements non annulés datés de la période. */
 async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: string) {
   const [tenant] = await tx
@@ -117,6 +125,7 @@ async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: st
       issueDate: invoices.issueDate,
       currency: invoices.currency,
       totalInclTaxCents: invoices.totalInclTaxCents,
+      buyerName: buyerNameAtIssue,
       clientId: clients.id,
       clientName: clients.name,
       accountingCode: clients.accountingCode,
@@ -161,6 +170,7 @@ async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: st
     currency: row.currency,
     totalInclTaxCents: row.totalInclTaxCents,
     client: { id: row.clientId, name: row.clientName, accountingCode: row.accountingCode },
+    buyerName: row.buyerName,
     lines: lines
       .filter((line) => line.invoiceId === row.id)
       .map((line) => ({
@@ -180,6 +190,7 @@ async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: st
       currency: payments.currency,
       method: payments.method,
       invoiceNumber: invoices.number,
+      buyerName: buyerNameAtIssue,
       clientId: clients.id,
       clientName: clients.name,
       accountingCode: clients.accountingCode,
@@ -197,6 +208,7 @@ async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: st
     method: row.method,
     invoiceNumber: row.invoiceNumber as string,
     client: { id: row.clientId, name: row.clientName, accountingCode: row.accountingCode },
+    buyerName: row.buyerName,
   }))
 
   return {

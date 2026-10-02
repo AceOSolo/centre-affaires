@@ -2,8 +2,10 @@ import { and, asc, eq, gt, gte, isNull, lt, ne, sql } from 'drizzle-orm'
 
 import { withTenant, type Transaction } from '../../db/index.ts'
 import {
+  PG_CHECK_VIOLATION,
   PG_CONTRACT_OCCUPATION_LOCKED,
   PG_EXCLUSION_VIOLATION,
+  PG_FOREIGN_KEY_VIOLATION,
   pgErrorCode,
 } from '../../db/errors.ts'
 import { tenants } from '../../db/tenants.ts'
@@ -18,7 +20,13 @@ import { listBookableResources } from '../ressources/queries.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange, occupiesResource, type TimeRange } from './availability.ts'
 import { dayAvailability } from './disponibilites.ts'
-import { BookingContractError, bookingContractProblem } from './rattachement.ts'
+import {
+  BookingContractError,
+  bookingClientLock,
+  bookingClientLockMessages,
+  bookingContractProblem,
+  type BookingClientLock,
+} from './rattachement.ts'
 import { bookings, type Booking } from './schema.ts'
 
 /** Une réservation et la ressource qu'elle occupe, tel que le planning l'affiche. */
@@ -636,6 +644,38 @@ export async function refuseBooking(
   )
 }
 
+/** Ce que la base sait du client d'une réservation : son auteur, ses états des lieux, sa facture. */
+function bookingClientFacts(tx: Transaction, id: string) {
+  return tx
+    .select({
+      clientId: bookings.clientId,
+      bookedByMemberId: bookings.bookedByMemberId,
+      cancelledByMemberId: bookings.cancelledByMemberId,
+      inspected: sql<boolean>`exists (
+        select 1 from inspections as x
+         where x.tenant_id = ${bookings.tenantId} and x.booking_id = ${bookings.id})`,
+      invoiced: sql<boolean>`exists (
+        select 1 from invoice_lines as l
+         where l.tenant_id = ${bookings.tenantId} and l.booking_id = ${bookings.id}
+           and l.deleted_at is null and l.released_at is null)`,
+    })
+    .from(bookings)
+    .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract')))
+    .limit(1)
+}
+
+/**
+ * Pourquoi le client d'une réservation ne peut plus changer (réservée depuis
+ * l'espace client, état des lieux, facture), ou `undefined`. La fiche s'en
+ * sert pour ne pas proposer un rattachement que la base refuserait.
+ */
+export async function findBookingClientLock(id: string): Promise<BookingClientLock | undefined> {
+  const [facts] = await withTenant(currentTenantId(), (tx) => bookingClientFacts(tx, id))
+  return facts ? bookingClientLock(facts) : undefined
+}
+
+export type AssignBookingClientOutcome = { ok: true } | { ok: false; message: string }
+
 /**
  * Rattache une réservation à une entreprise cliente, ou l'en détache (ADR 015).
  * Elle apparaît alors — ou disparaît — dans l'espace de ce client.
@@ -643,17 +683,44 @@ export async function refuseBooking(
  * Le contrat suit le client (R05) : changer de client détache la réservation
  * du contrat de l'ancien, qui ne la couvre plus. Une occupation de contrat
  * n'est jamais touchée : son client est celui de son contrat (ADR 018).
+ *
+ * Refusé, avec sa raison, quand le client est figé (`bookingClientLock`) ;
+ * un refus de la base qui passerait quand même (clé étrangère, contrainte)
+ * est rendu en phrase, jamais en page d'erreur.
  */
-export async function assignBookingClient(id: string, clientId: string | null): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(bookings)
-      .set({
-        clientId,
-        // Les expressions de `SET` lisent l'ancienne ligne : le contrat n'est
-        // gardé que si le client ne change pas.
-        contractId: sql`case when ${bookings.clientId} is not distinct from ${clientId}::uuid then ${bookings.contractId} end`,
-      })
-      .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract'))),
-  )
+export async function assignBookingClient(id: string, clientId: string | null): Promise<AssignBookingClientOutcome> {
+  try {
+    return await withTenant(currentTenantId(), async (tx) => {
+      const [facts] = await bookingClientFacts(tx, id).for('update', { of: bookings })
+      if (!facts) return { ok: false, message: 'Réservation introuvable.' }
+      if (facts.clientId === clientId) return { ok: true }
+      const lock = bookingClientLock(facts)
+      if (lock) return { ok: false, message: bookingClientLockMessages[lock] }
+      await tx
+        .update(bookings)
+        .set({
+          clientId,
+          // Les expressions de `SET` lisent l'ancienne ligne : le contrat n'est
+          // gardé que si le client ne change pas.
+          contractId: sql`case when ${bookings.clientId} is not distinct from ${clientId}::uuid then ${bookings.contractId} end`,
+        })
+        .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract')))
+      return { ok: true }
+    })
+  } catch (error) {
+    const code = pgErrorCode(error)
+    if (code === PG_FOREIGN_KEY_VIOLATION) {
+      return {
+        ok: false,
+        message: 'Ce client ne peut pas être rattaché : la réservation est liée à des éléments de son client actuel. Rien n’a été modifié.',
+      }
+    }
+    if (code === PG_CHECK_VIOLATION) {
+      return {
+        ok: false,
+        message: 'Cette réservation ne peut pas rester sans client. Rien n’a été modifié.',
+      }
+    }
+    throw error
+  }
 }

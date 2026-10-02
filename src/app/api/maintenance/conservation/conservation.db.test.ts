@@ -6,12 +6,14 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import { createDatabase, withTenant } from '../../../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../../../db/tenants.ts'
+import { runNightlyConservation } from '../../../../modules/rgpd/tache-de-nuit.ts'
 import { POST } from './route.ts'
 
 /**
  * Tâche nocturne de conservation (ADR 015, ADR 020, B4) : la route appelée
  * par le serveur efface aussi les coordonnées des demandes publiques échues.
- * Éprouvée telle que le serveur l'appelle, contre la base de test.
+ * Éprouvée telle que le serveur l'appelle, contre la base de test ; une panne
+ * du stockage ne retient aucune des autres étapes.
  */
 const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
 const appUrl = process.env.TEST_DATABASE_URL
@@ -108,6 +110,7 @@ describe('route de conservation', { skip: raison }, () => {
       notificationDeliveries: 0,
       inspectionPhotos: 0,
       inspectionPhotoViews: 0,
+      failed: [],
     })
 
     const echue = await demandeur('Demande publique anonymisée')
@@ -176,6 +179,66 @@ describe('route de conservation', { skip: raison }, () => {
       restants.map((row) => row.subject),
       ['Récente'],
     )
+    await owner.client`truncate table notification_deliveries`
+  })
+
+  it('mène les autres étapes à terme quand le stockage est injoignable, et le dit', async (t) => {
+    const erreurs = t.mock.method(console, 'error', () => {})
+    t.mock.method(console, 'info', () => {})
+    const ACCUEIL = '01a00000-0000-7000-8000-000000200d01'
+    await owner.client`truncate table notification_deliveries`
+    await owner.client`
+      update tenants set notification_log_retention_months = 12, mail_scan_retention_months = 12,
+                         mail_access_log_retention_months = 12`
+    await demande('Séminaire 2024', 24)
+    const scanId = await asTenant(async (tx) => {
+      await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Accueil')`)
+      const [client] = await tx.execute(sql`insert into clients (name, status) values ('Atelier Durand', 'active') returning id`)
+      const [pli] = await tx.execute(sql`insert into mail_items (client_id) values (${client.id as string}) returning id`)
+      const [scan] = await tx.execute(sql`
+        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size, created_at)
+        values (${pli.id as string}, 'content', 'courrier/test/conservation.pdf', 'application/pdf', 1200,
+                now() - interval '13 months')
+        returning id`)
+      await tx.execute(sql`
+        insert into mail_scan_views (mail_scan_id, viewer, staff_member_id, auth_user_id, viewed_at)
+        values (${scan.id as string}, 'staff', ${ACCUEIL}, 'u-accueil', now() - interval '13 months')`)
+      await tx.execute(sql`
+        insert into notification_deliveries (event, audience, recipients, subject, status, sent_at)
+        values ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Ancienne', 'sent', now() - interval '13 months')`)
+      return scan.id as string
+    })
+
+    const bilan = await runNightlyConservation(DEFAULT_TENANT_ID, async () => {
+      throw new Error('Stockage injoignable')
+    })
+    assert.deepEqual(bilan.failed, ['scans'])
+    assert.equal(bilan.scans, null)
+    // Tout ce qui ne dépend que de la base a eu lieu, journal d'accès compris.
+    assert.equal(bilan.publicRequests, 1)
+    assert.equal(bilan.views, 1)
+    assert.equal(bilan.notificationDeliveries, 1)
+    assert.deepEqual(bilan.anonymizedMembers, { accesses: 0, staff: 0 })
+    assert.equal(bilan.inspectionPhotoViews, 0)
+    assert.equal(bilan.inspectionPhotos, 0)
+    // La numérisation reste à reprendre : sa ligne n'est pas marquée.
+    const [scan] = await owner.client`select deleted_at from mail_scans where id = ${scanId}`
+    assert.equal(scan.deleted_at, null)
+    // Le journal nomme l'étape, sans le détail de l'erreur.
+    assert.equal(erreurs.mock.calls.length, 1)
+    assert.match(String(erreurs.mock.calls[0].arguments[0]), /« scans » a échoué.*Stockage injoignable/)
+
+    // La route le signale à la tâche du serveur : un 500, avec le bilan. Sans
+    // point d'accès configuré, le stockage refuse de démarrer.
+    const endpoint = process.env.AWS_ENDPOINT_URL_S3
+    delete process.env.AWS_ENDPOINT_URL_S3
+    try {
+      const response = await appeler(`Bearer ${TOKEN}`)
+      assert.equal(response.status, 500)
+      assert.deepEqual((await response.json()).failed, ['scans'])
+    } finally {
+      if (endpoint !== undefined) process.env.AWS_ENDPOINT_URL_S3 = endpoint
+    }
     await owner.client`truncate table notification_deliveries`
   })
 

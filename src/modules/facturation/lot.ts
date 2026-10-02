@@ -736,6 +736,13 @@ export type BillingMailRequest = {
    * elle attend : une fois l'acte facturé, la base fige les frais (CA008).
    */
   postageRecorded?: boolean
+  /**
+   * Demande d'un mois antérieur à la période, chargée pour le rang des inclus
+   * de son mois, mais que le rattrapage ne reprend pas : faite avant que son
+   * service n'entre au catalogue. Elle compte dans le rang, sans être
+   * facturée ni signalée. Absent : facturable.
+   */
+  billable?: boolean
 }
 
 /**
@@ -778,6 +785,13 @@ const requestWording: Record<BillableMailRequestKind, Omit<ActWording, 'source'>
  * dès qu'une ligne tient la demande), et ils ne seraient jamais refacturés.
  * Elle garde sa place dans le rang des inclus : notés ses frais — 0 s'il n'y
  * en a pas —, le lot rejoué la facture comme si elle n'avait pas attendu.
+ *
+ * Rattrapage : une demande d'un mois antérieur jamais tenue par une ligne
+ * (réexpédition qui attendait ses frais, client dont la facture était déjà
+ * émise) est reprise par le lot suivant, et signalée tant qu'elle attend. Le
+ * rang des inclus se compte par mois civil de la demande (ADR 035) : chaque
+ * mois est valorisé avec toutes ses demandes, facturées ou non, comme le lot
+ * de son mois l'aurait fait.
  */
 export function mailRequestInvoiceLines(
   requests: readonly BillingMailRequest[],
@@ -788,19 +802,34 @@ export function mailRequestInvoiceLines(
 ): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
   const ofKind = requests.filter((request) => request.kind === kind)
   const waiting = (request: BillingMailRequest) =>
-    kind === 'forward' && request.postageRecorded === false && !request.held
-  const result = actInvoiceLines(
-    ofKind.map((request) => ({
-      ...request,
-      at: request.completedAt,
-      // Sans service, rien n'est valorisé : elle est comptée avec les autres.
-      held: request.held || (service !== null && waiting(request)),
-    })),
-    service,
-    subscriptions,
-    settings,
-    { ...requestWording[kind], source: (act) => ({ mailRequestId: act.id }) },
-  )
+    kind === 'forward' && request.postageRecorded === false && !request.held && request.billable !== false
+  const byMonth = new Map<string, BillingMailRequest[]>()
+  for (const request of ofKind) {
+    const month = request.day.slice(0, 7)
+    byMonth.set(month, [...(byMonth.get(month) ?? []), request])
+  }
+  const result: { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } = {
+    byClient: new Map(),
+    warnings: [],
+  }
+  for (const month of [...byMonth.keys()].sort()) {
+    const monthRun = actInvoiceLines(
+      (byMonth.get(month) as BillingMailRequest[]).map((request) => ({
+        ...request,
+        at: request.completedAt,
+        // Sans service, rien n'est valorisé : elle est comptée avec les autres.
+        held: request.held || request.billable === false || (service !== null && waiting(request)),
+      })),
+      service,
+      subscriptions,
+      settings,
+      { ...requestWording[kind], source: (act) => ({ mailRequestId: act.id }) },
+    )
+    for (const [clientId, lines] of monthRun.byClient) {
+      result.byClient.set(clientId, [...(result.byClient.get(clientId) ?? []), ...lines])
+    }
+    result.warnings.push(...monthRun.warnings)
+  }
   if (service) {
     const missing = new Map<string, number>()
     for (const request of ofKind.filter(waiting)) {
@@ -979,6 +1008,28 @@ export function computeRun(sources: RunSources, settings: RunSettings): ClientRu
   }
 
   return [...runs.values()]
+}
+
+/**
+ * Avertissement d'un client dont la facture de la période est déjà émise :
+ * rien ne s'y ajoute. Les demandes de courrier (numérisations, réexpéditions
+ * et leurs frais) restent sans ligne et le lot suivant les reprend : les
+ * facturer à la main les ferait payer deux fois. Le reste est à facturer à
+ * part.
+ */
+export function issuedInvoiceWarning(invoiceNumber: string | null, lines: readonly InvoiceLineDraft[]): string {
+  const requests = lines.filter((line) => line.mailRequestId).length
+  const others = lines.length - requests
+  const parts: string[] = []
+  if (others > 0) {
+    parts.push(`${others} élément${others > 1 ? 's restent' : ' reste'} à facturer à part`)
+  }
+  if (requests > 0) {
+    parts.push(
+      `${requests} ligne${requests > 1 ? 's' : ''} de demandes de courrier ${requests > 1 ? 'seront reprises' : 'sera reprise'} par le lot suivant, ne ${requests > 1 ? 'les' : 'la'} facturez pas à la main`,
+    )
+  }
+  return `La facture ${invoiceNumber} de la période est déjà émise : ${parts.join(' ; ')}.`
 }
 
 /**

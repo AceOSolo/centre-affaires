@@ -58,6 +58,11 @@ export type FecChart = {
 
 export type FecJournal = { code: string; label: string }
 
+/**
+ * Le client tel que la fiche le connaît : son compte auxiliaire, ou sa raison
+ * sociale d'aujourd'hui dont l'export le dérive. Jamais le libellé d'une
+ * écriture : celui-ci vient de la pièce (`buyerName`).
+ */
 export type FecClient = { id: string; name: string; accountingCode: string | null }
 
 export type FecInvoice = {
@@ -68,6 +73,12 @@ export type FecInvoice = {
   currency: string
   totalInclTaxCents: number
   client: FecClient
+  /**
+   * Nom de l'acheteur figé à l'émission (`invoices.buyer_snapshot`) : un
+   * changement de raison sociale, ou l'anonymisation de la fiche (ADR 040),
+   * ne change pas le livre d'une période passée.
+   */
+  buyerName: string
   lines: {
     kind: InvoiceLineKind
     netAmountCents: number
@@ -85,6 +96,8 @@ export type FecPayment = {
   method: PaymentMethod
   invoiceNumber: string
   client: FecClient
+  /** Nom de l'acheteur figé à l'émission de la facture réglée. */
+  buyerName: string
 }
 
 /** Une ligne d'écriture, montants en centimes : la mise en forme vient après. */
@@ -238,7 +251,7 @@ export function buildFecLines({
     ...payments.map((payment) => payment.client),
   ])
   const customers = chart.customers as FecAccount
-  type Entry = { date: string; journalRank: number; number: string; lines: FecLine[] }
+  type Entry = { date: string; journalRank: number; number: string; clientId: string; buyerName: string; lines: FecLine[] }
   const entries: Entry[] = []
 
   for (const invoice of invoices) {
@@ -251,7 +264,7 @@ export function buildFecLines({
       entryDate: invoice.issueDate,
       pieceRef: invoice.number,
       pieceDate: invoice.issueDate,
-      label: fecText(`${isCredit ? 'Avoir' : 'Facture'} ${invoice.number} ${invoice.client.name}`),
+      label: fecText(`${isCredit ? 'Avoir' : 'Facture'} ${invoice.number} ${invoice.buyerName}`),
     }
     const lines: FecLine[] = []
 
@@ -278,7 +291,7 @@ export function buildFecLines({
         accountNumber: customers.number,
         accountLabel: customers.label,
         auxNumber: auxiliary.get(invoice.client.id) as string,
-        auxLabel: fecText(invoice.client.name),
+        auxLabel: '',
         ...sided(invoice.totalInclTaxCents, !isCredit),
       })
     }
@@ -307,7 +320,16 @@ export function buildFecLines({
         ...sided(vat, isCredit),
       })
     }
-    if (lines.length > 0) entries.push({ date: invoice.issueDate, journalRank: 0, number: invoice.number, lines })
+    if (lines.length > 0) {
+      entries.push({
+        date: invoice.issueDate,
+        journalRank: 0,
+        number: invoice.number,
+        clientId: invoice.client.id,
+        buyerName: invoice.buyerName,
+        lines,
+      })
+    }
   }
 
   // Paiements : numérotés par jour de valeur, dans l'ordre de la liste reçue.
@@ -325,7 +347,7 @@ export function buildFecLines({
       pieceRef: payment.invoiceNumber,
       pieceDate: payment.paidOn,
       label: fecText(
-        `${isRefund ? 'Remboursement' : 'Règlement'} ${payment.invoiceNumber} ${payment.client.name} (${paymentMethodWords[payment.method]})`,
+        `${isRefund ? 'Remboursement' : 'Règlement'} ${payment.invoiceNumber} ${payment.buyerName} (${paymentMethodWords[payment.method]})`,
       ),
     }
     const bank = chart.bank as FecAccount
@@ -333,6 +355,8 @@ export function buildFecLines({
       date: payment.paidOn,
       journalRank: 1,
       number: base.entryNumber,
+      clientId: payment.client.id,
+      buyerName: payment.buyerName,
       lines: [
         {
           ...base,
@@ -347,7 +371,7 @@ export function buildFecLines({
           accountNumber: customers.number,
           accountLabel: customers.label,
           auxNumber: auxiliary.get(payment.client.id) as string,
-          auxLabel: fecText(payment.client.name),
+          auxLabel: '',
           ...sided(payment.amountCents, false),
         },
       ],
@@ -366,7 +390,14 @@ export function buildFecLines({
       a.journalRank - b.journalRank ||
       (a.number < b.number ? -1 : a.number > b.number ? 1 : 0),
   )
-  return entries.flatMap((entry) => entry.lines)
+  // Un libellé par compte auxiliaire dans le fichier : le nom figé sur la
+  // pièce la plus récente du client. Il ne dépend que des pièces de la
+  // période, si bien que le livre d'une période close ne bouge plus.
+  const auxLabels = new Map<string, string>()
+  for (const entry of entries) auxLabels.set(entry.clientId, fecText(entry.buyerName))
+  return entries.flatMap((entry) =>
+    entry.lines.map((line) => (line.auxNumber ? { ...line, auxLabel: auxLabels.get(entry.clientId) as string } : line)),
+  )
 }
 
 /** Taux en points de base, écrit à la française : 2000 → « 20 », 550 → « 5,5 », 210 → « 2,1 ». */

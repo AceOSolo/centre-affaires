@@ -7,6 +7,7 @@ import {
   contractInvoiceLines,
   contractKey,
   expectedPaymentFor,
+  issuedInvoiceWarning,
   mailActInvoiceLines,
   mailRequestInvoiceLines,
   postageInvoiceLines,
@@ -710,6 +711,67 @@ describe('demandes de courrier faites (R21, ADR 037)', () => {
       [['r1', 0]],
     )
     assert.deepEqual(rejoue.warnings, [])
+  })
+
+  it('rattrape une demande d’un mois antérieur, au rang des inclus de son mois', () => {
+    // Août : a1 a pris l'inclus d'août ; a2, jamais facturée (réexpédition qui
+    // attendait ses frais, facture déjà émise), est due au prix du forfait.
+    // Septembre garde son propre inclus.
+    const { byClient, warnings } = mailRequestInvoiceLines(
+      [
+        demande('a1', 'scan', '2026-08-03', { held: true }),
+        demande('a2', 'scan', '2026-08-20'),
+        demande('s1', 'scan', '2026-09-04'),
+      ],
+      'scan',
+      numerisation,
+      [forfait()],
+      octobre,
+    )
+    assert.deepEqual(warnings, [])
+    assert.deepEqual(
+      (byClient.get('c1') ?? []).map((line) => [line.mailRequestId, line.unitPriceCents, line.periodStart]),
+      [
+        ['a2', 150, '2026-08-20'],
+        ['s1', 0, '2026-09-04'],
+      ],
+    )
+  })
+
+  it('compte sans la facturer ni la signaler une demande que le rattrapage ne reprend pas', () => {
+    const { byClient, warnings } = mailRequestInvoiceLines(
+      [
+        demande('a1', 'forward', '2026-08-03', { billable: false, postageRecorded: false }),
+        demande('a2', 'forward', '2026-08-20', { postageRecorded: true }),
+      ],
+      'forward',
+      reexpedition,
+      [forfait({ id: 'sub-fwd', unitPriceCents: 400 })],
+      octobre,
+    )
+    // a1 occupe l'inclus d'août, sans ligne ni avertissement de frais.
+    assert.deepEqual(warnings, [])
+    assert.deepEqual(
+      (byClient.get('c1') ?? []).map((line) => [line.mailRequestId, line.unitPriceCents]),
+      [['a2', 400]],
+    )
+  })
+
+  it('dit qu’une facture déjà émise laisse les demandes au lot suivant, le reste à facturer à part', () => {
+    const ligne = (mailRequestId: string | null): InvoiceLineDraft =>
+      ({ kind: mailRequestId ? 'act' : 'booking', mailRequestId }) as InvoiceLineDraft
+    assert.equal(
+      issuedInvoiceWarning('FA-2026-0007', [ligne(null), ligne('r1'), ligne('r1')]),
+      'La facture FA-2026-0007 de la période est déjà émise : 1 élément reste à facturer à part ; 2 lignes de demandes de courrier seront reprises par le lot suivant, ne les facturez pas à la main.',
+    )
+    assert.equal(
+      issuedInvoiceWarning('FA-2026-0007', [ligne(null), ligne(null)]),
+      'La facture FA-2026-0007 de la période est déjà émise : 2 éléments restent à facturer à part.',
+    )
+    assert.equal(
+      issuedInvoiceWarning('FA-2026-0007', [ligne('n1')]),
+      'La facture FA-2026-0007 de la période est déjà émise : 1 ligne de demandes de courrier sera reprise par le lot suivant, ne la facturez pas à la main.',
+    )
   })
 
   it('ne valorise rien sans service au catalogue, et le dit client par client', () => {

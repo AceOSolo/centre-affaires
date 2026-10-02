@@ -56,6 +56,7 @@ const facture: FecInvoice = {
   currency: 'EUR',
   totalInclTaxCents: 107_160,
   client: DURAND,
+  buyerName: 'Atelier Durand',
   lines: [
     { kind: 'rent', netAmountCents: 90_000, vatAmountCents: 18_000, vatRateBp: 2000, vatCategory: 'S' },
     { kind: 'act', netAmountCents: 300, vatAmountCents: 60, vatRateBp: 2000, vatCategory: 'S' },
@@ -72,6 +73,7 @@ const factureDeuxTaux: FecInvoice = {
   currency: 'EUR',
   totalInclTaxCents: 6_000 + 1_650 + 500,
   client: PETIT,
+  buyerName: 'Boulangerie Petit',
   lines: [
     { kind: 'booking', netAmountCents: 5_000, vatAmountCents: 1_000, vatRateBp: 2000, vatCategory: 'S' },
     { kind: 'other', netAmountCents: 1_500, vatAmountCents: 150, vatRateBp: 1000, vatCategory: 'S' },
@@ -87,6 +89,7 @@ const avoir: FecInvoice = {
   currency: 'EUR',
   totalInclTaxCents: 12_000,
   client: PETIT,
+  buyerName: 'Boulangerie Petit',
   lines: [{ kind: 'booking', netAmountCents: 10_000, vatAmountCents: 2_000, vatRateBp: 2000, vatCategory: 'S' }],
 }
 
@@ -98,6 +101,7 @@ const paiement = (values: Partial<FecPayment> = {}): FecPayment => ({
   method: 'transfer',
   invoiceNumber: 'FA-2026-0001',
   client: DURAND,
+  buyerName: 'Atelier Durand',
   ...values,
 })
 
@@ -168,12 +172,59 @@ describe('écritures de banque', () => {
   })
 })
 
+describe('fiche renommée ou anonymisée après l’émission', () => {
+  // La fiche ne porte plus la raison sociale de l'émission : renommée, ou
+  // anonymisée (ADR 040) avec son compte auxiliaire figé.
+  const anonymise = { id: 'c1', name: 'Client anonymisé 01a00000', accountingCode: 'ATELIERDURAND' }
+
+  it('écrit les libellés depuis la pièce, jamais depuis la fiche d’aujourd’hui', () => {
+    const lines = buildFecLines({
+      journals,
+      chart,
+      invoices: [{ ...facture, client: anonymise }],
+      payments: [paiement({ client: anonymise })],
+    })
+    const before = buildFecLines({ journals, chart, invoices: [facture], payments: [paiement()] })
+    assert.equal(fecDocument(lines), fecDocument(before))
+    assert.ok(lines.every((line) => !line.label.includes('anonymisé') && !line.auxLabel.includes('anonymisé')))
+  })
+
+  it('donne un seul libellé par compte auxiliaire : le nom de la pièce la plus récente', () => {
+    const renamed = { ...DURAND, name: 'Durand & Fils' }
+    const lines = buildFecLines({
+      journals,
+      chart,
+      invoices: [
+        { ...facture, id: 'i8', number: 'FA-2026-0008', issueDate: '2026-09-01', client: renamed },
+        { ...facture, client: renamed, buyerName: 'Durand & Fils' },
+      ],
+      payments: [],
+    })
+    const customerLines = lines.filter((line) => line.accountNumber === '411000')
+    assert.deepEqual(
+      customerLines.map((line) => [line.entryNumber, line.auxNumber, line.auxLabel, line.label]),
+      [
+        ['FA-2026-0008', 'DURANDFILS', 'Durand & Fils', 'Facture FA-2026-0008 Atelier Durand'],
+        ['FA-2026-0001', 'DURANDFILS', 'Durand & Fils', 'Facture FA-2026-0001 Durand & Fils'],
+      ],
+    )
+  })
+
+  it('n’attribue pas un même compte à deux clients anonymisés dont les codes sont figés', () => {
+    const autre = { id: 'c3', name: 'Client anonymisé 01a00000', accountingCode: 'BOULANGERIEPETIT' }
+    assert.deepEqual(
+      [...auxiliaryAccounts([anonymise, autre]).values()],
+      ['ATELIERDURAND', 'BOULANGERIEPETIT'],
+    )
+  })
+})
+
 describe('fichier complet', () => {
   const lines = buildFecLines({
     journals,
     chart,
     invoices: [facture, factureDeuxTaux, avoir],
-    payments: [paiement(), paiement({ id: 'p2', paidOn: '2026-09-15', amountCents: 8_150, client: PETIT, invoiceNumber: 'FA-2026-0002' })],
+    payments: [paiement(), paiement({ id: 'p2', paidOn: '2026-09-15', amountCents: 8_150, client: PETIT, buyerName: 'Boulangerie Petit', invoiceNumber: 'FA-2026-0002' })],
   })
 
   it('équilibre le débit et le crédit, au total et par écriture', () => {
@@ -234,7 +285,7 @@ describe('fichier complet', () => {
       journals,
       chart,
       invoices: [avoir, factureDeuxTaux, facture],
-      payments: [paiement({ id: 'p2', paidOn: '2026-09-15', amountCents: 8_150, client: PETIT, invoiceNumber: 'FA-2026-0002' }), paiement()],
+      payments: [paiement({ id: 'p2', paidOn: '2026-09-15', amountCents: 8_150, client: PETIT, buyerName: 'Boulangerie Petit', invoiceNumber: 'FA-2026-0002' }), paiement()],
     })
     assert.equal(fecDocument(again), fecDocument(lines))
   })

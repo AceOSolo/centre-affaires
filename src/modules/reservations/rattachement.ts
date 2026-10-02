@@ -70,3 +70,42 @@ export class BookingContractError extends Error {
     this.problem = problem
   }
 }
+
+/**
+ * Ce qui fige le client d'une réservation (ADR 036, 039 ; correctifs de la
+ * dernière vague, ADR 041) :
+ *
+ * - **espace client** : réservée ou annulée par une personne de l'entreprise,
+ *   depuis son espace ; la base exige que cette personne soit de l'entreprise
+ *   de la réservation (clé étrangère composite, `bookings_booked_by_member_consistent`) ;
+ * - **état des lieux** : il porte le client de la réservation
+ *   (`inspections_booking_fk`), y compris un brouillon retiré ;
+ * - **facturée** : la ligne de facture est celle du client facturé ; la
+ *   rattacher à un autre client contredirait la facture.
+ */
+export type BookingClientLock = 'espace-client' | 'etat-des-lieux' | 'facturee'
+
+export const bookingClientLockMessages: Record<BookingClientLock, string> = {
+  'espace-client':
+    'Réservée ou annulée depuis l’espace client : la réservation reste à l’entreprise de la personne qui l’a faite.',
+  'etat-des-lieux': 'Un état des lieux porte sur cette réservation : son client ne change plus.',
+  facturee:
+    'Cette réservation est facturée : son client ne change plus. Pour la facturer à un autre client, établissez d’abord un avoir.',
+}
+
+export type BookingClientFacts = {
+  bookedByMemberId: string | null
+  cancelledByMemberId: string | null
+  /** Au moins un état des lieux, même retiré, porte sur la réservation. */
+  inspected: boolean
+  /** Une ligne de facture vivante la tient. */
+  invoiced: boolean
+}
+
+/** Premier verrou du client de la réservation, ou `undefined` s'il peut changer. */
+export function bookingClientLock(facts: BookingClientFacts): BookingClientLock | undefined {
+  if (facts.bookedByMemberId || facts.cancelledByMemberId) return 'espace-client'
+  if (facts.inspected) return 'etat-des-lieux'
+  if (facts.invoiced) return 'facturee'
+  return undefined
+}

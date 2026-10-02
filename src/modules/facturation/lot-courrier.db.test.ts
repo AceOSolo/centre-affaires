@@ -18,7 +18,7 @@ import {
   updateForwardShipping,
 } from '../courrier/demandes-queries.ts'
 import type { StoredScan } from '../courrier/queries.ts'
-import { findInvoice, listInvoices } from './factures-queries.ts'
+import { findInvoice, issueInvoice, listInvoices } from './factures-queries.ts'
 import { runInvoicing } from './lot-queries.ts'
 
 /**
@@ -32,6 +32,9 @@ import { runInvoicing } from './lot-queries.ts'
  *   centime ; relevés après le lot, ils rejoignent le suivant ;
  * - rejoué, le lot ne refacture rien ; une demande refusée ne se facture pas ;
  *   des frais facturés ne se modifient plus.
+ *
+ * - une demande laissée de côté (frais notés après l'émission de la facture
+ *   du mois) est rattrapée par le lot suivant, au rang des inclus de son mois.
  *
  * Les demandes sont faites maintenant : le lot du mois prochain, qui facture
  * les consommations du mois en cours (à échoir), les reprend.
@@ -230,5 +233,65 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
     // Le lot suivant ne reprend rien : elles sont de ce mois-ci.
     const suivant = await runInvoicing(addMonthsToIsoMonth(MOIS, 1), ACCUEIL)
     assert.equal(suivant.report.linesCreated, 0)
+  })
+
+  it('rattrape au lot suivant ce qu’une facture déjà émise a laissé, au rang des inclus de son mois', async () => {
+    // Émettre exige l'identité du centre et l'adresse du client.
+    await owner.client`
+      update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
+        postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
+        vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
+      where id = ${DEFAULT_TENANT_ID}`
+    await asTenant((tx) =>
+      tx.execute(sql`
+        update clients set address_line1 = '2 place du Marché', postal_code = '38000', city = 'Grenoble'
+         where id = ${DURAND}`),
+    )
+    try {
+      const premiere = await demandeFaite('scan')
+      const reexpedition = await demandeFaite('forward')
+      const { report } = await runInvoicing(MOIS, ACCUEIL)
+      assert.deepEqual(avertissements(report.warnings), [
+        '1 réexpédition non facturée : frais d’affranchissement non relevés. Notez-les sur la demande (0 s’il n’y en a pas), puis relancez le lot.',
+      ])
+      const [brouillon] = await lignes()
+      assert.equal(brouillon.mailRequestId, premiere)
+      const [facture] = (await listInvoices({ clientId: DURAND })).filter((invoice) => invoice.kind === 'invoice')
+      const numero = await issueInvoice(facture.id, ACCUEIL)
+
+      // Après l'émission : une numérisation de plus, et les frais enfin notés.
+      const seconde = await demandeFaite('scan')
+      await updateForwardShipping(reexpedition, { trackingNumber: null, postageCents: 290 })
+      const rejoue = await runInvoicing(MOIS, ACCUEIL)
+      assert.equal(rejoue.report.linesCreated, 0)
+      assert.deepEqual(avertissements(rejoue.report.warnings), [
+        `La facture ${numero} de la période est déjà émise : 3 lignes de demandes de courrier seront reprises par le lot suivant, ne les facturez pas à la main.`,
+      ])
+
+      // Le lot suivant les reprend : la seconde numérisation est due, l'inclus
+      // du mois étant pris par la première ; la réexpédition avec ses frais.
+      const MOIS_SUIVANT = addMonthsToIsoMonth(MOIS, 1)
+      const suivant = await runInvoicing(MOIS_SUIVANT, ACCUEIL)
+      assert.equal(suivant.report.invoicesCreated, 1)
+      assert.deepEqual(avertissements(suivant.report.warnings), [])
+      const reprises = (await lignes()).filter((line) => line.periodStartOfInvoice === `${MOIS_SUIVANT}-01`)
+      assert.deepEqual(
+        reprises.map((line) => [line.kind, line.mailRequestId, line.netAmountCents]),
+        [
+          ['act', seconde, 150],
+          ['act', reexpedition, 500],
+          ['other', reexpedition, 290],
+        ],
+      )
+
+      // Rejoué, le lot suivant ne refacture rien, et le surlendemain non plus.
+      assert.equal((await runInvoicing(MOIS_SUIVANT, ACCUEIL)).report.linesCreated, 0)
+      assert.equal((await runInvoicing(addMonthsToIsoMonth(MOIS, 2), ACCUEIL)).report.linesCreated, 0)
+    } finally {
+      await owner.client`
+        update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
+          siren = null, vat_number = null, bank_iban = null
+        where id = ${DEFAULT_TENANT_ID}`
+    }
   })
 })
