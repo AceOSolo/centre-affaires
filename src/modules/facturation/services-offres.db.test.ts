@@ -177,8 +177,15 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
         return seedExpectedServices(tx, prices)
       })
 
+    // Les actes du courrier sans prix fixé : numérisation seule et réexpédition (ADR 037).
+    const autresActes = ['courrier.numerisation', 'courrier.reexpedition']
+
     it('ne crée pas l’ouverture d’un pli sans prix fixé par le centre', async () => {
-      assert.deepEqual(await semer({}), { created: [], existing: [], withoutPrice: ['courrier.ouverture'] })
+      assert.deepEqual(await semer({}), {
+        created: [],
+        existing: [],
+        withoutPrice: ['courrier.ouverture', ...autresActes],
+      })
       assert.deepEqual(await listServices(), [])
     })
 
@@ -186,7 +193,7 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
       assert.deepEqual(await semer({ 'courrier.ouverture': 350 }), {
         created: ['courrier.ouverture'],
         existing: [],
-        withoutPrice: [],
+        withoutPrice: autresActes,
       })
       const [cree] = await listServices()
       assert.equal(cree.code, 'courrier.ouverture')
@@ -200,7 +207,7 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
       assert.deepEqual(await semer({ 'courrier.ouverture': 350 }), {
         created: [],
         existing: ['courrier.ouverture'],
-        withoutPrice: [],
+        withoutPrice: autresActes,
       })
       assert.equal((await findService(cree.id))?.unitPriceCents, 400)
     })

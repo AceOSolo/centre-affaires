@@ -38,7 +38,7 @@ const displayName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
 /* Stockage                                                                   */
 /* -------------------------------------------------------------------------- */
 
-type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
+export type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionKeyVersion: number }
 
 /**
  * Dépose les fichiers avant d'écrire en base : une ligne ne doit jamais
@@ -49,7 +49,7 @@ type StoredScan = { side: MailScanSide; key: string; scan: ScanFile; encryptionK
  * reçoit jamais le document en clair. Sans clé configurée, le dépôt échoue
  * avant le premier envoi.
  */
-async function store(
+export async function store(
   tenantId: string,
   scans: Partial<Record<MailScanSide, ScanFile>>,
 ): Promise<StoredScan[]> {
@@ -68,11 +68,11 @@ async function store(
   return stored
 }
 
-async function discard(stored: StoredScan[]): Promise<void> {
+export async function discard(stored: StoredScan[]): Promise<void> {
   await Promise.allSettled(stored.map(({ key }) => deleteObject(key)))
 }
 
-const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
+export const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: string) =>
   stored.map(({ side, key, scan, encryptionKeyVersion }) => ({
     mailItemId,
     side,
@@ -179,7 +179,8 @@ export async function findMail(id: string): Promise<MailDetail | undefined> {
       .select()
       .from(mailScans)
       .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt)))
-      .orderBy(asc(mailScans.side))
+      // L'enveloppe, puis les contenus dans l'ordre de leur dépôt (ADR 037).
+      .orderBy(asc(mailScans.side), asc(mailScans.createdAt))
 
     const views = await tx
       .select({
@@ -271,21 +272,63 @@ export async function openMail(id: string, staffMemberId: string, content: ScanF
   const stored = await store(tenantId, { content })
 
   try {
-    await withTenant(tenantId, async (tx) => {
-      const [item] = await tx
-        .update(mailItems)
-        .set({ status: 'opened', openedAt: sql`now()`, openedBy: staffMemberId })
-        .where(
-          and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
-        )
-        .returning({ id: mailItems.id })
-      if (!item) throw new MailStateError('Ce courrier a déjà été ouvert, ou il a été retiré.')
-      await tx.insert(mailScans).values(scanRows(item.id, stored, staffMemberId))
-    })
+    await recordOpening(id, staffMemberId, stored)
   } catch (error) {
     await discard(stored)
     throw error
   }
+}
+
+/**
+ * Écriture de l'ouverture, une fois le contenu déposé : séparée du dépôt pour
+ * s'éprouver contre la base sans stockage réel.
+ *
+ * La demande d'ouverture en cours (ADR 037) est verrouillée d'abord : le
+ * client ne l'annule pas pendant qu'on ouvre. L'ouverture du pli la clôt
+ * (trigger `mail_items_follow_requests`), et le contenu lui est rattaché
+ * (`mail_scans.mail_request_id`) ; sans demande, c'est une ouverture d'office,
+ * contenu sans demande.
+ */
+export async function recordOpening(
+  id: string,
+  staffMemberId: string,
+  stored: StoredScan[],
+): Promise<{ mailRequestId: string | null }> {
+  return withTenant(currentTenantId(), async (tx) => {
+    const [request] = await tx
+      .select({ id: mailRequests.id })
+      .from(mailRequests)
+      .where(
+        and(
+          eq(mailRequests.mailItemId, id),
+          eq(mailRequests.kind, 'open_and_scan'),
+          inArray(mailRequests.status, ['requested', 'in_progress']),
+        ),
+      )
+      .limit(1)
+      .for('update')
+    const [item] = await tx
+      .update(mailItems)
+      .set({ status: 'opened', openedAt: sql`now()`, openedBy: staffMemberId })
+      .where(
+        and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
+      )
+      .returning({ id: mailItems.id })
+    if (!item) throw new MailStateError('Ce courrier a déjà été ouvert, ou il a été retiré.')
+    const mailRequestId = request?.id ?? null
+    if (stored.length > 0) {
+      await tx
+        .insert(mailScans)
+        .values(
+          scanRows(item.id, stored, staffMemberId).map((row) => ({
+            ...row,
+            // Seul un contenu est le produit d'une demande.
+            mailRequestId: row.side === 'content' ? mailRequestId : null,
+          })),
+        )
+    }
+    return { mailRequestId }
+  })
 }
 
 /**

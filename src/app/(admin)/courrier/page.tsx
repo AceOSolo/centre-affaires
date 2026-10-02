@@ -1,4 +1,5 @@
 import Link from 'next/link'
+import { redirect } from 'next/navigation'
 
 import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
@@ -11,13 +12,15 @@ import {
   mailStatusLabels,
   mailStatusStyles,
 } from '../../../modules/courrier/labels.ts'
-import { countOpeningRequests, listMail } from '../../../modules/courrier/queries.ts'
+import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
+import { listMail } from '../../../modules/courrier/queries.ts'
 
 export const metadata = { title: 'Courrier' }
 
 /**
- * Courrier des entreprises domiciliées : la file des plis à ouvrir, et tout ce
- * qui a été enregistré.
+ * Courrier des entreprises domiciliées : tout ce qui a été enregistré. Les
+ * plis à ouvrir sont une vue de la file des demandes (`/courrier/demandes`,
+ * ADR 037), à côté des numérisations et des réexpéditions.
  */
 export default async function CourrierPage({
   searchParams,
@@ -26,17 +29,21 @@ export default async function CourrierPage({
 }) {
   const { member } = await requirePermission('courrier.gerer')
   const { vue, client } = await searchParams
-  const aOuvrir = vue === 'a-ouvrir'
   const clientId = isUuid(client) ? client : undefined
+  // L'ancienne vue « À ouvrir » : la file des demandes d'ouverture.
+  if (vue === 'a-ouvrir') {
+    redirect(`/courrier/demandes?nature=ouverture${clientId ? `&client=${clientId}` : ''}`)
+  }
 
-  const [timeZone, rows, requestCount, filteredClient] = await Promise.all([
+  const [timeZone, rows, pending, filteredClient] = await Promise.all([
     currentTimeZone(),
-    listMail({ status: aOuvrir ? 'opening_requested' : undefined, clientId }),
-    countOpeningRequests(),
+    listMail({ clientId }),
+    countPendingMailRequests(),
     clientId ? findClient(clientId) : undefined,
   ])
+  const requestCount = pending.total
 
-  const suffix = clientId ? `&client=${clientId}` : ''
+  const suffix = clientId ? `?client=${clientId}` : ''
 
   return (
     <div className="flex flex-col gap-6">
@@ -69,18 +76,18 @@ export default async function CourrierPage({
         <FilterLink
           href={clientId ? `/courrier?client=${clientId}` : '/courrier'}
           label="Tous"
-          active={!aOuvrir}
+          active
         />
         <FilterLink
-          href={`/courrier?vue=a-ouvrir${suffix}`}
-          label={`À ouvrir (${requestCount})`}
-          active={aOuvrir}
+          href={`/courrier/demandes${suffix}`}
+          label={`Demandes à traiter (${requestCount})`}
+          active={false}
         />
         {filteredClient && (
           <span className="ml-2 inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-medium">
             Client : {filteredClient.name}
             <Link
-              href={aOuvrir ? '/courrier?vue=a-ouvrir' : '/courrier'}
+              href="/courrier"
               className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
             >
               Tous les clients
@@ -92,18 +99,14 @@ export default async function CourrierPage({
       {rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            {aOuvrir
-              ? 'Aucun courrier à ouvrir : toutes les demandes des clients ont été traitées.'
-              : 'Aucun courrier enregistré. Le client verra chaque pli dans son espace dès son enregistrement.'}
+            Aucun courrier enregistré. Le client verra chaque pli dans son espace dès son enregistrement.
           </p>
-          {!aOuvrir && (
-            <Link
-              href={clientId ? `/courrier/nouveau?clientId=${clientId}` : '/courrier/nouveau'}
-              className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-            >
-              Enregistrer un courrier
-            </Link>
-          )}
+          <Link
+            href={clientId ? `/courrier/nouveau?clientId=${clientId}` : '/courrier/nouveau'}
+            className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            Enregistrer un courrier
+          </Link>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border bg-white">
@@ -114,7 +117,6 @@ export default async function CourrierPage({
                 <th className="px-4 py-3 font-medium">Destinataire</th>
                 <th className="px-4 py-3 font-medium">Expéditeur</th>
                 <th className="px-4 py-3 font-medium">Type</th>
-                {aOuvrir && <th className="px-4 py-3 font-medium">Demandé le</th>}
                 <th className="px-4 py-3 font-medium">État</th>
               </tr>
             </thead>
@@ -131,7 +133,7 @@ export default async function CourrierPage({
                   </td>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/courrier?client=${row.clientId}${aOuvrir ? '&vue=a-ouvrir' : ''}`}
+                      href={`/courrier?client=${row.clientId}`}
                       className="underline-offset-2 hover:underline"
                     >
                       {row.clientName}
@@ -139,13 +141,6 @@ export default async function CourrierPage({
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{row.sender ?? '—'}</td>
                   <td className="px-4 py-3 text-muted-foreground">{mailKindLabels[row.kind]}</td>
-                  {aOuvrir && (
-                    <td className="whitespace-nowrap px-4 py-3 text-muted-foreground tabular">
-                      {row.openingRequestedAt
-                        ? formatDateTime(row.openingRequestedAt, timeZone)
-                        : '—'}
-                    </td>
-                  )}
                   <td className="px-4 py-3">
                     <span
                       className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${mailStatusStyles[row.status]}`}

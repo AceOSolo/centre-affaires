@@ -20,6 +20,7 @@ import {
 const constraintMessages: Record<string, string> = {
   invoice_lines_booking_key: 'Cette réservation est déjà facturée.',
   invoice_lines_mail_item_key: 'Ce pli est déjà facturé.',
+  invoice_lines_mail_request_key: 'Cette demande de courrier est déjà facturée.',
   invoice_lines_contract_period_no_overlap:
     'Une partie de cette période est déjà facturée pour ce contrat.',
   invoice_lines_subscription_period_no_overlap:

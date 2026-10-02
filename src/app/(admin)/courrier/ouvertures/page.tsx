@@ -104,10 +104,10 @@ export default async function OuverturesPage({
             Aucune ouverture de courrier en {formatIsoMonth(month)}.
           </p>
           <Link
-            href="/courrier?vue=a-ouvrir"
+            href="/courrier/demandes?nature=ouverture"
             className="mt-4 inline-block text-sm text-muted-foreground underline-offset-2 hover:underline"
           >
-            Voir les courriers à ouvrir
+            Voir les demandes d’ouverture à traiter
           </Link>
         </div>
       ) : (

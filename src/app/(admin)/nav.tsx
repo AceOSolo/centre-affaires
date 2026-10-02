@@ -25,8 +25,8 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/tarifs', label: 'Tarifs', permission: 'tarifs.gerer' },
   { href: '/services', label: 'Services', permission: 'services.gerer' },
   { href: '/offres', label: 'Offres', permission: 'services.gerer' },
-  // Les plis dont le client attend l'ouverture sont comptés, comme les
-  // demandes : c'est une file d'attente, pas une liste de consultation.
+  // Les demandes de courrier à traiter (ouverture, numérisation,
+  // réexpédition) sont comptées : c'est une file d'attente (ADR 037).
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
   { href: '/indicateurs', label: 'Indicateurs', permission: 'indicateurs.consulter' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
@@ -87,7 +87,7 @@ export function Nav({
             {section.href === '/courrier' && mailRequestCount > 0 && (
               <span
                 className="ml-1.5 inline-block rounded-full bg-primary px-1.5 text-xs font-semibold text-white tabular"
-                aria-label={`${mailRequestCount} courrier${mailRequestCount > 1 ? 's' : ''} à ouvrir`}
+                aria-label={`${mailRequestCount} demande${mailRequestCount > 1 ? 's' : ''} de courrier à traiter`}
               >
                 {mailRequestCount}
               </span>

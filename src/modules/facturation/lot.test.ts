@@ -8,6 +8,8 @@ import {
   contractKey,
   expectedPaymentFor,
   mailActInvoiceLines,
+  mailRequestInvoiceLines,
+  postageInvoiceLines,
   previewAmounts,
   subscriptionInvoiceLines,
   vatCategoryFor,
@@ -16,6 +18,7 @@ import {
   type BillingBooking,
   type BillingContract,
   type BillingMailItem,
+  type BillingMailRequest,
   type BillingSubscription,
   type InvoiceLineDraft,
   type RunSettings,
@@ -578,6 +581,222 @@ describe('actes du courrier (R14, ADR 024)', () => {
   })
 })
 
+describe('demandes de courrier faites (R21, ADR 037)', () => {
+  const numerisation: BillingActService = {
+    id: 'svc-scan',
+    name: 'Numérisation d’un pli',
+    unitPriceCents: 200,
+    vatRateBp: 2000,
+    currency: 'EUR',
+  }
+  const reexpedition: BillingActService = {
+    id: 'svc-fwd',
+    name: 'Réexpédition d’un pli',
+    unitPriceCents: 500,
+    vatRateBp: 2000,
+    currency: 'EUR',
+  }
+  const forfait = (overrides: Partial<BillingActSubscription> = {}): BillingActSubscription => ({
+    id: 'sub-scan',
+    clientId: 'c1',
+    includedQuantity: 1,
+    unitPriceCents: 150,
+    discountBp: null,
+    discountAmountCents: null,
+    vatRateBp: 2000,
+    currency: 'EUR',
+    startsOn: '2026-01-01',
+    endsOn: null,
+    ...overrides,
+  })
+  const demande = (
+    id: string,
+    kind: BillingMailRequest['kind'],
+    day: string,
+    overrides: Partial<BillingMailRequest> = {},
+  ): BillingMailRequest => ({
+    id,
+    clientId: 'c1',
+    kind,
+    completedAt: new Date(`${day}T10:00:00Z`),
+    day,
+    held: false,
+    ...overrides,
+  })
+
+  it('facture les numérisations faites : les inclus du forfait à 0 €, puis son prix, chacune par sa demande', () => {
+    const { byClient, warnings } = mailRequestInvoiceLines(
+      [demande('n2', 'scan', '2026-09-12'), demande('n1', 'scan', '2026-09-02'), demande('r1', 'forward', '2026-09-05')],
+      'scan',
+      numerisation,
+      [forfait()],
+      octobre,
+    )
+    assert.deepEqual(warnings, [])
+    const lines = byClient.get('c1') ?? []
+    assert.deepEqual(
+      lines.map((line) => [line.mailRequestId, line.unitPriceCents, line.serviceId, line.mailItemId]),
+      [
+        ['n1', 0, 'svc-scan', null],
+        ['n2', 150, 'svc-scan', null],
+      ],
+    )
+    assert.equal(lines[0].description, 'Numérisation d’un pli — numérisation du 02/09/2026, inclus')
+    assert.ok(lines.every((line) => line.kind === 'act' && line.quantity === 1 && line.subscribedServiceId === 'sub-scan'))
+  })
+
+  it('compte les inclus sur toutes les demandes de la période, et ne refacture pas une demande tenue', () => {
+    const { byClient } = mailRequestInvoiceLines(
+      [demande('n1', 'scan', '2026-09-02', { held: true }), demande('n2', 'scan', '2026-09-12')],
+      'scan',
+      numerisation,
+      [forfait()],
+      octobre,
+    )
+    // n1 a pris l'inclus du mois : n2 est due, au prix du forfait.
+    assert.deepEqual(
+      (byClient.get('c1') ?? []).map((line) => [line.mailRequestId, line.unitPriceCents]),
+      [['n2', 150]],
+    )
+  })
+
+  it('facture une réexpédition au catalogue, ses frais relevés', () => {
+    const { byClient, warnings } = mailRequestInvoiceLines(
+      [demande('r1', 'forward', '2026-09-05', { postageRecorded: true })],
+      'forward',
+      reexpedition,
+      [],
+      octobre,
+    )
+    assert.deepEqual(warnings, [])
+    const [line] = byClient.get('c1') ?? []
+    assert.deepEqual([line.kind, line.mailRequestId, line.unitPriceCents, line.subscribedServiceId], ['act', 'r1', 500, null])
+    assert.equal(line.description, 'Réexpédition d’un pli — réexpédition du 05/09/2026')
+  })
+
+  it('fait attendre une réexpédition sans frais relevés, à sa place dans le rang des inclus', () => {
+    const inclusUne = [forfait({ id: 'sub-fwd', unitPriceCents: 400 })]
+    // r1, la première du mois, attend ses frais : r2 est due au prix du forfait.
+    const premier = mailRequestInvoiceLines(
+      [
+        demande('r1', 'forward', '2026-09-02', { postageRecorded: false }),
+        demande('r2', 'forward', '2026-09-20', { postageRecorded: true }),
+      ],
+      'forward',
+      reexpedition,
+      inclusUne,
+      octobre,
+    )
+    assert.deepEqual(
+      (premier.byClient.get('c1') ?? []).map((line) => [line.mailRequestId, line.unitPriceCents]),
+      [['r2', 400]],
+    )
+    assert.equal(premier.warnings.length, 1)
+    assert.match(premier.warnings[0].message, /1 réexpédition non facturée : frais d’affranchissement non relevés/)
+
+    // Ses frais notés (0 s'il n'y en a pas), le lot rejoué la facture : l'inclus du mois.
+    const rejoue = mailRequestInvoiceLines(
+      [
+        demande('r1', 'forward', '2026-09-02', { postageRecorded: true }),
+        demande('r2', 'forward', '2026-09-20', { postageRecorded: true, held: true }),
+      ],
+      'forward',
+      reexpedition,
+      inclusUne,
+      octobre,
+    )
+    assert.deepEqual(
+      (rejoue.byClient.get('c1') ?? []).map((line) => [line.mailRequestId, line.unitPriceCents]),
+      [['r1', 0]],
+    )
+    assert.deepEqual(rejoue.warnings, [])
+  })
+
+  it('ne valorise rien sans service au catalogue, et le dit client par client', () => {
+    const { byClient, warnings } = mailRequestInvoiceLines(
+      [demande('n1', 'scan', '2026-09-02'), demande('n2', 'scan', '2026-09-03', { clientId: 'c2', held: true })],
+      'scan',
+      null,
+      [],
+      octobre,
+    )
+    assert.equal(byClient.size, 0)
+    assert.deepEqual(warnings.map((warning) => warning.clientId), ['c1'])
+    assert.match(warnings[0].message, /1 numérisation non valorisée : aucun service de code « courrier\.numerisation »/)
+  })
+
+  it('refacture les frais d’affranchissement au centime relevé, une fois, sans remise ni prorata', () => {
+    const { byClient, warnings } = postageInvoiceLines(
+      [{ requestId: 'r1', clientId: 'c1', day: '2026-09-28', postageCents: 435, currency: 'EUR' }],
+      reexpedition,
+      octobre,
+    )
+    assert.deepEqual(warnings, [])
+    const [line] = byClient.get('c1') ?? []
+    assert.deepEqual(
+      [line.kind, line.mailRequestId, line.quantity, line.unitPriceCents, line.discountBp, line.discountAmountCents, line.prorataNumerator],
+      ['other', 'r1', 1, 435, null, null, null],
+    )
+    assert.equal(line.description, 'Frais d’affranchissement — réexpédition du 28/09/2026')
+    // Frais accessoires : la TVA de la réexpédition (à valider, ADR 037).
+    assert.equal(line.vatRateBp, 2000)
+    assert.equal(line.serviceId, null)
+    assert.equal(net(line), 435)
+  })
+
+  it('renvoie à la main des frais dans une autre devise, ou sans service pour en fixer la TVA', () => {
+    const autreDevise = postageInvoiceLines(
+      [{ requestId: 'r1', clientId: 'c1', day: '2026-09-05', postageCents: 900, currency: 'CHF' }],
+      reexpedition,
+      octobre,
+    )
+    assert.equal(autreDevise.byClient.size, 0)
+    assert.match(autreDevise.warnings[0].message, /en CHF : à facturer à la main/)
+
+    const sansService = postageInvoiceLines(
+      [{ requestId: 'r1', clientId: 'c1', day: '2026-09-05', postageCents: 900, currency: 'EUR' }],
+      null,
+      octobre,
+    )
+    assert.equal(sansService.byClient.size, 0)
+    assert.match(sansService.warnings[0].message, /non facturés : aucun service de code « courrier\.reexpedition »/)
+  })
+
+  it('place les demandes après les plis ouverts, sur la facture du client', () => {
+    const runs = computeRun(
+      {
+        contracts: [],
+        contractBilled: new Map(),
+        subscriptions: [],
+        subscriptionBilled: new Map(),
+        bookings: [],
+        mailItems: [{ id: 'p1', clientId: 'c1', openedAt: new Date('2026-09-03T09:00:00Z'), day: '2026-09-03', held: false }],
+        actService: { id: 'svc', name: 'Ouverture', unitPriceCents: 300, vatRateBp: 2000, currency: 'EUR' },
+        actSubscriptions: [],
+        mailRequests: [
+          demande('r1', 'forward', '2026-09-05', { postageRecorded: true }),
+          demande('n1', 'scan', '2026-09-04'),
+        ],
+        requestServices: { scan: numerisation, forward: reexpedition },
+        requestSubscriptions: { scan: [], forward: [] },
+        postages: [{ requestId: 'r1', clientId: 'c1', day: '2026-09-05', postageCents: 435, currency: 'EUR' }],
+      },
+      octobre,
+    )
+    const [c1] = runs
+    assert.deepEqual(
+      c1.lines.map((line) => [line.kind, line.mailItemId ?? line.mailRequestId]),
+      [
+        ['act', 'p1'],
+        ['act', 'n1'],
+        ['act', 'r1'],
+        ['other', 'r1'],
+      ],
+    )
+    assert.deepEqual(c1.warnings, [])
+  })
+})
+
 describe('le lot : une facture par client (R15)', () => {
   it('réunit, par client et dans l’ordre de la facture, contrats, forfaits, réservations et actes', () => {
     const runs = computeRun(
@@ -667,6 +886,7 @@ describe('TVA par taux, pas ligne à ligne (ADR 026)', () => {
     bookingId: null,
     subscribedServiceId: null,
     mailItemId: null,
+    mailRequestId: null,
     serviceId: null,
     resourceId: null,
   })
