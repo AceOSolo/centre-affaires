@@ -42,3 +42,7 @@ yarn-error.log*
 next-env.d.ts
 .env.local
 .neon
+
+# journal du serveur de développement, copies de travail des agents
+.dev-log.txt
+.claude/worktrees/

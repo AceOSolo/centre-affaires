@@ -241,7 +241,9 @@ landing page et ne convient pas à ce produit — ne pas l'utiliser.
 - Nommage TypeScript : `camelCase`, composants en `PascalCase`
 - Identifiants : UUID v7 (ordonnés temporellement, meilleurs index que v4)
 - Migrations : générées par Drizzle, jamais éditées après application
-- Branches : `feat/`, `fix/`, `chore/` — pas de commit direct sur `main`
+- Une seule branche : `main`. On committe et on pousse sur `main` (décision du
+  02/10/2026). Une branche temporaire, pour des agents en parallèle par exemple,
+  est fusionnée puis supprimée avant de rendre la main
 - Un ADR dans `docs/decisions/` à chaque décision structurante
 
 ## Commandes
