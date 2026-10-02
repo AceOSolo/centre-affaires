@@ -30,6 +30,8 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
   // Entrées et sorties des ressources occupées ; les modèles s'y rejoignent (ADR 039).
   { href: '/etats-des-lieux', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+  // Journal des messages envoyés ; les modèles s'ouvrent depuis lui (ADR 038).
+  { href: '/notifications', label: 'Messages', permission: 'notifications.consulter' },
   { href: '/indicateurs', label: 'Indicateurs', permission: 'indicateurs.consulter' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
   { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },

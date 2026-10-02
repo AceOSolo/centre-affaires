@@ -10,6 +10,12 @@ import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { parseQuoteDiscount } from '../facturation/devis.ts'
+import {
+  notifyBookingCancelled,
+  notifyBookingConfirmed,
+  notifyBookingRequestAccepted,
+  notifyBookingRequestRefused,
+} from '../notifications/declencheurs-reservations.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import { describeBusyBooking } from './occupation.ts'
 import {
@@ -162,6 +168,8 @@ export async function createBookingAction(
 
   // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014).
   after(() => syncBookingToGoogleCalendar(createdId))
+  // Réservée pour une entreprise : elle en est prévenue (ADR 038).
+  if (isUuid(values.clientId)) after(() => notifyBookingConfirmed(createdId))
   const day = toIsoDate(startsAt, timeZone)
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')
@@ -219,11 +227,15 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   const { member } = await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
   if (!id) return
+  // Lue avant : seule une réservation encore active d'une entreprise donne un
+  // message d'annulation (ADR 038).
+  const before = isUuid(id) ? await findBooking(id) : undefined
   // L'auteur est tracé (ADR 036) : l'espace client dit « annulée par le centre ».
   await cancelBooking(id, text(formData, 'reason') || null, member.id)
   // Retire l'événement de l'agenda Google de la ressource, pour qu'il ne montre
   // pas un créneau libéré comme occupé (ADR 014).
   after(() => syncBookingToGoogleCalendar(id))
+  if (before && before.status !== 'cancelled' && before.clientId) after(() => notifyBookingCancelled(id))
   revalidatePath('/')
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
   // deux repartir de la base, pas du cache de rendu.
@@ -241,8 +253,11 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
   await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
+  const before = isUuid(id) ? await findBooking(id) : undefined
   await confirmBooking(id)
   after(() => syncBookingToGoogleCalendar(id))
+  // Le client d'une demande validée en est prévenu (ADR 038).
+  if (before?.status === 'pending') after(() => notifyBookingRequestAccepted(id))
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')
 }
@@ -252,7 +267,9 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   const { member } = await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
+  const before = isUuid(id) ? await findBooking(id) : undefined
   await refuseBooking(id, text(formData, 'reason') || null, member.id)
+  if (before?.status === 'pending') after(() => notifyBookingRequestRefused(id))
   revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')

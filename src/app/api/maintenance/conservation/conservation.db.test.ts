@@ -105,6 +105,7 @@ describe('route de conservation', { skip: raison }, () => {
       publicRequests: 1,
       anonymizedClients: { clients: 0, contacts: 0, accesses: 0, mailSenders: 0 },
       anonymizedMembers: { accesses: 0, staff: 0 },
+      notificationDeliveries: 0,
       inspectionPhotos: 0,
       inspectionPhotoViews: 0,
     })
@@ -157,6 +158,25 @@ describe('route de conservation', { skip: raison }, () => {
     const ensuite = await (await appeler(`Bearer ${TOKEN}`)).json()
     assert.deepEqual(ensuite.anonymizedClients, { clients: 0, contacts: 0, accesses: 0, mailSenders: 0 })
     assert.deepEqual(ensuite.anonymizedMembers, { accesses: 0, staff: 0 })
+  })
+
+  it('purge le journal des messages au terme de sa durée (ADR 038)', async () => {
+    await owner.client`truncate table notification_deliveries`
+    await owner.client`update tenants set notification_log_retention_months = 12`
+    await asTenant((tx) =>
+      tx.execute(sql`
+        insert into notification_deliveries (event, audience, recipients, subject, status, sent_at) values
+          ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Ancienne', 'sent', now() - interval '13 months'),
+          ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Récente', 'sent', now() - interval '1 month')`),
+    )
+    const response = await appeler(`Bearer ${TOKEN}`)
+    assert.equal((await response.json()).notificationDeliveries, 1)
+    const restants = await owner.client`select subject from notification_deliveries`
+    assert.deepEqual(
+      restants.map((row) => row.subject),
+      ['Récente'],
+    )
+    await owner.client`truncate table notification_deliveries`
   })
 
   it('n’existe pas sans le bon jeton', async () => {

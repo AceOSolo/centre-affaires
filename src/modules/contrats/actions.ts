@@ -2,12 +2,14 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { notifyContractActivated } from '../notifications/declencheurs-clients.ts'
 import { findResource } from '../ressources/queries.ts'
 import { occupationConflictMessage } from './conflits.ts'
 import { noticeEndsOn } from './echeancier.ts'
@@ -152,6 +154,8 @@ export async function activateContractAction(
     throw error
   }
 
+  // Le client est prévenu que son contrat est en vigueur (ADR 038).
+  after(() => notifyContractActivated(id))
   revalidateContract(id)
   redirect(`/contrats/${id}?fait=active`)
 }

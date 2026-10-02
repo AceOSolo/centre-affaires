@@ -7,6 +7,7 @@ import {
   purgeExpiredInspectionPhotos,
   purgeExpiredInspectionPhotoViews,
 } from '../../../../modules/etats-des-lieux/conservation.ts'
+import { purgeExpiredNotificationDeliveries } from '../../../../modules/notifications/queries.ts'
 import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations/conservation.ts'
 import {
   anonymizeExpiredClients,
@@ -18,9 +19,12 @@ import { anonymizationLogLine } from '../../../../modules/rgpd/bilan.ts'
  * Purge planifiée de ce qui est arrivé au terme de sa conservation : le
  * courrier et son journal d'accès (ADR 015), les coordonnées des demandeurs de
  * la page publique (ADR 020), les entreprises et les personnes retirées à
- * anonymiser (R29, ADR 040), les photos d'états des lieux et le journal de
- * leurs consultations (R33, ADR 039). Les durées sont celles du centre
- * (`tenants`).
+ * anonymiser (R29, ADR 040), le journal des messages envoyés (ADR 038), les
+ * photos d'états des lieux et le journal de leurs consultations (R33,
+ * ADR 039). Les durées sont celles du centre (`tenants`).
+ *
+ * Chaque purge et chaque anonymisation a sa propre transaction : l'échec de
+ * l'une (le stockage injoignable, par exemple) ne retient pas les autres.
  *
  * Appelée chaque nuit par une tâche du serveur (infra/serveur/README.md), avec
  * le jeton `MAINTENANCE_TOKEN`. Sans jeton configuré, la route n'existe pas :
@@ -40,6 +44,9 @@ export async function POST(request: Request) {
   const anonymizedClients = await withTenant(tenantId, anonymizeExpiredClients)
   const anonymizedMembers = await withTenant(tenantId, anonymizeRemovedMembers)
   console.info(anonymizationLogLine(anonymizedClients, anonymizedMembers))
+  // Le journal des messages envoyés (ADR 038) aussi, avant le courrier et
+  // pour la même raison.
+  const notificationDeliveries = await withTenant(tenantId, purgeExpiredNotificationDeliveries)
   const mail = await withTenant(tenantId, (tx) => purgeExpiredMail(tx, deleteObject))
   // États des lieux (R33, ADR 039) : le journal des consultations des photos
   // d'abord, dans sa transaction — il ne dépend pas du stockage —, puis les
@@ -53,6 +60,7 @@ export async function POST(request: Request) {
     publicRequests,
     anonymizedClients,
     anonymizedMembers,
+    notificationDeliveries,
     inspectionPhotos,
     inspectionPhotoViews,
   })
