@@ -50,11 +50,12 @@ export const ratePlans = pgTable(
   },
   (table) => [
     unique('rate_plans_tenant_id_id_key').on(table.tenantId, table.id),
-    // Une seule grille par défaut à la fois : deux rendraient le tarif appliqué
-    // dépendant de l'ordre de lecture.
-    uniqueIndex('rate_plans_tenant_default_key')
-      .on(table.tenantId)
-      .where(sql`is_default and deleted_at is null`),
+    // Une seule grille par défaut **un jour donné** : deux rendraient le tarif
+    // appliqué dépendant de l'ordre de lecture. Des grilles par défaut dont
+    // les dates de validité se suivent sont permises — celle de l'an prochain
+    // se prépare d'avance (ADR 035). La contrainte d'exclusion
+    // `rate_plans_default_no_overlap` (migration 0038) le tient : Drizzle ne
+    // sait pas la décrire.
     check(
       'rate_plans_validity_ordered',
       sql`${table.validTo} is null or ${table.validFrom} is null or ${table.validTo} >= ${table.validFrom}`,

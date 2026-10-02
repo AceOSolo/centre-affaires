@@ -125,7 +125,8 @@ export function RatePlanForm({
           </label>
           <p id="isDefault-hint" className="text-xs text-muted-foreground">
             Appliquée aux réservations des clients dont le contrat ne désigne pas de grille, et à la
-            page publique. Une seule grille à la fois.
+            page publique, pendant ses dates de validité. Plusieurs grilles par défaut peuvent se
+            suivre — préparez celle de l’an prochain d’avance — mais pas se recouvrir.
           </p>
         </div>
       </div>

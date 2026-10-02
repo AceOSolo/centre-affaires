@@ -30,7 +30,7 @@ la vague 2, intégrée le 01/10/2026 ; 11, 14 et 8 après la vague 1 ; l'audit d
 | R05 | Réservation : créneau, statut, canal, client, contrat | ✅ | — (canal posé par chaque chemin et affiché sur la fiche ; rattachement à un contrat actif du même client qui couvre le créneau, vérifié à l'écriture) | — | — |
 | R06 | États des lieux configurables avec photos | ○ | Tout : modèles de champs en base, inspections, photos compressées | L | 4 |
 | R07 | CRM : fiche, contacts, historique | ✅ | — (vague 2 : services souscrits en cours, à venir et historique sur la fiche, mandats SEPA, lien vers les factures du client ; vague 1 : contacts CRM, historique des réservations, recherche par SIRET ou contact) | — | 2 |
-| R08 | Grilles jour / semaine / mois | ✅ | — (unité `week`, dates de validité appliquées au devis, écran de modification des grilles, ADR 023). Manque de schéma : une seule grille par défaut à la fois, la grille de l'an prochain ne se prépare pas d'avance | — | 2 |
+| R08 | Grilles jour / semaine / mois | ✅ | — (unité `week`, dates de validité appliquées au devis, écran de modification des grilles, ADR 023 ; grilles par défaut successives, celle de l'an prochain préparée d'avance, ADR 035) | — | 2 |
 | R09 | Offres groupées ressources + services | ✅ | — (catalogue `/services`, offres `/offres` chiffrées par `priceOffer`, contrat tiré d'une offre, ADR 024 et 028). Manques de schéma : une offre à plusieurs ressources précises n'en occupe qu'une (`contracts.resource_id`), pas de désignation commerciale par ligne d'offre | — | 2 |
 | R10 | Remises, engagement, prorata paramétrables | ◐ | Fait : règles du centre à l'écran `/configuration`, prorata jours réels / base 30 / aucun, remises par ligne, engagement et fin possible, jeu de cas figé (`cas-tarifaires.ts`), ADR 023 ; reconduction tacite inscrite chaque nuit, avec son journal (ADR 033). Reste : faire valider le jeu de cas et les choix « à valider » par l'exploitation ; poser la tâche nocturne sur le VPS | S | 2 |
 | R11 | Moteur tarifaire unique | ✅ | — (`quote()` partagé par le back-office et le portail, devis figé sur la réservation, grille du contrat avant la grille par défaut, ADR 023). Les séries posées en masse restent non chiffrées | — | 2 |
@@ -40,7 +40,7 @@ la vague 2, intégrée le 01/10/2026 ; 11, 14 et 8 après la vague 1 ; l'audit d
 | R15 | Facture = location + forfaits + actes | ✅ | — (une facture par client et par mois : loyers et lignes de contrat à l'échéancier versionné, forfaits, réservations au devis figé, actes ; chaque ligne garde sa source) | — | 2 |
 | R16 | Export comptable, paiement, e-facturation | ◐ | Fait : pointage des paiements, relances imprimables et journalisées (courriel et courrier), mandats SEPA chiffrés et rechiffrés à la rotation de clé, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée (ADR 027, 030 et 034). Reste : choisir et raccorder la plateforme agréée (émission obligatoire au 01/09/2027) | M–L | 2 |
 | R17 | Contrats et factures côté client | ○ | Pages « Mes contrats », « Mes factures » | S–M | 3 |
-| R18 | Forfaits de services souscrits | ✅ | — (souscriptions à prix figé, changement de conditions daté, fin, annulation, actes inclus, ADR 024). Les inclus se comptent par mois civil, faute de période de facturation sur `subscribed_services` | — | 2 |
+| R18 | Forfaits de services souscrits | ✅ | — (souscriptions à prix figé, changement de conditions daté, fin, annulation, actes inclus, ADR 024 ; un mois sans prorata dû une fois par chaîne, ADR 032 ; souscription d'un contrat brouillon montrée « en attente », ADR 035). Les inclus se comptent par mois civil (ADR 035) | — | 2 |
 | R19 | Réception du courrier, photo d'enveloppe | ✅ | Photo facultative (à rendre obligatoire ?) | S | — |
 | R20 | Notification à la réception | ✅ | Courriel à l'arrivée et à la numérisation, alerte au staff sur demande d'ouverture. Effectif en production une fois `SMTP_URL` et `MAIL_FROM` configurés (SMTP en UE) | — | — |
 | R21 | Espace courrier client | ◐ | Réexpédition absente ; ouverture et scan fusionnés ; une seule demande par pli | L | 3 |
@@ -165,45 +165,27 @@ ci-dessous.
 #### Manques de schéma relevés par la vague 2
 
 Le schéma de la vague 2 (migrations 0029 à 0031) a été figé avant les écrans ;
-chaque tranche a contourné ce qui lui manquait, sans migration. À trancher dans
-une migration de suivi :
+chaque tranche a contourné ce qui lui manquait, sans migration. Les
+vingt-trois manques relevés à l'intégration sont **tranchés** le 02/10/2026,
+un par un, dans l'[ADR 035](decisions/035-suites-de-la-vague-2-et-manques-ecartes.md) :
 
-- **Grilles** : une seule grille par défaut à la fois (index unique), pas de
-  taux de TVA par ligne de grille (`rate_plan_items.vat_rate_bp`), pas de
-  réglage du choix de l'unité d'une réservation (la moins chère est retenue).
-- **Réservations** : aucun garde en base n'empêche de réécrire le devis
-  (`quote_*`) d'une réservation déjà facturée.
-- **Services souscrits** : pas de période de facturation (inclus comptés par
-  mois civil), pas d'état « en attente » pour les souscriptions d'un contrat
-  brouillon (le lot les ignore), pas de lien entre une souscription et celle
-  qui la remplace, recouvrement possible entre contrats pour un service à
-  l'acte (`subscribed_services_no_overlap` porte sur le contrat).
-- **Offres** : pas de désignation par ligne (`offer_items.description`),
-  `offer_items.unit` ne dit pas si les inclus d'un acte valent par mois ou par
-  période.
-- **Contrats** : `contracts.resource_id` unique (une offre à plusieurs
-  ressources n'en occupe qu'une) ; client d'un brouillon figé dès qu'il porte
-  une souscription (clé composite) ; `contract_lines_sync_amount` ne remet rien
-  à zéro quand la dernière ligne récurrente est retirée ;
-  `contract_version_lines_amount` ignore les lignes ponctuelles ; ~~aucune tâche
-  ni journal de reconduction tacite~~ (ADR 033) ; pas de document signé ni d'état
-  « remis / signé » sur `contract_documents` ; pas de date « facturé
-  jusqu'au » pour les contrats repris de l'existant.
-- **Factures** : ~~`invoice_runs.created_by` obligatoire (pas de lot planifié)~~
-  (migration 0033, ADR 033) ;
-  ~~`invoice_lines_guard` refuse un loyer global à côté de lignes
-  ponctuelles~~ ; ~~`vat_exemption_reason` ni exigé ni vérifié à l'émission~~ ;
-  ~~le type `InvoiceRunResult` ignore `invoicesUpdated` et `linesCreated`~~
-  (résolus par la migration 0032, ADR 032).
-- **Règlements** : ~~pas de journal des relances (`invoice_reminders`)~~
-  (migrations 0035 et 0036, ADR 034) ; pas de table des remises de
-  prélèvement ni de `payments.batch_id` (écarté, ADR 034 : la remise est
-  décrite par ses paiements) ; pas de marque
-  « envoyée à la plateforme » sur une facture émise, fichier d'export
-  comptable non stocké ; pas de mode de paiement préféré sur `clients`.
-- **Indicateurs** : `invoice_lines.resource_id` et `service_id` ne sont pas
-  posés par la base (le lot les remplit ; les indicateurs se replient sur la
-  source sinon).
+- **Faits** (migrations 0032 à 0038) : loyer global à côté de lignes
+  ponctuelles, motif d'exonération exigé, bilan du lot typé (ADR 032) ; lot
+  planifié sans auteur, reconduction tacite et son journal (ADR 033) ; journal
+  des relances (ADR 034) ; grilles par défaut successives, devis d'une
+  réservation facturée gardé en base, souscriptions d'un contrat brouillon
+  montrées « en attente » (ADR 035).
+- **Écartés**, avec leur raison (ADR 034 et 035) : taux de TVA par ligne de
+  grille, réglage de l'unité d'une réservation, période de facturation et lien
+  de remplacement des souscriptions, recouvrement d'un acte entre contrats,
+  client figé d'un brouillon, remise à zéro du montant d'une version, date
+  « facturé jusqu'au » des contrats repris, table des remises de prélèvement,
+  marques « prélevée » et « envoyée », fichier d'export stocké, mode de
+  paiement préféré, `resource_id` et `service_id` posés par la base.
+- **Reportés** : désignation et unité des lignes d'offre (vague 3, avec
+  l'offre groupée du portail, R23) ; document de contrat signé (vague 4, avec
+  le stockage documentaire, R33) ; contrats à plusieurs ressources (nouvel ADR
+  si le centre vend de telles offres).
 
 ### Phase 3 — Lot 3 « autonomie client » (déjà engagé côté courrier)
 - R26 : modèles de messages éditables, historique des envois, déclencheurs

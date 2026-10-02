@@ -6,6 +6,7 @@ import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
   PG_CHECK_VIOLATION,
+  PG_EXCLUSION_VIOLATION,
   PG_FOREIGN_KEY_VIOLATION,
   PG_UNIQUE_VIOLATION,
   pgErrorCode,
@@ -115,13 +116,20 @@ describe('contraintes des clients, grilles et contrats', { skip: raison }, () =>
   })
 
   describe('grilles tarifaires', () => {
-    it('n’admet qu’une seule grille par défaut', async () => {
+    it('n’admet qu’une grille par défaut un jour donné, plusieurs qui se suivent (ADR 035)', async () => {
       const code = await errorCode(() =>
         asTenant((tx) =>
           tx.execute(sql`insert into rate_plans (name, is_default) values ('Concurrente', true)`),
         ),
       )
-      assert.equal(code, PG_UNIQUE_VIOLATION)
+      assert.equal(code, PG_EXCLUSION_VIOLATION)
+      await asTenant((tx) =>
+        tx.execute(sql`update rate_plans set valid_to = '2026-12-31' where id = ${PLAN_ID}`),
+      )
+      await asTenant((tx) =>
+        tx.execute(sql`
+          insert into rate_plans (name, is_default, valid_from) values ('Tarifs publics 2027', true, '2027-01-01')`),
+      )
     })
 
     it('accepte autant de grilles non par défaut qu’on veut', async () => {

@@ -384,12 +384,37 @@ describe('devis des réservations', { skip: raison }, () => {
       assert.equal(result.ok ? 'chiffré' : result.reason, 'aucune-grille')
     })
 
-    it('refuse une seconde grille par défaut', async () => {
+    it('refuse une seconde grille par défaut sur les mêmes jours', async () => {
       await assert.rejects(
         updateRatePlan(RESIDENTS, { name: 'Tarifs résidents', isDefault: true }),
         DefaultRatePlanConflictError,
       )
       await assert.rejects(createRatePlan({ name: 'Autre', isDefault: true }), DefaultRatePlanConflictError)
+      // Même partiellement : du 15 décembre, contre une grille sans date de fin.
+      await assert.rejects(
+        createRatePlan({ name: 'Tarifs 2027', isDefault: true, validFrom: '2026-12-15' }),
+        DefaultRatePlanConflictError,
+      )
+    })
+
+    it('prépare d’avance la grille par défaut de l’an prochain, chacune chiffrant ses jours (ADR 035)', async () => {
+      await updateRatePlan(PUBLIQUE, { name: 'Tarifs publics 2026', isDefault: true, validTo: '2026-12-31' })
+      const suivante = await createRatePlan({ name: 'Tarifs publics 2027', isDefault: true, validFrom: '2027-01-01' })
+      await prixDe(suivante.id, 'salle', 'half_day', 9_500)
+
+      const octobre = await quote({ resourceId: SALLE, ...MATIN })
+      assert.equal(octobre.ok && octobre.quote.ratePlanId, PUBLIQUE)
+      assert.equal(octobre.ok && octobre.quote.netCents, 9_000)
+      const janvier = await quote({ resourceId: SALLE, ...creneau('2027-01-12T09:00', '2027-01-12T13:00') })
+      assert.equal(janvier.ok && janvier.quote.ratePlanId, suivante.id)
+      assert.equal(janvier.ok && janvier.quote.netCents, 9_500)
+
+      assert.equal((await findDefaultRatePlan('2026-12-31'))?.id, PUBLIQUE)
+      assert.equal((await findDefaultRatePlan('2027-01-01'))?.id, suivante.id)
+      // Une grille archivée libère ses jours.
+      await archiveRatePlan(suivante.id)
+      assert.equal(await findDefaultRatePlan('2027-01-01'), undefined)
+      await createRatePlan({ name: 'Tarifs publics 2027 bis', isDefault: true, validFrom: '2027-01-01' })
     })
 
     it('ne modifie pas une grille archivée', async () => {

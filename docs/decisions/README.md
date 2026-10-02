@@ -37,7 +37,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 020 | [Chiffrement et conservation des documents](020-chiffrement-et-conservation-des-documents.md) | 2026-10-01 | accepté ; mise en œuvre du chiffrement, du contrôle de région et de la purge ajoutée |
 | 021 | [Numérotation des documents](021-numerotation-des-documents.md) | 2026-10-01 | accepté |
 | 022 | [Sauvegardes et plan de reprise](022-sauvegardes-et-plan-de-reprise.md) | 2026-10-01 | accepté |
-| 023 | [Tarification paramétrable, remises, engagement et devis figé](023-tarification-parametrable-et-devis.md) | 2026-10-01 | accepté ; amende les ADR 006 et 009 ; mise en œuvre du devis, de l'échéancier et de la configuration ajoutée ; reconduction tacite mise en œuvre par l'ADR 033 |
+| 023 | [Tarification paramétrable, remises, engagement et devis figé](023-tarification-parametrable-et-devis.md) | 2026-10-01 | accepté ; amende les ADR 006 et 009 ; mise en œuvre du devis, de l'échéancier et de la configuration ajoutée ; reconduction tacite mise en œuvre par l'ADR 033 ; grilles par défaut successives par l'ADR 035 |
 | 024 | [Catalogue de services, services souscrits et offres groupées](024-services-et-offres-groupees.md) | 2026-10-01 | accepté ; mise en œuvre des écrans, du prix des offres et des souscriptions ajoutée |
 | 025 | [Contrats versionnés : lignes, avenants, segments d'occupation, documents](025-contrats-versionnes-et-documents.md) | 2026-10-01 | accepté ; amende les ADR 006 et 018 ; mis en œuvre par l'ADR 028 |
 | 026 | [Factures structurées : modèle EN 16931, émission, avoirs, double facturation](026-factures-structurees.md) | 2026-10-01 | accepté ; précisé par les ADR 029 et 032 |
@@ -49,6 +49,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 032 | [Correctifs de la facturation : avenants déjà facturés, avoirs au centime, forfaits sans prorata, motif d'exonération](032-correctifs-de-la-facturation.md) | 2026-10-02 | accepté ; corrige l'ADR 029, précise les ADR 026 et 030 ; choix à valider par l'expert-comptable |
 | 033 | [Tâches planifiées de la facturation : lot mensuel et reconduction tacite](033-taches-planifiees-de-la-facturation.md) | 2026-10-02 | accepté ; met en œuvre la reconduction de l'ADR 023 et le lancement planifié de R13 ; choix à valider par le centre |
 | 034 | [Règlements : journal des relances, rechiffrement des mandats, remises sans table](034-journal-des-relances-et-rechiffrement-des-mandats.md) | 2026-10-02 | accepté ; précise l'ADR 030 ; choix à valider par le centre |
+| 035 | [Suites de la vague 2 : grilles par défaut successives, devis d'une réservation facturée, et manques de schéma écartés](035-suites-de-la-vague-2-et-manques-ecartes.md) | 2026-10-02 | accepté ; amende l'ADR 023 ; choix à valider par le centre |
 
 ## Numéros en double et numéro manquant
 
@@ -87,7 +88,7 @@ Aucun numéro déjà publié n'a été réattribué.
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **035**.
+   `ListAgents`. Le prochain numéro libre est **036**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

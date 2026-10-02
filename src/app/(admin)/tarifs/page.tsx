@@ -19,8 +19,10 @@ export default async function RatePlansPage() {
   const [plans, timeZone] = await Promise.all([listRatePlans(), currentTimeZone()])
   // Le jour du centre, pas celui du serveur (décision 4).
   const today = todayIsoDate(timeZone)
-  const defaultPlan = plans.find((plan) => plan.isDefault)
-  const defaultState = defaultPlan ? ratePlanValidityState(defaultPlan, today) : undefined
+  // Plusieurs grilles par défaut se suivent dans le temps (ADR 035) : celle
+  // d'aujourd'hui chiffre les réservations sans grille de contrat.
+  const defaultPlans = plans.filter((plan) => plan.isDefault)
+  const currentDefault = defaultPlans.find((plan) => ratePlanValidityState(plan, today) === 'current')
 
   return (
     <div className="flex flex-col gap-6">
@@ -52,11 +54,12 @@ export default async function RatePlansPage() {
 
       {/* Une grille par défaut hors de ses dates ne chiffre rien : le dire ici,
           avant qu'une réservation ne parte sans prix. */}
-      {defaultPlan && defaultState !== 'current' && (
+      {defaultPlans.length > 0 && !currentDefault && (
         <p role="status" className="rounded-md border border-statut-conflit/40 bg-white px-4 py-3 text-sm">
-          <strong className="font-medium">Grille par défaut hors de ses dates</strong> — « {defaultPlan.name} »
-          est valable {formatRatePlanValidity(defaultPlan)} : aujourd’hui, les réservations sans grille
-          de contrat ne sont pas chiffrées. Modifiez ses dates ou désignez une autre grille par défaut.
+          <strong className="font-medium">Aucune grille par défaut en vigueur aujourd’hui</strong> —{' '}
+          {defaultPlans.map((plan) => `« ${plan.name} » est valable ${formatRatePlanValidity(plan)}`).join(' ; ')} :
+          aujourd’hui, les réservations sans grille de contrat ne sont pas chiffrées. Modifiez des dates ou
+          désignez une autre grille par défaut.
         </p>
       )}
 

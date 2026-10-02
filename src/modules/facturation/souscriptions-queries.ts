@@ -34,9 +34,21 @@ import {
  * nouvelle, dans la même transaction.
  */
 
+/**
+ * Le contrat d'une souscription, avec ce qui dit si elle se facture : une
+ * souscription d'un contrat brouillon attend son activation, celle d'un
+ * contrat archivé ne se facture plus (le lot les ignore, ADR 028, ADR 035).
+ */
+export type SubscriptionContract = {
+  id: string
+  reference: string
+  status: ContractStatus
+  archived: boolean
+}
+
 export type SubscriptionRow = SubscribedService & {
   service: Pick<Service, 'id' | 'name' | 'code' | 'nature' | 'unit'>
-  contract: { id: string; reference: string } | null
+  contract: SubscriptionContract | null
 }
 
 const selection = {
@@ -48,13 +60,18 @@ const selection = {
     nature: services.nature,
     unit: services.unit,
   },
-  contract: { id: contracts.id, reference: contracts.reference },
+  contract: {
+    id: contracts.id,
+    reference: contracts.reference,
+    status: contracts.status,
+    archived: sql<boolean>`${contracts.deletedAt} is not null`,
+  },
 }
 
 function hydrate(row: {
   subscription: SubscribedService
   service: SubscriptionRow['service']
-  contract: { id: string; reference: string } | null
+  contract: SubscriptionContract | null
 }): SubscriptionRow {
   return { ...row.subscription, service: row.service, contract: row.contract }
 }

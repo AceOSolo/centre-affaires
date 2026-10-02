@@ -16,6 +16,7 @@ import {
   type QuotePlanSource,
   type QuoteRules,
 } from './devis.ts'
+import { defaultRatePlanOn } from './queries.ts'
 import { ratePlanItems, ratePlans } from './schema.ts'
 
 /**
@@ -165,10 +166,12 @@ export async function quoteInTransaction(tx: Transaction, request: QuoteRequest)
   const fromContracts = request.clientId
     ? await contractPlanSources(tx, request.clientId, day, request.contractId)
     : []
+  // La grille par défaut en vigueur ce jour-là : plusieurs se suivent dans le
+  // temps (ADR 035).
   const [defaultPlan] = await tx
     .select({ id: ratePlans.id })
     .from(ratePlans)
-    .where(and(eq(ratePlans.isDefault, true), isNull(ratePlans.deletedAt)))
+    .where(defaultRatePlanOn(day))
     .limit(1)
 
   const plans = await loadPlans(tx, [

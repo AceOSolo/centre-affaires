@@ -9,6 +9,7 @@ import {
   readSubscriptionForm,
   readTerms,
   sameTerms,
+  subscriptionHold,
   subscriptionState,
   subscriptionValues,
   type ActOccurrence,
@@ -56,6 +57,14 @@ describe('état d’une souscription', () => {
 
   it('est annulée une fois archivée, quelles que soient ses dates', () => {
     assert.equal(subscriptionState({ ...ligne, deletedAt: new Date() }, '2026-11-01'), 'cancelled')
+  })
+
+  it('attend l’activation d’un contrat brouillon, ne se facture plus sous un contrat archivé (ADR 035)', () => {
+    assert.equal(subscriptionHold(null), null)
+    assert.equal(subscriptionHold({ status: 'active', archived: false }), null)
+    assert.equal(subscriptionHold({ status: 'terminated', archived: false }), null)
+    assert.equal(subscriptionHold({ status: 'draft', archived: false }), 'contract-draft')
+    assert.equal(subscriptionHold({ status: 'draft', archived: true }), 'contract-archived')
   })
 })
 

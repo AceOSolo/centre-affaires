@@ -14,6 +14,9 @@ import {
 } from './souscriptions-queries.ts'
 import {
   isCurrent,
+  subscriptionHold,
+  subscriptionHoldHints,
+  subscriptionHoldLabels,
   subscriptionState,
   subscriptionStateLabels,
   subscriptionStateStyles,
@@ -175,6 +178,8 @@ function SubscriptionTable({
         <tbody className="divide-y divide-border">
           {rows.map((row) => {
             const state = subscriptionState(row, today)
+            // Un contrat brouillon ou archivé retient la facturation (ADR 035).
+            const hold = isCurrent(state) ? subscriptionHold(row.contract) : null
             const isAct = row.service.nature === 'act'
             const used = usage.get(row.id)
             return (
@@ -192,6 +197,7 @@ function SubscriptionTable({
                         >
                           {row.contract.reference}
                         </Link>
+                        {hold && ` (${subscriptionHoldHints[hold]})`}
                       </>
                     ) : (
                       ' · hors contrat'
@@ -243,9 +249,9 @@ function SubscriptionTable({
                 <td className="px-4 py-3">
                   {/* L'état se lit au libellé ; la teinte l'accompagne (ADR 004). */}
                   <span
-                    className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${subscriptionStateStyles[state]}`}
+                    className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${hold ? subscriptionStateStyles.ended : subscriptionStateStyles[state]}`}
                   >
-                    {subscriptionStateLabels[state]}
+                    {hold ? subscriptionHoldLabels[hold] : subscriptionStateLabels[state]}
                   </span>
                 </td>
                 {canManage && (

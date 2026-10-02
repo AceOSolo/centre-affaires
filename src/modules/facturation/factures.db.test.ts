@@ -1221,6 +1221,27 @@ describe('factures', { skip: raison }, () => {
   })
 
   describe('devis figé d’une réservation (R11)', () => {
+    it('ne réécrit plus le devis d’une réservation facturée, le reste si (ADR 035)', async () => {
+      const id = await reservation()
+      const brouillonId = await brouillon()
+      const tenue = await ligne(brouillonId, { kind: 'booking', bookingId: id, unitPriceCents: 5_000 })
+      const reprix = () =>
+        asTenant((tx) => tx.execute(sql`update bookings set quote_unit_price_cents = 3000 where id = ${id}`))
+      const refus = await errorOf(reprix)
+      assert.equal(pgErrorCode(refus), PG_INVOICE_LOCKED)
+      assert.match(messageOf(refus), /repris par une facture/)
+      // Le reste de la réservation suit ses propres règles.
+      await asTenant((tx) => tx.execute(sql`update bookings set title = 'Réunion de rentrée' where id = ${id}`))
+
+      // La ligne retirée du brouillon, le devis se corrige.
+      await asTenant((tx) =>
+        tx.update(invoiceLines).set({ deletedAt: new Date() }).where(eq(invoiceLines.id, tenue.id)),
+      )
+      await reprix()
+      const [row] = await asTenant((tx) => tx.execute(sql`select quote_amount_cents from bookings where id = ${id}`))
+      assert.equal(row.quote_amount_cents, 6_000)
+    })
+
     it('calcule le montant du devis par la règle commune', async () => {
       const id = await reservation()
       const [row] = await asTenant((tx) =>

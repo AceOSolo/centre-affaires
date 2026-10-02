@@ -5,7 +5,8 @@
 des paramètres du centre) et l'ADR 009 (durée de la demi-journée, choix de
 l'unité d'une réservation) ; mise en œuvre du moteur de devis, de
 l'échéancier et de la configuration ajoutée ; reconduction tacite mise en
-œuvre par l'ADR 033
+œuvre par l'ADR 033 ; une grille par défaut par jour, et non plus une seule,
+depuis l'ADR 035
 
 ## Contexte
 
@@ -313,8 +314,9 @@ de poste) éprouvent ces unités, à remplacer ou à retirer.
 
 ### Limites connues
 
-- Une seule grille par défaut à la fois (index `rate_plans_tenant_default_key`)
+- ~~Une seule grille par défaut à la fois (index `rate_plans_tenant_default_key`)
   : la grille de l'année suivante ne peut pas être préparée comme grille par
-  défaut aux dates qui suivent ; il faut basculer le drapeau le jour venu.
+  défaut aux dates qui suivent ; il faut basculer le drapeau le jour venu.~~
+  Levé par l'ADR 035 : une grille par défaut par jour, plusieurs se suivent.
 - Les lignes de grille n'ont pas de taux de TVA : toutes les réservations
   prennent le taux par défaut du centre.

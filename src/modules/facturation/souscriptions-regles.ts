@@ -61,6 +61,34 @@ export function isCurrent(state: SubscriptionState): boolean {
   return state === 'active' || state === 'upcoming'
 }
 
+/**
+ * Pourquoi une souscription en cours ou à venir ne se facture pas (ADR 035) :
+ * son contrat est un brouillon — elle attend son activation — ou il est
+ * archivé. Le lot les ignore (ADR 028) ; la fiche du client doit le dire
+ * plutôt que de les montrer « en cours ». Nul : rien ne la retient.
+ */
+export type SubscriptionHold = 'contract-draft' | 'contract-archived'
+
+export function subscriptionHold(
+  contract: { status: string; archived: boolean } | null,
+): SubscriptionHold | null {
+  if (!contract) return null
+  if (contract.archived) return 'contract-archived'
+  if (contract.status === 'draft') return 'contract-draft'
+  return null
+}
+
+export const subscriptionHoldLabels: Record<SubscriptionHold, string> = {
+  'contract-draft': 'En attente du contrat',
+  'contract-archived': 'Contrat archivé',
+}
+
+/** Ce que la retenue veut dire pour la facturation. */
+export const subscriptionHoldHints: Record<SubscriptionHold, string> = {
+  'contract-draft': 'facturée à l’activation du contrat',
+  'contract-archived': 'plus facturée',
+}
+
 /* ------------------------------------------------------------------------ */
 /* Conditions : quantité, prix, remise, TVA, inclus                         */
 /* ------------------------------------------------------------------------ */
