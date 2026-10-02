@@ -40,6 +40,8 @@ import {
   bookingStatusBadgeStyles,
   bookingStatusLabels,
 } from '../../../../modules/reservations/labels.ts'
+import { formatCentreDay } from '../../../../modules/rgpd/affichage.ts'
+import { ClientRetentionSection } from '../../../../modules/rgpd/client-section.tsx'
 
 export const metadata = { title: 'Client' }
 
@@ -58,9 +60,11 @@ export default async function ClientPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ contact?: string; souscription?: string }>
+  searchParams: Promise<{ contact?: string; souscription?: string; rgpd?: string }>
 }) {
   const { member: staff } = await requirePermission('clients.gerer')
+  // Retour d'une anonymisation (R29) : lu à part, la section le confirme.
+  const { rgpd: rgpdNotice } = await searchParams
   const [{ id }, { contact: contactNotice, souscription: subscriptionNotice }] = await Promise.all([
     params,
     searchParams,
@@ -100,6 +104,11 @@ export default async function ClientPage({
               Fiche archivée
             </span>
           )}
+          {client.anonymizedAt && (
+            <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
+              Anonymisée le {formatCentreDay(client.anonymizedAt, timeZone)}
+            </span>
+          )}
         </div>
       </div>
 
@@ -114,12 +123,15 @@ export default async function ClientPage({
       )}
 
       <div className="flex flex-wrap gap-3">
-        <Link
-          href={`/clients/${client.id}/modifier`}
-          className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
-        >
-          Modifier la fiche
-        </Link>
+        {/* Une fiche anonymisée ne change plus (CA012, ADR 040). */}
+        {!client.anonymizedAt && (
+          <Link
+            href={`/clients/${client.id}/modifier`}
+            className="rounded-md border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Modifier la fiche
+          </Link>
+        )}
         {can(staff.role, 'contrats.creer') && (
           <Link
             href={`/contrats/nouveau?clientId=${client.id}`}
@@ -531,6 +543,14 @@ export default async function ClientPage({
           canManage={can(staff.role, 'paiements.gerer')}
         />
       )}
+
+      {/* Conservation et anonymisation (R29, ADR 040). */}
+      <ClientRetentionSection
+        client={client}
+        canAnonymize={can(staff.role, 'rgpd.anonymiser')}
+        timeZone={timeZone}
+        notice={typeof rgpdNotice === 'string' ? rgpdNotice : undefined}
+      />
 
       {!client.deletedAt && can(staff.role, 'clients.archiver') && (
         <form

@@ -4,11 +4,17 @@ import { deleteObject } from '../../../../lib/stockage.ts'
 import { currentTenantId } from '../../../../lib/tenant.ts'
 import { purgeExpiredMail } from '../../../../modules/courrier/conservation.ts'
 import { anonymizeExpiredPublicRequests } from '../../../../modules/reservations/conservation.ts'
+import {
+  anonymizeExpiredClients,
+  anonymizeRemovedMembers,
+} from '../../../../modules/rgpd/anonymisation.ts'
+import { anonymizationLogLine } from '../../../../modules/rgpd/bilan.ts'
 
 /**
  * Purge planifiée de ce qui est arrivé au terme de sa conservation : le
  * courrier et son journal d'accès (ADR 015), les coordonnées des demandeurs de
- * la page publique (ADR 020). Les durées sont celles du centre (`tenants`).
+ * la page publique (ADR 020), les entreprises et les personnes retirées à
+ * anonymiser (R29, ADR 040). Les durées sont celles du centre (`tenants`).
  *
  * Appelée chaque nuit par une tâche du serveur (infra/serveur/README.md), avec
  * le jeton `MAINTENANCE_TOKEN`. Sans jeton configuré, la route n'existe pas :
@@ -22,6 +28,12 @@ export async function POST(request: Request) {
   // leur propre transaction : une panne du stockage, qui interrompt la purge
   // du courrier, ne retient pas leur effacement.
   const publicRequests = await withTenant(tenantId, anonymizeExpiredPublicRequests)
+  // L'anonymisation RGPD (ADR 040), chacune dans sa transaction et avant le
+  // stockage, pour la même raison. La base choisit qui et quoi, exclusions
+  // comprises ; le journal ne reçoit que des nombres.
+  const anonymizedClients = await withTenant(tenantId, anonymizeExpiredClients)
+  const anonymizedMembers = await withTenant(tenantId, anonymizeRemovedMembers)
+  console.info(anonymizationLogLine(anonymizedClients, anonymizedMembers))
   const mail = await withTenant(tenantId, (tx) => purgeExpiredMail(tx, deleteObject))
-  return Response.json({ ...mail, publicRequests })
+  return Response.json({ ...mail, publicRequests, anonymizedClients, anonymizedMembers })
 }
