@@ -22,7 +22,7 @@ import {
   listPortalDayAvailability,
   previewPortalQuote,
 } from './portail-queries.ts'
-import { cancelBooking, refuseBooking } from './queries.ts'
+import { cancelBooking, confirmBooking, refuseBooking } from './queries.ts'
 import { bookings } from './schema.ts'
 
 /**
@@ -351,9 +351,28 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
       assert.ok(vues.every((vue) => vue.cancelledByCentre && vue.cancelledByMember === null))
       assert.deepEqual(await findBookingAuthors(demande.id), {
         bookedBy: 'Jeanne Martin',
+        confirmedByStaff: null,
         cancelledByMember: null,
         cancelledByStaff: 'accueil@centre.test',
       })
+    })
+
+    it('date la confirmation : immédiate selon la ressource, ou donnée par l’accueil (ADR 041)', async () => {
+      // Confirmation immédiate : datée dès le dépôt, sans membre de l'équipe.
+      const immediate = await ligne((await reserver(durand, VEHICULE)).id)
+      assert.equal(immediate.status, 'confirmed')
+      assert.ok(immediate.confirmedAt)
+      assert.equal(immediate.confirmedByStaffId, null)
+
+      // Demande soumise à l'accord de l'accueil : datée quand il la confirme, à son nom.
+      const demande = await reserver(durand, SALLE)
+      assert.equal((await ligne(demande.id)).confirmedAt, null)
+      await confirmBooking(demande.id, ACCUEIL)
+      const acceptee = await ligne(demande.id)
+      assert.equal(acceptee.status, 'confirmed')
+      assert.ok(acceptee.confirmedAt)
+      assert.equal(acceptee.confirmedByStaffId, ACCUEIL)
+      assert.equal((await findBookingAuthors(demande.id)).confirmedByStaff, 'accueil@centre.test')
     })
 
     it('montre la demande dans « Demandes », avec son canal et la personne', async () => {

@@ -9,6 +9,7 @@ import { findDefaultRatePlan } from '../facturation/queries.ts'
 import { offerItems, offers, services, type Offer } from '../facturation/schema.ts'
 import type { RateCandidate } from '../facturation/tarifs.ts'
 import { resources } from '../ressources/schema.ts'
+import { settleOfferRequests } from './demandes-offres.ts'
 import { encodeTarget, targetOf, type LineDraft } from './lignes.ts'
 import { linesRefusal, writeDraftLines } from './lignes-queries.ts'
 import type { LinesCatalog } from './lines-editor.tsx'
@@ -198,12 +199,21 @@ export async function createContractFromOffer(input: {
   contract: ContractInput & { offerId: string }
   lines: readonly LineDraft[]
   subscriptions: readonly ProposedSubscription[]
+  /** Membre de l'équipe qui tire le contrat : il clôt la demande d'offre du client (ADR 041). */
+  drawnBy?: string | null
 }): Promise<Contract> {
   try {
     return await withTenant(currentTenantId(), async (tx) => {
       const created = await insertContract(tx, input.contract)
       await writeDraftLines(tx, { contractId: created.id, amendmentId: null }, input.lines)
       await insertContractSubscriptions(tx, created, input.subscriptions)
+      // La demande à traiter de cette offre par ce client, s'il y en a une, est
+      // traitée par ce contrat : dans la même transaction.
+      await settleOfferRequests(
+        tx,
+        { id: created.id, clientId: created.clientId, offerId: input.contract.offerId },
+        input.drawnBy ?? null,
+      )
       // Relu : la base a recalculé le montant depuis les lignes.
       const [contract] = await tx.select().from(contracts).where(eq(contracts.id, created.id))
       return contract

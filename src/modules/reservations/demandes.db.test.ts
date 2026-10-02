@@ -166,6 +166,52 @@ describe('demandes de réservation publiques', { skip: raison }, () => {
         assert.equal(ligne.requester_name, 'Camille Rousseau')
         assert.equal(ligne.requester_phone, '06 12 34 56 78')
       })
+
+      it('date la confirmation et garde qui l’a donnée, sans qu’elle se réécrive (ADR 041)', async () => {
+        const ACCUEIL = '01999f00-0000-7000-8000-0000000000d1'
+        await owner.client`truncate table staff_members cascade`
+        await withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) => tx.execute(sql`insert into staff_members (id, email) values (${ACCUEIL}, 'accueil@centre.fr')`),
+          app.db,
+        )
+        await demander('2026-10-05T09:00:00Z', '2026-10-05T11:00:00Z')
+        const [enAttente] = await lire()
+        assert.equal(enAttente.confirmed_at, null)
+
+        await withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) => tx.execute(sql`update bookings set status = 'confirmed', confirmed_by_staff_id = ${ACCUEIL}`),
+          app.db,
+        )
+        const [confirmee] = await lire()
+        assert.ok(confirmee.confirmed_at)
+        assert.equal(confirmee.confirmed_by_staff_id, ACCUEIL)
+
+        // Ni la date ni l'auteur ne se réécrivent ensuite.
+        const refus = await codeErreur(() =>
+          withTenant(
+            DEFAULT_TENANT_ID,
+            (tx) => tx.execute(sql`update bookings set confirmed_at = now() - interval '1 day'`),
+            app.db,
+          ),
+        )
+        assert.equal(refus, 'P0001')
+
+        // Une réservation du centre est confirmée, et datée, dès sa saisie.
+        await withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) =>
+            tx.execute(sql`
+              insert into bookings (resource_id, channel, starts_at, ends_at, title)
+              values (${RESOURCE_ID}, 'staff', '2026-10-06T09:00:00Z', '2026-10-06T10:00:00Z', 'Interne')`),
+          app.db,
+        )
+        const [interne] = await lire(sql`channel = 'staff'`)
+        assert.ok(interne.confirmed_at)
+        assert.equal(interne.confirmed_by_staff_id, null)
+        await owner.client`truncate table staff_members cascade`
+      })
     })
 
     describe('refus', () => {

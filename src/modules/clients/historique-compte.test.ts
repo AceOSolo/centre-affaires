@@ -11,10 +11,12 @@ import {
   invoiceHistoryEntry,
   isHistoryCategory,
   mailRequestHistoryEntry,
+  offerRequestHistoryEntry,
   type HistoryBookingRow,
   type HistoryInspectionRow,
   type HistoryInvoiceRow,
   type HistoryMailRequestRow,
+  type HistoryOfferRequestRow,
 } from './historique-compte.ts'
 
 const TZ = 'Europe/Paris'
@@ -33,10 +35,26 @@ const reservation = (overrides: Partial<HistoryBookingRow> = {}): HistoryBooking
   startsAt: new Date('2026-10-20T07:00:00Z'),
   endsAt: new Date('2026-10-20T09:00:00Z'),
   bookedByName: 'Jeanne Martin',
+  confirmedAt: null,
+  confirmedByStaff: false,
   cancelledAt: null,
   cancellationReason: null,
   cancelledByMemberName: null,
   cancelledByStaff: false,
+  ...overrides,
+})
+
+const demandeOffre = (overrides: Partial<HistoryOfferRequestRow> = {}): HistoryOfferRequestRow => ({
+  id: 'o1',
+  clientId: DURAND,
+  clientName: 'Atelier Durand',
+  offerName: 'Domiciliation Premium',
+  status: 'requested',
+  requestedAt: new Date('2026-10-01T08:00:00Z'),
+  requestedByName: 'Jeanne Martin',
+  closedAt: null,
+  contractReference: null,
+  dismissalReason: null,
   ...overrides,
 })
 
@@ -144,8 +162,39 @@ describe('historique du compte : réservations', () => {
     )
     const publique = bookingHistoryEntry(reservation({ channel: 'public', bookedByName: null, status: 'confirmed' }), TZ)
     assert.equal(publique.steps[0].label, 'Demandée depuis le site')
-    // La base ne date pas la confirmation : l'étape est dite, sans date.
+    // Confirmée avant que la base ne la date : l'étape est dite, sans date.
     assert.deepEqual(publique.steps.at(-1), { label: 'Confirmée', at: null })
+  })
+
+  it('date la confirmation et dit qui l’a donnée (ADR 041)', () => {
+    const confirmedAt = new Date('2026-10-02T09:30:00Z')
+    const acceptee = bookingHistoryEntry(
+      reservation({ status: 'confirmed', confirmedAt, confirmedByStaff: true }),
+      TZ,
+    )
+    assert.deepEqual(acceptee.steps.at(-1), { label: 'Confirmée par le centre', at: confirmedAt })
+
+    const immediate = bookingHistoryEntry(
+      reservation({ status: 'confirmed', confirmedAt: new Date('2026-10-01T08:00:00Z') }),
+      TZ,
+    )
+    assert.equal(immediate.steps.at(-1)?.label, 'Confirmée immédiatement')
+
+    // Confirmée puis annulée par le centre : les deux étapes, dans l'ordre.
+    const annulee = bookingHistoryEntry(
+      reservation({
+        status: 'cancelled',
+        confirmedAt,
+        confirmedByStaff: true,
+        cancelledAt: new Date('2026-10-05T10:00:00Z'),
+        cancelledByStaff: true,
+      }),
+      TZ,
+    )
+    assert.deepEqual(
+      annulee.steps.map((step) => step.label),
+      ['Demandée depuis l’espace client par Jeanne Martin', 'Confirmée par le centre', 'Annulée par le centre'],
+    )
   })
 
   it('écrit un créneau de plusieurs jours de bout en bout', () => {
@@ -291,6 +340,40 @@ describe('historique du compte : états des lieux', () => {
   })
 })
 
+describe('historique du compte : demandes d’offre (ADR 041)', () => {
+  it('dit qui a demandé l’offre, et qu’elle attend l’accueil', () => {
+    const entry = offerRequestHistoryEntry(demandeOffre())
+    assert.equal(entry.category, 'contrats')
+    assert.equal(entry.title, 'Demande d’offre — Domiciliation Premium')
+    assert.deepEqual(entry.outcome, { label: 'Transmise à l’accueil', tone: 'waiting' })
+    assert.deepEqual(
+      entry.steps.map((step) => step.label),
+      ['Demandée depuis l’espace client par Jeanne Martin'],
+    )
+  })
+
+  it('date le contrat préparé, et ne le nomme que si l’entreprise le voit', () => {
+    const closedAt = new Date('2026-10-03T09:00:00Z')
+    const nomme = offerRequestHistoryEntry(
+      demandeOffre({ status: 'contracted', closedAt, contractReference: 'CT-2026-0012' }),
+    )
+    assert.deepEqual(nomme.outcome, { label: 'Contrat préparé', tone: 'done' })
+    assert.deepEqual(nomme.steps.at(-1), { label: 'Contrat CT-2026-0012 préparé par le centre', at: closedAt })
+    const brouillon = offerRequestHistoryEntry(demandeOffre({ status: 'contracted', closedAt }))
+    assert.equal(brouillon.steps.at(-1)?.label, 'Contrat préparé par le centre')
+  })
+
+  it('garde une demande écartée, avec sa date et son motif', () => {
+    const closedAt = new Date('2026-10-03T09:00:00Z')
+    const entry = offerRequestHistoryEntry(
+      demandeOffre({ status: 'dismissed', closedAt, dismissalReason: 'Offre réservée aux bureaux.' }),
+    )
+    assert.deepEqual(entry.outcome, { label: 'Écartée', tone: 'closed' })
+    assert.deepEqual(entry.steps.at(-1), { label: 'Écartée par le centre', at: closedAt })
+    assert.deepEqual(entry.notes, ['Motif : Offre réservée aux bureaux.'])
+  })
+})
+
 describe('historique du compte : assemblage', () => {
   it('range tout du plus récent au plus ancien, toutes rubriques confondues', () => {
     const entries = buildAccountHistory(
@@ -308,6 +391,7 @@ describe('historique du compte : assemblage', () => {
             createdAt: new Date('2026-09-30T08:00:00Z'),
           },
         ],
+        offerRequests: [demandeOffre({ requestedAt: new Date('2026-09-29T08:00:00Z') })],
         invoices: [facture({ issuedAt: new Date('2026-10-01T10:00:00Z') })],
         inspections: [etatDesLieux({ closedAt: new Date('2026-10-01T09:00:00Z') })],
       },
@@ -315,7 +399,7 @@ describe('historique du compte : assemblage', () => {
     )
     assert.deepEqual(
       entries.map((entry) => entry.key),
-      ['courrier:m1', 'factures:f1', 'etats-des-lieux:e1', 'reservations:b1', 'contrats:c1:1'],
+      ['courrier:m1', 'factures:f1', 'etats-des-lieux:e1', 'reservations:b1', 'contrats:c1:1', 'contrats:offre:o1'],
     )
   })
 
@@ -329,6 +413,7 @@ describe('historique du compte : assemblage', () => {
         ],
         mailRequests: [],
         contractDocuments: [],
+        offerRequests: [],
         invoices: [],
         inspections: [],
       },

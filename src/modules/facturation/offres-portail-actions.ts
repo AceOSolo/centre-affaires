@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { formatDateTime } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { requireClientAccount } from '../clients/session.ts'
-import { findPortalOffer, recentOfferRequest, requestOffer } from './offres-portail.ts'
+import { findPortalOffer, requestOffer } from './offres-portail.ts'
 
 /** Réponse rendue au bouton « Demander cette offre », annoncée au lecteur d'écran. */
 export type OfferRequestState =
@@ -15,9 +15,9 @@ export type OfferRequestState =
 
 /**
  * Demande d'une offre groupée depuis l'espace client (R23, ADR 036), en une
- * action : elle part à l'accueil, qui en tire le contrat. Revérifie le compte
- * (ADR 008) ; l'entreprise doit être l'une du compte, l'offre présentée dans
- * l'espace.
+ * action : elle s'inscrit dans les demandes du client (ADR 041) et part à
+ * l'accueil, qui en tire le contrat. Revérifie le compte (ADR 008) ;
+ * l'entreprise doit être l'une du compte, l'offre présentée dans l'espace.
  */
 export async function requestOfferAction(
   _previous: OfferRequestState,
@@ -38,20 +38,20 @@ export async function requestOfferAction(
     return { status: 'error', message: 'Cette offre n’est plus proposée. Contactez le centre.' }
   }
 
-  // Une seconde demande ne ferait que doubler le message à l'accueil.
-  const previous = await recentOfferRequest(account.clientId, offer.id)
-  if (previous) {
+  const outcome = await requestOffer({ account, offer })
+  // Une demande de cette offre attend déjà l'accueil : la base n'en garde qu'une.
+  if (outcome.status === 'already') {
     const tenant = await currentTenant()
     return {
       status: 'sent',
-      message: `Votre demande du ${formatDateTime(previous, tenant.timezone)} est déjà entre les mains de l’accueil, qui vous recontacte pour établir le contrat.`,
+      message: `Votre demande du ${formatDateTime(outcome.requestedAt, tenant.timezone)} est déjà entre les mains de l’accueil, qui vous recontacte pour établir le contrat.`,
     }
   }
 
-  await requestOffer({ account, offer })
   revalidatePath('/demandes')
+  revalidatePath('/compte/historique')
   return {
     status: 'sent',
-    message: `Demande transmise à l’accueil pour ${account.clientName}. L’équipe vous recontacte pour établir le contrat : rien ne vous engage avant sa signature.`,
+    message: `Demande transmise à l’accueil pour ${account.clientName}. L’équipe vous recontacte pour établir le contrat : rien ne vous engage avant sa signature. Vous la retrouvez dans votre historique.`,
   }
 }

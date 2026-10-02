@@ -146,6 +146,22 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           </>
         )}
 
+        {/* Confirmation datée par la base, et son auteur pour une demande acceptée (ADR 041). */}
+        {booking.confirmedAt && booking.channel !== 'staff' && (
+          <>
+            <dt className="text-muted-foreground">Confirmée le</dt>
+            <dd>
+              {formatLongDate(toIsoDate(booking.confirmedAt, timeZone), timeZone)} à{' '}
+              {formatTime(booking.confirmedAt, timeZone)}
+              {authors.confirmedByStaff
+                ? `, par ${authors.confirmedByStaff}`
+                : booking.bookedByMemberId
+                  ? ', immédiatement (réglage de la ressource)'
+                  : ''}
+            </dd>
+          </>
+        )}
+
         {booking.kind === 'booking' && (
           <>
             <dt className="text-muted-foreground">Prix</dt>

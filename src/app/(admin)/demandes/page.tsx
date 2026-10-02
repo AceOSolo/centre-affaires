@@ -11,7 +11,9 @@ import {
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { frozenQuoteDisplay } from '../../../modules/facturation/devis.ts'
+import { DismissOfferRequestForm } from '../../../modules/facturation/dismiss-offer-request-form.tsx'
 import {
+  DISMISSAL_REASON_MAX_LENGTH,
   OFFER_REQUEST_LIST_DAYS,
   listOfferRequests,
 } from '../../../modules/facturation/offres-portail.ts'
@@ -29,8 +31,8 @@ export const metadata = { title: 'Demandes' }
 /**
  * File des demandes : réservations déposées depuis le site public (ADR 005)
  * ou depuis l'espace client, sur une ressource soumise à l'accord de
- * l'accueil (ADR 036) ; et offres groupées demandées depuis l'espace client,
- * dont l'accueil tire le contrat.
+ * l'accueil (ADR 036) ; et offres groupées demandées depuis l'espace client
+ * (`offer_requests`, ADR 041), dont l'accueil tire le contrat ou qu'il écarte.
  *
  * Chaque demande de réservation bloque déjà son créneau : traiter la file vite
  * n'est pas une question de confort, c'est ce qui libère les salles que
@@ -41,7 +43,7 @@ export default async function DemandesPage() {
   const timeZone = await currentTimeZone()
   const [pending, offerRequests] = await Promise.all([listPendingRequests(), listOfferRequests()])
   const canDrawContract = can(member.role, 'contrats.creer')
-  const openOfferRequests = offerRequests.filter((request) => !request.contract)
+  const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
 
   return (
     <div className="flex flex-col gap-8">
@@ -213,8 +215,9 @@ export default async function DemandesPage() {
             <span className="font-normal text-muted-foreground">({openOfferRequests.length} à traiter)</span>
           </h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            {OFFER_REQUEST_LIST_DAYS} derniers jours. Une demande n’engage rien : le contrat tiré de
-            l’offre la traite.
+            Une demande n’engage rien : le contrat tiré de l’offre la traite, ou l’accueil l’écarte.
+            Les demandes traitées restent affichées {OFFER_REQUEST_LIST_DAYS} jours ; le client
+            retrouve les siennes dans son historique.
           </p>
         </div>
         {offerRequests.length === 0 ? (
@@ -230,38 +233,68 @@ export default async function DemandesPage() {
                   <th scope="col" className="px-4 py-3 font-medium">Demandée le</th>
                   <th scope="col" className="px-4 py-3 font-medium">Client</th>
                   <th scope="col" className="px-4 py-3 font-medium">Offre</th>
-                  <th scope="col" className="px-4 py-3 font-medium">Suite</th>
+                  <th scope="col" className="px-4 py-3 font-medium">État et suite</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
                 {offerRequests.map((request) => (
-                  <tr key={request.deliveryId}>
+                  <tr key={request.id} className="align-top">
                     <td className="whitespace-nowrap px-4 py-3 tabular">
-                      {formatDateTime(request.sentAt, timeZone)}
+                      {formatDateTime(request.requestedAt, timeZone)}
                     </td>
                     <td className="px-4 py-3">
                       <Link href={`/clients/${request.clientId}`} className="underline-offset-2 hover:underline">
                         {request.clientName}
                       </Link>
+                      {request.requestedByName && (
+                        <span className="block text-xs text-muted-foreground">
+                          par {request.requestedByName}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3">{request.offerName}</td>
                     <td className="px-4 py-3">
-                      {request.contract ? (
+                      {request.status === 'contracted' && request.contract ? (
                         <Link
                           href={`/contrats/${request.contract.id}`}
                           className="underline-offset-2 hover:underline"
                         >
                           Contrat {request.contract.reference} établi
                         </Link>
-                      ) : canDrawContract ? (
-                        <Link
-                          href={`/contrats/nouveau/offre?${new URLSearchParams({ offre: request.offerId, client: request.clientId }).toString()}`}
-                          className="font-medium text-primary underline-offset-2 hover:underline"
-                        >
-                          Préparer le contrat
-                        </Link>
+                      ) : request.status === 'dismissed' ? (
+                        <>
+                          <span>
+                            Écartée
+                            {request.closedAt ? ` le ${formatDateTime(request.closedAt, timeZone)}` : ''}
+                            {request.closedByName ? ` par ${request.closedByName}` : ''}
+                          </span>
+                          {request.dismissalReason && (
+                            <span className="block text-xs text-muted-foreground">
+                              Motif : {request.dismissalReason}
+                            </span>
+                          )}
+                        </>
                       ) : (
-                        <span className="text-muted-foreground">À transmettre à l’exploitant</span>
+                        <>
+                          <span className="font-medium">À traiter</span>
+                          {canDrawContract ? (
+                            <Link
+                              href={`/contrats/nouveau/offre?${new URLSearchParams({ offre: request.offerId, client: request.clientId }).toString()}`}
+                              className="block font-medium text-primary underline-offset-2 hover:underline"
+                            >
+                              Préparer le contrat
+                            </Link>
+                          ) : (
+                            <span className="block text-muted-foreground">
+                              Contrat : à transmettre à l’exploitant
+                            </span>
+                          )}
+                          <DismissOfferRequestForm
+                            requestId={request.id}
+                            subject={`${request.offerName}, ${request.clientName}`}
+                            maxLength={DISMISSAL_REASON_MAX_LENGTH}
+                          />
+                        </>
                       )}
                     </td>
                   </tr>

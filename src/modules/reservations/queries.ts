@@ -612,12 +612,15 @@ export async function listPendingBookings(): Promise<BookingWithResource[]> {
  * Le créneau était déjà bloqué depuis le dépôt, la contrainte d'exclusion n'a
  * donc rien à refuser ici — c'est tout l'intérêt d'avoir fait occuper le
  * créneau par le statut `pending`.
+ *
+ * La base date la confirmation (`confirmed_at`, ADR 041) ; le code dit qui
+ * l'a donnée, pour l'historique du client et la fiche.
  */
-export async function confirmBooking(id: string): Promise<void> {
+export async function confirmBooking(id: string, staffId: string | null = null): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(bookings)
-      .set({ status: 'confirmed' })
+      .set({ status: 'confirmed', confirmedByStaffId: staffId })
       .where(and(eq(bookings.id, id), eq(bookings.status, 'pending'))),
   )
 }

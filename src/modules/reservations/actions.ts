@@ -250,11 +250,11 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
  * validation est acquise en base, que Google réponde ou non.
  */
 export async function confirmBookingAction(formData: FormData): Promise<void> {
-  await requirePermission('demandes.traiter')
+  const { member } = await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
   const before = isUuid(id) ? await findBooking(id) : undefined
-  await confirmBooking(id)
+  await confirmBooking(id, member.id)
   after(() => syncBookingToGoogleCalendar(id))
   // Le client d'une demande validée en est prévenu (ADR 038).
   if (before?.status === 'pending') after(() => notifyBookingRequestAccepted(id))

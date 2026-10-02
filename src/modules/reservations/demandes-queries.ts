@@ -49,15 +49,18 @@ export async function listPendingRequests(): Promise<PendingRequest[]> {
   }))
 }
 
-/** Qui a fait et qui a annulé une réservation (ADR 036), pour la fiche du back-office. */
+/** Qui a fait, confirmé et annulé une réservation (ADR 036, 041), pour la fiche du back-office. */
 export type BookingAuthors = {
   bookedBy: string | null
+  /** Le membre de l'équipe qui a accepté la demande. */
+  confirmedByStaff: string | null
   cancelledByMember: string | null
   cancelledByStaff: string | null
 }
 
 const bookedBy = alias(clientMembers, 'booked_by_members')
 const cancelledByMember = alias(clientMembers, 'cancelled_by_members')
+const confirmedBy = alias(staffMembers, 'confirmed_by_staff')
 
 /** Noms (ou adresses) des auteurs ; tout à `null` pour une réservation sans trace. */
 export async function findBookingAuthors(id: string): Promise<BookingAuthors> {
@@ -65,15 +68,17 @@ export async function findBookingAuthors(id: string): Promise<BookingAuthors> {
     tx
       .select({
         bookedBy: sql<string | null>`coalesce(${bookedBy.fullName}, ${bookedBy.email})`,
+        confirmedByStaff: sql<string | null>`coalesce(${confirmedBy.fullName}, ${confirmedBy.email})`,
         cancelledByMember: sql<string | null>`coalesce(${cancelledByMember.fullName}, ${cancelledByMember.email})`,
         cancelledByStaff: sql<string | null>`coalesce(${staffMembers.fullName}, ${staffMembers.email})`,
       })
       .from(bookings)
       .leftJoin(bookedBy, eq(bookedBy.id, bookings.bookedByMemberId))
+      .leftJoin(confirmedBy, eq(confirmedBy.id, bookings.confirmedByStaffId))
       .leftJoin(cancelledByMember, eq(cancelledByMember.id, bookings.cancelledByMemberId))
       .leftJoin(staffMembers, eq(staffMembers.id, bookings.cancelledByStaffId))
       .where(eq(bookings.id, id))
       .limit(1),
   )
-  return row ?? { bookedBy: null, cancelledByMember: null, cancelledByStaff: null }
+  return row ?? { bookedBy: null, confirmedByStaff: null, cancelledByMember: null, cancelledByStaff: null }
 }
