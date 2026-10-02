@@ -308,27 +308,37 @@ Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
 
 Les numérisations de courrier et le journal de leurs consultations ne se
 gardent que le temps fixé par le centre (12 mois par défaut, colonnes
-`mail_*_retention_months` de `tenants`, voir `infra/configurer-centre.mjs`).
+`mail_*_retention_months` de `tenants`).
 Les coordonnées des personnes qui ont déposé une demande sur la page publique
 (nom, adresse, téléphone) sont effacées au même rythme : 12 mois par défaut
 après la fin du créneau demandé, ou après l'annulation si elle précède
-(`public_request_retention_months`, même script, ADR 020). La réservation
-reste, anonymisée.
+(`public_request_retention_months`, ADR 020). La réservation reste,
+anonymisée.
+Les prospects sans suite, les clients partis et les traces des accès et des
+membres retirés sont anonymisés au terme de leur durée (R29, ADR 040), sauf
+exclusion (facture non soldée, contrat vivant…) ; les factures émises ne sont
+jamais touchées.
+Toutes ces durées se règlent à l'écran **Configuration du centre**
+(`/configuration`, exploitant), et non plus dans `infra/configurer-centre.mjs`.
 La purge est une route de l'application, appelée chaque nuit ; elle exige
 `MAINTENANCE_TOKEN` dans le `.env` du serveur.
 
 Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 
 ```cron
-# Purge du courrier échu et des coordonnées des demandes publiques échues,
-# chaque nuit à 3 h 15 (ADR 015, ADR 020).
+# Purge du courrier échu, des coordonnées des demandes publiques échues et
+# anonymisation RGPD, chaque nuit à 3 h 15 (ADR 015, ADR 020, ADR 040).
 15 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/conservation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
 La commande tourne dans le conteneur, qui a déjà le jeton dans son
 environnement : il n'est écrit ni dans la crontab ni dans les journaux. Elle
-affiche le nombre de numérisations et de consultations purgées, et de demandes
-anonymisées : `{"scans":0,"views":0,"publicRequests":0}`.
+affiche le nombre de numérisations et de consultations purgées, de demandes
+anonymisées, d'entreprises anonymisées (avec leurs contacts, accès et plis)
+et de personnes retirées anonymisées — des nombres, jamais un nom :
+`{"scans":0,"views":0,"publicRequests":0,"anonymizedClients":{"clients":0,"contacts":0,"accesses":0,"mailSenders":0},"anonymizedMembers":{"accesses":0,"staff":0}}`.
+Le journal de l'application (`docker compose logs app`) en garde une ligne
+« Conservation (RGPD) : … » par nuit.
 
 ## Reconduction tacite et lot de facturation planifiés
 

@@ -24,7 +24,15 @@ export default async function EditClientPage({ params }: { params: Promise<{ id:
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modifier la fiche</h1>
       </div>
-      <ClientForm client={client} />
+      {/* Une fiche anonymisée ne change plus (CA012, ADR 040). */}
+      {client.anonymizedAt ? (
+        <p className="max-w-[70ch] rounded-lg border border-border bg-white px-5 py-4 text-sm">
+          Cette fiche est anonymisée : elle ne se modifie plus. Ses factures émises gardent
+          l’identité de l’acheteur figée à leur émission.
+        </p>
+      ) : (
+        <ClientForm client={client} />
+      )}
     </div>
   )
 }

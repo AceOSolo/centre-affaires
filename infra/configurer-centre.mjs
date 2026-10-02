@@ -45,15 +45,10 @@ const CENTRE = {
   ],
   timezone: 'Europe/Paris',
   currency: 'EUR',
-  // Conservation du courrier numérisé et du journal d'accès, en mois (RGPD,
-  // ADR 015). Validées par le centre le 2026-09-30 ; à reporter au contrat
-  // de domiciliation.
-  mailScanRetentionMonths: 12,
-  mailAccessLogRetentionMonths: 12,
-  // Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
-  // depuis la fin du créneau demandé. Douze mois par défaut, à faire valider
-  // par le centre (B4).
-  publicRequestRetentionMonths: 12,
+  // Les durées de conservation (courrier, demandes publiques, anonymisation,
+  // journaux, photos) ne sont plus posées ici : elles se règlent à l'écran
+  // Configuration du centre (R29, ADR 040). Rejouer ce script ne doit pas
+  // défaire le choix du centre. Valeurs par défaut : celles des colonnes.
 }
 
 /**
@@ -109,10 +104,7 @@ try {
         hero_image_path = ${CENTRE.heroImagePath},
         social_links    = ${sql.json(CENTRE.socialLinks)},
         timezone       = ${CENTRE.timezone},
-        currency       = ${CENTRE.currency},
-        mail_scan_retention_months       = ${CENTRE.mailScanRetentionMonths},
-        mail_access_log_retention_months = ${CENTRE.mailAccessLogRetentionMonths},
-        public_request_retention_months  = ${CENTRE.publicRequestRetentionMonths}
+        currency       = ${CENTRE.currency}
       where id = ${DEFAULT_TENANT_ID}
       returning name, city, phone, logo_path`
   })

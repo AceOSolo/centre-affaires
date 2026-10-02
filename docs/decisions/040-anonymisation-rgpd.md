@@ -145,3 +145,117 @@ conservation.
   modifier (`CA012`).
 - *À valider par le centre* : les trois durées, et le traitement des mandats
   révoqués (IBAN chiffré conservé en attendant leur durée propre).
+
+## Mise en œuvre
+
+Ajoutée par la tranche RGPD de la dernière vague (partie code de R29). Aucune
+dépendance, aucune migration : le code appelle les fonctions de la
+migration 0043 et rapporte ce qu'elles ont fait. Module
+`src/modules/rgpd/`.
+
+### Tâche de nuit
+
+`POST /api/maintenance/conservation` (la purge du courrier, ADR 015, 020)
+appelle, après les demandes publiques et avant le stockage, chacune dans sa
+transaction :
+
+- `anonymize_expired_clients()` (`anonymizeExpiredClients`) : prospects et
+  clients au terme de leur durée, exclusions passées sans erreur ;
+- `anonymize_removed_members()` (`anonymizeRemovedMembers`) : accès et
+  membres de l'équipe retirés depuis plus que leur durée.
+
+Le détail se compte dans la même transaction : les fonctions posent
+`anonymized_at = now()`, et `now()` est l'heure de début de la transaction,
+si bien que les lignes marquées à cet instant sont exactement celles du
+passage. La réponse de la route et le journal de l'application ne portent
+que des nombres :
+
+```json
+{ "anonymizedClients": { "clients": 1, "contacts": 2, "accesses": 1, "mailSenders": 14 },
+  "anonymizedMembers": { "accesses": 0, "staff": 1 } }
+```
+
+et une ligne « Conservation (RGPD) : 1 entreprise anonymisée (2 contacts,
+1 accès, 14 plis) ; … » (`src/modules/rgpd/bilan.ts`). Ni nom, ni adresse,
+ni identifiant : le journal ne doit pas devenir la copie de ce qu'on vient
+d'effacer. Les expéditeurs des plis partent avec l'entreprise : il n'y a pas
+de durée propre aux plis (voir « À valider »).
+
+### Durées à l'écran
+
+Les neuf durées de `tenants` (courrier, consultations, demandes publiques,
+prospect, client, membres retirés, journal des messages, photos et
+consultations des états des lieux) se règlent dans **Configuration du
+centre** (`centre.configurer`), section « Durées de conservation »
+(`durees.ts`, `durees-form.tsx`). Pour chacune : son départ, ce qui se passe
+au terme, sa valeur par défaut, son statut (« validée le 30/09/2026 » pour
+le courrier, « à valider » pour les autres) et ses bornes, celles des
+contraintes de la base (1 à 120 mois ; un test vérifie que l'écran et la
+base refusent les mêmes valeurs).
+
+**Raccourcir une durée se confirme.** Ce qui dépasse la nouvelle durée est
+effacé ou anonymisé dès la nuit suivante, données déjà présentes comprises :
+l'écran liste les durées raccourcies et demande de cocher une confirmation
+avant d'écrire.
+
+La section annonce aussi ce que la prochaine nuit fera avec les durées
+enregistrées (`readAnonymizationOutlook`, mêmes critères que les fonctions,
+en lecture seule) : nombre d'entreprises et de personnes anonymisées, et les
+entreprises **au terme mais retenues** par une exclusion, nommées avec leurs
+exclusions : c'est à l'équipe de solder, terminer ou révoquer.
+
+`infra/configurer-centre.mjs` ne pose plus aucune durée : le rejouer ne doit
+pas défaire le choix du centre.
+
+### Fiche client
+
+- En-tête : « Anonymisée le JJ/MM/AAAA » ; « Modifier la fiche » disparaît
+  (la page de modification le dit aussi).
+- Section « Conservation des données (RGPD) » :
+  - dernière activité (`client_last_activity_on`), dernier contact noté, et
+    la date après laquelle la nuit anonymise la fiche (dernière activité plus
+    la durée des prospects ou des clients), ou « suspendue » s'il y a une
+    exclusion ;
+  - **saisie du dernier contact** (`clients.gerer`) : un jour passé ou
+    aujourd'hui, jamais à venir — une date future repousserait
+    l'anonymisation sans contact réel (`dernier-contact.ts`, testé) ;
+  - **anonymisation à la demande** (`rgpd.anonymiser`, exploitant) : les
+    exclusions de `client_anonymization_blockers()` sont affichées avant
+    tout geste ; sans exclusion, un dialogue de confirmation dit ce qui part
+    et ce qui reste, puis appelle `anonymize_client()`. Un refus de la base
+    (exclusion apparue entre-temps) est rendu dans le dialogue, avec la liste
+    des exclusions et le conseil de la base (`HINT`) ;
+  - **accès retirés** : retirés le, conservés jusqu'au, ou anonymisés le ;
+    l'exploitant peut anonymiser l'un d'eux à la demande de la personne
+    (`anonymize_client_member()`).
+- Écran « Équipe » : section « Membres retirés », même tableau,
+  `anonymize_staff_member()`.
+
+Le code ne pose jamais `anonymized_at` ni `app.anonymization` ; un refus
+`CA012` est lu hors de la transaction, déjà annulée.
+
+### Tests
+
+- `src/modules/rgpd/anonymisation.db.test.ts` : la nuit anonymise au terme,
+  passe une facture impayée et un mandat actif, laisse la facture émise du
+  client parti, ses lignes et ses paiements identiques ; un
+  second passage ne trouve rien et ne réécrit rien ; la prévision de l'écran
+  annonce ce que la nuit fait ; refus motivé à la demande (numéro de facture
+  et conseil), puis succès une fois soldée, puis refus « déjà anonymisée » ;
+  accès et membres seulement retirés ; dernier contact qui repousse
+  l'échéance ; bornes des durées identiques à l'écran et en base.
+- `src/app/api/maintenance/conservation/conservation.db.test.ts` : la route
+  rapporte et journalise des nombres seulement, une fois.
+- `durees.test.ts`, `dernier-contact.test.ts` : règles pures.
+
+### À valider
+
+- Les durées, toutes « à valider » sauf le courrier (registre,
+  `docs/rgpd/durees-de-conservation.md`).
+- Les plis n'ont pas de durée propre : l'expéditeur et la note partent avec
+  l'entreprise, au terme de la durée des clients. Le registre proposait
+  « durée du contrat de domiciliation, puis 5 ans » : c'est ce que donne la
+  durée des clients quand la domiciliation est le dernier contrat. Une durée
+  plus courte pour les seuls plis demanderait une colonne et une fonction.
+- Le dernier contact se note à la main ; un échange par courriel ou un appel
+  non noté ne repousse rien.

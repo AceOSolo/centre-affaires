@@ -5,12 +5,14 @@ import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTenant } from '../../../lib/tenant.ts'
 import { centreSettingsValues, missingInvoiceRequirements } from '../../../modules/facturation/parametres.ts'
 import { CentreSettingsForms } from '../../../modules/facturation/parametres-form.tsx'
+import { RetentionSettingsSection } from '../../../modules/rgpd/durees-section.tsx'
 
 export const metadata = { title: 'Configuration du centre' }
 
 /**
  * Paramètres du centre (R10) : règles tarifaires, facturation, identité légale
- * et coordonnées bancaires du vendeur. Réservé à l'exploitant
+ * et coordonnées bancaires du vendeur ; durées de conservation des données
+ * (R29, ADR 040). Réservé à l'exploitant
  * (`centre.configurer`, ADR 019) : ces valeurs engagent chaque prix et chaque
  * facture.
  */
@@ -24,7 +26,8 @@ export default async function ConfigurationPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Configuration du centre</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-          Règles de calcul des prix, conditions de facturation et identité du vendeur. Les délais de
+          Règles de calcul des prix, conditions de facturation, identité du vendeur et durées de
+          conservation des données. Les délais de
           réservation du site public se règlent dans{' '}
           <Link href="/disponibilites" className="underline underline-offset-2">
             Disponibilités
@@ -53,6 +56,8 @@ export default async function ConfigurationPage() {
       )}
 
       <CentreSettingsForms values={centreSettingsValues(tenant)} />
+
+      <RetentionSettingsSection tenant={tenant} />
     </div>
   )
 }

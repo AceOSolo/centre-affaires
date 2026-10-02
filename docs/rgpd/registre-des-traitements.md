@@ -5,7 +5,7 @@ l'application de gestion du centre d'affaires (R29, D9). Il se déduit du code
 et des ADR à la date indiquée, et s'intègre au registre général de
 l'entreprise.
 
-- **Dernière mise à jour** : 01/10/2026.
+- **Dernière mise à jour** : 02/10/2026.
 - **Durées de conservation** : [tableau détaillé](durees-de-conservation.md).
 - Ce qui reste « à valider », « à vérifier » ou « à compléter » l'est par
   l'exploitant.
@@ -75,8 +75,11 @@ secret ni donnée. Il ne figure ici que pour mémoire.
   de déploiement réservée à la CI.
 - **Continuité** : sauvegarde nocturne testée, procédure de restauration,
   plan de reprise (ADR 022).
-- **Durées de conservation** appliquées par des purges planifiées (voir le
-  tableau).
+- **Durées de conservation** appliquées par des purges et des
+  anonymisations planifiées, chaque nuit (voir le tableau). Elles se règlent
+  par centre, à l'écran de configuration (exploitant). L'anonymisation ne
+  touche jamais une entreprise dont la relation vit encore (facture non
+  soldée, contrat vivant…) ni les pièces comptables (ADR 040).
 
 ## Traitements
 
@@ -91,7 +94,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Destinataires | Exploitant. |
 | Sous-traitants | Neon (base, Neon Auth), OVHcloud (serveur). |
 | Transferts hors UE | Aucun prévu ; garanties de Neon à vérifier. |
-| Conservation | Tant que la personne est dans l'équipe. Le retrait est logique : la ligne reste, car elle signe les actions passées. Durée de cette trace et des comptes Neon Auth : **à fixer**. |
+| Conservation | Tant que la personne est dans l'équipe. Le retrait est logique : la ligne reste, car elle signe les actions passées. Nom et adresse anonymisés 12 mois après le retrait (**à valider**), par la tâche de nuit, ou plus tôt à la demande de la personne (écran Équipe). Comptes Neon Auth : **à fixer**. |
 | Code | `src/db/staff.ts`, `src/lib/auth/`, ADR 008, 019 |
 
 ### T2. Clients, prospects et contrats
@@ -101,12 +104,13 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Finalité | Gérer la relation avec les entreprises locataires et domiciliées : fiche, interlocuteurs, contrats, et facturation à partir de la vague 2. |
 | Base légale | Clients : exécution du contrat (art. 6-1-b). Prospects : mesures précontractuelles (art. 6-1-b). Interlocuteurs des entreprises : intérêt légitime (art. 6-1-f), pour joindre la bonne personne. Les justificatifs que la domiciliation impose au centre relèvent d'une obligation légale (art. R.123-168 du Code de commerce ; art. L.561-2 du Code monétaire et financier) ; l'application ne les stocke pas aujourd'hui. *À confirmer par le conseil du centre.* |
 | Personnes | Dirigeants et interlocuteurs des entreprises clientes et prospects. Entrepreneurs individuels, pour qui la fiche de l'entreprise est une donnée personnelle. |
-| Données | Fiche : raison sociale, forme, SIRET, n° de TVA, adresse, courriel, téléphone, statut, notes. Contacts : nom, fonction, courriel, téléphone, rôles (principal, facturation), notes. Contrats : référence, type, ressource, dates, montant, résiliation, notes. Relances d'impayés : palier, canal, adresses des destinataires, texte de la lettre, auteur (ADR 034). |
+| Données | Fiche : raison sociale, forme, SIRET, n° de TVA, adresse, courriel, téléphone, statut, notes, date du dernier contact noté par l'équipe. Contacts : nom, fonction, courriel, téléphone, rôles (principal, facturation), notes. Contrats : référence, type, ressource, dates, montant, résiliation, notes. Relances d'impayés : palier, canal, adresses des destinataires, texte de la lettre, auteur (ADR 034). |
 | Destinataires | Équipe du centre. Plateforme agréée de facturation électronique à partir de la vague 2 (à choisir, ADR 016). |
 | Sous-traitants | Neon, OVHcloud. |
 | Transferts hors UE | Aucun prévu. |
-| Conservation | Prospects : 3 ans après le dernier contact. Clients : durée de la relation, puis 5 ans. Contrats : durée, puis 5 ans. Factures : 10 ans. **À valider** sauf les factures, imposées par la loi. Mécanisme d'anonymisation à construire. |
-| Code | `src/modules/clients/`, `src/modules/contrats/`, ADR 006, 021 |
+| Conservation | Prospects : 36 mois après leur dernière activité (création, dernier contact noté, réservation, courrier…). Clients : 60 mois après la fin de la relation (dernier contrat, réservation, pli, facture ou paiement). Au terme, la fiche, ses contacts, ses accès et leurs traces sont anonymisés chaque nuit ; les contrats restent, sans leurs notes. Jamais tant qu'une facture n'est pas soldée, qu'un contrat vit, qu'une réservation est à venir, qu'un service ou un mandat de prélèvement est actif. Factures, avoirs et paiements : 10 ans, jamais anonymisés (identité de l'acheteur figée à l'émission). **À valider** sauf les factures, imposées par la loi. |
+| Exercice des droits | Effacement : anonymisation à la demande sur la fiche client (exploitant), refusée et expliquée tant qu'une exclusion demeure (ADR 040). |
+| Code | `src/modules/clients/`, `src/modules/contrats/`, `src/modules/rgpd/`, ADR 006, 021, 040 |
 
 ### T3. Accès des clients à leur espace
 
@@ -119,7 +123,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Destinataires | Équipe du centre. Les autres personnes inscrites sur la même fiche voient le même courrier. |
 | Sous-traitants | Neon, OVHcloud, Brevo (courriel d'invitation). |
 | Transferts hors UE | Aucun prévu. |
-| Conservation | Tant que l'accès est ouvert. Le retrait est logique : la ligne reste, car elle signe les demandes d'ouverture. Durée de cette trace : **à fixer**. |
+| Conservation | Tant que l'accès est ouvert. Le retrait est logique : la ligne reste, car elle signe les demandes et les consultations. Nom et adresse anonymisés 12 mois après le retrait (**à valider**), ou plus tôt à la demande de la personne (fiche client), et avec l'entreprise quand elle l'est. |
 | Mesures propres | Isolation entre entreprises par la RLS, sous portée client (ADR 019). Rattachement du compte sur une adresse vérifiée. |
 | Code | `src/modules/clients/schema.ts` (`client_members`), `comptes.ts`, ADR 015, 019 |
 
@@ -150,7 +154,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Destinataires | Équipe du centre ; personnes inscrites sur la fiche de l'entreprise destinataire. |
 | Sous-traitants | Neon (base et stockage objet, Francfort), OVHcloud (transit), Brevo (notification, sans document ni expéditeur). |
 | Transferts hors UE | Aucun. Les numérisations ne sont jamais envoyées par courriel. |
-| Conservation | Numérisations : 12 mois, puis effacement du fichier (validé le 30/09/2026). Plis : **à valider**. |
+| Conservation | Numérisations : 12 mois, puis effacement du fichier (validé le 30/09/2026). Plis : expéditeur et note anonymisés avec l'entreprise, 60 mois après la fin de la relation (**à valider**) ; le pli et ses dates restent au relevé. |
 | Mesures propres | Jamais d'URL directe ni signée : chaque lecture passe par l'application, qui vérifie le droit et journalise (T6). Type de fichier lu dans le contenu. Chiffrement au repos en cours (ADR 020). Isolation par entreprise (ADR 019). |
 | Code | `src/modules/courrier/`, ADR 015, 019, 020 |
 
@@ -247,7 +251,9 @@ secret ni donnée. Il ne figure ici que pour mémoire.
    - page de l'espace client.
 8. **Organiser l'exercice des droits** : accès, rectification, effacement et
    opposition. L'effacement prend la forme d'une anonymisation (décision 6),
-   sauf conservation imposée par la loi.
+   sauf conservation imposée par la loi. L'outil est en place (fiche client,
+   écran Équipe, ADR 040) ; reste la procédure : qui reçoit la demande, la
+   réponse dans le mois (art. 12-3), la trace de la demande.
 9. **Tenir le registre des violations de données** (art. 33-5). La procédure
    est dans le [plan de reprise](../exploitation/plan-de-reprise.md),
    étape 4.
