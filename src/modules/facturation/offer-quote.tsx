@@ -61,11 +61,14 @@ export function OfferQuoteTable({
           {quote.lines.map((line) => (
             <tr key={line.id} className={line.id === highlightId ? 'bg-accent/5' : undefined}>
               <td className="px-4 py-3">
-                <span className="font-medium">{line.label}</span>
+                <span className="font-medium">{line.commercialLabel ?? line.label}</span>
                 {line.id === highlightId && (
                   <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-primary">
                     Aperçu
                   </span>
+                )}
+                {line.commercialLabel && (
+                  <span className="block text-xs text-muted-foreground">{line.label}</span>
                 )}
                 {line.includedActs !== null && line.problem === null && (
                   <span className="block text-xs text-muted-foreground">

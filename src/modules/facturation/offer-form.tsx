@@ -116,6 +116,28 @@ export function OfferForm({ id, defaults }: { id?: string; defaults: OfferHeader
         />
       </div>
 
+      {/* R23, ADR 036 : le client voit l'offre et son prix, et la demande à
+          l'accueil ; rien ne s'engage sans l'équipe. */}
+      <div className="flex items-start gap-3">
+        <input
+          id="clientVisible"
+          name="clientVisible"
+          type="checkbox"
+          defaultChecked={values.clientVisible === 'on'}
+          aria-describedby="clientVisible-hint"
+          className="mt-0.5 size-5 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        />
+        <div>
+          <label htmlFor="clientVisible" className={labelClass}>
+            Présenter l’offre dans l’espace client
+          </label>
+          <p id="clientVisible-hint" className="mt-1 text-xs text-muted-foreground">
+            Le client la voit avec son prix et peut la demander en un clic : la demande arrive à
+            l’accueil, qui établit le contrat. Rien n’engage le client sans l’équipe.
+          </p>
+        </div>
+      </div>
+
       <div className="flex items-center gap-3">
         <button type="submit" disabled={pending} className={primaryButtonClass}>
           {pending ? 'Enregistrement…' : id ? 'Enregistrer' : 'Créer l’offre'}

@@ -13,12 +13,11 @@ import { contracts, type Contract } from '../contrats/schema.ts'
 import { NO_BOOKING_QUOTE, bookingQuoteColumns, type QuoteDiscount } from '../facturation/devis.ts'
 import { quoteInTransaction, type QuoteRequest } from '../facturation/devis-queries.ts'
 import { invoiceLines } from '../facturation/schema-factures.ts'
-import { openingWindows } from '../ressources/ouverture.ts'
 import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange, occupiesResource, type TimeRange } from './availability.ts'
-import { freeMinutes, freeRanges } from './slots.ts'
+import { dayAvailability } from './disponibilites.ts'
 import { BookingContractError, bookingContractProblem } from './rattachement.ts'
 import { bookings, type Booking } from './schema.ts'
 
@@ -434,8 +433,15 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
  * Une occupation de contrat est laissée intacte : l'annuler libérerait un
  * bureau toujours loué (ADR 018). Elle s'annule en archivant ou en résiliant
  * son contrat.
+ *
+ * `staffId` : le membre de l'équipe qui annule (`cancelled_by_staff_id`,
+ * ADR 036), que l'espace client dit « annulée par le centre ».
  */
-export async function cancelBooking(id: string, reason?: string | null): Promise<void> {
+export async function cancelBooking(
+  id: string,
+  reason?: string | null,
+  staffId?: string | null,
+): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(bookings)
@@ -443,6 +449,7 @@ export async function cancelBooking(id: string, reason?: string | null): Promise
         status: 'cancelled',
         cancelledAt: sql`now()`,
         cancellationReason: reason?.trim() || null,
+        cancelledByStaffId: staffId ?? null,
       })
       .where(
         and(
@@ -490,20 +497,11 @@ export async function listDayAvailability(
     loadOpeningContext(isoDate, isoDate),
   ])
 
-  return bookable.map((resource) => {
-    const windows = openingWindows(isoDate, timeZone, {
-      rules: opening.rules,
-      closures: opening.closures,
-      resourceId: resource.id,
-    })
-    // Les annulées libèrent leur créneau ; les `pending` l'occupent, une demande
-    // en attente ne doit pas être proposée deux fois (ADR 005).
-    const busy = bookings.filter(
-      (booking) => booking.resourceId === resource.id && occupiesResource(booking.status),
-    )
-    const free = windows.flatMap((window) => freeRanges(window, busy))
-    return { resource, free, freeMinutes: freeMinutes(free), closed: windows.length === 0 }
-  })
+  // Les annulées libèrent leur créneau ; les `pending` l'occupent, une demande
+  // en attente ne doit pas être proposée deux fois (ADR 005). Le calcul est
+  // celui de l'espace client (`disponibilites.ts`).
+  const busy = bookings.filter((booking) => occupiesResource(booking.status))
+  return dayAvailability(isoDate, timeZone, bookable, busy, opening)
 }
 
 /**
@@ -616,8 +614,15 @@ export async function confirmBooking(id: string): Promise<void> {
   )
 }
 
-/** Refus d'une demande : une annulation avec motif, qui libère le créneau. */
-export async function refuseBooking(id: string, reason?: string | null): Promise<void> {
+/**
+ * Refus d'une demande : une annulation avec motif, qui libère le créneau,
+ * tracée au nom du membre de l'équipe qui refuse (ADR 036).
+ */
+export async function refuseBooking(
+  id: string,
+  reason?: string | null,
+  staffId?: string | null,
+): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(bookings)
@@ -625,6 +630,7 @@ export async function refuseBooking(id: string, reason?: string | null): Promise
         status: 'cancelled',
         cancelledAt: sql`now()`,
         cancellationReason: reason?.trim() || 'Demande refusée',
+        cancelledByStaffId: staffId ?? null,
       })
       .where(and(eq(bookings.id, id), eq(bookings.status, 'pending'))),
   )

@@ -12,6 +12,7 @@ import {
   FieldError,
   FieldHint,
   PendingAnnouncement,
+  TextField,
   describedBy,
   fieldClass,
   labelClass,
@@ -21,6 +22,7 @@ import { rateUnitLabels } from './labels.ts'
 import { saveOfferItemAction, type OfferItemFormState } from './offres-actions.ts'
 import { priceOffer, type OfferCatalogue, type OfferInput } from './offres-prix.ts'
 import {
+  MAX_ITEM_LABEL_LENGTH,
   offerItemLabels,
   validateOfferItem,
   type OfferItemErrors,
@@ -83,6 +85,7 @@ export function OfferItemForm({
       discountPercent: '',
       discountAmount: '',
       vatRate: '',
+      label: '',
     }
 
   return (
@@ -383,6 +386,18 @@ function ItemFields({
           </FieldHint>
         </div>
       </div>
+
+      <TextField
+        label="Désignation commerciale"
+        name="label"
+        optional
+        autoComplete="off"
+        maxLength={MAX_ITEM_LABEL_LENGTH}
+        value={values.label}
+        onChange={(event) => set('label', event.target.value)}
+        error={errors.label}
+        hint="Montrée au client dans son espace : « Bureau fermé de 12 m² », « Dix numérisations par mois ». Vide : le nom du catalogue."
+      />
 
       <fieldset id="pricing" tabIndex={-1}>
         <legend className={labelClass}>Prix de la ligne</legend>

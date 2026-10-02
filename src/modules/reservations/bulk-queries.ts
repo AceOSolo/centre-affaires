@@ -70,9 +70,11 @@ export async function listBookingSeries(seriesId: string): Promise<BookingWithRe
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))
 }
 
-export async function cancelFutureSeries(tx: Transaction, seriesId: string): Promise<Pick<Booking, 'id'>[]> {
+/** `staffId` : le membre de l'équipe qui annule, tracé sur chaque occurrence (ADR 036). */
+export async function cancelFutureSeries(tx: Transaction, seriesId: string, staffId: string | null = null): Promise<Pick<Booking, 'id'>[]> {
   return tx.update(bookings).set({
     status: 'cancelled', cancelledAt: sql`now()`, cancellationReason: 'Annulation des occurrences à venir de la série',
+    cancelledByStaffId: staffId,
   }).where(and(eq(bookings.seriesId, seriesId), ne(bookings.status, 'cancelled'), gt(bookings.startsAt, sql`now()`)))
     .returning({ id: bookings.id })
 }

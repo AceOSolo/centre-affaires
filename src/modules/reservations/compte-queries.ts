@@ -1,7 +1,8 @@
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/pg-core'
 
 import { isUuid } from '../../lib/uuid.ts'
-import { clients } from '../clients/schema.ts'
+import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { resources, type ResourceType } from '../ressources/schema.ts'
 import { bookings, type Booking } from './schema.ts'
@@ -14,12 +15,39 @@ import { bookings, type Booking } from './schema.ts'
  */
 export type ClientBookingRow = Pick<
   Booking,
-  'id' | 'status' | 'startsAt' | 'endsAt' | 'title' | 'cancellationReason' | 'clientId'
+  | 'id'
+  | 'status'
+  | 'startsAt'
+  | 'endsAt'
+  | 'title'
+  | 'cancellationReason'
+  | 'clientId'
+  | 'channel'
+  | 'cancelledAt'
+  | 'quoteUnit'
+  | 'quoteQuantity'
+  | 'quoteUnitPriceCents'
+  | 'quoteDiscountBp'
+  | 'quoteDiscountAmountCents'
+  | 'quoteAmountCents'
+  | 'quoteVatRateBp'
+  | 'quoteCurrency'
+  | 'quotedAt'
 > & {
   resourceName: string
   resourceType: ResourceType
   clientName: string
+  /** Personne de l'entreprise qui a réservé depuis l'espace (ADR 036) : son nom, ou son adresse. */
+  bookedBy: string | null
+  /** Personne de l'entreprise qui a annulé depuis l'espace. */
+  cancelledByMember: string | null
+  /** Annulée ou refusée par l'équipe du centre. */
+  cancelledByCentre: boolean
 }
+
+// Deux lectures de la même table : l'auteur de la réservation et celui de l'annulation.
+const bookedByMembers = alias(clientMembers, 'booked_by_members')
+const cancelledByMembers = alias(clientMembers, 'cancelled_by_members')
 
 /** Historique limité aux six derniers mois : l'espace sert à ce qui vient. */
 const HISTORY_DAYS = 183
@@ -38,13 +66,33 @@ export async function listBookingsForAccounts(accounts: ClientAccount[]): Promis
         title: bookings.title,
         cancellationReason: bookings.cancellationReason,
         clientId: bookings.clientId,
+        channel: bookings.channel,
+        cancelledAt: bookings.cancelledAt,
+        quoteUnit: bookings.quoteUnit,
+        quoteQuantity: bookings.quoteQuantity,
+        quoteUnitPriceCents: bookings.quoteUnitPriceCents,
+        quoteDiscountBp: bookings.quoteDiscountBp,
+        quoteDiscountAmountCents: bookings.quoteDiscountAmountCents,
+        quoteAmountCents: bookings.quoteAmountCents,
+        quoteVatRateBp: bookings.quoteVatRateBp,
+        quoteCurrency: bookings.quoteCurrency,
+        quotedAt: bookings.quotedAt,
         resourceName: resources.name,
         resourceType: resources.resourceType,
         clientName: clients.name,
+        bookedBy: sql<string | null>`coalesce(${bookedByMembers.fullName}, ${bookedByMembers.email})`,
+        cancelledByMember: sql<
+          string | null
+        >`coalesce(${cancelledByMembers.fullName}, ${cancelledByMembers.email})`,
+        cancelledByCentre: sql<boolean>`${bookings.cancelledByStaffId} is not null`,
       })
       .from(bookings)
       .innerJoin(resources, eq(resources.id, bookings.resourceId))
       .innerJoin(clients, eq(clients.id, bookings.clientId))
+      // Les personnes sont de l'entreprise de la réservation (clé étrangère
+      // composite) : la portée client les laisse lire.
+      .leftJoin(bookedByMembers, eq(bookedByMembers.id, bookings.bookedByMemberId))
+      .leftJoin(cancelledByMembers, eq(cancelledByMembers.id, bookings.cancelledByMemberId))
       .where(
         and(
           inArray(

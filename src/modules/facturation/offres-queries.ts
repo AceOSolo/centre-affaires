@@ -11,11 +11,13 @@ import type { OfferItemInput, OfferHeaderInput } from './offres-regles.ts'
 import {
   offerItems,
   offers,
+  ratePlanItems,
+  ratePlans,
   services,
   type Offer,
   type OfferItem,
 } from './schema.ts'
-import { findDefaultRatePlan } from './queries.ts'
+import { defaultRatePlanOn } from './queries.ts'
 
 /**
  * Offres groupées (R09, ADR 024) : lecture, création, modification,
@@ -97,6 +99,7 @@ export function toOfferLineInput(item: OfferItem): OfferLineInput {
     discountBp: item.discountBp,
     discountAmountCents: item.discountAmountCents,
     vatRateBp: item.vatRateBp,
+    label: item.label,
   }
 }
 
@@ -107,57 +110,83 @@ export function toOfferLineInput(item: OfferItem): OfferLineInput {
  * qu'ignorée — et taux de TVA par défaut du centre.
  */
 export async function loadOfferCatalogue(today: string): Promise<OfferCatalogue> {
-  // La grille par défaut en vigueur ce jour-là, lue comme le moteur de devis la
-  // lit (R08, `findDefaultRatePlan`).
-  const plan = await findDefaultRatePlan(today)
-  return withTenant(currentTenantId(), async (tx) => {
-    const [tenant] = await tx
-      .select({ defaultVatRateBp: tenants.defaultVatRateBp })
-      .from(tenants)
-      .where(eq(tenants.id, currentTenantId()))
-      .limit(1)
-    const rateItems = (plan?.items ?? []).map(({ resourceType, resourceId, unit, amountCents }) => ({
-      resourceType,
-      resourceId,
-      unit,
-      amountCents,
-    }))
-    const serviceRows = await tx.select().from(services).orderBy(asc(services.name))
-    const resourceRows = await tx
-      .select({
-        id: resources.id,
-        code: resources.code,
-        name: resources.name,
-        resourceType: resources.resourceType,
-        deletedAt: resources.deletedAt,
-      })
-      .from(resources)
-      .orderBy(asc(resources.resourceType), asc(resources.code))
+  return withTenant(currentTenantId(), (tx) => loadOfferCatalogueInTransaction(tx, today))
+}
 
-    return {
-      defaultVatRateBp: tenant?.defaultVatRateBp ?? 2_000,
-      rateItems,
-      rateCurrency: plan?.currency ?? null,
-      services: serviceRows.map((service) => ({
-        id: service.id,
-        name: service.name,
-        nature: service.nature,
-        unit: service.unit,
-        unitPriceCents: service.unitPriceCents,
-        vatRateBp: service.vatRateBp,
-        currency: service.currency,
-        isActive: service.isActive,
-        archived: service.deletedAt !== null,
-      })),
-      resources: resourceRows.map((resource) => ({
-        id: resource.id,
-        code: resource.code,
-        name: resource.name,
-        resourceType: resource.resourceType,
-        archived: resource.deletedAt !== null,
-      })),
-    }
-  })
+/**
+ * Le même catalogue, dans une transaction ouverte : celle de l'espace client
+ * (`inClientSpace`, ADR 019), qui montre les offres et leur prix (R23). Les
+ * tables lues n'ont pas de client : la portée ne les restreint pas.
+ */
+export async function loadOfferCatalogueInTransaction(
+  tx: Transaction,
+  today: string,
+): Promise<OfferCatalogue> {
+  // La grille par défaut en vigueur ce jour-là, lue comme le moteur de devis
+  // la lit (R08, `defaultRatePlanOn`).
+  const [plan] = await tx
+    .select({ id: ratePlans.id, currency: ratePlans.currency })
+    .from(ratePlans)
+    .where(defaultRatePlanOn(today))
+    .limit(1)
+  // Un prix retiré ne s'applique plus (décision 6) : la ligne reste en base.
+  const planItems = plan
+    ? await tx
+        .select({
+          resourceType: ratePlanItems.resourceType,
+          resourceId: ratePlanItems.resourceId,
+          unit: ratePlanItems.unit,
+          amountCents: ratePlanItems.amountCents,
+        })
+        .from(ratePlanItems)
+        .where(and(eq(ratePlanItems.ratePlanId, plan.id), isNull(ratePlanItems.deletedAt)))
+    : []
+  const [tenant] = await tx
+    .select({ defaultVatRateBp: tenants.defaultVatRateBp })
+    .from(tenants)
+    .where(eq(tenants.id, currentTenantId()))
+    .limit(1)
+  const rateItems = planItems.map(({ resourceType, resourceId, unit, amountCents }) => ({
+    resourceType,
+    resourceId,
+    unit,
+    amountCents,
+  }))
+  const serviceRows = await tx.select().from(services).orderBy(asc(services.name))
+  const resourceRows = await tx
+    .select({
+      id: resources.id,
+      code: resources.code,
+      name: resources.name,
+      resourceType: resources.resourceType,
+      deletedAt: resources.deletedAt,
+    })
+    .from(resources)
+    .orderBy(asc(resources.resourceType), asc(resources.code))
+
+  return {
+    defaultVatRateBp: tenant?.defaultVatRateBp ?? 2_000,
+    rateItems,
+    rateCurrency: plan?.currency ?? null,
+    services: serviceRows.map((service) => ({
+      id: service.id,
+      name: service.name,
+      nature: service.nature,
+      unit: service.unit,
+      unitPriceCents: service.unitPriceCents,
+      vatRateBp: service.vatRateBp,
+      currency: service.currency,
+      isActive: service.isActive,
+      archived: service.deletedAt !== null,
+    })),
+    resources: resourceRows.map((resource) => ({
+      id: resource.id,
+      code: resource.code,
+      name: resource.name,
+      resourceType: resource.resourceType,
+      archived: resource.deletedAt !== null,
+    })),
+  }
 }
 
 /** Levée quand on touche à une offre archivée : elle est figée. */

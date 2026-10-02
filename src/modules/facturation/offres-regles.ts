@@ -34,6 +34,8 @@ export type OfferHeaderValues = {
   description: string
   billingPeriod: string
   commitmentMonths: string
+  /** Case « présentée dans l'espace client » : `on`, ou vide. */
+  clientVisible: string
 }
 
 export type OfferHeaderInput = {
@@ -41,6 +43,8 @@ export type OfferHeaderInput = {
   description: string | null
   billingPeriod: BillingPeriod
   commitmentMonths: number | null
+  /** Présentée dans l'espace client, avec son prix (R23, ADR 036). Absente : inchangée. */
+  clientVisible?: boolean
 }
 
 export type OfferHeaderField = keyof OfferHeaderValues
@@ -51,6 +55,7 @@ export const offerHeaderLabels: Record<OfferHeaderField, string> = {
   description: 'Description',
   billingPeriod: 'Période de facturation',
   commitmentMonths: 'Engagement proposé',
+  clientVisible: 'Espace client',
 }
 
 const MAX_NAME_LENGTH = 120
@@ -67,6 +72,7 @@ export function readOfferHeaderForm(
     description: field(form, 'description'),
     billingPeriod: field(form, 'billingPeriod'),
     commitmentMonths: field(form, 'commitmentMonths'),
+    clientVisible: field(form, 'clientVisible') === 'on' ? 'on' : '',
   }
   const fieldErrors: OfferHeaderErrors = {}
 
@@ -94,6 +100,7 @@ export function readOfferHeaderForm(
       description: values.description || null,
       billingPeriod: billingPeriod as BillingPeriod,
       commitmentMonths,
+      clientVisible: values.clientVisible === 'on',
     },
   }
 }
@@ -114,6 +121,8 @@ export type OfferItemValues = {
   discountPercent: string
   discountAmount: string
   vatRate: string
+  /** Désignation commerciale, montrée au client (ADR 036) ; vide : le nom du catalogue. */
+  label: string
 }
 
 /** Ce qui s'écrit dans `offer_items`, hors offre et position. */
@@ -127,6 +136,8 @@ export type OfferItemInput = {
   discountBp: number | null
   discountAmountCents: number | null
   vatRateBp: number | null
+  /** Désignation commerciale ; nulle ou absente : le nom du catalogue. */
+  label?: string | null
 }
 
 export type OfferItemField = Exclude<keyof OfferItemValues, 'target'>
@@ -143,6 +154,7 @@ export const offerItemLabels: Record<OfferItemField, string> = {
   discountPercent: 'Remise en pourcentage',
   discountAmount: 'Remise en montant',
   vatRate: 'TVA',
+  label: 'Désignation commerciale',
 }
 
 /** Ce qu'il faut savoir du catalogue pour valider une ligne. */
@@ -157,6 +169,9 @@ export type OfferItemContext = {
     archived: boolean
   }[]
 }
+
+/** Désignation commerciale d'une ligne : « Bureau fermé de 12 m² ». */
+export const MAX_ITEM_LABEL_LENGTH = 120
 
 const targets: readonly OfferTarget[] = ['resource_type', 'resource', 'service']
 const pricings: readonly OfferPricing[] = ['catalogue', 'price', 'discount_bp', 'discount_amount']
@@ -176,6 +191,7 @@ export function offerItemValues(form: FormLike): OfferItemValues {
     discountPercent: field(form, 'discountPercent'),
     discountAmount: field(form, 'discountAmount'),
     vatRate: field(form, 'vatRate'),
+    label: field(form, 'label').replace(/\s+/g, ' '),
   }
 }
 
@@ -268,6 +284,10 @@ export function validateOfferItem(
     else vatRateBp = bp
   }
 
+  if (values.label.length > MAX_ITEM_LABEL_LENGTH) {
+    errors.label = `${MAX_ITEM_LABEL_LENGTH} caractères au plus.`
+  }
+
   if (Object.keys(errors).length > 0 || !unit || quantity === undefined) return { errors }
   return {
     errors,
@@ -281,6 +301,7 @@ export function validateOfferItem(
       discountBp,
       discountAmountCents,
       vatRateBp,
+      label: values.label || null,
     },
   }
 }
@@ -306,5 +327,6 @@ export function offerItemToValues(item: OfferItemInput): OfferItemValues {
     discountPercent: item.discountBp !== null ? bpToPercentInput(item.discountBp) : '',
     discountAmount: item.discountAmountCents !== null ? centsToAmountInput(item.discountAmountCents) : '',
     vatRate: item.vatRateBp !== null ? bpToPercentInput(item.vatRateBp) : '',
+    label: item.label ?? '',
   }
 }

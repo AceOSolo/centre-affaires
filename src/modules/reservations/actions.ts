@@ -216,10 +216,11 @@ export async function moveBookingAction(
 }
 
 export async function cancelBookingAction(formData: FormData): Promise<void> {
-  await requirePermission('reservations.gerer')
+  const { member } = await requirePermission('reservations.gerer')
   const id = text(formData, 'id')
   if (!id) return
-  await cancelBooking(id, text(formData, 'reason') || null)
+  // L'auteur est tracé (ADR 036) : l'espace client dit « annulée par le centre ».
+  await cancelBooking(id, text(formData, 'reason') || null, member.id)
   // Retire l'événement de l'agenda Google de la ressource, pour qu'il ne montre
   // pas un créneau libéré comme occupé (ADR 014).
   after(() => syncBookingToGoogleCalendar(id))
@@ -248,10 +249,10 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
 
 /** Refus d'une demande : annulation motivée, le créneau redevient libre. */
 export async function refuseBookingAction(formData: FormData): Promise<void> {
-  await requirePermission('demandes.traiter')
+  const { member } = await requirePermission('demandes.traiter')
   const id = text(formData, 'id')
   if (!id) return
-  await refuseBooking(id, text(formData, 'reason') || null)
+  await refuseBooking(id, text(formData, 'reason') || null, member.id)
   revalidatePath('/')
   revalidatePath('/demandes')
   revalidatePath('/reservations', 'layout')

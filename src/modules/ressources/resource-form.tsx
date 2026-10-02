@@ -14,7 +14,20 @@ import {
   type AttributeField,
 } from './attributs.ts'
 import { resourceStatusLabels, resourceTypeLabels } from './labels.ts'
-import { resourceStatuses, resourceTypes, type Resource, type ResourceType } from './schema.ts'
+import { clientBookingModeLabels, defaultClientBookingMode } from './reservation-client.ts'
+import {
+  clientBookingModes,
+  resourceStatuses,
+  resourceTypes,
+  type Resource,
+  type ResourceType,
+} from './schema.ts'
+
+/** Libellés du résumé d'erreurs : ceux de la ressource, et le réglage de l'espace client. */
+const formLabels = {
+  ...resourceFieldLabels,
+  clientBookingMode: 'Réservation depuis l’espace client',
+}
 
 const fieldClass =
   'w-full rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive'
@@ -81,7 +94,7 @@ function ResourceFields({
     <form action={formAction} className="flex max-w-2xl flex-col gap-5">
       {resource && <input type="hidden" name="id" value={resource.id} />}
 
-      <ErrorSummary errors={state?.fieldErrors} labels={resourceFieldLabels} message={state?.error} />
+      <ErrorSummary errors={state?.fieldErrors} labels={formLabels} message={state?.error} />
 
       <div className="grid gap-5 sm:grid-cols-2">
         {resource ? (
@@ -169,6 +182,40 @@ function ResourceFields({
           </select>
           <FieldError name="status" error={errors.status} />
         </div>
+
+        {/* À la création seulement : la fiche porte ensuite le réglage (ADR 036).
+            La valeur proposée suit le type, d'où la clé. */}
+        {!resource && (
+          <div className="sm:col-span-2">
+            <label className={labelClass} htmlFor="clientBookingMode">
+              Réservation depuis l’espace client
+            </label>
+            <select
+              key={resourceType}
+              id="clientBookingMode"
+              name="clientBookingMode"
+              defaultValue={
+                values?.resourceType === resourceType && values?.clientBookingMode
+                  ? values.clientBookingMode
+                  : defaultClientBookingMode(resourceType)
+              }
+              aria-invalid={errors.clientBookingMode ? true : undefined}
+              aria-describedby={`clientBookingMode-hint${errors.clientBookingMode ? ' clientBookingMode-error' : ''}`}
+              className={`${fieldClass} mt-1`}
+            >
+              {clientBookingModes.map((mode) => (
+                <option key={mode} value={mode}>
+                  {clientBookingModeLabels[mode]}
+                </option>
+              ))}
+            </select>
+            <p id="clientBookingMode-hint" className="mt-1 text-xs text-muted-foreground">
+              Casiers et boîtes aux lettres se louent par contrat : fermés à l’espace client par
+              défaut. Modifiable ensuite sur la fiche de la ressource.
+            </p>
+            <FieldError name="clientBookingMode" error={errors.clientBookingMode} />
+          </div>
+        )}
       </div>
 
       {attributeFields[resourceType].length > 0 && (
