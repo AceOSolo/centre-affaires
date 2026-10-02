@@ -238,7 +238,7 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
       { id: 'cles', label: 'Clés', type: 'number', unit: 'clés', required: true },
     ]
 
-    it('publie la version 1, ne republie pas sans changement, renomme, puis versionne', async () => {
+    it('publie la version 1, ne republie pas sans changement, versionne un nouveau nom, puis de nouveaux champs', async () => {
       assert.deepEqual(
         await publishTemplateVersion({ resourceType: 'bureau', name: 'Bureau', fields: CHAMPS }, CAMILLE),
         { status: 'published', version: 1 },
@@ -247,22 +247,23 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
         await publishTemplateVersion({ resourceType: 'bureau', name: 'Bureau', fields: CHAMPS }, CAMILLE),
         { status: 'unchanged' },
       )
+      // Le nom est figé avec la version (ADR 041) : le renommer en publie une.
       assert.deepEqual(
         await publishTemplateVersion({ resourceType: 'bureau', name: 'Bureaux', fields: CHAMPS }, CAMILLE),
-        { status: 'renamed' },
-      )
-      const v2 = [...CHAMPS, { id: 'proprete', label: 'Propreté', type: 'checkbox', required: false } as InspectionField]
-      assert.deepEqual(
-        await publishTemplateVersion({ resourceType: 'bureau', name: 'Bureaux', fields: v2 }, CAMILLE),
         { status: 'published', version: 2 },
+      )
+      const v3 = [...CHAMPS, { id: 'proprete', label: 'Propreté', type: 'checkbox', required: false } as InspectionField]
+      assert.deepEqual(
+        await publishTemplateVersion({ resourceType: 'bureau', name: 'Bureaux', fields: v3 }, CAMILLE),
+        { status: 'published', version: 3 },
       )
       const overview = await findTemplateOverview('bureau')
       assert.equal(overview.template?.name, 'Bureaux')
-      assert.equal(overview.current?.version, 2)
-      assert.deepEqual(overview.current?.fields, v2)
+      assert.equal(overview.current?.version, 3)
+      assert.deepEqual(overview.current?.fields, v3)
       assert.deepEqual(
         overview.versions.map((version) => version.version),
-        [2, 1],
+        [3, 2, 1],
       )
       assert.equal(overview.versions[1].createdByName, 'Camille Martin')
     })

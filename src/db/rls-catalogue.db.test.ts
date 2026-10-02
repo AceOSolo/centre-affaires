@@ -66,7 +66,8 @@ describe('catalogue : isolation et conservation', { skip: raison }, () => {
     const tables = await tablesAvec('client_id')
     assert.ok(
       tables.some((table) => table.table === 'mail_requests') &&
-        tables.some((table) => table.table === 'inspections'),
+        tables.some((table) => table.table === 'inspections') &&
+        tables.some((table) => table.table === 'offer_requests'),
     )
     const fautives: string[] = []
     for (const table of tables) {
@@ -91,6 +92,7 @@ describe('catalogue : isolation et conservation', { skip: raison }, () => {
       'inspections',
       'inspection_photos',
       'inspection_photo_views',
+      'offer_requests',
     ]
     const rows = await owner.client`
       select c.relname as table, count(p.oid)::int as n
@@ -130,6 +132,7 @@ describe('catalogue : isolation et conservation', { skip: raison }, () => {
       'inspections',
       'inspection_photos',
       'inspection_photo_views',
+      'offer_requests',
     ]
     const rows = await owner.client`
       select t as table, has_table_privilege('app_centre', t, 'DELETE') as supprime

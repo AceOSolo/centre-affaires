@@ -175,6 +175,18 @@ export const bookings = pgTable(
      */
     bookedByMemberId: uuid('booked_by_member_id'),
 
+    /**
+     * Confirmation (R24, ADR 041) : instant posé par la base quand la
+     * réservation devient confirmée — à sa création, ou quand l'accueil
+     * accepte la demande. Nulle pour une réservation confirmée avant la
+     * migration 0044 : l'étape reste connue, pas sa date.
+     */
+    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    /** Membre de l'équipe qui a accepté la demande ; nul à la création ou en confirmation immédiate. */
+    confirmedByStaffId: uuid('confirmed_by_staff_id').references(() => staffMembers.id, {
+      onDelete: 'restrict',
+    }),
+
     cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
     cancellationReason: text('cancellation_reason'),
     /**
@@ -240,6 +252,10 @@ export const bookings = pgTable(
     check(
       'bookings_booked_by_member_consistent',
       sql`${table.bookedByMemberId} is null or (${table.channel} = 'client' and ${table.kind} = 'booking' and ${table.clientId} is not null)`,
+    ),
+    check(
+      'bookings_confirmed_by_consistent',
+      sql`${table.confirmedByStaffId} is null or ${table.confirmedAt} is not null`,
     ),
     check(
       'bookings_cancelled_by_consistent',

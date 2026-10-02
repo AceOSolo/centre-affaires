@@ -1,5 +1,16 @@
 import { sql } from 'drizzle-orm'
-import { check, index, pgEnum, pgTable, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
+import {
+  check,
+  date,
+  index,
+  pgEnum,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+  uuid,
+  type AnyPgColumn,
+} from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
 import { tenantId } from './tenants.ts'
@@ -31,6 +42,25 @@ export const staffRoleLabels: Record<StaffRole, string> = {
   admin: 'Exploitant',
   staff: 'Accueil',
 }
+
+/**
+ * Fondement d'une anonymisation (R29, ADR 040 et 041), tracé avec elle sur
+ * `clients`, `client_members` et `staff_members` :
+ *
+ * - `retention` : au terme de la durée de conservation, par la tâche de nuit,
+ *   sans auteur ;
+ * - `erasure_request` : demande d'effacement de la personne (art. 17 du
+ *   RGPD), datée du jour où elle a été reçue — le centre a un mois pour y
+ *   répondre (art. 12-3) ;
+ * - `relationship_ended` : fin de la relation constatée par l'équipe, sans
+ *   attendre la durée.
+ *
+ * Une catégorie et non un motif libre : le motif d'un effacement ne doit pas
+ * conserver ce qu'il efface.
+ */
+export const anonymizationBases = ['retention', 'erasure_request', 'relationship_ended'] as const
+export type AnonymizationBasis = (typeof anonymizationBases)[number]
+export const anonymizationBasisEnum = pgEnum('anonymization_basis', anonymizationBases)
 
 export const staffMembers = pgTable(
   'staff_members',
@@ -64,6 +94,13 @@ export const staffMembers = pgTable(
      * change plus (SQLSTATE `CA012`).
      */
     anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
+    anonymizedBy: uuid('anonymized_by').references((): AnyPgColumn => staffMembers.id, {
+      onDelete: 'restrict',
+    }),
+    anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
+    /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
+    erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
   },
   (table) => [
     // Une adresse ne vaut qu'une fois par centre, et redevient libre après un
@@ -83,8 +120,29 @@ export const staffMembers = pgTable(
       'staff_members_anonymized_removed',
       sql`${table.anonymizedAt} is null or (${table.deletedAt} is not null and ${table.authUserId} is null)`,
     ),
+    check(
+      'staff_members_anonymization_traced',
+      anonymizationTraceCheck(table),
+    ),
   ],
 )
+
+/**
+ * Le fondement, l'auteur et la date de la demande ne valent qu'avec
+ * l'anonymisation ; une demande d'effacement est datée, une anonymisation au
+ * terme n'a pas d'auteur, une anonymisation à la demande en a un. Un
+ * fondement nul : anonymisée avant qu'il ne soit tracé (migration 0044).
+ */
+export function anonymizationTraceCheck(table: {
+  anonymizedAt: AnyPgColumn
+  anonymizedBy: AnyPgColumn
+  anonymizationBasis: AnyPgColumn
+  erasureRequestedOn: AnyPgColumn
+}) {
+  return sql`(${table.anonymizedAt} is not null or num_nonnulls(${table.anonymizedBy}, ${table.anonymizationBasis}, ${table.erasureRequestedOn}) = 0)
+    and (${table.erasureRequestedOn} is null) = (${table.anonymizationBasis} is distinct from 'erasure_request')
+    and (${table.anonymizationBasis} is null or (${table.anonymizedBy} is null) = (${table.anonymizationBasis} = 'retention'))`
+}
 
 export type StaffMember = typeof staffMembers.$inferSelect
 export type NewStaffMember = typeof staffMembers.$inferInsert

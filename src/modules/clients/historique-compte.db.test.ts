@@ -290,8 +290,8 @@ describe('historique du compte', { skip: raison }, () => {
       const [modele] = await tx.execute(sql`
         insert into inspection_templates (resource_type, name) values ('salle', 'Salle') returning id`)
       const [row] = await tx.execute(sql`
-        insert into inspection_template_versions (template_id, version, fields, created_by)
-        values (${modele.id as string}, 1,
+        insert into inspection_template_versions (template_id, version, name, fields, created_by)
+        values (${modele.id as string}, 1, 'Salle',
                 '[{"id":"murs","label":"Murs","type":"condition","required":true}]'::jsonb, ${CAMILLE})
         returning id`)
       return row.id as string

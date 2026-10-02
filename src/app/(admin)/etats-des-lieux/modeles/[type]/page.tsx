@@ -45,11 +45,9 @@ export default async function TemplatePage({
   const notice =
     fait === 'published'
       ? `Version ${numero ?? ''} publiée. Les prochains états des lieux de ce type la suivront ; ceux déjà saisis gardent la leur.`
-      : fait === 'renamed'
-        ? 'Nom du modèle enregistré. Les champs n’ayant pas changé, aucune version n’a été publiée.'
-        : fait === 'unchanged'
-          ? 'Rien n’a changé : aucune version n’a été publiée.'
-          : undefined
+      : fait === 'unchanged'
+        ? 'Rien n’a changé : aucune version n’a été publiée.'
+        : undefined
 
   return (
     <div className="flex flex-col gap-6">

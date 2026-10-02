@@ -136,15 +136,13 @@ export async function findTemplateOverview(type: ResourceType): Promise<Template
   return all.find((overview) => overview.resourceType === type)!
 }
 
-export type PublishOutcome =
-  | { status: 'published'; version: number }
-  | { status: 'renamed' }
-  | { status: 'unchanged' }
+export type PublishOutcome = { status: 'published'; version: number } | { status: 'unchanged' }
 
 /**
  * Publie une version du modèle d'un type : crée le modèle s'il n'existe pas,
- * renomme si le nom change, et ajoute une version si les champs changent —
- * jamais une version identique à la précédente. Le numéro est la dernière
+ * et ajoute une version si son nom ou ses champs changent — jamais une
+ * version identique à la précédente. Le nom est figé avec la version
+ * (ADR 041) : un état des lieux saisi garde celui qu'il portait. Le numéro est la dernière
  * version + 1 ; deux publications simultanées, l'unicité en refuse une.
  */
 export async function publishTemplateVersion(
@@ -174,7 +172,6 @@ export async function publishInTransaction(
     .for('update')
 
   let templateId: string
-  let renamed = false
   if (template) {
     templateId = template.id
     if (template.name !== input.name) {
@@ -182,7 +179,6 @@ export async function publishInTransaction(
         .update(inspectionTemplates)
         .set({ name: input.name })
         .where(eq(inspectionTemplates.id, template.id))
-      renamed = true
     }
   } else {
     const [created] = await tx
@@ -193,19 +189,26 @@ export async function publishInTransaction(
   }
 
   const [latest] = await tx
-    .select({ version: inspectionTemplateVersions.version, fields: inspectionTemplateVersions.fields })
+    .select({
+      version: inspectionTemplateVersions.version,
+      name: inspectionTemplateVersions.name,
+      fields: inspectionTemplateVersions.fields,
+    })
     .from(inspectionTemplateVersions)
     .where(eq(inspectionTemplateVersions.templateId, templateId))
     .orderBy(desc(inspectionTemplateVersions.version))
     .limit(1)
-  if (latest && sameFields(latest.fields, input.fields)) {
-    return renamed ? { status: 'renamed' } : { status: 'unchanged' }
+  // Le nom est figé avec la version (ADR 041) : le renommer en publie une,
+  // pour que les états des lieux déjà saisis gardent le leur.
+  if (latest && latest.name === input.name && sameFields(latest.fields, input.fields)) {
+    return { status: 'unchanged' }
   }
 
   const version = (latest?.version ?? 0) + 1
   await tx.insert(inspectionTemplateVersions).values({
     templateId,
     version,
+    name: input.name,
     fields: input.fields,
     createdBy: staffMemberId,
   })
@@ -436,7 +439,8 @@ async function loadDetail(tx: Transaction, id: string, clientIds?: readonly stri
       contractReference: contracts.reference,
       version: inspectionTemplateVersions.version,
       fields: inspectionTemplateVersions.fields,
-      templateName: inspectionTemplates.name,
+      // Le nom figé avec la version : celui que portait l'état des lieux.
+      templateName: inspectionTemplateVersions.name,
       createdByName: staffName(author),
       // Le client voit le nom du membre de l'équipe, jamais son adresse.
       closedByName: clientIds ? sql<string | null>`${closer.fullName}` : staffName(closer),

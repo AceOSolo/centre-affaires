@@ -21,7 +21,7 @@ import {
 import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
-import { clients } from '../clients/schema.ts'
+import { clientMembers, clients } from '../clients/schema.ts'
 import {
   billingPeriodEnum,
   billingPeriods,
@@ -193,6 +193,98 @@ export const contracts = pgTable(
 
 export type Contract = typeof contracts.$inferSelect
 export type NewContract = typeof contracts.$inferInsert
+
+/**
+ * Demande d'une offre groupée depuis l'espace client (R23, R24 ; ADR 036,
+ * ADR 041) :
+ *
+ * - `requested` : transmise à l'accueil, à traiter ;
+ * - `contracted` : un contrat en a été tiré pour ce client (`contract_id`) ;
+ * - `dismissed` : écartée par l'accueil, avec un motif montré au client.
+ *
+ * La trace de la demande, que le client retrouve dans son historique : elle
+ * ne vit plus dans le journal des envois, purgé au terme de sa durée.
+ */
+export const offerRequestStatuses = ['requested', 'contracted', 'dismissed'] as const
+export type OfferRequestStatus = (typeof offerRequestStatuses)[number]
+export const offerRequestStatusEnum = pgEnum('offer_request_status', offerRequestStatuses)
+
+/**
+ * Garanties tenues par la base (migration 0044, `CA013`) : datée par elle,
+ * jamais supprimée ; client, offre, auteur et date figés ; une seule demande
+ * à traiter par entreprise et par offre ; sous portée client, seulement le
+ * dépôt d'une offre présentée dans l'espace ; un contrat tiré de cette offre
+ * pour ce client, ou un refus de l'accueil, la clôt.
+ */
+export const offerRequests = pgTable(
+  'offer_requests',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    clientId: uuid('client_id').notNull(),
+    offerId: uuid('offer_id').notNull(),
+    /** La personne de l'entreprise qui l'a déposée depuis son espace. */
+    requestedByMemberId: uuid('requested_by_member_id').notNull(),
+    /** Posée par la base à l'insertion. */
+    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    status: offerRequestStatusEnum('status').notNull().default('requested'),
+    /** Contrat tiré de l'offre pour ce client, qui clôt la demande. */
+    contractId: uuid('contract_id'),
+    /** Clôture : date posée par la base, auteur par le code. */
+    closedAt: timestamp('closed_at', { withTimezone: true }),
+    closedByStaffId: uuid('closed_by_staff_id').references(() => staffMembers.id, {
+      onDelete: 'restrict',
+    }),
+    /** Motif d'une demande écartée, montré au client. */
+    dismissalReason: text('dismissal_reason'),
+    ...timestamps(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'offer_requests_client_fk',
+      columns: [table.tenantId, table.clientId],
+      foreignColumns: [clients.tenantId, clients.id],
+    }).onDelete('restrict'),
+    foreignKey({
+      name: 'offer_requests_offer_fk',
+      columns: [table.tenantId, table.offerId],
+      foreignColumns: [offers.tenantId, offers.id],
+    }).onDelete('restrict'),
+    // La personne est de l'entreprise de la demande.
+    foreignKey({
+      name: 'offer_requests_requested_by_member_fk',
+      columns: [table.tenantId, table.clientId, table.requestedByMemberId],
+      foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
+    }).onDelete('restrict'),
+    // Le contrat est celui de l'entreprise de la demande.
+    foreignKey({
+      name: 'offer_requests_contract_fk',
+      columns: [table.tenantId, table.contractId, table.clientId],
+      foreignColumns: [contracts.tenantId, contracts.id, contracts.clientId],
+    }).onDelete('restrict'),
+    // Une seule demande à traiter par entreprise et par offre : deux clics,
+    // deux personnes de l'entreprise, une seule demande.
+    uniqueIndex('offer_requests_open_key')
+      .on(table.tenantId, table.clientId, table.offerId)
+      .where(sql`status = 'requested'`),
+    index('offer_requests_client_idx').on(table.tenantId, table.clientId, table.requestedAt),
+    check(
+      'offer_requests_status_consistent',
+      sql`case ${table.status}
+        when 'requested' then num_nonnulls(${table.contractId}, ${table.closedAt}, ${table.closedByStaffId}, ${table.dismissalReason}) = 0
+        when 'contracted' then ${table.contractId} is not null and ${table.closedAt} is not null and ${table.dismissalReason} is null
+        else ${table.contractId} is null and ${table.closedAt} is not null
+      end`,
+    ),
+    check(
+      'offer_requests_dismissal_reason_length',
+      sql`${table.dismissalReason} is null or char_length(${table.dismissalReason}) <= 500`,
+    ),
+  ],
+)
+
+export type OfferRequest = typeof offerRequests.$inferSelect
+export type NewOfferRequest = typeof offerRequests.$inferInsert
 
 /**
  * `draft` : préparé, n'engage rien, se modifie et s'abandonne (`deleted_at`).

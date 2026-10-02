@@ -16,6 +16,7 @@ import {
 } from 'drizzle-orm/pg-core'
 
 import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { anonymizationBasisEnum, anonymizationTraceCheck, staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 
 /**
@@ -72,6 +73,12 @@ export const clients = pgTable(
      * conservation de 10 ans).
      */
     anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
+    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /** Au terme, à la demande d'effacement, ou à la fin de la relation (`anonymizationBases`). */
+    anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
+    /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
+    erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
   },
   (table) => [
     // Cible des clés étrangères composites : un contrat ne peut pas viser le
@@ -82,6 +89,7 @@ export const clients = pgTable(
       'clients_anonymized_archived',
       sql`${table.anonymizedAt} is null or ${table.deletedAt} is not null`,
     ),
+    check('clients_anonymization_traced', anonymizationTraceCheck(table)),
     // Deux clients vivants ne partagent pas un compte auxiliaire : leurs
     // écritures se mêleraient chez l'expert-comptable.
     uniqueIndex('clients_tenant_accounting_code_key')
@@ -142,6 +150,11 @@ export const clientMembers = pgTable(
      * consultations, des validations d'états des lieux.
      */
     anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
+    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
+    /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
+    erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
   },
   (table) => [
     foreignKey({
@@ -160,6 +173,7 @@ export const clientMembers = pgTable(
       'client_members_anonymized_removed',
       sql`${table.anonymizedAt} is null or (${table.deletedAt} is not null and ${table.authUserId} is null)`,
     ),
+    check('client_members_anonymization_traced', anonymizationTraceCheck(table)),
     // Une adresse ne vaut qu'une fois par entreprise, et redevient libre après
     // un retrait.
     uniqueIndex('client_members_client_email_key')

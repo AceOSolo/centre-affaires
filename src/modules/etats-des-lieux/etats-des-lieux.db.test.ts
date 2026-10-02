@@ -79,8 +79,8 @@ describe('états des lieux', { skip: raison }, () => {
         insert into inspection_templates (resource_type, name) values (${type}, ${`État des lieux ${type}`})
         returning id`)
       return tx.execute(sql`
-        insert into inspection_template_versions (template_id, version, fields, created_by)
-        values (${template.id as string}, 1, ${JSON.stringify(fields)}::jsonb, ${CAMILLE})
+        insert into inspection_template_versions (template_id, version, name, fields, created_by)
+        values (${template.id as string}, 1, ${`État des lieux ${type}`}, ${JSON.stringify(fields)}::jsonb, ${CAMILLE})
         returning id`)
     })
     return row.id as string
@@ -221,8 +221,8 @@ describe('états des lieux', { skip: raison }, () => {
       )
       await asTenant((tx) =>
         tx.execute(sql`
-          insert into inspection_template_versions (template_id, version, fields)
-          values (${templateId as string}, 2,
+          insert into inspection_template_versions (template_id, version, name, fields)
+          values (${templateId as string}, 2, 'État des lieux bureau',
                   '[{"id":"sol","label":"Sol","type":"condition","required":true}]'::jsonb)`),
       )
       const [row] = await asTenant((tx) =>

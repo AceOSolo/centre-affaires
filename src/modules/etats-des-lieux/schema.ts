@@ -114,6 +114,12 @@ export const inspectionTemplateVersions = pgTable(
     tenantId: tenantId(),
     templateId: uuid('template_id').notNull(),
     version: integer('version').notNull(),
+    /**
+     * Nom du modèle à cette version (ADR 041) : un état des lieux clos montre
+     * le nom qu'il portait, même si le modèle est renommé depuis. Renommer un
+     * modèle en publie une version.
+     */
+    name: text('name').notNull(),
     fields: jsonb('fields').$type<InspectionField[]>().notNull(),
     createdBy: uuid('created_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -131,6 +137,7 @@ export const inspectionTemplateVersions = pgTable(
       table.version,
     ),
     check('inspection_template_versions_version_positive', sql`${table.version} >= 1`),
+    check('inspection_template_versions_name_not_blank', sql`btrim(${table.name}) <> ''`),
     // La fonction est posée par la migration 0039, avant cette table.
     check(
       'inspection_template_versions_fields_valid',
@@ -264,6 +271,11 @@ export const inspections = pgTable(
       sql`${table.entryInspectionId} is null or ${table.kind} = 'exit'`,
     ),
     check('inspections_values_object', sql`jsonb_typeof(${table.values}) = 'object'`),
+    // Même borne que la saisie (`MAX_REMARKS`, compte-actions.ts), tenue par la base (ADR 041).
+    check(
+      'inspections_client_remarks_length',
+      sql`${table.clientRemarks} is null or char_length(${table.clientRemarks}) <= 2000`,
+    ),
     check(
       'inspections_status_consistent',
       sql`(${table.status} = 'closed') = (${table.closedAt} is not null)

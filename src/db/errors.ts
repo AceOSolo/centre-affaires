@@ -132,3 +132,10 @@ export const PG_INSPECTION_INVALID = 'CA011'
  * `anonymized_at` hors des fonctions `anonymize_*`.
  */
 export const PG_ANONYMIZATION_REFUSED = 'CA012'
+/**
+ * Demande d'offre refusée (ADR 041, migration 0044) : offre non présentée
+ * dans l'espace client, demande déjà traitée, contrat qui n'est pas tiré de
+ * cette offre, refus sans auteur, modification depuis l'espace client ou
+ * suppression.
+ */
+export const PG_OFFER_REQUEST_REFUSED = 'CA013'
