@@ -83,6 +83,8 @@ export type OfferLineInput = {
   discountBp: number | null
   discountAmountCents: number | null
   vatRateBp: number | null
+  /** Désignation commerciale de la ligne (ADR 036) ; absente : celle du catalogue. */
+  label?: string | null
 }
 
 export type OfferInput = {
@@ -102,6 +104,11 @@ export type PricedOfferLine = {
   target: OfferTarget
   /** Désignation : « Bureau 3 (BUR-03) », « Standard téléphonique ». */
   label: string
+  /**
+   * Désignation commerciale saisie sur la ligne d'offre (ADR 036), montrée au
+   * client à la place de `label` ; nulle sans saisie.
+   */
+  commercialLabel: string | null
   quantity: number
   unit: RateUnit
   /** Prix unitaire HT appliqué. Nul : aucun prix connu. */
@@ -330,6 +337,7 @@ export function priceOffer(offer: OfferInput, catalogue: OfferCatalogue): OfferQ
       kind: pricing.kind,
       target,
       label: pricing.label,
+      commercialLabel: line.label ?? null,
       quantity: line.quantity,
       unit: line.unit,
       unitPriceCents,

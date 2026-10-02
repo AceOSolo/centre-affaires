@@ -43,7 +43,17 @@ describe('en-tête d’une offre', () => {
       description: null,
       billingPeriod: 'quarterly',
       commitmentMonths: 12,
+      clientVisible: false,
     })
+  })
+
+  it('présente l’offre dans l’espace client quand la case est cochée (R23, ADR 036)', () => {
+    const cochee = readOfferHeaderForm(form({ name: 'Pack', billingPeriod: 'monthly', clientVisible: 'on' }))
+    assert.equal(cochee.fieldErrors, undefined)
+    assert.equal(cochee.input.clientVisible, true)
+    const vide = readOfferHeaderForm(form({ name: 'Pack', billingPeriod: 'monthly' }))
+    assert.equal(vide.fieldErrors, undefined)
+    assert.equal(vide.input.clientVisible, false)
   })
 
   it('accepte une offre sans engagement, refuse un engagement hors de 1 à 120 mois', () => {
@@ -73,6 +83,7 @@ describe('ligne d’une offre', () => {
       discountBp: null,
       discountAmountCents: null,
       vatRateBp: null,
+      label: null,
     })
   })
 
@@ -145,11 +156,21 @@ describe('ligne d’une offre', () => {
       discountBp: null,
       discountAmountCents: 1_050,
       vatRateBp: 550,
+      label: 'Standard téléphonique partagé',
     }
     const values = offerItemToValues(enregistree)
     assert.equal(values.target, 'service')
     assert.equal(values.pricing, 'discount_amount')
     assert.equal(values.discountAmount, '10,50')
     assert.deepEqual(validateOfferItem(values, context).input, enregistree)
+  })
+
+  it('lit la désignation commerciale montrée au client (ADR 036)', () => {
+    assert.equal(
+      valider({ target: 'resource_type', resourceType: 'bureau', label: '  Bureau fermé   de 12 m² ' }).input?.label,
+      'Bureau fermé de 12 m²',
+    )
+    assert.equal(valider({ target: 'resource_type', resourceType: 'bureau', label: '' }).input?.label, null)
+    assert.ok(valider({ target: 'resource_type', resourceType: 'bureau', label: 'x'.repeat(121) }).errors.label)
   })
 })

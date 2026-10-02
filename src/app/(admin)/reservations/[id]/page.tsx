@@ -18,6 +18,7 @@ import {
 } from '../../../../modules/reservations/actions.ts'
 import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
+import { findBookingAuthors } from '../../../../modules/reservations/demandes-queries.ts'
 import { findBooking } from '../../../../modules/reservations/queries.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 
@@ -31,9 +32,11 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   const booking = await findBooking(id)
   if (!booking) notFound()
   // `findClient` et non la liste : une fiche archivée reste nommée ici.
-  const [clients, client] = await Promise.all([
+  const [clients, client, authors] = await Promise.all([
     listClients(),
     booking.clientId ? findClient(booking.clientId) : undefined,
+    // Auteur de la réservation et de l'annulation (ADR 036).
+    findBookingAuthors(booking.id),
   ])
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
@@ -135,6 +138,13 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           <ChannelLabel channel={booking.channel} detailed />
         </dd>
 
+        {authors.bookedBy && (
+          <>
+            <dt className="text-muted-foreground">Réservée par</dt>
+            <dd>{authors.bookedBy}, depuis l’espace client</dd>
+          </>
+        )}
+
         {booking.kind === 'booking' && (
           <>
             <dt className="text-muted-foreground">Prix</dt>
@@ -199,6 +209,16 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
                 ? `${formatLongDate(toIsoDate(booking.cancelledAt, timeZone), timeZone)} à ${formatTime(booking.cancelledAt, timeZone)}`
                 : '—'}
             </dd>
+            {(authors.cancelledByMember || authors.cancelledByStaff) && (
+              <>
+                <dt className="text-muted-foreground">Annulée par</dt>
+                <dd>
+                  {authors.cancelledByMember
+                    ? `${authors.cancelledByMember}, depuis l’espace client`
+                    : `${authors.cancelledByStaff}, de l’équipe`}
+                </dd>
+              </>
+            )}
             <dt className="text-muted-foreground">Motif</dt>
             <dd>{booking.cancellationReason ?? '—'}</dd>
           </>

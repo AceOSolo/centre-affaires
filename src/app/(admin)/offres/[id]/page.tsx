@@ -77,6 +77,11 @@ export default async function OfferPage({
           >
             {archived ? 'Archivée' : 'Proposée'}
           </span>
+          {!archived && offer.clientVisible && (
+            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-primary">
+              Présentée dans l’espace client
+            </span>
+          )}
         </div>
         <p className="mt-1 text-sm text-muted-foreground">
           Facturation {billingPeriodLabels[offer.billingPeriod].toLowerCase()} ·{' '}
@@ -177,7 +182,7 @@ export default async function OfferPage({
       {!archived && (
         <section aria-labelledby="entete-titre" className="flex flex-col gap-3">
           <h2 id="entete-titre" className="text-sm font-semibold tracking-tight">
-            Nom, facturation et engagement
+            Nom, facturation, engagement et espace client
           </h2>
           <OfferForm
             id={offer.id}
@@ -186,6 +191,7 @@ export default async function OfferPage({
               description: offer.description ?? '',
               billingPeriod: offer.billingPeriod,
               commitmentMonths: offer.commitmentMonths ? String(offer.commitmentMonths) : '',
+              clientVisible: offer.clientVisible ? 'on' : '',
             }}
           />
         </section>

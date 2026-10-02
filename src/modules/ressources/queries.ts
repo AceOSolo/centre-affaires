@@ -8,6 +8,7 @@ import { centreRanges } from './ouverture.ts'
 import {
   openingHours,
   resources,
+  type ClientBookingMode,
   type Resource,
   type ResourceAttributes,
   type ResourceStatus,
@@ -59,6 +60,8 @@ export type CreateResourceInput = {
   capacity?: number | null
   status?: ResourceStatus
   attributes?: ResourceAttributes[ResourceType]
+  /** Réservation depuis l'espace client (ADR 036). Absent : la valeur de la base, `approval`. */
+  clientBookingMode?: ClientBookingMode
 }
 
 /** Levée quand le code saisi est déjà porté par une ressource active du centre. */
@@ -98,6 +101,7 @@ export async function createResource(input: CreateResourceInput): Promise<Resour
           capacity: input.capacity ?? null,
           status: input.status ?? 'active',
           attributes: input.attributes ?? {},
+          ...(input.clientBookingMode ? { clientBookingMode: input.clientBookingMode } : {}),
         })
         .returning()
 
@@ -231,6 +235,23 @@ export async function updateResource(
     // Même garde que la création : les index partiels tranchent, pas une lecture.
     throw uniquenessError(error, input.code, input.attributes) ?? error
   }
+}
+
+/**
+ * Réglage de la réservation depuis l'espace client (R23, ADR 036). Effet
+ * immédiat sur les réservations à venir du portail : la base lit le réglage
+ * dans la transaction qui écrit chaque réservation. Celles déjà déposées
+ * gardent leur statut. Rend `false` pour une ressource absente ou archivée.
+ */
+export async function updateClientBookingMode(id: string, mode: ClientBookingMode): Promise<boolean> {
+  const updated = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .update(resources)
+      .set({ clientBookingMode: mode })
+      .where(and(eq(resources.id, id), isNull(resources.deletedAt)))
+      .returning({ id: resources.id }),
+  )
+  return updated.length > 0
 }
 
 export async function updateResourceStatus(id: string, status: ResourceStatus): Promise<void> {

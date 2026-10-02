@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { canClientCancel, splitClientBookings } from './compte-regles.ts'
+import {
+  canClientCancel,
+  clientBookingTrace,
+  isClientBookingInProgress,
+  splitClientBookings,
+} from './compte-regles.ts'
 
 const NOW = new Date('2026-10-01T10:00:00Z')
 
@@ -58,6 +63,53 @@ describe('liste des réservations du client', () => {
     assert.deepEqual(
       history.map((r) => r.id),
       ['annulee-future', 'passee'],
+    )
+  })
+})
+
+describe('traçabilité côté client (R24, ADR 036)', () => {
+  const trace = (overrides: Partial<Parameters<typeof clientBookingTrace>[0]> = {}) =>
+    clientBookingTrace({
+      status: 'confirmed',
+      channel: 'client',
+      bookedBy: null,
+      cancelledByMember: null,
+      cancelledByCentre: false,
+      ...overrides,
+    })
+
+  it('nomme la personne de l’entreprise qui a réservé depuis l’espace', () => {
+    assert.equal(trace({ bookedBy: 'Jeanne Martin' }).origin, 'Réservée par Jeanne Martin depuis l’espace client')
+  })
+
+  it('dit d’où vient une réservation sans auteur : l’accueil ou le site', () => {
+    assert.equal(trace({ channel: 'staff' }).origin, 'Réservée par l’accueil du centre')
+    assert.equal(trace({ channel: 'public' }).origin, 'Demandée depuis le site du centre')
+  })
+
+  it('nomme l’auteur d’une annulation, sans nommer l’équipe', () => {
+    assert.equal(
+      trace({ status: 'cancelled', cancelledByMember: 'Jeanne Martin' }).cancellation,
+      'Annulée par Jeanne Martin',
+    )
+    assert.equal(trace({ status: 'cancelled', cancelledByCentre: true }).cancellation, 'Annulée par le centre')
+    // Annulation sans trace (antérieure à la vague 3) : rien n'est inventé.
+    assert.equal(trace({ status: 'cancelled' }).cancellation, null)
+    assert.equal(trace({ status: 'confirmed', cancelledByCentre: true }).cancellation, null)
+  })
+
+  it('reconnaît une réservation en cours', () => {
+    assert.equal(
+      isClientBookingInProgress(reservation('a', '2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z'), NOW),
+      true,
+    )
+    assert.equal(
+      isClientBookingInProgress(reservation('a', '2026-10-01T10:30:00Z', '2026-10-01T11:00:00Z'), NOW),
+      false,
+    )
+    assert.equal(
+      isClientBookingInProgress(reservation('a', '2026-10-01T09:00:00Z', '2026-10-01T11:00:00Z', 'cancelled'), NOW),
+      false,
     )
   })
 })

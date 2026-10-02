@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
+import { isUuid } from '../../lib/uuid.ts'
 
 import { parseResourceInput } from './attributs.ts'
 import {
@@ -12,9 +13,15 @@ import {
   archiveResource,
   createResource,
   findResource,
+  updateClientBookingMode,
   updateResource,
   updateResourceStatus,
 } from './queries.ts'
+import {
+  clientBookingModeLabels,
+  defaultClientBookingMode,
+  parseClientBookingMode,
+} from './reservation-client.ts'
 import { resourceStatuses, type ResourceStatus } from './schema.ts'
 
 /**
@@ -66,11 +73,28 @@ export async function createResourceAction(
   const parsed = parseResourceInput((key) => text(formData, key), {
     allowedStatuses: ['active', 'maintenance'],
   })
+  // Réservation depuis l'espace client (ADR 036) : la valeur proposée suit le
+  // type ; une valeur illisible est refusée plutôt que remplacée.
+  const rawMode = text(formData, 'clientBookingMode')
+  const clientBookingMode = rawMode
+    ? parseClientBookingMode(rawMode)
+    : parsed.ok
+      ? defaultClientBookingMode(parsed.input.resourceType)
+      : undefined
+  if (!clientBookingMode) {
+    return {
+      fieldErrors: {
+        ...(parsed.ok ? {} : parsed.errors),
+        clientBookingMode: 'Choisissez l’un des trois réglages.',
+      },
+      values,
+    }
+  }
   if (!parsed.ok) return { fieldErrors: parsed.errors, values }
 
   let id: string
   try {
-    id = (await createResource(parsed.input)).id
+    id = (await createResource({ ...parsed.input, clientBookingMode })).id
   } catch (error) {
     const fieldErrors = uniquenessFailure(error)
     if (fieldErrors) return { fieldErrors, values }
@@ -137,4 +161,27 @@ export async function archiveResourceAction(formData: FormData): Promise<void> {
   await archiveResource(id)
   revalidatePath('/ressources')
   revalidatePath('/reservations')
+}
+
+/** Réponse rendue au formulaire du réglage, annoncée au lecteur d'écran. */
+export type ClientBookingModeState = { ok?: string; error?: string } | null
+
+/**
+ * Réglage de la réservation depuis l'espace client (R23, ADR 016 décision D4,
+ * ADR 036) : confirmation immédiate, accord de l'accueil, ou fermée.
+ */
+export async function updateClientBookingModeAction(
+  _previous: ClientBookingModeState,
+  formData: FormData,
+): Promise<ClientBookingModeState> {
+  await requirePermission('ressources.gerer')
+  const id = text(formData, 'id')
+  const mode = parseClientBookingMode(text(formData, 'clientBookingMode'))
+  if (!mode) return { error: 'Choisissez l’un des trois réglages.' }
+  if (!isUuid(id) || !(await updateClientBookingMode(id, mode))) {
+    return { error: 'Cette ressource n’existe pas ou a été archivée.' }
+  }
+  revalidatePath(`/ressources/${id}`)
+  revalidatePath('/compte/reservations', 'layout')
+  return { ok: `Réglage enregistré : ${clientBookingModeLabels[mode].toLocaleLowerCase('fr-FR')}.` }
 }

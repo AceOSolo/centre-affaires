@@ -19,7 +19,7 @@ export default async function NewOfferPage() {
         </p>
       </div>
       <OfferForm
-        defaults={{ name: '', description: '', billingPeriod: 'monthly', commitmentMonths: '' }}
+        defaults={{ name: '', description: '', billingPeriod: 'monthly', commitmentMonths: '', clientVisible: '' }}
       />
     </div>
   )

@@ -42,12 +42,21 @@ export function availableStarts(free: readonly TimeRange[], now: Date, latestSta
   })
 }
 
-/** Fins possibles pour ce départ, sans traverser une fermeture ni changer de jour. */
-export function availableEnds(start: Date, free: readonly TimeRange[], timeZone: string): Date[] {
+/**
+ * Fins possibles pour ce départ, sans traverser une fermeture ni changer de
+ * jour. `maxMinutes` : huit heures pour la page publique ; l'espace client va
+ * jusqu'à la fin de la plage libre.
+ */
+export function availableEnds(
+  start: Date,
+  free: readonly TimeRange[],
+  timeZone: string,
+  maxMinutes: number = MAX_REQUEST_MINUTES,
+): Date[] {
   const window = free.find((range) => start >= range.startsAt && start < range.endsAt)
   if (!window) return []
   const ends: Date[] = []
-  const last = Math.min(window.endsAt.getTime(), start.getTime() + MAX_REQUEST_MINUTES * 60_000)
+  const last = Math.min(window.endsAt.getTime(), start.getTime() + maxMinutes * 60_000)
   for (let at = start.getTime() + MIN_REQUEST_MINUTES * 60_000; at <= last; at += QUARTER_HOUR) {
     const end = new Date(at)
     if (toIsoDate(end, timeZone) === toIsoDate(start, timeZone)) ends.push(end)

@@ -163,3 +163,156 @@ portail aurait confirmé des « demandes de devis ».
 - *À valider par le centre* : la liste des ressources ouvertes en
   confirmation immédiate ; la proposition `closed` pour les casiers et boîtes
   aux lettres créés ensuite.
+
+## Mise en œuvre — portail de réservation (vague 3)
+
+Ajoutée par la tranche « portail-réservation » (R23 ; R24 pour les
+réservations ; R25 pour ces écrans). Aucune migration ni dépendance : le
+schéma ci-dessus suffit, à un manque près (fin de section). Les choix
+nouveaux sont marqués **à valider**.
+
+### Le parcours dans l'espace client
+
+`/compte/reservations/nouvelle` : un formulaire en GET (type d'espace et
+date, sans JavaScript, URL partageable), la liste des espaces ouverts au
+portail avec leurs plages libres du jour, puis, l'espace choisi, le
+formulaire de réservation. Mobile d'abord : une colonne, cibles de 44 px,
+8 px entre deux cibles.
+
+- **Disponibilités réelles, même moteur.** Le calcul des plages libres est
+  sorti de `listDayAvailability` dans un module pur,
+  `reservations/disponibilites.ts` (`dayAvailability`), qu'appellent la page
+  publique, le back-office et l'espace client. L'espace client lit tout sous
+  sa portée (`listPortalDayAvailability`, `inClientSpace`) : ressources en
+  service, non archivées et non fermées au portail, horaires, fermetures, et
+  les créneaux des autres par `booking_busy_ranges()`, qui n'en livre que les
+  heures. Préavis et horizon du centre comme la page publique
+  (`requestableRanges`).
+- **Pas de plafond de huit heures** : un client réserve jusqu'à la fin d'une
+  plage libre (`availableEnds(…, maxMinutes)`), sur une seule journée, trente
+  minutes au moins (*à valider*).
+- **Montant avant validation.** `previewPortalQuote` appelle `quote()` dans
+  une transaction de l'espace client, pour l'entreprise choisie : la grille
+  de son contrat passe avant celle du centre (ADR 023). L'écran affiche le
+  détail (`QuoteSummary`), dit si le prix vient du contrat, et annonce la
+  suite — « Confirmation immédiate » ou « Sur validation »
+  (`expectedPortalOutcome`, jumeau pur du trigger). Le bouton le redit :
+  « Confirmer la réservation » ou « Envoyer la demande ».
+- **Écriture.** `createPortalBooking` : une transaction de l'espace client
+  calcule le devis par `quoteInTransaction`, le fige (`bookingQuoteColumns`)
+  et insère la réservation (`kind = 'booking'`, canal `client`,
+  `booked_by_member_id` = la personne connectée). Le statut écrit est
+  ignoré : celui que rend la base est lu et dit à l'écran
+  (`portalOutcomeMessage` : « Réservation confirmée » ou « Demande envoyée à
+  l'accueil »), avec le montant figé. Erreurs traduites : `23P01` (créneau
+  pris entre-temps), `CA009` (message de la base, qui nomme la ressource),
+  `23503` (personne qui n'est plus de l'entreprise). Les disponibilités sont
+  relues à l'envoi (`portalBookingRejection`).
+- **Entreprise.** Une personne qui représente plusieurs entreprises choisit
+  la sienne ; elle doit être l'une du compte, jamais déduite de la seule
+  requête.
+- **Après l'écriture** : une réservation confirmée part dans l'agenda Google
+  de la ressource (ADR 014) ; une demande prévient l'accueil
+  (`booking_request_submitted`, ci-dessous).
+
+La page publique, connectée ou non, ne change pas (ADR 005) ; « Mes
+réservations » renvoie désormais vers le parcours de l'espace.
+
+### « Mes réservations »
+
+À venir — en cours comprises, signalées « En cours » — puis « Passées et
+annulées » (six mois). Chaque réservation porte son statut en toutes
+lettres et par une icône, son montant figé TTC, son origine
+(`clientBookingTrace` : « Réservée par Jeanne Martin depuis l'espace
+client », « Réservée par l'accueil du centre », « Demandée depuis le site
+du centre ») et l'auteur de son annulation (« Annulée par Jeanne Martin »,
+« Annulée par le centre » ; rien d'inventé pour une annulation sans
+trace). L'équipe reste « le centre » : le client n'a pas à connaître ses
+membres. L'annulation par le client suit `canClientCancel`, inchangée
+(demande en attente, avant son début), et pose `cancelled_by_member_id`.
+
+### Côté équipe
+
+- **Fiche ressource** : section « Réservation depuis l'espace client »,
+  trois choix expliqués, enregistrement avec son état
+  (`updateClientBookingModeAction`, `ressources.gerer`). La création
+  propose `closed` pour un casier ou une boîte aux lettres, `approval`
+  sinon (`defaultClientBookingMode`, *à valider*), modifiable avant
+  d'enregistrer.
+- **Annulations tracées** : `cancelBooking`, `refuseBooking` et
+  l'annulation des occurrences d'une série posent `cancelled_by_staff_id`
+  (le membre connecté). La fiche d'une réservation dit qui l'a faite depuis
+  l'espace et qui l'a annulée.
+- **« Demandes »** : les demandes de l'espace client y arrivent avec les
+  autres, chacune avec son canal (`ChannelLabel`), son entreprise, la
+  personne (nom, adresse) et son montant figé — ou « non chiffrée ». Le
+  motif de refus a désormais un libellé visible.
+
+### L'offre groupée : une demande que l'équipe transforme
+
+Tranché : **le client ne crée pas de contrat brouillon**. Un brouillon
+tiré de l'offre par le client prendrait un numéro de contrat, bloquerait
+l'anonymisation de l'entreprise tant qu'il vit (ADR 040 : un brouillon est
+un contrat vivant), et l'accueil devrait de toute façon l'ajuster (lignes,
+ressource, date de début : ADR 028). La demande est le message
+`offer_requested` au centre, journalisé ; l'accueil en tire le contrat.
+
+- **`/compte/offres`** (onglet « Offres » de l'espace) : les offres
+  `client_visible` non archivées, lues sous la portée client, chiffrées par
+  `priceOffer` au catalogue du jour (`loadOfferCatalogueInTransaction`,
+  extrait de `loadOfferCatalogue`) : lignes par leur désignation
+  commerciale (`offer_items.label`) ou celle du catalogue, actes inclus et
+  prix au-delà, totaux HT et TTC par période, économie sur le catalogue,
+  engagement. Une offre au prix incomplet le dit : « précisé par
+  l'accueil ».
+- **« Demander cette offre »**, en une action : l'entreprise (si
+  plusieurs), puis `requestOfferAction`. Une seconde demande de la même
+  offre par la même entreprise dans les sept jours ne renvoie rien et
+  rappelle la date de la première (*à valider*).
+- **Back-office** : la case « Présenter l'offre dans l'espace client » sur
+  le formulaire d'offre, le champ « Désignation commerciale » sur ses
+  lignes (`services.gerer`), repris dans la composition de l'offre.
+  « Demandes » liste les offres demandées des quatre-vingt-dix derniers
+  jours (*à valider*), relues dans le journal, avec « Préparer le
+  contrat » (`/contrats/nouveau/offre`, offre et client remplis, droit
+  `contrats.creer` ; sinon « À transmettre à l'exploitant ») ; une demande
+  est traitée dès qu'un contrat est tiré de l'offre pour ce client après
+  elle.
+
+### Messages au centre
+
+`notifications/message-centre.ts` (`sendCentreMessage`) : le chemin
+minimal de cette tranche pour les deux messages au centre qu'elle
+déclenche, `booking_request_submitted` (demande de réservation de
+l'espace, après la réponse) et `offer_requested` (avant la réponse : le
+journal est la seule trace de la demande, son échec fait échouer la
+demande). Modèle du centre s'il existe, variables `{{centre}}`,
+`{{client}}`, `{{personne}}`, `{{ressource}}`, `{{offre}}`, `{{date}}`,
+`{{montant}}`, `{{lien}}` ; modèle désactivé ou centre sans adresse : rien
+ne part, journalisé `skipped`. `sendMessage` rend désormais l'issue de
+l'envoi (`SendReport`) pour le journal. À l'intégration avec le moteur de
+la tranche notifications (ADR 038), ces deux appels passent par lui.
+
+### Manque de schéma relevé
+
+Le journal des envois ne porte pas la personne qui a demandé une offre
+(`notification_deliveries` n'a ni membre ni texte libre, par décision de
+l'ADR 038) : « Demandes » montre l'entreprise et l'offre, la personne
+n'est que dans le corps du courriel. Le journal étant purgé au terme de sa
+durée (12 mois) et anonymisé avec le client, une demande d'offre n'a pas
+d'historique au-delà ; la table des demandes d'offre écartée ci-dessus le
+permettrait, si le centre exprime un suivi.
+
+### Tests
+
+`portail-regles.test.ts` (statut annoncé selon le réglage et le devis,
+créneau refusé avant l'écriture, objet), `disponibilites.test.ts` (moteur
+commun), `reservation-client.test.ts` (réglage proposé et lu),
+`compte-regles.test.ts` (traçabilité, réservation en cours),
+`offres-regles.test.ts` (case et désignation), `message-centre.test.ts`
+(modèles et textes) ; contre la base, `portail-reservation.db.test.ts`
+(disponibilités sous portée client, tarif du contrat annoncé puis figé,
+statut selon le réglage, refus traduits, annulations tracées,
+« Demandes », message au centre) et `offres-portail.db.test.ts` (offres
+présentées et chiffrées, demande journalisée sans contrat, anti-doublon,
+traitement par le contrat, modèle désactivé).

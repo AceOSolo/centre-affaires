@@ -6,6 +6,7 @@ import { usePathname } from 'next/navigation'
 const sections = [
   { href: '/compte/courrier', label: 'Ma boîte aux lettres' },
   { href: '/compte/reservations', label: 'Mes réservations' },
+  { href: '/compte/offres', label: 'Offres' },
   { href: '/compte/etats-des-lieux', label: 'États des lieux' },
 ]
 
