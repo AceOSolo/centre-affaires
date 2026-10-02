@@ -158,3 +158,175 @@ destructrice (une catégorie de plus), si le centre le demande.
   `/api/maintenance/conservation`.
 - *À valider par le centre* : la durée du journal (12 mois), la liste des
   événements qu'un client peut refuser, les textes par défaut.
+
+## Mise en œuvre (dernière vague) — moteur, écrans, déclencheurs
+
+Ajoutée le 2026-10-02, sans changer la décision ni le schéma : elle dit
+comment le code l'applique, et les choix par défaut qu'il a dû faire.
+
+### Un seul point d'envoi : `notify()` (`notifications/moteur.ts`)
+
+Pour un événement et ses valeurs, le moteur :
+
+1. lit, dans une transaction courte sous `withTenant()`, le centre (nom,
+   adresse), son modèle pour l'événement et les destinataires ;
+2. rend l'objet et le corps — le modèle du centre, ou le texte par défaut ;
+3. écarte les personnes qui ont renoncé à la catégorie ;
+4. envoie par `sendMessage()`, **hors de toute transaction** : un serveur
+   SMTP lent ne retient pas de connexion à la base ;
+5. inscrit l'issue au journal, dans sa propre transaction.
+
+Il **ne lève jamais** : une panne du transport vaut `failed` (journalisé),
+une panne de la base rend `failed` non journalisé et laisse une trace dans
+les journaux du serveur. Il rend l'issue — statut, objet, corps rendu,
+adresses servies et refusées — à l'appelant, qui n'en a besoin que pour la
+relance (ci-dessous). Les appelants le lancent après la réponse (`after()`).
+
+`sendMessage()` (`lib/courriel.ts`) rend désormais cette issue au lieu de
+rien : `sent`, `failed` (adresses refusées, cause bornée à 500 caractères,
+jamais le texte du message), `not_configured`, `no_recipient`. Il ne lève
+toujours pas.
+
+| Issue au journal | Quand |
+|---|---|
+| `sent` | parti vers chaque adresse |
+| `failed` | au moins une adresse refusée ; `failed_recipients` dit lesquelles |
+| `not_configured` | SMTP absent : les adresses qui auraient été servies sont gardées |
+| `skipped` | modèle désactivé ; aucune adresse (accès, centre sans adresse) ; toutes les personnes ont renoncé. `recipients` est vide : rien n'est parti ; `error` dit pourquoi |
+
+**Destinataires.** Un message au centre part à `tenants.email` (sans adresse :
+`skipped`, « renseignez-la dans la configuration »). Un message au client part
+aux accès de l'entreprise — ni retirés, ni anonymisés, fiche non archivée —,
+ou à ceux que l'appelant désigne (`memberIds`, restreints à l'entreprise), ou
+à des adresses données telles quelles (`addresses`). Les préférences ne
+s'appliquent qu'aux accès : une adresse sans accès (contact « factures »)
+est toujours servie, et une adresse servie si l'une au moins de ses entrées
+n'a pas renoncé.
+
+### Modèles et variables (`catalogue.ts`, `rendu.ts`)
+
+- Le **catalogue** donne, pour chaque événement, son nom, sa description, ses
+  variables (nom, sens, exemple fictif, facultative ou non) et son texte par
+  défaut. Les textes du courrier et de l'invitation reprennent ceux de
+  l'ADR 015. Un test vérifie que chaque texte par défaut passe la
+  vérification de son propre événement.
+- **Rendu** en une seule passe : une valeur qui contient `{{…}}` n'est
+  jamais réinterprétée. Les messages sont en texte brut, sans HTML à
+  échapper ; les caractères de contrôle sont retirés, et l'objet tient sur une
+  ligne (sauts et retours remplacés par une espace : pas d'injection
+  d'en-tête). **Une ligne du corps qui cite une variable manquante** (nulle,
+  vide, ou lien sans `APP_URL`) **n'est pas envoyée** ; les lignes vides
+  qui se suivent alors sont réduites à une. Dans l'objet, une variable
+  manquante est remplacée par rien ; un objet vide prend le nom de
+  l'événement. L'objet est borné à 200 caractères.
+- **Vérification à l'enregistrement** : objet non vide, une ligne, 200
+  caractères ; corps non vide, 10 000 ; accolades bien formées ; variables
+  connues de l'événement, avec la liste des variables possibles dans le
+  message d'erreur.
+- `centre` est fourni par le moteur à tous les événements (signature).
+- Un pli enregistré **déjà ouvert** part comme `mail_scanned` (« Votre
+  courrier a été numérisé ») : il est lisible dès l'arrivée. L'objet
+  « Nouveau courrier numérisé pour … » de l'ADR 015 disparaît.
+- `invoice_reminder` : la lettre de relance reste celle de la facturation
+  (`reminderMessage`, mentions légales comprises) ; le modèle l'entoure par
+  `{{objet}}` et `{{lettre}}` (texte par défaut : rien d'autre), il ne la
+  réécrit pas.
+
+### Déclencheurs (`notifications/declencheurs-*.ts`)
+
+Chacun relit l'état en base et ne prévient que si l'événement a bien eu
+lieu : un double clic, une action rejouée ou un état changé entre-temps ne
+font pas partir un message faux. Ils rendent `null` quand il n'y a rien à
+dire, et ne lèvent jamais.
+
+| Événement | Posé où | Destinataires |
+|---|---|---|
+| `mail_received`, `mail_scanned` | enregistrement et ouverture d'un pli (`courrier/actions.ts`, inchangé : `courrier/notifications.ts` délègue au moteur) | accès de l'entreprise |
+| `mail_request_submitted` | demande d'ouverture de l'espace (`notifyOpeningRequested`, inchangé) ; `notifyMailRequestSubmitted(id)` prêt pour la numérisation et la réexpédition | centre ; rien pour une demande consignée par l'accueil |
+| `mail_request_done`, `mail_request_refused` | **prêts** (`notifyMailRequestDone`, `notifyMailRequestRefused`), à brancher par la tranche courrier | accès de l'entreprise ; une demande d'ouverture faite ne donne pas de second message (l'ouverture envoie `mail_scanned`) |
+| `booking_request_submitted` | page publique (`requestBookingAction`) ; prêt pour l'espace client en mode « accord de l'accueil » | centre |
+| `booking_request_accepted`, `booking_request_refused` | `/demandes` (validation, refus) | la personne qui a réservé depuis son espace ; sinon le demandeur (avec les préférences de son accès s'il en a un) ; sinon les accès |
+| `booking_confirmed` | réservation de l'équipe pour une entreprise (`createBookingAction`) ; prêt pour l'espace client en mode « confirmation immédiate » | idem |
+| `booking_cancelled` | annulation par l'équipe d'une réservation d'entreprise encore active | idem |
+| `invoice_issued` | émission d'une facture, d'un lot de brouillons, d'un avoir total | accès de l'entreprise ; lien vers `/compte/factures`, **jamais de pièce jointe** |
+| `invoice_reminder` | relance par courriel (`sendRemindersAction`) | contacts « factures », sinon l'adresse de la fiche |
+| `contract_activated` | activation d'un contrat | accès de l'entreprise |
+| `inspection_to_sign`, `inspection_signed` | **prêts** (`notifyInspectionToSign`, `notifyInspectionSigned`), à brancher par la tranche des états des lieux | accès de l'entreprise ; centre. Ni document, ni photo, ni texte des remarques |
+| `member_invited` | ajout d'un accès sur la fiche client (`sendInvitation`, inchangé) | la personne inscrite seulement |
+| `offer_requested` | **prêt** (`notifyOfferRequested`), à brancher par la tranche portail | centre, si l'offre est montrée aux clients |
+
+Les messages ne portent jamais l'expéditeur ni la note d'un pli, l'adresse
+ou la consigne d'une demande de courrier, les remarques d'un état des lieux.
+
+**Une demande anonyme de la page publique ne prévient pas son demandeur** :
+le journal exige l'entreprise d'un message au client
+(`notification_deliveries_client_audience`), et l'équipe répond elle-même
+au demandeur (ADR 005). Rattachée à une entreprise, elle le prévient.
+
+**Relances (amende la mise en œuvre de l'ADR 034).** La relance part par le
+moteur, puis s'inscrit au journal des relances **telle qu'elle est partie**
+(objet et texte rendus) **et à qui l'a reçue**. Elle n'y figure pas si
+personne ne l'a reçue (refus SMTP, modèle désactivé) : la liste des envois
+de l'action le dit, facture par facture.
+
+### Écrans
+
+- **`/notifications`** — « Messages » dans la navigation, `notifications.consulter`
+  (accueil et exploitant) : journal filtrable par message, issue, période
+  (jours du centre, convertis en UTC, décision 4) et partie d'adresse
+  (`ILIKE`, `%` et `_` saisis restent des caractères) ; 50 lignes par page ;
+  liens vers la réservation, la facture, le contrat, le pli, l'offre ou la
+  fiche client quand le rôle peut les ouvrir. Il rappelle la durée de
+  conservation et dit quand le SMTP n'est pas configuré.
+- **`/notifications/modeles`** et **`/notifications/modeles/[evenement]`** —
+  `notifications.gerer` (exploitant) : liste par destinataire (clients,
+  centre) avec la catégorie qui permet de refuser, « Personnalisé » ou
+  « Texte par défaut », « Actif » ou « Désactivé » en toutes lettres ;
+  éditeur avec objet, texte, activation, variables (insérables au curseur
+  du dernier champ utilisé) et **aperçu rendu à la saisie** avec les données
+  d'exemple, par le même rendu que l'envoi. « Revenir au texte par défaut »
+  réécrit la ligne avec le texte du code (confirmation par dialogue),
+  l'activation restant celle choisie. Un modèle est « personnalisé » quand
+  son texte diffère de celui du code.
+- **`/compte/preferences`** — « Préférences » dans l'espace client : une
+  case par catégorie, pour chaque entreprise de la personne (une légende par
+  entreprise quand elle en a plusieurs). Toutes les catégories sont écrites
+  à chaque enregistrement (`on conflict … do update`). L'accès réglé est
+  pris parmi ceux du compte, jamais dans le formulaire ; l'écriture se fait
+  sous portée client, et la clé étrangère composite refuse un accès d'une
+  autre entreprise. Mobile d'abord : lignes et bouton de 44 px. La page dit
+  que l'ouverture d'un accès part toujours, et que les relances vont aux
+  contacts de facturation quels que soient ces choix.
+
+### Purge
+
+`/api/maintenance/conservation` appelle `purge_expired_notification_deliveries()`
+dans sa propre transaction, avant la purge du courrier : une panne du
+stockage ne la retient pas. Le nombre de lignes purgées est rendu
+(`notificationDeliveries`).
+
+### Tests
+
+`rendu.test.ts` et `catalogue.test.ts` (variables, valeurs manquantes,
+réinterprétation, objet sur une ligne, vérification, textes par défaut
+valides), `journal-filtres.test.ts`, `courriel.test.ts` (issue sans SMTP),
+`moteur.db.test.ts` (texte par défaut et modèle du centre, modèle désactivé,
+préférences, accès retirés et fiche archivée, message au centre, échec SMTP
+journalisé avec ses adresses, SMTP non configuré journalisé, transport qui
+lève, base injoignable, **aucune donnée du corps dans aucune colonne du
+journal**), `declencheurs.db.test.ts` (chaque déclencheur, l'état attendu, les
+destinataires, l'absence d'expéditeur, d'adresse, de consigne et de
+remarques), `queries.db.test.ts` (modèles, filtres et pagination du journal,
+préférences sous portée client), et la route de conservation.
+
+### À valider par le centre
+
+- Une facture émise prévient les **accès** de l'espace client, pas les
+  contacts « factures » sans accès : le message mène à l'espace.
+- Une réservation saisie par l'équipe pour une entreprise la prévient
+  (`booking_confirmed`) ; les réservations posées en masse et les séries ne
+  préviennent pas.
+- Un message non envoyé (`skipped`) ne garde pas les adresses qu'il aurait
+  servies.
+- La durée du journal reste celle du centre (`notification_log_retention_months`) ;
+  son réglage à l'écran relève de la configuration des durées.

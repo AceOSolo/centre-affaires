@@ -1,67 +1,81 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { invitationMessage } from '../clients/invitation.ts'
-import { mailArrivedMessage, mailScannedMessage, openingRequestedMessage } from './notifications.ts'
+import { formatDateTime } from '../../lib/dates.ts'
+import { defaultTemplates, notificationEventLabels } from '../notifications/catalogue.ts'
+import { renderMessage } from '../notifications/rendu.ts'
+import type { NotificationEvent } from '../notifications/schema.ts'
+
+/**
+ * Textes par défaut des courriels du courrier et de l'invitation (ADR 015),
+ * désormais rendus par le moteur de notifications (ADR 038) : ce qu'un centre
+ * qui n'a écrit aucun modèle envoie.
+ */
+const rendre = (event: NotificationEvent, values: Record<string, string | null | undefined>) =>
+  renderMessage(defaultTemplates[event], { centre: 'Handfield', ...values }, notificationEventLabels[event])
 
 const faits = {
-  centreName: 'Handfield',
-  clientName: 'Atelier Durand',
-  kind: 'recommande' as const,
+  client: 'Atelier Durand',
+  nature: 'recommandé',
   // 1er octobre 0h30 à Paris.
-  receivedAt: new Date('2026-09-30T22:30:00Z'),
-  timeZone: 'Europe/Paris',
-  link: 'https://www.handfield.fr/compte/courrier',
+  date: formatDateTime(new Date('2026-09-30T22:30:00Z'), 'Europe/Paris'),
+  lien: 'https://www.handfield.fr/compte/courrier',
 }
 
 describe('courriels du courrier', () => {
   it('annonce l’arrivée sans rien dire du contenu', () => {
-    const { subject, text } = mailArrivedMessage({ ...faits, opened: false })
+    const { subject, body } = rendre('mail_received', faits)
     assert.equal(subject, 'Nouveau courrier pour Atelier Durand')
-    assert.match(text, /recommandé/)
-    assert.match(text, /en demander l’ouverture/)
-    assert.match(text, /ne contient pas le document/)
-    assert.ok(text.includes(faits.link))
+    assert.match(body, /recommandé/)
+    assert.match(body, /en demander l’ouverture/)
+    assert.match(body, /ne contient pas le document/)
+    assert.ok(body.includes(faits.lien))
   })
 
   it('date le pli à l’heure du centre', () => {
-    const { text } = mailArrivedMessage({ ...faits, opened: false })
-    assert.match(text, /1 oct\. 2026 à 00:30/)
+    const { body } = rendre('mail_received', faits)
+    assert.match(body, /1 oct\. 2026 à 00:30/)
   })
 
-  it('dit d’emblée qu’un pli enregistré ouvert est déjà lisible', () => {
-    const { subject, text } = mailArrivedMessage({ ...faits, opened: true })
-    assert.equal(subject, 'Nouveau courrier numérisé pour Atelier Durand')
-    assert.match(text, /ouvert et numérisé/)
-    assert.doesNotMatch(text, /en demander l’ouverture/)
-  })
-
-  it('prévient de la numérisation', () => {
-    const { subject } = mailScannedMessage(faits)
+  it('prévient de la numérisation, lisible dans l’espace', () => {
+    const { subject, body } = rendre('mail_scanned', faits)
     assert.equal(subject, 'Votre courrier a été numérisé — Atelier Durand')
+    assert.match(body, /ouvert et numérisé/)
+    assert.doesNotMatch(body, /en demander l’ouverture/)
   })
 
   it('nomme le demandeur dans la demande adressée au centre', () => {
-    const { text } = openingRequestedMessage({ ...faits, requestedBy: 'Jeanne Durand' })
-    assert.match(text, /^Jeanne Durand demande l’ouverture/)
+    const { subject, body } = rendre('mail_request_submitted', {
+      ...faits,
+      demande: 'ouverture et numérisation',
+      demandeur: 'Jeanne Durand',
+      lien: 'https://www.handfield.fr/courrier/1',
+    })
+    assert.equal(subject, 'Demande de courrier (ouverture et numérisation) — Atelier Durand')
+    assert.match(body, /^Jeanne Durand demande pour Atelier Durand : ouverture et numérisation/)
   })
 
   it('reste lisible sans adresse d’application configurée', () => {
-    const { text } = mailScannedMessage({ ...faits, link: undefined })
-    assert.doesNotMatch(text, /undefined/)
+    const { body } = rendre('mail_scanned', { ...faits, lien: undefined })
+    assert.doesNotMatch(body, /undefined/)
+    assert.doesNotMatch(body, /Votre boîte aux lettres/)
+    assert.match(body, /ne contient pas le document/)
+  })
+
+  it('signe du nom du centre', () => {
+    assert.match(rendre('mail_received', faits).body, /—\nHandfield$/)
   })
 })
 
 describe('invitation à l’espace client', () => {
   it('indique l’adresse avec laquelle créer l’accès', () => {
-    const { subject, text } = invitationMessage({
-      centreName: 'Handfield',
-      clientName: 'Atelier Durand',
-      email: 'jeanne@durand.fr',
-      link: 'https://www.handfield.fr/auth/connexion',
+    const { subject, body } = rendre('member_invited', {
+      client: 'Atelier Durand',
+      adresse: 'jeanne@durand.fr',
+      lien: 'https://www.handfield.fr/auth/connexion',
     })
     assert.equal(subject, 'Votre espace client Handfield')
-    assert.match(text, /jeanne@durand\.fr/)
-    assert.match(text, /https:\/\/www\.handfield\.fr\/auth\/connexion/)
+    assert.match(body, /jeanne@durand\.fr/)
+    assert.match(body, /https:\/\/www\.handfield\.fr\/auth\/connexion/)
   })
 })

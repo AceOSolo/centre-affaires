@@ -2,9 +2,11 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { notifyInvoiceIssued } from '../notifications/declencheurs-facturation.ts'
 import { InvoiceRefusedError } from './factures-erreurs.ts'
 import {
   isIsoMonthInput,
@@ -92,6 +94,11 @@ export async function issueSelectedAction(
   const ids = formData.getAll('ids').map(String).filter(isUuid)
   if (ids.length === 0) return { error: 'Cochez au moins un brouillon à émettre.' }
   const result = await issueInvoices([...new Set(ids)], member.id)
+  // Chaque client est prévenu que sa facture l'attend dans son espace, après
+  // la réponse et l'un après l'autre (ADR 038). Jamais en pièce jointe.
+  after(async () => {
+    for (const issued of result.issued) await notifyInvoiceIssued(issued.id)
+  })
   revalidatePath('/factures')
   return result
 }
@@ -210,6 +217,7 @@ export async function issueInvoiceAction(
   } catch (error) {
     return { error: refusal(error) }
   }
+  after(() => notifyInvoiceIssued(id))
   revalidateInvoice(id)
   redirect(`/factures/${id}?fait=emise`)
 }
@@ -250,6 +258,7 @@ export async function creditInFullAction(
   } catch (error) {
     return { error: refusal(error) }
   }
+  after(() => notifyInvoiceIssued(creditNote.id))
   revalidateInvoice(id)
   revalidateInvoice(creditNote.id)
   redirect(`/factures/${creditNote.id}?fait=avoir-emis`)

@@ -1,12 +1,14 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { after } from 'next/server'
 
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
 import { quote } from '../facturation/devis-queries.ts'
 import { toQuoteDisplay, type QuoteDisplay } from '../facturation/devis.ts'
+import { notifyBookingRequestSubmitted } from '../notifications/declencheurs-reservations.ts'
 import { findResource } from '../ressources/queries.ts'
 import {
   BookingConflictError,
@@ -157,8 +159,9 @@ export async function requestBookingAction(
     return { status: 'error', step: 2, message: 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.' }
   }
 
+  let requestId: string
   try {
-    await createBookingRequest({
+    const created = await createBookingRequest({
       resourceId,
       startsAt,
       endsAt,
@@ -169,6 +172,7 @@ export async function requestBookingAction(
       requesterPhone: text(formData, 'phone'),
       clientId: await requesterClientId(),
     })
+    requestId = created.id
   } catch (error) {
     if (error instanceof InvalidRangeError) {
       return { status: 'error', message: rejectionMessages['duree-trop-courte'] }
@@ -186,6 +190,8 @@ export async function requestBookingAction(
     throw error
   }
 
+  // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
+  after(() => notifyBookingRequestSubmitted(requestId))
   // Le planning du staff doit montrer la demande sans attendre.
   revalidatePath('/reservations')
   revalidatePath('/demandes')

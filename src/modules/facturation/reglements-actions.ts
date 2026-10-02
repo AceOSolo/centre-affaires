@@ -5,10 +5,11 @@ import { redirect } from 'next/navigation'
 
 import { withTenant } from '../../db/index.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
-import { emailEnabled, sendMessage } from '../../lib/courriel.ts'
+import { emailEnabled } from '../../lib/courriel.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { sendInvoiceReminder } from '../notifications/declencheurs-facturation.ts'
 import {
   paymentFormValues,
   readCancellationReason,
@@ -155,22 +156,41 @@ export async function sendRemindersAction(
       skipped.push(`${number} : ${client.name} n’a ni contact « factures » ni adresse de courriel.`)
       continue
     }
-    // Inscrite au journal dans la transaction de l'envoi : un courriel qui ne
-    // part pas n'y figure pas (ADR 034).
-    await withTenant(currentTenantId(), async (tx) => {
-      await recordReminder(tx, {
+    // Envoyée par le moteur de notifications : modèle du centre autour de la
+    // lettre, journal des messages (ADR 038).
+    const outcome = await sendInvoiceReminder({
+      invoiceId: invoice.id,
+      invoiceNumber: number,
+      clientId: client.id,
+      clientName: client.name,
+      recipients,
+      amountDueCents: draft.amountDueCents,
+      currency: invoice.currency,
+      dueDate: invoice.dueDate as string,
+      subject: draft.subject,
+      letter: draft.text,
+    })
+    const delivered = outcome.recipients.filter((address) => !outcome.failedRecipients.includes(address))
+    if ((outcome.status !== 'sent' && outcome.status !== 'failed') || delivered.length === 0) {
+      skipped.push(`${number} : non envoyée — ${outcome.error ?? 'le serveur de courriel ne l’a pas acceptée.'}`)
+      continue
+    }
+    // Inscrite au journal des relances une fois partie, telle qu'elle est
+    // partie et à qui l'a reçue : un courriel qui ne part pas n'y figure pas
+    // (ADR 034).
+    await withTenant(currentTenantId(), (tx) =>
+      recordReminder(tx, {
         invoiceId: invoice.id,
         level: draft.level,
         channel: 'email',
-        recipients,
+        recipients: delivered,
         amountDueCents: draft.amountDueCents,
         currency: invoice.currency,
-        subject: draft.subject,
-        body: draft.text,
+        subject: outcome.subject,
+        body: outcome.body,
         sentBy: member.id,
-      })
-      await sendMessage({ to: recipients, subject: draft.subject, text: draft.text })
-    })
+      }),
+    )
     sent++
   }
   if (sent > 0) revalidatePath('/paiements', 'layout')

@@ -28,6 +28,8 @@ const sections: { href: string; label: string; permission: Permission }[] = [
   // Les plis dont le client attend l'ouverture sont comptés, comme les
   // demandes : c'est une file d'attente, pas une liste de consultation.
   { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
+  // Journal des messages envoyés ; les modèles s'ouvrent depuis lui (ADR 038).
+  { href: '/notifications', label: 'Messages', permission: 'notifications.consulter' },
   { href: '/indicateurs', label: 'Indicateurs', permission: 'indicateurs.consulter' },
   { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
   { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },
