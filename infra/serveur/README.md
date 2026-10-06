@@ -146,21 +146,39 @@ fichier (ancien site), supprimer son lien dans `sites-enabled`.
 ```bash
 grep -rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
 
-mkdir -p /var/www/letsencrypt
+mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
 cp /home/deploy/centre-affaires/nginx-handfield-*.conf /etc/nginx/sites-available/
 ln -s /etc/nginx/sites-available/nginx-handfield-http.conf /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
+# Les deux noms doivent arriver sur ce serveur : deux fois « ok », et aucune
+# adresse IPv6 (Let's Encrypt essaie l'IPv6 en premier). Sinon le DNS n'est
+# pas à jour (section 6) : ne pas lancer certbot, Let's Encrypt bloque après
+# cinq échecs par heure.
+echo ok > /var/www/letsencrypt/.well-known/acme-challenge/test
+curl http://handfield.fr/.well-known/acme-challenge/test
+curl http://www.handfield.fr/.well-known/acme-challenge/test
+dig +short AAAA handfield.fr www.handfield.fr
+```
+
+Puis :
+
+```bash
 apt install certbot   # s'il n'y est pas
 certbot certonly --webroot -w /var/www/letsencrypt \
   -d www.handfield.fr -d handfield.fr \
   --deploy-hook "systemctl reload nginx"
 
-# Le bloc HTTPS seulement maintenant : avant le certificat, nginx refuserait
+# Le bloc HTTPS seulement si le certificat existe : sans lui, nginx refuserait
 # de démarrer, et avec lui tous les sites du serveur.
-ln -s /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/
-nginx -t && systemctl reload nginx
+test -f /etc/letsencrypt/live/www.handfield.fr/fullchain.pem \
+  && ln -s /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/ \
+  && nginx -t && systemctl reload nginx
 ```
+
+Si `nginx -t` échoue un jour avec le bloc HTTPS actif, retirer son lien
+aussitôt (`rm /etc/nginx/sites-enabled/nginx-handfield-https.conf`) : nginx
+continue de servir sa configuration précédente, mais ne redémarrerait pas.
 
 Le renouvellement est automatique (minuteur de certbot) et recharge nginx.
 Vérifier :
