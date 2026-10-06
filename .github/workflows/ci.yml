@@ -116,11 +116,11 @@ jobs:
           printf 'Host serveur\n  HostName %s\n  Port %s\n  User %s\n  IdentityFile ~/.ssh/id_deploy\n  StrictHostKeyChecking yes\n' \
             "$VPS_HOST" "$VPS_PORT" "$VPS_USER" > ~/.ssh/config
       # La configuration suit le dépôt ; le `.env`, lui, n'y est jamais. Le
-      # fichier Apache est déposé à côté mais s'installe à la main, en root
+      # fichiers nginx sont déposés à côté mais s'installent à la main, en root
       # (infra/serveur/README.md) : le compte de déploiement n'y touche pas.
       # Le script de sauvegarde suit le dépôt de la même façon ; sa
       # configuration (`sauvegarde.env`) reste sur le serveur (ADR 022).
-      - run: scp infra/serveur/compose.yml infra/serveur/apache-handfield.conf infra/serveur/sauvegarde.sh serveur:centre-affaires/
+      - run: scp infra/serveur/compose.yml infra/serveur/nginx-handfield-*.conf infra/serveur/sauvegarde.sh serveur:centre-affaires/
       - name: Mise en service
         env:
           GHCR_USER: ${{ github.actor }}

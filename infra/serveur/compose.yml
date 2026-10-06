@@ -3,7 +3,7 @@
 # Ce fichier est recopié sur le serveur à chaque déploiement par la CI : la
 # configuration suit le dépôt. Les secrets, eux, vivent dans le `.env` posé à
 # côté, jamais dans le dépôt (modèle : `.env.example`). HTTPS et le domaine
-# sont l'affaire de l'Apache déjà en place (`apache-handfield.conf`).
+# sont l'affaire du nginx déjà en place (`nginx-handfield-*.conf`).
 name: centre-affaires
 
 services:
@@ -12,7 +12,7 @@ services:
     image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file: .env
-    # Publié sur la boucle locale seulement : joignable par Apache, jamais
+    # Publié sur la boucle locale seulement : joignable par nginx, jamais
     # depuis l'extérieur. PORT_LOCAL si 3000 est déjà pris sur le serveur.
     ports:
       - "127.0.0.1:${PORT_LOCAL:-3000}:3000"

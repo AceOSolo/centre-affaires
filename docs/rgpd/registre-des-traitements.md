@@ -27,7 +27,7 @@ l'entreprise.
 |---|---|---|---|---|---|
 | **Neon** (Neon, Inc., États-Unis) | Base PostgreSQL, authentification (Neon Auth), stockage objet (bucket `uploads`) | toutes | AWS `eu-central-1`, Francfort (ADR 003, 015) | Accord de traitement (DPA) de Neon. Accès possible du fournisseur depuis les États-Unis : garanties de transfert à vérifier dans le DPA. | DPA à accepter et à archiver ; garanties à vérifier |
 | **Neon Auth**, par Neon | Courriels d'authentification (vérification d'adresse, mot de passe) envoyés depuis `auth@mail.myneon.app` tant qu'aucun SMTP propre n'est configuré (ADR 008) | adresse, nom | à vérifier | DPA de Neon | à vérifier |
-| **OVHcloud** (OVH SAS, France) | VPS de production : application, Apache, journaux, fichiers en transit pendant la sauvegarde ; zone DNS | toutes, en transit ; journaux | centre de données du VPS : **à vérifier qu'il est en UE** | contrat OVHcloud, accord de traitement inclus | localisation à vérifier |
+| **OVHcloud** (OVH SAS, France) | VPS de production : application, nginx, journaux, fichiers en transit pendant la sauvegarde ; zone DNS | toutes, en transit ; journaux | centre de données du VPS : **à vérifier qu'il est en UE** | contrat OVHcloud, accord de traitement inclus | localisation à vérifier |
 | **Destination des sauvegardes** (recommandée : OVHcloud Object Storage) | Conservation des sauvegardes, chiffrées avant envoi : le prestataire ne peut pas les lire (ADR 022) | toutes, chiffrées | UE, dans une autre région que le VPS | DPA du prestataire | à choisir |
 | **Brevo** (Sendinblue SAS, France) | Envoi des courriels transactionnels par SMTP (ADR 015) | adresse du destinataire, objet, texte | Europe (ADR 015) | DPA à accepter dans le compte Brevo ; suivi des ouvertures et des clics désactivé | DPA à accepter et à archiver |
 | **Google** (Google Agenda) | Agendas des salles reliées (ADR 014) | objet de la réservation, ressource, créneau, lien vers la fiche | aucune garantie de localisation pour un compte Gmail : **transfert hors UE possible** | conditions de Google ; transfert à encadrer | ADR 014 au statut « proposé » : compromis à valider |
@@ -209,12 +209,12 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Finalité | Sécurité du service et diagnostic des pannes. |
 | Base légale | Intérêt légitime (art. 6-1-f) ; obligation de sécurité (art. 32). |
 | Personnes | Visiteurs du site, utilisateurs. |
-| Données | Apache : adresse IP, date, URL demandée, navigateur, page d'origine, code de réponse. Application : messages d'erreur, qui peuvent citer une adresse électronique en cas d'échec d'envoi. |
+| Données | nginx : adresse IP, date, URL demandée, navigateur, page d'origine, code de réponse. Application : messages d'erreur, qui peuvent citer une adresse électronique en cas d'échec d'envoi. |
 | Destinataires | Opérateur technique. |
 | Sous-traitants | OVHcloud. |
 | Transferts hors UE | Aucun, sous réserve de la localisation du VPS. |
-| Conservation | Apache : 14 jours avec la rotation par défaut de Debian, **à vérifier puis à valider**. Application : jusqu'au déploiement suivant, 50 Mo au plus. |
-| Code | `infra/serveur/apache-handfield.conf`, `infra/serveur/compose.yml` |
+| Conservation | nginx : 14 jours avec la rotation par défaut de Debian, **à vérifier puis à valider**. Application : jusqu'au déploiement suivant, 50 Mo au plus. |
+| Code | `infra/serveur/nginx-handfield-http.conf`, `infra/serveur/nginx-handfield-https.conf`, `infra/serveur/compose.yml` |
 
 ### T10. Sauvegardes
 

@@ -1,7 +1,8 @@
 # ADR 013 — Hébergement sur le VPS de production, déployé depuis GitHub
 
 **Date** : 2026-09-30
-**Statut** : accepté — remplace la partie « hébergement applicatif » de l'ADR 001
+**Statut** : accepté — remplace la partie « hébergement applicatif » de l'ADR 001 ;
+Apache remplacé par nginx, le serveur web réellement en place (ADR 042)
 
 ## Contexte
 

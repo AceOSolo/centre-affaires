@@ -26,7 +26,7 @@ Les règles du projet, à lire avant toute contribution, sont dans
 | Authentification | Neon Auth (Better Auth managé) | ADR 008 |
 | Fichiers | Neon Object Storage (S3), bucket privé `uploads` | ADR 015 |
 | Courriels | SMTP de Brevo | ADR 015 |
-| Hébergement | Image Docker sur le VPS de production, derrière Apache | ADR 013 |
+| Hébergement | Image Docker sur le VPS de production, derrière nginx | ADR 013, 042 |
 | Sauvegardes | Lot nocturne chiffré, hors du serveur | ADR 022 |
 
 ## Organisation

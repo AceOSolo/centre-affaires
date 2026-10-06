@@ -4,7 +4,7 @@ Le choix et ses raisons : [ADR 013](../../docs/decisions/013-hebergement-vps-de-
 
 L'application tourne dans un conteneur Docker sur le VPS de production (Debian),
 à côté des sites qu'il héberge déjà. Elle n'écoute que sur `127.0.0.1` ; c'est
-l'Apache en place qui sert le domaine et HTTPS. La base reste chez Neon.
+le nginx en place qui sert le domaine et HTTPS. La base reste chez Neon.
 
 Chaque push sur `main` dont la CI est verte déclenche le job `deploy` : l'image
 est construite par GitHub, puis lancée sur le serveur. Ce document décrit
@@ -19,7 +19,7 @@ S'il n'y est pas déjà (`docker compose version` pour vérifier) :
 curl -fsSL https://get.docker.com | sudo sh
 ```
 
-Docker ne touche ni à Apache ni aux sites existants : le conteneur n'est
+Docker ne touche ni à nginx ni aux sites existants : le conteneur n'est
 joignable que depuis le serveur lui-même.
 
 ## 2. Compte de déploiement
@@ -136,27 +136,33 @@ ajoutent, sans les remplacer (étape 8).
 L'IPv4 du serveur figure dans l'espace client OVH (Bare Metal Cloud → VPS), ou
 dans la zone DNS d'un autre domaine déjà hébergé dessus.
 
-## 7. Apache et certificat
+## 7. nginx et certificat
 
 Une fois le DNS propagé (`dig +short www.handfield.fr` renvoie l'adresse du
-serveur), en root sur le serveur :
+serveur), en root sur le serveur. Aucun autre site nginx ne doit déjà déclarer
+le domaine : la première commande ne doit rien afficher. Si elle cite un
+fichier (ancien site), supprimer son lien dans `sites-enabled`.
 
 ```bash
-a2enmod proxy proxy_http headers ssl rewrite
-mkdir -p /var/www/letsencrypt
-cp /home/deploy/centre-affaires/apache-handfield.conf /etc/apache2/sites-available/
-a2ensite apache-handfield
-apache2ctl configtest && systemctl reload apache2
+grep -rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
 
-# Le bloc HTTPS du fichier ne s'active qu'une fois le certificat présent.
+mkdir -p /var/www/letsencrypt
+cp /home/deploy/centre-affaires/nginx-handfield-*.conf /etc/nginx/sites-available/
+ln -s /etc/nginx/sites-available/nginx-handfield-http.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+
 apt install certbot   # s'il n'y est pas
 certbot certonly --webroot -w /var/www/letsencrypt \
   -d www.handfield.fr -d handfield.fr \
-  --deploy-hook "systemctl reload apache2"
-systemctl reload apache2
+  --deploy-hook "systemctl reload nginx"
+
+# Le bloc HTTPS seulement maintenant : avant le certificat, nginx refuserait
+# de démarrer, et avec lui tous les sites du serveur.
+ln -s /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
 ```
 
-Le renouvellement est automatique (minuteur de certbot) et recharge Apache.
+Le renouvellement est automatique (minuteur de certbot) et recharge nginx.
 Vérifier :
 
 ```bash
@@ -164,9 +170,9 @@ curl -I https://www.handfield.fr   # 200
 curl -I https://handfield.fr       # 301 vers https://www.handfield.fr/
 ```
 
-Le fichier Apache est redéposé dans `/home/deploy/centre-affaires/` à chaque
-déploiement. S'il change dans le dépôt, le recopier dans `sites-available` et
-recharger Apache.
+Les deux fichiers nginx sont redéposés dans `/home/deploy/centre-affaires/` à
+chaque déploiement. S'ils changent dans le dépôt, les recopier dans
+`sites-available` puis `nginx -t && systemctl reload nginx`.
 
 ## 8. Courriels avec Brevo
 
@@ -302,7 +308,7 @@ docker compose logs -f app    # journaux de l'application
 tail sauvegardes.log          # dernières sauvegardes (section 9)
 ```
 
-Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
+Journaux nginx du site : `/var/log/nginx/handfield-*.log`.
 
 ## Conservation du courrier
 
