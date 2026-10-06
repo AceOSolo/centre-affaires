@@ -15,7 +15,9 @@ pas écouter tous les deux sur les ports 80 et 443.
 ## Décision
 
 **Le nginx en place sert `www.handfield.fr` et HTTPS**, en proxy vers le
-conteneur sur `127.0.0.1:3000`. Le reste de l'ADR 013 ne change pas :
+conteneur sur `127.0.0.1:3100` : le port 3000 du serveur est déjà pris par
+Open WebUI, et y envoyer handfield aurait servi cet autre service sous le
+domaine. Le reste de l'ADR 013 ne change pas :
 conteneur publié sur la boucle locale, image construite par la CI, base chez
 Neon, certificat Let's Encrypt obtenu par certbot en `--webroot`, `www` comme
 adresse canonique.

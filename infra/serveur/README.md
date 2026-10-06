@@ -92,8 +92,10 @@ sudo -u deploy chmod 600 /home/deploy/centre-affaires/.env
 ```
 
 Contenu : voir [`.env.example`](.env.example). Ce fichier ne quitte jamais le
-serveur. Si `sudo ss -ltnp | grep ':3000 '` montre que le port 3000 est déjà
-pris, y ajouter `PORT_LOCAL=<autre port>`. La clé de chiffrement des documents
+serveur. L'application écoute sur `127.0.0.1:3100`, 3000 étant pris par Open
+WebUI. Si `sudo ss -ltnp | grep ':3100 '` montre que 3100 l'est aussi, y
+ajouter `PORT_LOCAL=<autre port>` et reporter ce port dans
+`nginx-handfield-https.conf`. La clé de chiffrement des documents
 se crée et se sauvegarde hors du serveur comme indiqué à « Chiffrement des
 documents », plus bas.
 
@@ -113,7 +115,7 @@ Settings → Pages : désactiver GitHub Pages.
 
 Puis Actions → ci → Run workflow sur `main` : premier déploiement. Sur le
 serveur, dans `/home/deploy/centre-affaires`, `docker compose ps` doit montrer
-`app` en `healthy`, et `curl -I http://127.0.0.1:3000/` répondre 200.
+`app` en `healthy`, et `curl -I http://127.0.0.1:3100/` répondre 200.
 
 ## 6. DNS chez OVH
 

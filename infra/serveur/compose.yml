@@ -13,9 +13,10 @@ services:
     restart: unless-stopped
     env_file: .env
     # Publié sur la boucle locale seulement : joignable par nginx, jamais
-    # depuis l'extérieur. PORT_LOCAL si 3000 est déjà pris sur le serveur.
+    # depuis l'extérieur. 3100 et pas 3000 : sur le VPS de production, 3000
+    # est pris par Open WebUI (ADR 042). PORT_LOCAL si 3100 l'est aussi.
     ports:
-      - "127.0.0.1:${PORT_LOCAL:-3000}:3000"
+      - "127.0.0.1:${PORT_LOCAL:-3100}:3000"
     # Journaux bornés (registre RGPD, docs/rgpd/durees-de-conservation.md) :
     # sans limite, Docker les garde jusqu'à saturer le disque. Ils peuvent
     # citer une adresse électronique dans une erreur d'envoi. Cinq fichiers
