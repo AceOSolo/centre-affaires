@@ -138,10 +138,10 @@ dans la zone DNS d'un autre domaine déjà hébergé dessus.
 
 ## 7. nginx et certificat
 
-Une fois le DNS propagé (`dig +short www.handfield.fr` renvoie l'adresse du
-serveur), en root sur le serveur. Aucun autre site nginx ne doit déjà déclarer
-le domaine : la première commande ne doit rien afficher. Si elle cite un
-fichier (ancien site), supprimer son lien dans `sites-enabled`.
+Une fois le DNS modifié (section 6), en root sur le serveur. Aucun autre site
+nginx ne doit déjà déclarer le domaine : la première commande ne doit rien
+afficher. Si elle cite un fichier (ancien site), supprimer son lien dans
+`sites-enabled`.
 
 ```bash
 grep -rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
@@ -151,28 +151,26 @@ cp /home/deploy/centre-affaires/nginx-handfield-*.conf /etc/nginx/sites-availabl
 ln -s /etc/nginx/sites-available/nginx-handfield-http.conf /etc/nginx/sites-enabled/
 nginx -t && systemctl reload nginx
 
-# Les deux noms doivent arriver sur ce serveur : deux fois « ok », et aucune
-# adresse IPv6 (Let's Encrypt essaie l'IPv6 en premier). Sinon le DNS n'est
-# pas à jour (section 6) : ne pas lancer certbot, Let's Encrypt bloque après
-# cinq échecs par heure.
 echo ok > /var/www/letsencrypt/.well-known/acme-challenge/test
-curl http://handfield.fr/.well-known/acme-challenge/test
-curl http://www.handfield.fr/.well-known/acme-challenge/test
-dig +short AAAA handfield.fr www.handfield.fr
+for d in handfield.fr www.handfield.fr; do echo "$d -> $(getent ahosts $d | awk '{print $1}' | sort -u | xargs) | test : $(curl -s http://$d/.well-known/acme-challenge/test)"; done
 ```
 
-Puis :
+Les deux lignes doivent montrer l'IPv4 du serveur, seule, et `test : ok`.
+Toute autre adresse, IPv6 comprise (Let's Encrypt essaie l'IPv6 en premier),
+est une ligne à supprimer dans la zone DNS (section 6). Tant que ce n'est pas
+le cas, ne pas lancer certbot : Let's Encrypt bloque après cinq échecs par
+heure. Relancer la boucle après chaque modification du DNS.
+
+Puis, d'un seul tenant : le bloc HTTPS ne s'active que si certbot a réussi.
+Sans certificat, nginx refuserait de démarrer, et avec lui tous les sites du
+serveur.
 
 ```bash
 apt install certbot   # s'il n'y est pas
 certbot certonly --webroot -w /var/www/letsencrypt \
   -d www.handfield.fr -d handfield.fr \
-  --deploy-hook "systemctl reload nginx"
-
-# Le bloc HTTPS seulement si le certificat existe : sans lui, nginx refuserait
-# de démarrer, et avec lui tous les sites du serveur.
-test -f /etc/letsencrypt/live/www.handfield.fr/fullchain.pem \
-  && ln -s /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/ \
+  --deploy-hook "systemctl reload nginx" \
+  && ln -sf /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/ \
   && nginx -t && systemctl reload nginx
 ```
 
