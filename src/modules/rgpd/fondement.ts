@@ -68,7 +68,7 @@ export type AnonymizationTrace = {
 /**
  * « à la demande d'effacement reçue le 28/09/2026, par Camille Martin » ;
  * « au terme de la durée de conservation » ; rien pour une anonymisation
- * antérieure au fondement tracé (migration 0044).
+ * antérieure au fondement tracé.
  */
 export function anonymizationTraceLabel(trace: AnonymizationTrace): string | null {
   const by = trace.byName ? `, par ${trace.byName}` : ''

@@ -1,7 +1,9 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbConstraintName, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
-import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { hasCapacity, mergeAttributes } from './attributs.ts'
 import { centreRanges } from './ouverture.ts'
@@ -91,19 +93,16 @@ export class DuplicateResourceCodeError extends Error {
 export async function createResource(input: CreateResourceInput): Promise<Resource> {
   try {
     const created = await withTenant(currentTenantId(), async (tx) => {
-      const [resource] = await tx
-        .insert(resources)
-        .values({
-          resourceType: input.resourceType,
-          code: input.code,
-          name: input.name,
-          description: input.description ?? null,
-          capacity: input.capacity ?? null,
-          status: input.status ?? 'active',
-          attributes: input.attributes ?? {},
-          ...(input.clientBookingMode ? { clientBookingMode: input.clientBookingMode } : {}),
-        })
-        .returning()
+      const resource = await insertReturning(tx, resources, {
+        resourceType: input.resourceType,
+        code: input.code,
+        name: input.name,
+        description: input.description ?? null,
+        capacity: input.capacity ?? null,
+        status: input.status ?? 'active',
+        attributes: input.attributes ?? {},
+        ...(input.clientBookingMode ? { clientBookingMode: input.clientBookingMode } : {}),
+      })
 
       const modele = centreRanges(
         await tx
@@ -127,7 +126,7 @@ export async function createResource(input: CreateResourceInput): Promise<Resour
     return created
   } catch (error) {
     // L'unicité du code et celle du numéro de casier sont tenues par des index
-    // partiels : les vérifier en amont laisserait passer deux créations
+    // uniques (sur colonnes générées) : les vérifier en amont laisserait passer deux créations
     // simultanées.
     throw uniquenessError(error, input.code, input.attributes) ?? error
   }
@@ -144,7 +143,7 @@ export class DuplicateLockerNumberError extends Error {
   }
 }
 
-/** Index qui tient le numéro de casier unique (migration 0028). */
+/** Index qui tient le numéro de casier unique (colonne générée `locker_numero_key`). */
 const LOCKER_NUMBER_INDEX = 'resources_tenant_locker_numero_key'
 
 /**
@@ -161,8 +160,12 @@ function uniquenessError(
   code: string,
   attributes: object | undefined,
 ): Error | undefined {
-  if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) return undefined
-  if (pgConstraintName(error) === LOCKER_NUMBER_INDEX) {
+  if (dbErrorCode(error) !== DB_UNIQUE_VIOLATION) return undefined
+  // Le nom de l'index est cherché aussi dans le message brut : le serveur peut
+  // le rendre en français (« pour la clef '…' »), que `dbConstraintName` ne lit pas.
+  const causeMessage = (error as { cause?: { sqlMessage?: unknown } } | undefined)?.cause?.sqlMessage
+  const rawMessage = typeof causeMessage === 'string' ? causeMessage : String((error as Error)?.message ?? '')
+  if (dbConstraintName(error) === LOCKER_NUMBER_INDEX || rawMessage.includes(`.${LOCKER_NUMBER_INDEX}'`)) {
     const numero = (attributes as { numero?: unknown } | undefined)?.numero
     return new DuplicateLockerNumberError(typeof numero === 'string' ? numero.trim() : '')
   }
@@ -184,7 +187,7 @@ export type UpdateResourceInput = {
  *
  * La ligne est verrouillée le temps de fusionner les attributs : deux
  * modifications simultanées ne doivent pas s'écraser en relisant chacune
- * l'ancien JSONB. Rend `undefined` pour une ressource absente ou archivée —
+ * l'ancien JSON. Rend `undefined` pour une ressource absente ou archivée —
  * une ressource archivée reste lisible, pas modifiable (décision 6).
  */
 export async function writeResourceUpdate(
@@ -206,18 +209,19 @@ export async function writeResourceUpdate(
     input.attributes as Record<string, unknown>,
   )
 
-  const [updated] = await tx
-    .update(resources)
-    .set({
+  const [updated] = await updateReturning(
+    tx,
+    resources,
+    {
       code: input.code,
       name: input.name,
       description: input.description,
       capacity: hasCapacity(existing.resourceType) ? input.capacity : null,
       status: input.status,
       attributes: attributes as ResourceAttributes[ResourceType],
-    })
-    .where(eq(resources.id, id))
-    .returning()
+    },
+    eq(resources.id, id),
+  )
   return updated
 }
 
@@ -232,7 +236,7 @@ export async function updateResource(
   try {
     return await withTenant(currentTenantId(), (tx) => writeResourceUpdate(tx, id, input))
   } catch (error) {
-    // Même garde que la création : les index partiels tranchent, pas une lecture.
+    // Même garde que la création : les index uniques tranchent, pas une lecture.
     throw uniquenessError(error, input.code, input.attributes) ?? error
   }
 }
@@ -245,11 +249,12 @@ export async function updateResource(
  */
 export async function updateClientBookingMode(id: string, mode: ClientBookingMode): Promise<boolean> {
   const updated = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(resources)
-      .set({ clientBookingMode: mode })
-      .where(and(eq(resources.id, id), isNull(resources.deletedAt)))
-      .returning({ id: resources.id }),
+    updateReturning(
+      tx,
+      resources,
+      { clientBookingMode: mode },
+      and(eq(resources.id, id), isNull(resources.deletedAt)),
+    ),
   )
   return updated.length > 0
 }
@@ -269,7 +274,7 @@ export async function archiveResource(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(resources)
-      .set({ deletedAt: sql`now()`, status: 'retired' })
+      .set({ deletedAt: maintenant(), status: 'retired' })
       .where(and(eq(resources.id, id), isNull(resources.deletedAt))),
   )
 }

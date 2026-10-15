@@ -1,8 +1,10 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias } from 'drizzle-orm/mysql-core'
 
-import { PG_PAYMENT_REFUSED, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_PAYMENT_REFUSED, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenants, type Tenant } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -151,7 +153,7 @@ export async function recordPayment(
         .select()
         .from(invoices)
         .where(eq(invoices.id, invoiceId))
-        .for('no key update')
+        .for('update')
       if (!invoice || invoice.deletedAt) throw new PaymentRefusedError('Facture introuvable.')
       if (invoice.kind !== 'invoice') {
         throw new PaymentRefusedError(
@@ -170,24 +172,20 @@ export async function recordPayment(
       })
       if (amountMessage) throw new PaymentAmountError(amountMessage)
 
-      const [created] = await tx
-        .insert(payments)
-        .values({
-          invoiceId,
-          amountCents: input.amountCents,
-          currency: invoice.currency,
-          paidOn: input.paidOn,
-          method: input.method,
-          reference: input.reference,
-          notes: input.notes,
-          sepaMandateId: input.method === 'direct_debit' ? invoice.sepaMandateId : null,
-          recordedBy,
-        })
-        .returning()
-      return created
+      return insertReturning(tx, payments, {
+        invoiceId,
+        amountCents: input.amountCents,
+        currency: invoice.currency,
+        paidOn: input.paidOn,
+        method: input.method,
+        reference: input.reference,
+        notes: input.notes,
+        sepaMandateId: input.method === 'direct_debit' ? invoice.sepaMandateId : null,
+        recordedBy,
+      })
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_PAYMENT_REFUSED) {
+    if (dbErrorCode(error) === DB_PAYMENT_REFUSED) {
       throw new PaymentRefusedError(guardMessage(error) ?? 'Paiement refusé.')
     }
     throw error
@@ -212,13 +210,12 @@ export async function cancelPayment({
 }): Promise<boolean> {
   if (!isUuid(invoiceId) || !isUuid(paymentId)) return false
   const cancelled = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(payments)
-      .set({ cancelledAt: sql`now()`, cancelledBy, cancellationReason: reason })
-      .where(
-        and(eq(payments.id, paymentId), eq(payments.invoiceId, invoiceId), isNull(payments.cancelledAt)),
-      )
-      .returning({ id: payments.id }),
+    updateReturning(
+      tx,
+      payments,
+      { cancelledAt: maintenant(), cancelledBy, cancellationReason: reason },
+      and(eq(payments.id, paymentId), eq(payments.invoiceId, invoiceId), isNull(payments.cancelledAt)),
+    ),
   )
   return cancelled.length > 0
 }

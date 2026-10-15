@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
-import { and, asc, eq, gt, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, gt, inArray, isNull, lt, ne } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
-import { pgErrorCode, PG_EXCLUSION_VIOLATION } from '../../db/errors.ts'
+import { dbErrorCode, DB_EXCLUSION_VIOLATION } from '../../db/errors.ts'
+import { insertManyReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { resources } from '../ressources/schema.ts'
 import { overlaps } from './availability.ts'
@@ -32,7 +34,12 @@ export async function insertBookingSeries(tx: Transaction, input: BulkBookingInp
   }
   const available = await tx.select({ id: resources.id }).from(resources)
     .where(and(inArray(resources.id, resourceIds), eq(resources.status, 'active'), isNull(resources.deletedAt)))
-    .for('share')
+    // Verrou exclusif, dans l'ordre des identifiants : deux lots concurrents se
+    // sérialisent ici (le second relit ensuite les réservations du premier et
+    // nomme le conflit) au lieu de s'interbloquer au verrou que prend le
+    // trigger anti-chevauchement.
+    .orderBy(asc(resources.id))
+    .for('update')
   if (available.length !== resourceIds.length) throw new RecurrenceError('Une des ressources choisies n’est plus en service.')
 
   const existing = await tx.select().from(bookings).where(and(
@@ -43,11 +50,11 @@ export async function insertBookingSeries(tx: Transaction, input: BulkBookingInp
   if (conflicts.length) throw new BookingConflictError(conflicts)
 
   const seriesId = randomUUID()
-  const created = await tx.insert(bookings).values(resourceIds.flatMap((resourceId) => ranges.map((range) => ({
+  const created = await insertManyReturning(tx, bookings, resourceIds.flatMap((resourceId) => ranges.map((range) => ({
     ...range, resourceId, seriesId, kind: input.kind, channel: 'staff' as const,
     title: input.kind === 'unavailability' ? `Indisponible — ${input.title.trim()}` : input.title.trim(),
     notes: input.notes?.trim() || null,
-  })))).returning({ id: bookings.id })
+  }))))
   return { seriesId, count: created.length }
 }
 
@@ -55,9 +62,10 @@ export async function createBookingSeries(input: BulkBookingInput, timeZone: str
   try {
     return await withTenant(currentTenantId(), (tx) => insertBookingSeries(tx, input, timeZone))
   } catch (error) {
-    // La contrainte d’exclusion tranche aussi lorsqu’un autre utilisateur écrit
-    // entre la lecture et l’insertion. La transaction annule alors tout le lot.
-    if (pgErrorCode(error) === PG_EXCLUSION_VIOLATION) throw new BookingConflictError([])
+    // Le garde anti-chevauchement de la base tranche aussi lorsqu’un autre
+    // utilisateur écrit entre la lecture et l’insertion. La transaction annule
+    // alors tout le lot.
+    if (dbErrorCode(error) === DB_EXCLUSION_VIOLATION) throw new BookingConflictError([])
     throw error
   }
 }
@@ -72,9 +80,8 @@ export async function listBookingSeries(seriesId: string): Promise<BookingWithRe
 
 /** `staffId` : le membre de l'équipe qui annule, tracé sur chaque occurrence (ADR 036). */
 export async function cancelFutureSeries(tx: Transaction, seriesId: string, staffId: string | null = null): Promise<Pick<Booking, 'id'>[]> {
-  return tx.update(bookings).set({
-    status: 'cancelled', cancelledAt: sql`now()`, cancellationReason: 'Annulation des occurrences à venir de la série',
+  return updateReturning(tx, bookings, {
+    status: 'cancelled', cancelledAt: maintenant(), cancellationReason: 'Annulation des occurrences à venir de la série',
     cancelledByStaffId: staffId,
-  }).where(and(eq(bookings.seriesId, seriesId), ne(bookings.status, 'cancelled'), gt(bookings.startsAt, sql`now()`)))
-    .returning({ id: bookings.id })
+  }, and(eq(bookings.seriesId, seriesId), ne(bookings.status, 'cancelled'), gt(bookings.startsAt, maintenant())))
 }

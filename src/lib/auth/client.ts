@@ -1,11 +1,11 @@
 'use client'
 
-import { createAuthClient } from '@neondatabase/auth/next'
+import { createAuthClient } from 'better-auth/react'
 
 /**
  * Client d'authentification côté navigateur.
  *
- * Sans argument : il s'adresse au relais `/api/auth` de cette application, donc
- * à la même origine. L'URL du service Neon reste côté serveur.
+ * Sans `baseURL` : il s'adresse à `/api/auth` sur la même origine, donc à
+ * cette application (ADR 042).
  */
 export const authClient = createAuthClient()

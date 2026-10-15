@@ -6,21 +6,22 @@ import {
   date,
   foreignKey,
   index,
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
+  int,
+  json,
+  mysqlEnum,
+  mysqlTable,
   smallint,
   text,
-  timestamp,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { tenantContext } from '../../db/contexte.ts'
 import { staffMembers } from '../../db/staff.ts'
-import { paymentMethodEnum, tenantId, tenants } from '../../db/tenants.ts'
+import { DEFAULT_TENANT_ID, paymentMethodEnum, tenantId, tenants } from '../../db/tenants.ts'
 import { clients } from '../clients/schema.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
 import { mailItems, mailRequests } from '../courrier/schema.ts'
@@ -36,16 +37,20 @@ import { lineNetAmountSql, rateUnitEnum, services } from './schema.ts'
  * contrats, des réservations et du courrier, qui eux importent le catalogue :
  * les réunir ferait une boucle d'imports.
  *
- * Les garanties sont en base (migration 0031) : une facture émise ne change
- * plus (`CA002`), son numéro vient de `issue_invoice()`, une source n'est
- * facturée qu'une fois hors avoir, les totaux sont recalculés depuis les
- * lignes, le statut de paiement se déduit des paiements.
+ * Les garanties sont en base (`src/db/regles/50-facturation.sql`) : une
+ * facture émise ne change plus (`CA002`), son numéro vient de
+ * `issue_invoice()`, une source n'est facturée qu'une fois hors avoir, les
+ * totaux se recalculent depuis les lignes (`invoice_refresh_amounts()`), le
+ * statut de paiement se déduit des paiements.
  */
 
-/** `bytea` : Drizzle n'en a pas, le pilote rend un `Buffer`. */
+/**
+ * Binaire : `varbinary(512)` (un IBAN scellé en tient largement), rendu en
+ * `Buffer` par le pilote. Drizzle n'a pas de type binaire utilisable en `Buffer`.
+ */
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({
   dataType() {
-    return 'bytea'
+    return 'varbinary(512)'
   },
 })
 
@@ -61,38 +66,41 @@ const bytea = customType<{ data: Buffer; driverData: Buffer }>({
  * Une même souscription ne se chevauche pas elle-même : un client ne souscrit
  * pas deux fois le même service, pour le même contrat, sur des périodes qui se
  * recouvrent (contrainte d'exclusion `subscribed_services_no_overlap`). Pour
- * deux lignes de standard, on souscrit une quantité de deux.
+ * deux lignes de standard, on souscrit une quantité de deux. MySQL n'a pas de
+ * contrainte d'exclusion : les triggers `subscribed_services_before_insert` /
+ * `_update` (`src/db/regles/50-facturation.sql`, `CA000`) la tiennent.
  */
-export const subscribedServices = pgTable(
+export const subscribedServices = mysqlTable(
   'subscribed_services',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     /** Contrat dans le cadre duquel le service est souscrit, du même client. */
-    contractId: uuid('contract_id'),
-    serviceId: uuid('service_id').notNull(),
-    quantity: integer('quantity').notNull().default(1),
+    contractId: char('contract_id', { length: 36 }),
+    serviceId: char('service_id', { length: 36 }).notNull(),
+    quantity: int('quantity').notNull().default(1),
     /** Unité du service à la souscription, figée avec le prix. */
     unit: rateUnitEnum('unit').notNull(),
     /** Prix unitaire HT figé à la souscription, en centimes. */
-    unitPriceCents: integer('unit_price_cents').notNull(),
-    discountBp: integer('discount_bp'),
-    discountAmountCents: integer('discount_amount_cents'),
+    unitPriceCents: int('unit_price_cents').notNull(),
+    discountBp: int('discount_bp'),
+    discountAmountCents: int('discount_amount_cents'),
     /** Montant net HT par période (forfait), calculé par la base. */
-    netAmountCents: integer('net_amount_cents').generatedAlwaysAs(
+    netAmountCents: int('net_amount_cents').generatedAlwaysAs(
       lineNetAmountSql({
         quantity: 'quantity',
         unitPrice: 'unit_price_cents',
         discountBp: 'discount_bp',
         discountCents: 'discount_amount_cents',
       }),
+      { mode: 'stored' },
     ),
     /** Taux de TVA figé à la souscription, en points de base. */
-    vatRateBp: integer('vat_rate_bp').notNull(),
+    vatRateBp: int('vat_rate_bp').notNull(),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
     /** Actes inclus par période de facturation ; nul pour un forfait. */
-    includedQuantity: integer('included_quantity'),
+    includedQuantity: int('included_quantity'),
     startsOn: date('starts_on', { mode: 'string' }).notNull(),
     /** Dernier jour, compris. Nul : jusqu'à résiliation. */
     endsOn: date('ends_on', { mode: 'string' }),
@@ -122,7 +130,7 @@ export const subscribedServices = pgTable(
     check('subscribed_services_unit_price_positive', sql`${table.unitPriceCents} >= 0`),
     check(
       'subscribed_services_discount_valid',
-      sql`num_nonnulls(${table.discountBp}, ${table.discountAmountCents}) <= 1 and (${table.discountBp} is null or ${table.discountBp} between 0 and 10000) and (${table.discountAmountCents} is null or ${table.discountAmountCents} >= 0)`,
+      sql`((${table.discountBp} is not null) + (${table.discountAmountCents} is not null)) <= 1 and (${table.discountBp} is null or ${table.discountBp} between 0 and 10000) and (${table.discountAmountCents} is null or ${table.discountAmountCents} >= 0)`,
     ),
     check('subscribed_services_net_positive', sql`${table.netAmountCents} >= 0`),
     check('subscribed_services_vat_rate_valid', sql`${table.vatRateBp} between 0 and 10000`),
@@ -136,9 +144,7 @@ export const subscribedServices = pgTable(
     ),
     index('subscribed_services_client_idx').on(table.tenantId, table.clientId),
     index('subscribed_services_service_idx').on(table.tenantId, table.serviceId),
-    index('subscribed_services_contract_idx')
-      .on(table.tenantId, table.contractId)
-      .where(sql`contract_id is not null`),
+    index('subscribed_services_contract_idx').on(table.tenantId, table.contractId),
   ],
 )
 
@@ -148,7 +154,7 @@ export type NewSubscribedService = typeof subscribedServices.$inferInsert
 /** `running` : en cours (un seul à la fois par centre) ; puis `completed` ou `failed`. */
 export const invoiceRunStatuses = ['running', 'completed', 'failed'] as const
 export type InvoiceRunStatus = (typeof invoiceRunStatuses)[number]
-export const invoiceRunStatusEnum = pgEnum('invoice_run_status', invoiceRunStatuses)
+export const invoiceRunStatusEnum = (name: string) => mysqlEnum(name, invoiceRunStatuses)
 
 /** Bilan d'un lot, écrit par le code qui le déroule. */
 export type InvoiceRunResult = {
@@ -177,7 +183,7 @@ export type InvoiceRunResult = {
  * unique par client et par période (`invoices_run_period_key`), et chaque
  * source n'est facturée qu'une fois.
  */
-export const invoiceRuns = pgTable(
+export const invoiceRuns = mysqlTable(
   'invoice_runs',
   {
     id: primaryKeyId(),
@@ -186,18 +192,20 @@ export const invoiceRuns = pgTable(
     periodStart: date('period_start', { mode: 'string' }).notNull(),
     periodEnd: date('period_end', { mode: 'string' }).notNull(),
     status: invoiceRunStatusEnum('status').notNull().default('running'),
-    startedAt: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
-    finishedAt: timestamp('finished_at', { withTimezone: true }),
+    startedAt: instant('started_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+    finishedAt: instant('finished_at'),
     /** Membre de l'équipe qui l'a lancé ; nul : la tâche planifiée du serveur (ADR 033). */
-    createdBy: uuid('created_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
-    result: jsonb('result').$type<InvoiceRunResult>().notNull().default({}),
+    createdBy: char('created_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
+    result: json('result').$type<InvoiceRunResult>().notNull().default(sql`(JSON_OBJECT())`),
     ...timestamps(),
+    /** `1` tant que le lot tourne, `NULL` ensuite : sert l'unicité du lot en cours. */
+    runningLive: tinyint('running_live').generatedAlwaysAs(sql`if(status = 'running', 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     unique('invoice_runs_tenant_id_id_key').on(table.tenantId, table.id),
-    uniqueIndex('invoice_runs_one_running_key')
-      .on(table.tenantId)
-      .where(sql`status = 'running'`),
+    uniqueIndex('invoice_runs_one_running_key').on(table.tenantId, table.runningLive),
     check('invoice_runs_period_ordered', sql`${table.periodEnd} >= ${table.periodStart}`),
     check(
       'invoice_runs_finished_consistent',
@@ -213,7 +221,7 @@ export type NewInvoiceRun = typeof invoiceRuns.$inferInsert
 /** Mandat pour des prélèvements répétés, ou pour un seul (SEPA : RCUR, OOFF). */
 export const sepaSequenceTypes = ['recurrent', 'one_off'] as const
 export type SepaSequenceType = (typeof sepaSequenceTypes)[number]
-export const sepaSequenceTypeEnum = pgEnum('sepa_sequence_type', sepaSequenceTypes)
+export const sepaSequenceTypeEnum = (name: string) => mysqlEnum(name, sepaSequenceTypes)
 
 /**
  * `active` : utilisable ; `revoked` : révoqué par le client ou le centre ;
@@ -221,7 +229,7 @@ export const sepaSequenceTypeEnum = pgEnum('sepa_sequence_type', sepaSequenceTyp
  */
 export const sepaMandateStatuses = ['active', 'revoked', 'expired'] as const
 export type SepaMandateStatus = (typeof sepaMandateStatuses)[number]
-export const sepaMandateStatusEnum = pgEnum('sepa_mandate_status', sepaMandateStatuses)
+export const sepaMandateStatusEnum = (name: string) => mysqlEnum(name, sepaMandateStatuses)
 
 /**
  * Mandats de prélèvement SEPA (R16, ADR 016, ADR 027).
@@ -238,14 +246,14 @@ export const sepaMandateStatusEnum = pgEnum('sepa_mandate_status', sepaMandateSt
  * centre, même après révocation, et elle ne change pas, pas plus que le
  * client (SQLSTATE `CA007`). Un mandat actif au plus par client.
  */
-export const sepaMandates = pgTable(
+export const sepaMandates = mysqlTable(
   'sepa_mandates',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     /** RUM : 35 caractères au plus. */
-    reference: text('reference').notNull(),
+    reference: varchar('reference', { length: 35 }).notNull(),
     /** Titulaire du compte débité. */
     debtorName: text('debtor_name').notNull(),
     /** IBAN chiffré (`sealIban`), jamais en clair. */
@@ -254,7 +262,7 @@ export const sepaMandates = pgTable(
     ibanKeyVersion: smallint('iban_key_version').notNull(),
     /** Quatre derniers caractères de l'IBAN, pour l'affichage masqué. */
     ibanLast4: char('iban_last4', { length: 4 }).notNull(),
-    bic: text('bic'),
+    bic: varchar('bic', { length: 11 }),
     signedOn: date('signed_on', { mode: 'string' }).notNull(),
     sequenceType: sepaSequenceTypeEnum('sequence_type').notNull().default('recurrent'),
     status: sepaMandateStatusEnum('status').notNull().default('active'),
@@ -263,6 +271,11 @@ export const sepaMandates = pgTable(
     lastCollectedOn: date('last_collected_on', { mode: 'string' }),
     ...timestamps(),
     deletedAt: deletedAt(),
+    /** `1` pour le mandat actif non archivé, `NULL` sinon : un seul par client. */
+    activeLive: tinyint('active_live').generatedAlwaysAs(
+      sql`if(status = 'active' and deleted_at is null, 1, null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     unique('sepa_mandates_tenant_id_id_key').on(table.tenantId, table.id),
@@ -275,25 +288,24 @@ export const sepaMandates = pgTable(
       columns: [table.tenantId, table.clientId],
       foreignColumns: [clients.tenantId, clients.id],
     }).onDelete('restrict'),
-    uniqueIndex('sepa_mandates_one_active_key')
-      .on(table.tenantId, table.clientId)
-      .where(sql`status = 'active' and deleted_at is null`),
+    uniqueIndex('sepa_mandates_one_active_key').on(table.tenantId, table.clientId, table.activeLive),
+    // `'c'` : la collation est insensible à la casse, la classe de caractères non.
     check(
       'sepa_mandates_reference_format',
-      sql`${table.reference} ~ '^[A-Za-z0-9+?/:().,'' -]{1,35}$' and btrim(${table.reference}) <> ''`,
+      sql`REGEXP_LIKE(${table.reference}, '^[A-Za-z0-9+?/:().,'' -]{1,35}$', 'c') and trim(${table.reference}) <> ''`,
     ),
-    check('sepa_mandates_debtor_not_blank', sql`btrim(${table.debtorName}) <> ''`),
+    check('sepa_mandates_debtor_not_blank', sql`trim(${table.debtorName}) <> ''`),
     // L'en-tête « CAD1 » du format chiffré (`chiffrement-documents.ts`), et au
     // moins la place d'un IBAN de 15 caractères : un IBAN en clair est refusé.
     check(
       'sepa_mandates_iban_sealed',
-      sql`substring(${table.ibanCiphertext} from 1 for 4) = '\\x43414431'::bytea and octet_length(${table.ibanCiphertext}) >= 49`,
+      sql`substring(${table.ibanCiphertext}, 1, 4) = x'43414431' and octet_length(${table.ibanCiphertext}) >= 49`,
     ),
     check('sepa_mandates_key_version_positive', sql`${table.ibanKeyVersion} > 0`),
-    check('sepa_mandates_last4_format', sql`${table.ibanLast4} ~ '^[0-9A-Z]{4}$'`),
+    check('sepa_mandates_last4_format', sql`REGEXP_LIKE(${table.ibanLast4}, '^[0-9A-Z]{4}$', 'c')`),
     check(
       'sepa_mandates_bic_format',
-      sql`${table.bic} is null or ${table.bic} ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$'`,
+      sql`${table.bic} is null or REGEXP_LIKE(${table.bic}, '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$', 'c')`,
     ),
     check(
       'sepa_mandates_revoked_consistent',
@@ -313,7 +325,7 @@ export type NewSepaMandate = typeof sepaMandates.$inferInsert
  */
 export const invoiceKinds = ['invoice', 'credit_note'] as const
 export type InvoiceKind = (typeof invoiceKinds)[number]
-export const invoiceKindEnum = pgEnum('invoice_kind', invoiceKinds)
+export const invoiceKindEnum = (name: string) => mysqlEnum(name, invoiceKinds)
 
 /**
  * Statut d'une facture (ADR 026) :
@@ -329,7 +341,7 @@ export const invoiceKindEnum = pgEnum('invoice_kind', invoiceKinds)
  */
 export const invoiceStatuses = ['draft', 'issued', 'partially_paid', 'paid', 'cancelled'] as const
 export type InvoiceStatus = (typeof invoiceStatuses)[number]
-export const invoiceStatusEnum = pgEnum('invoice_status', invoiceStatuses)
+export const invoiceStatusEnum = (name: string) => mysqlEnum(name, invoiceStatuses)
 
 /** Vendeur, figé à l'émission depuis `tenants` (mentions obligatoires). */
 export type InvoiceSellerSnapshot = {
@@ -389,9 +401,12 @@ export type InvoiceLegalMentions = {
  * Factures et avoirs (R13, R15, R16, ADR 026), en données structurées
  * compatibles EN 16931 : le PDF n'est qu'une vue.
  *
- * **Brouillon** : sans numéro ni date d'émission, il se modifie, ses totaux et
- * la TVA de ses lignes sont tenus à jour par la base à chaque écriture de
- * ligne. On l'abandonne par `deleted_at` (ses lignes libèrent leurs sources).
+ * **Brouillon** : sans numéro ni date d'émission, il se modifie. La TVA
+ * provisoire de chaque ligne est posée par la base à l'écriture ; la
+ * répartition par taux et les totaux du brouillon se recalculent par
+ * `select invoice_refresh_amounts(id)`, à appeler après les écritures de
+ * lignes (MySQL n'a pas de trigger d'instruction). On l'abandonne par
+ * `deleted_at` (ses lignes libèrent leurs sources).
  *
  * **Émission** : `select issue_invoice(id, staff_id)`, et rien d'autre. La
  * fonction vérifie les mentions obligatoires, recalcule la TVA par taux, prend
@@ -405,57 +420,65 @@ export type InvoiceLegalMentions = {
  * Une facture par client et par période pour un lot (`invoice_run_id`) : elle
  * réunit loyers, réservations, forfaits et actes (R15).
  */
-export const invoices = pgTable(
+export const invoices = mysqlTable(
   'invoices',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     kind: invoiceKindEnum('kind').notNull().default('invoice'),
     /** `FA-2026-0001` ou `AV-2026-0001`, attribué à l'émission. Nul en brouillon. */
-    number: text('number'),
+    number: varchar('number', { length: 32 }),
     status: invoiceStatusEnum('status').notNull().default('draft'),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     /** Pour un avoir : la facture qu'il corrige, du même client. */
-    creditedInvoiceId: uuid('credited_invoice_id'),
+    creditedInvoiceId: char('credited_invoice_id', { length: 36 }),
     /** Lot qui a créé le brouillon ; nul pour une facture saisie à la main. */
-    invoiceRunId: uuid('invoice_run_id'),
+    invoiceRunId: char('invoice_run_id', { length: 36 }),
     /** Période facturée (date des prestations), jours civils du centre. */
     periodStart: date('period_start', { mode: 'string' }).notNull(),
     periodEnd: date('period_end', { mode: 'string' }).notNull(),
     /** Jour d'émission dans le fuseau du centre, posé par `issue_invoice()`. */
     issueDate: date('issue_date', { mode: 'string' }),
-    issuedAt: timestamp('issued_at', { withTimezone: true }),
-    issuedBy: uuid('issued_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    issuedAt: instant('issued_at'),
+    issuedBy: char('issued_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     /** Délai de paiement en jours. Nul en brouillon : celui du centre à l'émission. */
-    paymentTermsDays: integer('payment_terms_days'),
+    paymentTermsDays: int('payment_terms_days'),
     /** Échéance : `issue_date + payment_terms_days`, posée à l'émission. */
     dueDate: date('due_date', { mode: 'string' }),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
     /* Totaux tenus par la base depuis les lignes, en centimes. */
-    totalExclTaxCents: integer('total_excl_tax_cents').notNull().default(0),
-    totalTaxCents: integer('total_tax_cents').notNull().default(0),
-    totalInclTaxCents: integer('total_incl_tax_cents').notNull().default(0),
+    totalExclTaxCents: int('total_excl_tax_cents').notNull().default(0),
+    totalTaxCents: int('total_tax_cents').notNull().default(0),
+    totalInclTaxCents: int('total_incl_tax_cents').notNull().default(0),
     /** Somme des paiements non annulés, tenue par la base. */
-    paidCents: integer('paid_cents').notNull().default(0),
+    paidCents: int('paid_cents').notNull().default(0),
     /** Somme TTC des avoirs émis sur cette facture, tenue par la base. */
-    creditedCents: integer('credited_cents').notNull().default(0),
+    creditedCents: int('credited_cents').notNull().default(0),
     expectedPaymentMethod: paymentMethodEnum('expected_payment_method')
       .notNull()
       .default('transfer'),
     /** Mandat de prélèvement du client, pour `direct_debit`. */
-    sepaMandateId: uuid('sepa_mandate_id'),
+    sepaMandateId: char('sepa_mandate_id', { length: 36 }),
     /** RUM du mandat, figée à l'émission. */
-    mandateReference: text('mandate_reference'),
+    mandateReference: varchar('mandate_reference', { length: 35 }),
     /** Référence de l'acheteur (EN 16931, BT-10) : bon de commande, service. */
     buyerReference: text('buyer_reference'),
     /** Texte libre imprimé sur la facture ; motif d'un avoir. */
     notes: text('notes'),
-    sellerSnapshot: jsonb('seller_snapshot').$type<InvoiceSellerSnapshot>(),
-    buyerSnapshot: jsonb('buyer_snapshot').$type<InvoiceBuyerSnapshot>(),
-    legalMentions: jsonb('legal_mentions').$type<InvoiceLegalMentions>(),
+    sellerSnapshot: json('seller_snapshot').$type<InvoiceSellerSnapshot>(),
+    buyerSnapshot: json('buyer_snapshot').$type<InvoiceBuyerSnapshot>(),
+    legalMentions: json('legal_mentions').$type<InvoiceLegalMentions>(),
     ...timestamps(),
     /** Abandon d'un brouillon. Une facture émise ne s'efface jamais. */
     deletedAt: deletedAt(),
+    /**
+     * `1` pour une facture de lot vivante et non annulée : sert l'unicité par
+     * client et par période. `NULL` pour tout le reste.
+     */
+    runPeriodLive: tinyint('run_period_live').generatedAlwaysAs(
+      sql`if(kind = 'invoice' and invoice_run_id is not null and deleted_at is null and status <> 'cancelled', 1, null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     unique('invoices_tenant_id_id_key').on(table.tenantId, table.id),
@@ -481,23 +504,24 @@ export const invoices = pgTable(
       columns: [table.tenantId, table.sepaMandateId, table.clientId],
       foreignColumns: [sepaMandates.tenantId, sepaMandates.id, sepaMandates.clientId],
     }).onDelete('restrict'),
-    uniqueIndex('invoices_tenant_number_key')
-      .on(table.tenantId, table.number)
-      .where(sql`number is not null`),
+    // `number` nul (brouillon) ne se heurte jamais : plusieurs `NULL` permis.
+    uniqueIndex('invoices_tenant_number_key').on(table.tenantId, table.number),
     // Une facture de lot par client et par période. Une facture annulée par
     // avoir, ou un brouillon abandonné, laisse la place à la facture corrigée.
-    uniqueIndex('invoices_run_period_key')
-      .on(table.tenantId, table.clientId, table.periodStart, table.periodEnd)
-      .where(
-        sql`kind = 'invoice' and invoice_run_id is not null and deleted_at is null and status <> 'cancelled'`,
-      ),
+    uniqueIndex('invoices_run_period_key').on(
+      table.tenantId,
+      table.clientId,
+      table.periodStart,
+      table.periodEnd,
+      table.runPeriodLive,
+    ),
     check(
       'invoices_number_on_issue',
       sql`(${table.status} = 'draft') = (${table.number} is null)`,
     ),
     check(
       'invoices_issued_complete',
-      sql`${table.status} = 'draft' or num_nulls(${table.issueDate}, ${table.issuedAt}, ${table.paymentTermsDays}, ${table.dueDate}, ${table.sellerSnapshot}, ${table.buyerSnapshot}, ${table.legalMentions}) = 0`,
+      sql`${table.status} = 'draft' or ((${table.issueDate} is null) + (${table.issuedAt} is null) + (${table.paymentTermsDays} is null) + (${table.dueDate} is null) + (${table.sellerSnapshot} is null) + (${table.buyerSnapshot} is null) + (${table.legalMentions} is null)) = 0`,
     ),
     check(
       'invoices_draft_unsettled',
@@ -505,7 +529,7 @@ export const invoices = pgTable(
     ),
     check(
       'invoices_draft_not_issued',
-      sql`${table.status} <> 'draft' or num_nonnulls(${table.issueDate}, ${table.issuedAt}, ${table.dueDate}, ${table.sellerSnapshot}, ${table.buyerSnapshot}, ${table.legalMentions}, ${table.mandateReference}) = 0`,
+      sql`${table.status} <> 'draft' or ((${table.issueDate} is not null) + (${table.issuedAt} is not null) + (${table.dueDate} is not null) + (${table.sellerSnapshot} is not null) + (${table.buyerSnapshot} is not null) + (${table.legalMentions} is not null) + (${table.mandateReference} is not null)) = 0`,
     ),
     check(
       'invoices_totals_consistent',
@@ -513,7 +537,7 @@ export const invoices = pgTable(
     ),
     check(
       'invoices_credit_note_link',
-      sql`(${table.kind} = 'credit_note') = (${table.creditedInvoiceId} is not null) and ${table.creditedInvoiceId} is distinct from ${table.id}`,
+      sql`(${table.kind} = 'credit_note') = (${table.creditedInvoiceId} is not null) and not (${table.creditedInvoiceId} <=> ${table.id})`,
     ),
     check(
       'invoices_credit_note_status',
@@ -529,16 +553,23 @@ export const invoices = pgTable(
       sql`${table.sepaMandateId} is null or ${table.expectedPaymentMethod} = 'direct_debit'`,
     ),
     check('invoices_credited_positive', sql`${table.creditedCents} >= 0`),
+    // Hors brouillon, le statut est une fonction des montants (R16, ADR 026) :
+    // même règle que `invoice_payment_status()`, écrite en ligne parce qu'un
+    // `CHECK` MySQL n'appelle pas de fonction stockée.
+    check(
+      'invoices_status_derived',
+      sql`${table.status} = 'draft' or ${table.status} = (case
+        when ${table.kind} = 'credit_note' then 'issued'
+        when ${table.totalInclTaxCents} > 0 and ${table.creditedCents} >= ${table.totalInclTaxCents} then 'cancelled'
+        when ${table.totalInclTaxCents} - ${table.creditedCents} - ${table.paidCents} <= 0 then 'paid'
+        when ${table.paidCents} > 0 then 'partially_paid'
+        else 'issued'
+      end)`,
+    ),
     index('invoices_client_idx').on(table.tenantId, table.clientId, table.periodStart),
-    index('invoices_tenant_issue_date_idx')
-      .on(table.tenantId, table.issueDate)
-      .where(sql`issue_date is not null`),
-    index('invoices_credited_invoice_idx')
-      .on(table.tenantId, table.creditedInvoiceId)
-      .where(sql`credited_invoice_id is not null`),
-    index('invoices_run_idx')
-      .on(table.tenantId, table.invoiceRunId)
-      .where(sql`invoice_run_id is not null`),
+    index('invoices_tenant_issue_date_idx').on(table.tenantId, table.issueDate),
+    index('invoices_credited_invoice_idx').on(table.tenantId, table.creditedInvoiceId),
+    index('invoices_run_idx').on(table.tenantId, table.invoiceRunId),
   ],
 )
 
@@ -553,7 +584,7 @@ export type NewInvoice = typeof invoices.$inferInsert
  */
 export const invoiceLineKinds = ['rent', 'booking', 'package', 'act', 'discount', 'other'] as const
 export type InvoiceLineKind = (typeof invoiceLineKinds)[number]
-export const invoiceLineKindEnum = pgEnum('invoice_line_kind', invoiceLineKinds)
+export const invoiceLineKindEnum = (name: string) => mysqlEnum(name, invoiceLineKinds)
 
 /**
  * Catégorie de TVA (EN 16931, BT-151, liste UNCL5305) : `S` taux normal ou
@@ -564,7 +595,7 @@ export const invoiceLineKindEnum = pgEnum('invoice_line_kind', invoiceLineKinds)
  */
 export const vatCategories = ['S', 'Z', 'E', 'AE', 'K', 'G', 'O'] as const
 export type VatCategory = (typeof vatCategories)[number]
-export const vatCategoryEnum = pgEnum('vat_category', vatCategories)
+export const vatCategoryEnum = (name: string) => mysqlEnum(name, vatCategories)
 
 /**
  * Lignes d'une facture ou d'un avoir (R15, ADR 026).
@@ -582,19 +613,20 @@ export const vatCategoryEnum = pgEnum('vat_category', vatCategories)
  * ligne de contrat (loyer, forfait), réservation, souscription, pli. Tant
  * qu'elle la tient (`deleted_at` et `released_at` nuls), aucune autre ligne
  * ne peut facturer la même source : même réservation, même pli, ou même ligne
- * de contrat ou souscription sur des jours qui se recouvrent (SQLSTATE `23505`
- * ou `23P01`). Une ligne entièrement créditée par un avoir émis libère sa
+ * de contrat ou souscription sur des jours qui se recouvrent (`23505` pour
+ * une réservation, un pli ou une demande ; `CA000` pour des jours qui se
+ * recouvrent). Une ligne entièrement créditée par un avoir émis libère sa
  * source (`released_at`), qui peut être refacturée.
  *
  * Une ligne d'avoir ne porte aucune source : elle désigne la ligne qu'elle
  * crédite (`credited_line_id`), ou rien pour un geste commercial.
  */
-export const invoiceLines = pgTable(
+export const invoiceLines = mysqlTable(
   'invoice_lines',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    invoiceId: uuid('invoice_id').notNull(),
+    invoiceId: char('invoice_id', { length: 36 }).notNull(),
     /** Ordre d'affichage sur la facture. */
     position: smallint('position').notNull().default(0),
     kind: invoiceLineKindEnum('kind').notNull(),
@@ -603,16 +635,16 @@ export const invoiceLines = pgTable(
     /** Période de la prestation, jours civils du centre, bornes comprises. */
     periodStart: date('period_start', { mode: 'string' }),
     periodEnd: date('period_end', { mode: 'string' }),
-    quantity: integer('quantity').notNull().default(1),
+    quantity: int('quantity').notNull().default(1),
     unit: rateUnitEnum('unit'),
     /** Prix unitaire HT en centimes ; négatif seulement pour une remise. */
-    unitPriceCents: integer('unit_price_cents').notNull(),
-    discountBp: integer('discount_bp'),
-    discountAmountCents: integer('discount_amount_cents'),
+    unitPriceCents: int('unit_price_cents').notNull(),
+    discountBp: int('discount_bp'),
+    discountAmountCents: int('discount_amount_cents'),
     /** Prorata d'une période partielle : jours couverts / jours de la période. */
-    prorataNumerator: integer('prorata_numerator'),
-    prorataDenominator: integer('prorata_denominator'),
-    netAmountCents: integer('net_amount_cents').generatedAlwaysAs(
+    prorataNumerator: int('prorata_numerator'),
+    prorataDenominator: int('prorata_denominator'),
+    netAmountCents: int('net_amount_cents').generatedAlwaysAs(
       lineNetAmountSql({
         quantity: 'quantity',
         unitPrice: 'unit_price_cents',
@@ -621,22 +653,23 @@ export const invoiceLines = pgTable(
         prorataNumerator: 'prorata_numerator',
         prorataDenominator: 'prorata_denominator',
       }),
+      { mode: 'stored' },
     ),
-    vatRateBp: integer('vat_rate_bp').notNull(),
+    vatRateBp: int('vat_rate_bp').notNull(),
     vatCategory: vatCategoryEnum('vat_category').notNull().default('S'),
     /** Motif d'exonération (EN 16931, BT-120) pour une catégorie autre que `S`. */
     vatExemptionReason: text('vat_exemption_reason'),
     /** Tenue par la base. */
-    vatAmountCents: integer('vat_amount_cents').notNull().default(0),
+    vatAmountCents: int('vat_amount_cents').notNull().default(0),
     /** Tenue par la base : net + TVA. */
-    totalAmountCents: integer('total_amount_cents').notNull().default(0),
+    totalAmountCents: int('total_amount_cents').notNull().default(0),
 
     /* Sources (lignes de facture seulement). */
-    contractId: uuid('contract_id'),
-    contractLineId: uuid('contract_line_id'),
-    bookingId: uuid('booking_id'),
-    subscribedServiceId: uuid('subscribed_service_id'),
-    mailItemId: uuid('mail_item_id'),
+    contractId: char('contract_id', { length: 36 }),
+    contractLineId: char('contract_line_id', { length: 36 }),
+    bookingId: char('booking_id', { length: 36 }),
+    subscribedServiceId: char('subscribed_service_id', { length: 36 }),
+    mailItemId: char('mail_item_id', { length: 36 }),
     /**
      * Demande de courrier faite (ADR 037) : numérisation seule ou réexpédition.
      * Une ligne `act` (le service `courrier.numerisation` ou
@@ -645,21 +678,30 @@ export const invoiceLines = pgTable(
      * (`invoice_lines_mail_request_key`). L'ouverture demandée, elle, se
      * facture par le pli (`mail_item_id`), jamais par sa demande.
      */
-    mailRequestId: uuid('mail_request_id'),
+    mailRequestId: char('mail_request_id', { length: 36 }),
     /** Service du catalogue facturé (forfait, acte) : rentabilité des services (R31). */
-    serviceId: uuid('service_id'),
+    serviceId: char('service_id', { length: 36 }),
     /** Ressource facturée : revenu par ressource (R31). */
-    resourceId: uuid('resource_id'),
+    resourceId: char('resource_id', { length: 36 }),
     /** Ligne d'avoir : la ligne de facture qu'elle crédite. */
-    creditedLineId: uuid('credited_line_id'),
+    creditedLineId: char('credited_line_id', { length: 36 }),
     /**
      * Posé par la base quand la ligne est entièrement créditée par un avoir
      * émis : sa source est libérée et peut être refacturée.
      */
-    releasedAt: timestamp('released_at', { withTimezone: true }),
+    releasedAt: instant('released_at'),
     ...timestamps(),
     /** Ligne retirée d'un brouillon, ou brouillon abandonné. */
     deletedAt: deletedAt(),
+    /**
+     * `1` tant que la ligne tient sa source (ni retirée ni libérée par un
+     * avoir), `NULL` sinon : sert les index uniques de réservation, de pli et
+     * de demande de courrier. Jamais écrite par le code.
+     */
+    heldLive: tinyint('held_live').generatedAlwaysAs(
+      sql`if(deleted_at is null and released_at is null, 1, null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     unique('invoice_lines_tenant_id_id_key').on(table.tenantId, table.id),
@@ -715,23 +757,27 @@ export const invoiceLines = pgTable(
       foreignColumns: [table.tenantId, table.id],
     }).onDelete('restrict'),
     // Une réservation, un pli : une seule ligne qui les tient.
-    uniqueIndex('invoice_lines_booking_key')
-      .on(table.tenantId, table.bookingId)
-      .where(sql`booking_id is not null and deleted_at is null and released_at is null`),
-    uniqueIndex('invoice_lines_mail_item_key')
-      .on(table.tenantId, table.mailItemId)
-      .where(sql`mail_item_id is not null and deleted_at is null and released_at is null`),
+    // La source nulle ne se heurte jamais (plusieurs `NULL` permis).
+    uniqueIndex('invoice_lines_booking_key').on(table.tenantId, table.bookingId, table.heldLive),
+    uniqueIndex('invoice_lines_mail_item_key').on(table.tenantId, table.mailItemId, table.heldLive),
     // Une demande faite : un acte, et des frais d'affranchissement au plus.
-    uniqueIndex('invoice_lines_mail_request_key')
-      .on(table.tenantId, table.mailRequestId, table.kind)
-      .where(sql`mail_request_id is not null and deleted_at is null and released_at is null`),
+    uniqueIndex('invoice_lines_mail_request_key').on(
+      table.tenantId,
+      table.mailRequestId,
+      table.kind,
+      table.heldLive,
+    ),
+    // Les deux exclusions contre la double facturation d'un contrat ou d'une
+    // souscription sur des jours qui se recouvrent n'ont pas d'équivalent
+    // MySQL : le trigger `invoice_lines_before_insert` / `_update`
+    // (`src/db/regles/50-facturation.sql`) les tient, `CA000`.
     // Un pli et une demande ne se facturent pas sur la même ligne : l'ouverture
     // est la source du pli, chaque demande la sienne.
     check(
       'invoice_lines_one_mail_source',
-      sql`num_nonnulls(${table.mailItemId}, ${table.mailRequestId}) <= 1`,
+      sql`(${table.mailItemId} is not null) + (${table.mailRequestId} is not null) <= 1`,
     ),
-    check('invoice_lines_description_not_blank', sql`btrim(${table.description}) <> ''`),
+    check('invoice_lines_description_not_blank', sql`trim(${table.description}) <> ''`),
     check('invoice_lines_quantity_positive', sql`${table.quantity} > 0`),
     check(
       'invoice_lines_period_consistent',
@@ -743,16 +789,16 @@ export const invoiceLines = pgTable(
     ),
     check(
       'invoice_lines_discount_valid',
-      sql`num_nonnulls(${table.discountBp}, ${table.discountAmountCents}) <= 1 and (${table.discountBp} is null or ${table.discountBp} between 0 and 10000) and (${table.discountAmountCents} is null or ${table.discountAmountCents} >= 0)`,
+      sql`((${table.discountBp} is not null) + (${table.discountAmountCents} is not null)) <= 1 and (${table.discountBp} is null or ${table.discountBp} between 0 and 10000) and (${table.discountAmountCents} is null or ${table.discountAmountCents} >= 0)`,
     ),
     check(
       'invoice_lines_unit_price_sign',
-      sql`case when ${table.kind} = 'discount' then ${table.unitPriceCents} <= 0 else ${table.unitPriceCents} >= 0 end`,
+      sql`(case when ${table.kind} = 'discount' then ${table.unitPriceCents} <= 0 else ${table.unitPriceCents} >= 0 end) = 1`,
     ),
     check('invoice_lines_vat_rate_valid', sql`${table.vatRateBp} between 0 and 10000`),
     check(
       'invoice_lines_vat_category_consistent',
-      sql`case when ${table.vatCategory} = 'S' then ${table.vatRateBp} > 0 else ${table.vatRateBp} = 0 end`,
+      sql`(case when ${table.vatCategory} = 'S' then ${table.vatRateBp} > 0 else ${table.vatRateBp} = 0 end) = 1`,
     ),
     check(
       'invoice_lines_total_consistent',
@@ -763,15 +809,9 @@ export const invoiceLines = pgTable(
       sql`${table.contractLineId} is null or ${table.contractId} is not null`,
     ),
     index('invoice_lines_invoice_idx').on(table.tenantId, table.invoiceId),
-    index('invoice_lines_resource_idx')
-      .on(table.tenantId, table.resourceId)
-      .where(sql`resource_id is not null`),
-    index('invoice_lines_service_idx')
-      .on(table.tenantId, table.serviceId)
-      .where(sql`service_id is not null`),
-    index('invoice_lines_credited_line_idx')
-      .on(table.tenantId, table.creditedLineId)
-      .where(sql`credited_line_id is not null`),
+    index('invoice_lines_resource_idx').on(table.tenantId, table.resourceId),
+    index('invoice_lines_service_idx').on(table.tenantId, table.serviceId),
+    index('invoice_lines_credited_line_idx').on(table.tenantId, table.creditedLineId),
   ],
 )
 
@@ -787,26 +827,26 @@ export type NewInvoiceLine = typeof invoiceLines.$inferInsert
  * erreur de pointage s'annule (`cancelled_at`), la ligne reste. La base tient
  * `invoices.paid_cents` et en déduit le statut de la facture.
  */
-export const payments = pgTable(
+export const payments = mysqlTable(
   'payments',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    invoiceId: uuid('invoice_id').notNull(),
-    amountCents: integer('amount_cents').notNull(),
+    invoiceId: char('invoice_id', { length: 36 }).notNull(),
+    amountCents: int('amount_cents').notNull(),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
     /** Date de valeur du paiement, jour civil du centre. */
     paidOn: date('paid_on', { mode: 'string' }).notNull(),
     method: paymentMethodEnum('method').notNull(),
     /** Référence bancaire : libellé du virement, référence de remise. */
     reference: text('reference'),
-    sepaMandateId: uuid('sepa_mandate_id'),
+    sepaMandateId: char('sepa_mandate_id', { length: 36 }),
     notes: text('notes'),
-    recordedBy: uuid('recorded_by')
+    recordedBy: char('recorded_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
-    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
-    cancelledBy: uuid('cancelled_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    cancelledAt: instant('cancelled_at'),
+    cancelledBy: char('cancelled_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     cancellationReason: text('cancellation_reason'),
     ...timestamps(),
   },
@@ -849,31 +889,31 @@ export type ReminderChannel = (typeof reminderChannels)[number]
  * relance, 3 mise en demeure), le reste dû réclamé, ses destinataires et son
  * texte.
  *
- * Une preuve : jamais modifiée ni supprimée par l'application (migration
- * 0036). Rien ne part sans un geste de l'équipe (ADR 030) : `sent_by` est
+ * Une preuve : jamais modifiée ni supprimée (trigger `invoice_reminders_before_update`
+ * et `_delete`, `CA002`). Rien ne part sans un geste de l'équipe (ADR 030) : `sent_by` est
  * toujours un membre.
  */
-export const invoiceReminders = pgTable(
+export const invoiceReminders = mysqlTable(
   'invoice_reminders',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    invoiceId: uuid('invoice_id').notNull(),
+    invoiceId: char('invoice_id', { length: 36 }).notNull(),
     /** Palier de relance atteint ce jour-là (`dunningLevel`). */
     level: smallint('level').notNull(),
-    channel: text('channel').$type<ReminderChannel>().notNull(),
+    channel: varchar('channel', { length: 16 }).$type<ReminderChannel>().notNull(),
     /** Adresses de courriel ; vide pour un courrier. */
-    recipients: text('recipients').array().notNull().default(sql`'{}'::text[]`),
+    recipients: json('recipients').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
     /** Reste dû réclamé par la relance, en centimes (décision 5). */
-    amountDueCents: integer('amount_due_cents').notNull(),
+    amountDueCents: int('amount_due_cents').notNull(),
     currency: char('currency', { length: 3 }).notNull(),
     /** Objet et texte de la lettre, tels qu'ils sont partis. */
     subject: text('subject').notNull(),
     body: text('body').notNull(),
-    sentBy: uuid('sent_by')
+    sentBy: char('sent_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
-    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    sentAt: instant('sent_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
     foreignKey({
@@ -885,7 +925,7 @@ export const invoiceReminders = pgTable(
     check('invoice_reminders_channel_known', sql`${table.channel} in ('email', 'post')`),
     check(
       'invoice_reminders_recipients_consistent',
-      sql`(${table.channel} = 'email') = (cardinality(${table.recipients}) > 0)`,
+      sql`(${table.channel} = 'email') = (JSON_LENGTH(${table.recipients}) > 0)`,
     ),
     check('invoice_reminders_amount_positive', sql`${table.amountDueCents} > 0`),
     index('invoice_reminders_invoice_idx').on(table.tenantId, table.invoiceId, table.sentAt),
@@ -905,54 +945,70 @@ export type NewInvoiceReminder = typeof invoiceReminders.$inferInsert
  */
 export const accountingPurposes = ['customers', 'bank', 'revenue', 'vat_collected'] as const
 export type AccountingPurpose = (typeof accountingPurposes)[number]
-export const accountingPurposeEnum = pgEnum('accounting_purpose', accountingPurposes)
+export const accountingPurposeEnum = (name: string) => mysqlEnum(name, accountingPurposes)
 
 /**
  * Plan de comptes de l'export, par centre (R16, ADR 027).
  *
  * Paramétrage, pas entité métier : une ligne se corrige en place. Posé par la
  * base pour chaque centre (`seed_accounting_accounts`, à la création du centre
- * et par la migration 0031) avec des comptes du plan comptable général, **à
+ * et à l'installation) avec des comptes du plan comptable général, **à
  * valider par l'expert-comptable**. Un taux de TVA sans compte fait refuser
  * l'export plutôt que d'improviser.
  *
  * `tenant_id` en `ON DELETE CASCADE`, comme `document_sequences` : un plan de
  * comptes n'existe pas hors de son centre.
  */
-export const accountingAccounts = pgTable(
+export const accountingAccounts = mysqlTable(
   'accounting_accounts',
   {
     id: primaryKeyId(),
-    tenantId: uuid('tenant_id')
+    tenantId: char('tenant_id', { length: 36 })
       .notNull()
-      .default(sql`tenant_id_default()`)
+      .default(DEFAULT_TENANT_ID)
+      .$defaultFn(() => tenantContext.getStore() ?? DEFAULT_TENANT_ID)
       .references(() => tenants.id, { onDelete: 'cascade' }),
     purpose: accountingPurposeEnum('purpose').notNull(),
     lineKind: invoiceLineKindEnum('line_kind'),
-    vatRateBp: integer('vat_rate_bp'),
+    vatRateBp: int('vat_rate_bp'),
     /** Numéro de compte : `706000`, `445711`, `411000`. */
-    accountNumber: text('account_number').notNull(),
+    accountNumber: varchar('account_number', { length: 20 }).notNull(),
     label: text('label').notNull(),
     ...timestamps(),
+    /**
+     * Clés d'unicité **sans `NULL`** : `unique nulls not distinct` de
+     * PostgreSQL n'existe pas en MySQL, où plusieurs `NULL` ne se heurtent
+     * pas. Jamais écrites par le code.
+     */
+    lineKindKey: varchar('line_kind_key', { length: 16 }).generatedAlwaysAs(sql`ifnull(line_kind, '')`, {
+      mode: 'virtual',
+    }),
+    vatRateKey: int('vat_rate_key').generatedAlwaysAs(sql`ifnull(vat_rate_bp, -1)`, { mode: 'virtual' }),
   },
   (table) => [
-    unique('accounting_accounts_key')
-      .on(table.tenantId, table.purpose, table.lineKind, table.vatRateBp)
-      .nullsNotDistinct(),
+    unique('accounting_accounts_key').on(
+      table.tenantId,
+      table.purpose,
+      table.lineKindKey,
+      table.vatRateKey,
+    ),
     check(
       'accounting_accounts_target_consistent',
-      sql`case ${table.purpose}
+      sql`(case ${table.purpose}
         when 'revenue' then ${table.lineKind} is not null and ${table.vatRateBp} is null
         when 'vat_collected' then ${table.vatRateBp} is not null and ${table.lineKind} is null
         else ${table.lineKind} is null and ${table.vatRateBp} is null
-      end`,
+      end) = 1`,
     ),
     check(
       'accounting_accounts_vat_rate_valid',
       sql`${table.vatRateBp} is null or ${table.vatRateBp} between 1 and 10000`,
     ),
-    check('accounting_accounts_number_format', sql`${table.accountNumber} ~ '^[0-9A-Z]{3,20}$'`),
-    check('accounting_accounts_label_not_blank', sql`btrim(${table.label}) <> ''`),
+    check(
+      'accounting_accounts_number_format',
+      sql`REGEXP_LIKE(${table.accountNumber}, '^[0-9A-Z]{3,20}$', 'c')`,
+    ),
+    check('accounting_accounts_label_not_blank', sql`trim(${table.label}) <> ''`),
   ],
 )
 
@@ -962,36 +1018,39 @@ export type NewAccountingAccount = typeof accountingAccounts.$inferInsert
 /**
  * Journal des exports comptables (R16, ADR 027) : chaque fichier remis à
  * l'expert-comptable, sa période, son auteur et son empreinte. On y ajoute,
- * on y lit, rien d'autre : le rôle applicatif n'a ni `UPDATE` ni `DELETE`.
+ * on y lit, rien d'autre : un trigger refuse `UPDATE` et `DELETE` (`CA002`).
  *
  * Format retenu : `fec`, le fichier des écritures comptables (art. A47 A-1 du
  * livre des procédures fiscales), journaux des ventes et de banque.
  */
-export const accountingExports = pgTable(
+export const accountingExports = mysqlTable(
   'accounting_exports',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    format: text('format').$type<'fec'>().notNull().default('fec'),
+    format: varchar('format', { length: 16 }).$type<'fec'>().notNull().default('fec'),
     /** Période exportée, jours civils du centre, bornes comprises. */
     periodStart: date('period_start', { mode: 'string' }).notNull(),
     periodEnd: date('period_end', { mode: 'string' }).notNull(),
-    fileName: text('file_name').notNull(),
+    fileName: varchar('file_name', { length: 255 }).notNull(),
     /** SHA-256 du fichier remis, en hexadécimal minuscule. */
-    fileSha256: text('file_sha256').notNull(),
+    fileSha256: char('file_sha256', { length: 64 }).notNull(),
     /** Nombre d'écritures (lignes du fichier, en-tête exclu). */
-    entryCount: integer('entry_count').notNull(),
-    generatedBy: uuid('generated_by')
+    entryCount: int('entry_count').notNull(),
+    generatedBy: char('generated_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    createdAt: instant('created_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
     check('accounting_exports_format_known', sql`${table.format} in ('fec')`),
     check('accounting_exports_period_ordered', sql`${table.periodEnd} >= ${table.periodStart}`),
-    check('accounting_exports_sha256_format', sql`${table.fileSha256} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'accounting_exports_sha256_format',
+      sql`REGEXP_LIKE(${table.fileSha256}, '^[0-9a-f]{64}$', 'c')`,
+    ),
     check('accounting_exports_entry_count_positive', sql`${table.entryCount} >= 0`),
-    check('accounting_exports_file_name_not_blank', sql`btrim(${table.fileName}) <> ''`),
+    check('accounting_exports_file_name_not_blank', sql`trim(${table.fileName}) <> ''`),
     index('accounting_exports_tenant_period_idx').on(table.tenantId, table.periodStart),
   ],
 )

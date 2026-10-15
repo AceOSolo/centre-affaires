@@ -1,7 +1,7 @@
 /**
  * Identité publique du centre.
  *
- *   node --env-file=.env.local infra/configurer-centre.mjs
+ *   npm run db:centre   # node --env-file=.env.local infra/configurer-centre.mjs
  *
  * Ce ne sont pas des données de démonstration : c'est la configuration du
  * centre, reprise du site public handfield.fr. Elle vit en base et non dans le
@@ -10,13 +10,11 @@
  *
  * Le script est idempotent : le rejouer remet les valeurs ci-dessous.
  */
-import postgres from 'postgres'
-
+import { withTenant } from '../src/db/index.ts'
 // Module TypeScript importé tel quel : Node 24 retire les types à la volée,
 // comme pour `infra/chiffrer-documents.ts`.
 import { seedExpectedServices } from '../src/modules/facturation/services-attendus.ts'
-
-const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
+import { assurerCentre, dansLeCentre, DEFAULT_TENANT_ID, ouvrirBase, uuidv7 } from './connexion.mjs'
 
 /**
  * Le logo est servi depuis `public/`, jamais appelé chez l'hébergeur du site
@@ -54,8 +52,7 @@ const CENTRE = {
 /**
  * Heures d'ouverture réelles : du lundi au vendredi, 8h00 – 18h00.
  *
- * Elles remplacent celles posées par défaut à la migration 0011, qui ouvraient
- * à 9h00. Ce sont ces lignes, et non un texte dans la page, qui décident de ce
+ * Ce sont ces lignes, et non un texte dans la page, qui décident de ce
  * que le site public propose comme créneaux.
  */
 const OUVERTURE = { opensAt: '08:00', closesAt: '18:00', weekdays: [1, 2, 3, 4, 5] }
@@ -77,63 +74,55 @@ const PRIX_DES_SERVICES = {
   'courrier.reexpedition': null,
 }
 
-const url = process.env.APP_DATABASE_URL
-if (!url) {
-  console.error('APP_DATABASE_URL manquant (voir .env.example).')
-  process.exit(1)
-}
-
-const sql = postgres(url, { prepare: false })
+const { client, db } = ouvrirBase()
 
 try {
-  const [centre] = await sql.begin(async (tx) => {
-    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
-    return tx`
-      update tenants set
-        name           = ${CENTRE.name},
-        slug           = ${CENTRE.slug},
-        tagline        = ${CENTRE.tagline},
-        legal_name     = ${CENTRE.legalName},
-        address_line1  = ${CENTRE.addressLine1},
-        address_line2  = ${CENTRE.addressLine2},
-        postal_code    = ${CENTRE.postalCode},
-        city           = ${CENTRE.city},
-        country        = ${CENTRE.country},
-        phone          = ${CENTRE.phone},
-        email          = ${CENTRE.email},
-        website_url    = ${CENTRE.websiteUrl},
-        logo_path      = ${CENTRE.logoPath},
-        logo_light_path = ${CENTRE.logoLightPath},
-        hero_image_path = ${CENTRE.heroImagePath},
-        social_links    = ${sql.json(CENTRE.socialLinks)},
-        timezone       = ${CENTRE.timezone},
-        currency       = ${CENTRE.currency}
-      where id = ${DEFAULT_TENANT_ID}
-      returning name, city, phone, logo_path`
+  const centre = await dansLeCentre(client, async (cnx) => {
+    // Base vide : la ligne du centre est posée ici si aucun script ne l'a fait.
+    await assurerCentre(cnx, { name: CENTRE.name, slug: CENTRE.slug })
+    await cnx.query(
+      `update tenants set
+         name = ?, slug = ?, tagline = ?, legal_name = ?,
+         address_line1 = ?, address_line2 = ?, postal_code = ?, city = ?, country = ?,
+         phone = ?, email = ?, website_url = ?,
+         logo_path = ?, logo_light_path = ?, hero_image_path = ?,
+         social_links = ?, timezone = ?, currency = ?
+       where id = ?`,
+      [
+        CENTRE.name, CENTRE.slug, CENTRE.tagline, CENTRE.legalName,
+        CENTRE.addressLine1, CENTRE.addressLine2, CENTRE.postalCode, CENTRE.city, CENTRE.country,
+        CENTRE.phone, CENTRE.email, CENTRE.websiteUrl,
+        CENTRE.logoPath, CENTRE.logoLightPath, CENTRE.heroImagePath,
+        JSON.stringify(CENTRE.socialLinks), CENTRE.timezone, CENTRE.currency,
+        DEFAULT_TENANT_ID,
+      ],
+    )
+    const [[row]] = await cnx.query(
+      'select name, city, phone, logo_path from tenants where id = ?',
+      [DEFAULT_TENANT_ID],
+    )
+    return row
   })
 
-  if (!centre) {
-    console.error(
-      "Le centre unique est absent de la base. Appliquer les migrations d'abord : npx drizzle-kit migrate",
-    )
-    process.exit(1)
-  }
-
-  const plages = await sql.begin(async (tx) => {
-    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
+  const plages = await dansLeCentre(client, async (cnx) => {
     // Les horaires du centre, pas ceux d'une ressource précise : `resource_id`
     // nul vaut pour tout le centre.
-    await tx`delete from opening_hours where resource_id is null`
-    return tx`
-      insert into opening_hours (weekday, opens_at, closes_at)
-      select unnest(${OUVERTURE.weekdays}::int[]), ${OUVERTURE.opensAt}::time, ${OUVERTURE.closesAt}::time
-      returning weekday`
+    await cnx.query('delete from opening_hours where resource_id is null')
+    for (const weekday of OUVERTURE.weekdays) {
+      await cnx.query(
+        `insert into opening_hours (id, resource_id, weekday, opens_at, closes_at)
+         values (?, null, ?, ?, ?)`,
+        [uuidv7(), weekday, OUVERTURE.opensAt, OUVERTURE.closesAt],
+      )
+    }
+    return OUVERTURE.weekdays
   })
 
-  const services = await sql.begin(async (tx) => {
-    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
-    return seedExpectedServices(tx, PRIX_DES_SERVICES)
-  })
+  const services = await withTenant(
+    DEFAULT_TENANT_ID,
+    (tx) => seedExpectedServices(tx, PRIX_DES_SERVICES),
+    db,
+  )
 
   console.log(`Centre configuré : ${centre.name}, ${centre.city} — ${centre.phone}`)
   for (const code of services.created) console.log(`Service créé : ${code}`)
@@ -151,5 +140,5 @@ try {
   )
   console.log(`Logo servi depuis ${centre.logo_path}`)
 } finally {
-  await sql.end()
+  await client.end()
 }

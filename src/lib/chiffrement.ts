@@ -4,9 +4,9 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
  * Chiffrement des secrets confiés par un tiers — aujourd'hui le jeton Google
  * Agenda du centre (ADR 014).
  *
- * Une branche Neon copie les données de sa branche parente : un jeton en clair
- * en production se retrouverait dans chaque branche de développement, et avec
- * lui l'accès à l'agenda du centre. Chiffré avec une clé propre à chaque
+ * Une copie de la base de production (sauvegarde restaurée, base de
+ * développement alimentée depuis elle) emporte les jetons : en clair, elle
+ * donnerait avec eux l'accès à l'agenda du centre. Chiffré avec une clé propre à chaque
  * environnement, il y est illisible.
  *
  * AES-256-GCM : authentifié, donc un chiffré altéré est refusé au lieu d'être

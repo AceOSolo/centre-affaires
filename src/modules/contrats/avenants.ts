@@ -1,16 +1,18 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import {
-  PG_AMENDMENT_INVALID,
-  PG_COMMITMENT_LOCKED,
-  PG_EXCLUSION_VIOLATION,
-  pgErrorCode,
+  DB_AMENDMENT_INVALID,
+  DB_COMMITMENT_LOCKED,
+  DB_EXCLUSION_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { archiveContractDocument } from './documents.ts'
-import { pgRefusalMessage } from './erreurs.ts'
+import { dbRefusalMessage } from './erreurs.ts'
 import type { LineDraft } from './lignes.ts'
 import { linesRefusal, writeDraftLines } from './lignes-queries.ts'
 import { ContractOccupationConflictError, selectOccupationConflicts } from './queries.ts'
@@ -26,7 +28,7 @@ import { selectContractLines, type ContractLineWithTarget } from './versions.ts'
  * d'effet après le début et après le dernier avenant signé, avenant qui change
  * quelque chose (`CA005`) ; signé, il est figé (`CA004`). La signature d'un
  * avenant de ressource recalcule l'occupation par segments ; si la nouvelle
- * ressource est prise, la contrainte d'exclusion refuse (`23P01`) et l'avenant
+ * ressource est prise, le contrôle de chevauchement refuse (`CA000`) et l'avenant
  * reste brouillon.
  *
  * À la signature, le document de l'avenant est archivé dans la même
@@ -63,7 +65,7 @@ export class AmendmentRefusedError extends Error {
 }
 
 function amendmentRefusal(error: unknown): unknown {
-  const message = pgRefusalMessage(error, [PG_AMENDMENT_INVALID, PG_COMMITMENT_LOCKED])
+  const message = dbRefusalMessage(error, [DB_AMENDMENT_INVALID, DB_COMMITMENT_LOCKED])
   if (message) return new AmendmentRefusedError(message)
   const lines = linesRefusal(error)
   if (lines !== error) return lines
@@ -92,10 +94,10 @@ export async function createAmendment(
 ): Promise<ContractAmendment> {
   try {
     return await withTenant(currentTenantId(), async (tx) => {
-      const [created] = await tx
-        .insert(contractAmendments)
-        .values({ contractId, ...amendmentColumns(input) })
-        .returning()
+      const created = await insertReturning(tx, contractAmendments, {
+        contractId,
+        ...amendmentColumns(input),
+      })
       if (input.priceMode === 'lines') {
         await writeDraftLines(tx, { contractId, amendmentId: created.id }, input.lines)
       }
@@ -135,7 +137,7 @@ export async function updateDraftAmendment(
             isNull(contractAmendments.deletedAt),
           ),
         )
-        .for('no key update')
+        .for('update')
       if (!draft) return false
       await writeDraftLines(
         tx,
@@ -170,18 +172,17 @@ export async function signAmendment(
 ): Promise<{ documentVersion: number } | false> {
   try {
     return await withTenant(currentTenantId(), async (tx) => {
-      const signed = await tx
-        .update(contractAmendments)
-        .set({ status: 'signed' })
-        .where(
-          and(
-            eq(contractAmendments.id, amendmentId),
-            eq(contractAmendments.contractId, contractId),
-            eq(contractAmendments.status, 'draft'),
-            isNull(contractAmendments.deletedAt),
-          ),
-        )
-        .returning({ id: contractAmendments.id })
+      const signed = await updateReturning(
+        tx,
+        contractAmendments,
+        { status: 'signed' },
+        and(
+          eq(contractAmendments.id, amendmentId),
+          eq(contractAmendments.contractId, contractId),
+          eq(contractAmendments.status, 'draft'),
+          isNull(contractAmendments.deletedAt),
+        ),
+      )
       if (signed.length === 0) return false
       const document = await archiveContractDocument(tx, {
         contractId,
@@ -191,7 +192,7 @@ export async function signAmendment(
       return { documentVersion: document.version }
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_EXCLUSION_VIOLATION) {
+    if (dbErrorCode(error) === DB_EXCLUSION_VIOLATION) {
       throw await occupationConflict(contractId, amendmentId)
     }
     throw amendmentRefusal(error)
@@ -227,18 +228,17 @@ async function occupationConflict(
 /** Abandonne un avenant brouillon (`deleted_at`) : il ne compte plus, et reste lisible. */
 export async function abandonAmendment(contractId: string, amendmentId: string): Promise<boolean> {
   const abandoned = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(contractAmendments)
-      .set({ deletedAt: sql`now()` })
-      .where(
-        and(
-          eq(contractAmendments.id, amendmentId),
-          eq(contractAmendments.contractId, contractId),
-          eq(contractAmendments.status, 'draft'),
-          isNull(contractAmendments.deletedAt),
-        ),
-      )
-      .returning({ id: contractAmendments.id }),
+    updateReturning(
+      tx,
+      contractAmendments,
+      { deletedAt: maintenant() },
+      and(
+        eq(contractAmendments.id, amendmentId),
+        eq(contractAmendments.contractId, contractId),
+        eq(contractAmendments.status, 'draft'),
+        isNull(contractAmendments.deletedAt),
+      ),
+    ),
   )
   return abandoned.length > 0
 }

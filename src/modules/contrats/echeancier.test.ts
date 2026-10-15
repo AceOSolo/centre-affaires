@@ -413,7 +413,7 @@ describe('contractSchedule : échéancier versionné (ADR 025)', () => {
 })
 
 describe('engagement et préavis (ADR 023)', () => {
-  it('ajoute des mois comme Postgres, en ramenant au dernier jour du mois', () => {
+  it('ajoute des mois comme MySQL (date_add), en ramenant au dernier jour du mois', () => {
     assert.equal(addMonths('2026-01-31', 1), '2026-02-28')
     assert.equal(addMonths('2028-01-31', 1), '2028-02-29')
     assert.equal(addMonths('2026-03-10', 12), '2027-03-10')

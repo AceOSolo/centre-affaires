@@ -1,5 +1,5 @@
 import { and, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
-import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { alias, type AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { contractAmendments, contractDocuments, contracts, offerRequests } from '../contrats/schema.ts'
@@ -44,7 +44,7 @@ function yearRange(year: number, timeZone: string): { from: Date; to: Date } {
   }
 }
 
-const memberName = (member: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
+const memberName = (member: { fullName: AnyMySqlColumn; email: AnyMySqlColumn }) =>
   sql<string | null>`coalesce(${member.fullName}, ${member.email})`
 
 export async function loadAccountHistory(
@@ -83,11 +83,11 @@ export async function loadAccountHistory(
           endsAt: bookings.endsAt,
           bookedByName: memberName(bookedBy),
           confirmedAt: bookings.confirmedAt,
-          confirmedByStaff: sql<boolean>`${bookings.confirmedByStaffId} is not null`,
+          confirmedByStaff: sql<boolean>`${bookings.confirmedByStaffId} is not null`.mapWith(Boolean),
           cancelledAt: bookings.cancelledAt,
           cancellationReason: bookings.cancellationReason,
           cancelledByMemberName: memberName(cancelledBy),
-          cancelledByStaff: sql<boolean>`${bookings.cancelledByStaffId} is not null`,
+          cancelledByStaff: sql<boolean>`${bookings.cancelledByStaffId} is not null`.mapWith(Boolean),
         })
         .from(bookings)
         .innerJoin(clients, eq(clients.id, bookings.clientId))
@@ -123,7 +123,7 @@ export async function loadAccountHistory(
           // Un pli retiré n'était peut-être pas à l'entreprise : son expéditeur
           // ne remonte plus.
           sender: sql<string | null>`case when ${mailItems.deletedAt} is null then ${mailItems.sender} end`,
-          mailItemRemoved: sql<boolean>`${mailItems.deletedAt} is not null`,
+          mailItemRemoved: sql<boolean>`${mailItems.deletedAt} is not null`.mapWith(Boolean),
           receivedAt: mailItems.receivedAt,
           requestedAt: mailRequests.requestedAt,
           requestedByMemberName: memberName(requestedBy),
@@ -133,7 +133,7 @@ export async function loadAccountHistory(
           refusalReason: mailRequests.refusalReason,
           cancelledAt: mailRequests.cancelledAt,
           cancelledByMemberName: memberName(cancelledBy),
-          cancelledByStaff: sql<boolean>`${mailRequests.cancelledByStaffId} is not null`,
+          cancelledByStaff: sql<boolean>`${mailRequests.cancelledByStaffId} is not null`.mapWith(Boolean),
           forwardTrackingNumber: mailRequests.forwardTrackingNumber,
         })
         .from(mailRequests)
@@ -243,8 +243,8 @@ export async function loadAccountHistory(
             inArray(invoices.clientId, clientIds),
             ne(invoices.status, 'draft'),
             isNull(invoices.deletedAt),
-            sql`coalesce(${invoices.issuedAt}, ${invoices.createdAt}) >= ${from.toISOString()}::timestamptz`,
-            sql`coalesce(${invoices.issuedAt}, ${invoices.createdAt}) < ${to.toISOString()}::timestamptz`,
+            sql`coalesce(${invoices.issuedAt}, ${invoices.createdAt}) >= ${from}`,
+            sql`coalesce(${invoices.issuedAt}, ${invoices.createdAt}) < ${to}`,
           ),
         )
         .orderBy(desc(issuedAt))
@@ -269,7 +269,7 @@ export async function loadAccountHistory(
           closedAt: inspections.closedAt,
           signedAt: inspections.signedAt,
           signedByName: memberName(signedBy),
-          hasRemarks: sql<boolean>`coalesce(btrim(${inspections.clientRemarks}), '') <> ''`,
+          hasRemarks: sql<boolean>`coalesce(trim(${inspections.clientRemarks}), '') <> ''`.mapWith(Boolean),
         })
         .from(inspections)
         .innerJoin(clients, eq(clients.id, inspections.clientId))
@@ -280,8 +280,8 @@ export async function loadAccountHistory(
             inArray(inspections.clientId, clientIds),
             eq(inspections.status, 'closed'),
             isNull(inspections.deletedAt),
-            sql`${shownAt} >= ${from.toISOString()}::timestamptz`,
-            sql`${shownAt} < ${to.toISOString()}::timestamptz`,
+            sql`${shownAt} >= ${from}`,
+            sql`${shownAt} < ${to}`,
           ),
         )
         .orderBy(desc(shownAt))
@@ -320,25 +320,35 @@ export async function loadAccountHistory(
 export async function findAccountHistoryStart(accounts: readonly ClientAccount[]): Promise<Date | null> {
   if (accounts.length === 0) return null
   const ids = sql.join(
-    accounts.map((account) => sql`${account.clientId}::uuid`),
+    accounts.map((account) => sql`${account.clientId}`),
     sql`, `,
   )
-  const [row] = await inClientSpace(accounts, (tx) =>
-    tx.execute<{ first_at: string | null }>(sql`
-      select least(
-        (select min(b.created_at) from bookings as b
-          where b.client_id in (${ids}) and b.kind = 'booking'),
-        (select min(r.requested_at) from mail_requests as r
-          where r.client_id in (${ids})),
-        (select min(d.created_at) from contract_documents as d
+  // Une sous-requête par rubrique, réunies puis minimisées : `least()` de
+  // MySQL rend NULL dès qu'un argument l'est, là où celui de PostgreSQL
+  // ignorait les nuls. Chaque requête filtre sur les entreprises du compte :
+  // la base ne filtre plus les lectures (conventions §6).
+  const [rows] = (await inClientSpace(accounts, (tx) =>
+    tx.execute(sql`
+      select min(first_at) as first_at from (
+        select min(b.created_at) as first_at from bookings as b
+          where b.client_id in (${ids}) and b.kind = 'booking'
+        union all
+        select min(r.requested_at) from mail_requests as r
+          where r.client_id in (${ids})
+        union all
+        select min(d.created_at) from contract_documents as d
            join contracts as k on k.id = d.contract_id
-          where k.client_id in (${ids}) and k.status <> 'draft' and k.deleted_at is null),
-        (select min(coalesce(i.issued_at, i.created_at)) from invoices as i
-          where i.client_id in (${ids}) and i.status <> 'draft' and i.deleted_at is null),
-        (select min(coalesce(e.closed_at, e.performed_at)) from inspections as e
-          where e.client_id in (${ids}) and e.status = 'closed' and e.deleted_at is null)
-      ) as first_at`),
-  )
-  // `execute` rend les instants en chaînes (ADR 019, pièges du schéma).
-  return row?.first_at ? new Date(row.first_at) : null
+          where k.client_id in (${ids}) and k.status <> 'draft' and k.deleted_at is null
+        union all
+        select min(coalesce(i.issued_at, i.created_at)) from invoices as i
+          where i.client_id in (${ids}) and i.status <> 'draft' and i.deleted_at is null
+        union all
+        select min(coalesce(e.closed_at, e.performed_at)) from inspections as e
+          where e.client_id in (${ids}) and e.status = 'closed' and e.deleted_at is null
+      ) as firsts`),
+  )) as unknown as [{ first_at: Date | string | null }[]]
+  const first = rows[0]?.first_at
+  if (!first) return null
+  // Le pilote rend les `datetime` en chaînes UTC « 2026-01-05 09:00:00.000 ».
+  return first instanceof Date ? first : new Date(`${first.replace(' ', 'T')}Z`)
 }

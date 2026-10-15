@@ -1,16 +1,17 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
-import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { count, eq, sql } from 'drizzle-orm'
 
-import { PG_OFFER_REQUEST_REFUSED, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
-import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { DB_OFFER_REQUEST_REFUSED, dbErrorCode } from '../../db/errors.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
+import { DEFAULT_TENANT_ID, tenants } from '../../db/tenants.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { loadAccountHistory } from '../clients/historique-compte-queries.ts'
 import { settleOfferRequests } from '../contrats/demandes-offres.ts'
-import { contracts } from '../contrats/schema.ts'
+import { contracts, offerRequests } from '../contrats/schema.ts'
 import { notificationDeliveries } from '../notifications/schema.ts'
 import {
   dismissOfferRequest,
@@ -22,6 +23,56 @@ import {
 } from './offres-portail.ts'
 
 /**
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
  * L'offre groupée dans l'espace client (R23, ADR 036), contre la base : le
  * client ne voit que les offres présentées, chiffrées par le moteur de la
  * vague 2 ; sa demande est une ligne de `offer_requests` (ADR 041), qu'il
@@ -29,21 +80,11 @@ import {
  * contrat en soit tiré ou que l'accueil l'écarte ; l'accueil en est prévenu
  * (ADR 038). Aucun contrat n'est créé par le client.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('offre groupée depuis l’espace client', { skip: raison }, () => {
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('offre groupée depuis l’espace client', { skip: raisonDeSaut }, () => {
   delete process.env.SMTP_HOST
 
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000f1c01'
   const PETIT = '01a00000-0000-7000-8000-0000000f1c02'
@@ -57,7 +98,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
   const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
   const journal = () => asTenant((tx) => tx.select().from(notificationDeliveries))
   const demander = () =>
     requestOffer({ account: durand[0], offer: { id: PREMIUM, name: 'Domiciliation Premium' } })
@@ -65,16 +106,19 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
   let centreEmail: string | null = null
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    const [tenant] = await owner.client`select email from tenants where id = ${DEFAULT_TENANT_ID}`
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
+    const [tenant] = await bases.owner.db
+      .select({ email: tenants.email })
+      .from(tenants)
+      .where(eq(tenants.id, DEFAULT_TENANT_ID))
     centreEmail = tenant.email
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table contracts, offers, services, rate_plan_items, rate_plans, clients cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table notification_deliveries, notification_templates`
-    await owner.client`update tenants set email = 'accueil@centre.test' where id = ${DEFAULT_TENANT_ID}`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE, 'notification_deliveries', 'notification_templates')
+    await bases.owner.db.execute(sql`update tenants set email = 'accueil@centre.test' where id = ${DEFAULT_TENANT_ID}`)
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.test', 'Claire Accueil')`)
       await tx.execute(sql`
@@ -91,7 +135,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
           (${PREMIUM}, 'Domiciliation Premium', true, 12),
           (${INTERNE}, 'Offre en préparation', false, null),
           (${ANCIENNE}, 'Ancienne offre', true, null)`)
-      await tx.execute(sql`update offers set deleted_at = now() where id = ${ANCIENNE}`)
+      await tx.execute(sql`update offers set deleted_at = CURRENT_TIMESTAMP(3) where id = ${ANCIENNE}`)
       await tx.execute(sql`
         insert into offer_items (offer_id, resource_type, quantity, unit, price_cents, label, position) values
           (${PREMIUM}, 'boite_aux_lettres', 1, 'month', 4000, 'Adresse de domiciliation', 0),
@@ -104,9 +148,9 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`update tenants set email = ${centreEmail} where id = ${DEFAULT_TENANT_ID}`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await bases.owner.db.execute(sql`update tenants set email = ${centreEmail} where id = ${DEFAULT_TENANT_ID}`)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('ne montre que les offres présentées dans l’espace, chiffrées par le moteur de la vague 2', async () => {
@@ -133,10 +177,10 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
 
   it('inscrit la demande, prévient l’accueil et la journalise, sans créer de contrat', async () => {
     assert.equal((await demander()).status, 'created')
-    const [demande] = await asTenant((tx) => tx.execute(sql`select * from offer_requests`))
-    assert.equal(demande.client_id, DURAND)
-    assert.equal(demande.offer_id, PREMIUM)
-    assert.equal(demande.requested_by_member_id, JEANNE)
+    const [demande] = await asTenant((tx) => tx.select().from(offerRequests))
+    assert.equal(demande.clientId, DURAND)
+    assert.equal(demande.offerId, PREMIUM)
+    assert.equal(demande.requestedByMemberId, JEANNE)
     assert.equal(demande.status, 'requested')
 
     const [ligne] = await journal()
@@ -148,7 +192,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
     assert.equal(ligne.status, 'not_configured')
     assert.deepEqual(ligne.recipients, ['accueil@centre.test'])
     assert.equal(ligne.subject, 'Offre demandée — Domiciliation Premium, Atelier Durand')
-    const [{ total }] = await asTenant((tx) => tx.execute(sql`select count(*)::int as total from contracts`))
+    const [{ total }] = await asTenant((tx) => tx.select({ total: count() }).from(contracts))
     assert.equal(total, 0)
   })
 
@@ -172,19 +216,19 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
           tx.execute(sql`
             insert into offer_requests (client_id, offer_id, requested_by_member_id)
             values (${clientId}, ${offerId}, ${JEANNE})`),
-        app.db,
+        bases.app.db,
       )
     const code = async (run: () => Promise<unknown>) => {
       try {
         await run()
       } catch (error) {
-        return pgErrorCode(error)
+        return dbErrorCode(error)
       }
       return undefined
     }
-    assert.equal(await code(() => deposer(DURAND, INTERNE)), PG_OFFER_REQUEST_REFUSED)
-    assert.equal(await code(() => deposer(DURAND, ANCIENNE)), PG_OFFER_REQUEST_REFUSED)
-    // Hors de la portée du compte : la RLS refuse l'écriture.
+    assert.equal(await code(() => deposer(DURAND, INTERNE)), DB_OFFER_REQUEST_REFUSED)
+    assert.equal(await code(() => deposer(DURAND, ANCIENNE)), DB_OFFER_REQUEST_REFUSED)
+    // Hors de la portée du compte : le trigger de portée refuse l'écriture.
     assert.ok(await code(() => deposer(PETIT, PREMIUM)))
     // Le client ne traite pas sa demande, et personne ne la supprime.
     await demander()
@@ -194,20 +238,18 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
           DEFAULT_TENANT_ID,
           [DURAND],
           (tx) => tx.execute(sql`update offer_requests set status = 'dismissed', closed_by_staff_id = ${ACCUEIL}`),
-          app.db,
+          bases.app.db,
         ),
       ),
-      PG_OFFER_REQUEST_REFUSED,
+      DB_OFFER_REQUEST_REFUSED,
     )
     assert.ok(await code(() => asTenant((tx) => tx.execute(sql`delete from offer_requests`))))
-    // Une autre entreprise ne la voit pas.
-    const vues = await withClientScope(
-      DEFAULT_TENANT_ID,
-      [PETIT],
-      (tx) => tx.execute(sql`select id from offer_requests`),
-      app.db,
-    )
-    assert.equal(vues.length, 0)
+    // Une autre entreprise ne la voit pas : la base ne filtre plus les
+    // lectures, c'est le filtre de la requête sur les entreprises du compte.
+    const petit: ClientAccount[] = [{ memberId: JEANNE, clientId: PETIT, clientName: 'Boulangerie Petit' }]
+    assert.equal(await openOfferRequest(petit, PETIT, PREMIUM), undefined)
+    assert.equal(await openOfferRequest(petit, DURAND, PREMIUM), undefined)
+    assert.ok(await openOfferRequest(durand, DURAND, PREMIUM))
   })
 
   it('la montre à traiter dans « Demandes » jusqu’à ce qu’un contrat en soit tiré pour ce client', async () => {
@@ -221,19 +263,27 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
 
     // Un contrat tiré d'une autre offre, ou pour un autre client, ne la clôt pas.
     await asTenant(async (tx) => {
-      const [autre] = await tx
-        .insert(contracts)
-        .values({ clientId: PETIT, reference: 'CT-OFF-0', contractType: 'domiciliation', startsOn: '2026-11-01', amountCents: 4_000, offerId: PREMIUM })
-        .returning({ id: contracts.id, clientId: contracts.clientId })
+      const autre = await insertReturning(tx, contracts, {
+        clientId: PETIT,
+        reference: 'CT-OFF-0',
+        contractType: 'domiciliation',
+        startsOn: '2026-11-01',
+        amountCents: 4_000,
+        offerId: PREMIUM,
+      })
       await settleOfferRequests(tx, { id: autre.id, clientId: autre.clientId, offerId: PREMIUM }, ACCUEIL)
     })
     assert.equal((await listOfferRequests())[0].status, 'requested')
 
     await asTenant(async (tx) => {
-      const [contrat] = await tx
-        .insert(contracts)
-        .values({ clientId: DURAND, reference: 'CT-OFF-1', contractType: 'domiciliation', startsOn: '2026-11-01', amountCents: 4_000, offerId: PREMIUM })
-        .returning({ id: contracts.id, clientId: contracts.clientId })
+      const contrat = await insertReturning(tx, contracts, {
+        clientId: DURAND,
+        reference: 'CT-OFF-1',
+        contractType: 'domiciliation',
+        startsOn: '2026-11-01',
+        amountCents: 4_000,
+        offerId: PREMIUM,
+      })
       await settleOfferRequests(tx, { id: contrat.id, clientId: contrat.clientId, offerId: PREMIUM }, ACCUEIL)
     })
     const [traitee] = await listOfferRequests()
@@ -273,20 +323,26 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
   it('retient l’anonymisation tant qu’une demande attend, et efface le motif avec la fiche', async () => {
     await demander()
     const bloquants = async () => {
-      const [row] = await asTenant((tx) =>
-        tx.execute(sql`select client_anonymization_blockers(${DURAND}::uuid) as raisons`),
-      )
-      return row.raisons as string[]
+      const [rows] = (await asTenant((tx) =>
+        tx.execute(sql`select client_anonymization_blockers(${DURAND}) as raisons`),
+      )) as unknown as [{ raisons: string[] | string }[]]
+      // Une valeur JSON : le pilote la rend en tableau ou en texte selon le contexte.
+      const raisons = rows[0].raisons
+      return typeof raisons === 'string' ? (JSON.parse(raisons) as string[]) : raisons
     }
     assert.deepEqual(await bloquants(), ["Demande d'offre à traiter."])
     const [demande] = await listOfferRequests()
     await dismissOfferRequest(demande.id, ACCUEIL, 'Rappeler M. Durand en janvier.')
     assert.deepEqual(await bloquants(), [])
     await asTenant((tx) =>
-      tx.execute(sql`select anonymize_client(${DURAND}::uuid, ${ACCUEIL}::uuid, 'relationship_ended', null)`),
+      tx.execute(sql`select anonymize_client(${DURAND}, ${ACCUEIL}, 'relationship_ended', null)`),
     )
-    const [reste] = await asTenant((tx) => tx.execute(sql`select status, dismissal_reason from offer_requests`))
-    assert.deepEqual({ ...reste }, { status: 'dismissed', dismissal_reason: null })
+    const [reste] = await asTenant((tx) =>
+      tx
+        .select({ status: offerRequests.status, dismissalReason: offerRequests.dismissalReason })
+        .from(offerRequests),
+    )
+    assert.deepEqual({ ...reste }, { status: 'dismissed', dismissalReason: null })
   })
 
   it('suit le modèle du centre : son texte, ou rien s’il est désactivé (journalisé)', async () => {
@@ -311,7 +367,7 @@ describe('offre groupée depuis l’espace client', { skip: raison }, () => {
   })
 
   it('garde dans « Demandes » la demande d’un centre sans adresse, journalisée sans destinataire', async () => {
-    await owner.client`update tenants set email = null where id = ${DEFAULT_TENANT_ID}`
+    await bases.owner.db.execute(sql`update tenants set email = null where id = ${DEFAULT_TENANT_ID}`)
     assert.equal((await demander()).status, 'created')
     const [ligne] = await journal()
     assert.equal(ligne.status, 'skipped')

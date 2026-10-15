@@ -4,18 +4,18 @@ import {
   check,
   foreignKey,
   index,
-  integer,
-  pgEnum,
-  pgTable,
+  int,
+  mysqlEnum,
+  mysqlTable,
   smallint,
   text,
-  timestamp,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
@@ -30,7 +30,7 @@ import { clientMembers, clients } from '../clients/schema.ts'
  */
 export const mailKinds = ['lettre', 'recommande', 'colis', 'autre'] as const
 export type MailKind = (typeof mailKinds)[number]
-export const mailKindEnum = pgEnum('mail_kind', mailKinds)
+export const mailKindEnum = (name: string) => mysqlEnum(name, mailKinds)
 
 /**
  * `received` : enregistré, fermé. Le client ne voit au mieux que l'enveloppe.
@@ -45,22 +45,22 @@ export const mailKindEnum = pgEnum('mail_kind', mailKinds)
  */
 export const mailStatuses = ['received', 'opening_requested', 'opened'] as const
 export type MailStatus = (typeof mailStatuses)[number]
-export const mailStatusEnum = pgEnum('mail_status', mailStatuses)
+export const mailStatusEnum = (name: string) => mysqlEnum(name, mailStatuses)
 
-export const mailItems = pgTable(
+export const mailItems = mysqlTable(
   'mail_items',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     kind: mailKindEnum('kind').notNull().default('lettre'),
     /** Expéditeur lu sur l'enveloppe. Nul quand il n'y figure pas. */
     sender: text('sender'),
-    receivedAt: timestamp('received_at', { withTimezone: true }).notNull().defaultNow(),
+    receivedAt: instant('received_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
     /** Précision du centre, visible du client : « avis de passage, à retirer avant le 12 ». */
     note: text('note'),
     status: mailStatusEnum('status').notNull().default('received'),
-    registeredBy: uuid('registered_by').references(() => staffMembers.id, {
+    registeredBy: char('registered_by', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
 
@@ -69,12 +69,12 @@ export const mailItems = pgTable(
      * ouvre de lui-même : l'origine de l'ouverture se lit ici, et le relevé de
      * facturation la montre.
      */
-    openingRequestedAt: timestamp('opening_requested_at', { withTimezone: true }),
-    openingRequestedBy: uuid('opening_requested_by'),
+    openingRequestedAt: instant('opening_requested_at'),
+    openingRequestedBy: char('opening_requested_by', { length: 36 }),
 
     /** Ouverture et numérisation du contenu : la prestation facturée. */
-    openedAt: timestamp('opened_at', { withTimezone: true }),
-    openedBy: uuid('opened_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    openedAt: instant('opened_at'),
+    openedBy: char('opened_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
 
     ...timestamps(),
     /**
@@ -86,7 +86,7 @@ export const mailItems = pgTable(
      * Anonymisation de l'expéditeur et de la note (R29, ADR 040), avec la
      * fiche du client : le pli, ses dates et son ouverture restent au relevé.
      */
-    senderAnonymizedAt: timestamp('sender_anonymized_at', { withTimezone: true }),
+    senderAnonymizedAt: instant('sender_anonymized_at'),
   },
   (table) => [
     foreignKey({
@@ -112,12 +112,10 @@ export const mailItems = pgTable(
     // relevé.
     check(
       'mail_items_status_consistent',
-      sql`case ${table.status}
-        when 'received' then ${table.openingRequestedAt} is null and ${table.openedAt} is null
-        when 'opening_requested' then ${table.openingRequestedAt} is not null and ${table.openedAt} is null
-        when 'opened' then ${table.openedAt} is not null
-        else false
-      end`,
+      // Écrit en OU de cas : MySQL refuse un `CASE` nu comme expression de check.
+      sql`(${table.status} = 'received' and ${table.openingRequestedAt} is null and ${table.openedAt} is null)
+        or (${table.status} = 'opening_requested' and ${table.openingRequestedAt} is not null and ${table.openedAt} is null)
+        or (${table.status} = 'opened' and ${table.openedAt} is not null)`,
     ),
     check(
       'mail_items_request_complete',
@@ -130,14 +128,11 @@ export const mailItems = pgTable(
 
     index('mail_items_client_received_idx').on(table.tenantId, table.clientId, table.receivedAt),
     index('mail_items_tenant_received_idx').on(table.tenantId, table.receivedAt),
-    // File des ouvertures à faire : peu de lignes parmi beaucoup.
-    index('mail_items_requested_idx')
-      .on(table.tenantId, table.openingRequestedAt)
-      .where(sql`status = 'opening_requested' and deleted_at is null`),
-    // Relevé mensuel des ouvertures.
-    index('mail_items_opened_idx')
-      .on(table.tenantId, table.openedAt)
-      .where(sql`opened_at is not null`),
+    // File des ouvertures à faire. MySQL n'a pas d'index partiel : le statut
+    // précède la date pour que la file se lise sans balayer le reste.
+    index('mail_items_requested_idx').on(table.tenantId, table.status, table.openingRequestedAt),
+    // Relevé mensuel des ouvertures (les plis fermés ont `opened_at` nul).
+    index('mail_items_opened_idx').on(table.tenantId, table.openedAt),
   ],
 )
 
@@ -161,7 +156,7 @@ export type NewMailItem = typeof mailItems.$inferInsert
  */
 export const mailRequestKinds = ['open_and_scan', 'scan', 'forward'] as const
 export type MailRequestKind = (typeof mailRequestKinds)[number]
-export const mailRequestKindEnum = pgEnum('mail_request_kind', mailRequestKinds)
+export const mailRequestKindEnum = (name: string) => mysqlEnum(name, mailRequestKinds)
 
 /**
  * `requested` → `in_progress` → `done` ; `requested` ou `in_progress` →
@@ -178,14 +173,14 @@ export const mailRequestStatuses = [
   'cancelled',
 ] as const
 export type MailRequestStatus = (typeof mailRequestStatuses)[number]
-export const mailRequestStatusEnum = pgEnum('mail_request_status', mailRequestStatuses)
+export const mailRequestStatusEnum = (name: string) => mysqlEnum(name, mailRequestStatuses)
 
 /**
  * Un pli reçoit plusieurs demandes dans le temps : ouverture, puis
  * numérisation de pages oubliées, puis réexpédition. Au plus une demande en
  * cours par pli et par nature (`mail_requests_pending_key`).
  *
- * Garanties tenues par la base (migration 0041, ADR 037) :
+ * Garanties tenues par la base (`src/db/regles/60-courrier.sql`, ADR 037) :
  *
  * - transitions, dates et auteurs : trigger `mail_requests_guard` (`CA008`) ;
  *   sous portée client, seules la création et l'annulation par une personne
@@ -197,22 +192,31 @@ export const mailRequestStatusEnum = pgEnum('mail_request_status', mailRequestSt
  *   avoir (`invoice_lines_mail_request_key`), et seulement faite (`CA003`) ;
  * - ni suppression ni réécriture de l'adresse figée.
  */
-export const mailRequests = pgTable(
+export const mailRequests = mysqlTable(
   'mail_requests',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    mailItemId: uuid('mail_item_id').notNull(),
+    mailItemId: char('mail_item_id', { length: 36 }).notNull(),
     /** Client du pli, recopié pour la portée client ; la clé étrangère le tient égal. */
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     kind: mailRequestKindEnum('kind').notNull(),
     status: mailRequestStatusEnum('status').notNull().default('requested'),
 
+    /**
+     * Colonne générée : 1 tant que la demande est en cours (`requested`,
+     * `in_progress`), NULL ensuite. Porte l'unicité « une demande en cours par
+     * pli et par nature » (MySQL n'a pas d'index partiel). Jamais écrite.
+     */
+    pendingLive: tinyint('pending_live').generatedAlwaysAs(
+      sql`if(status in ('requested', 'in_progress'), 1, null)`,
+      { mode: 'virtual' },
+    ),
     /** Posée par la base à l'insertion. */
-    requestedAt: timestamp('requested_at', { withTimezone: true }).notNull().defaultNow(),
+    requestedAt: instant('requested_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
     /** Exactement un auteur : une personne de l'entreprise, ou l'accueil (consigne par téléphone). */
-    requestedByMemberId: uuid('requested_by_member_id'),
-    requestedByStaffId: uuid('requested_by_staff_id').references(() => staffMembers.id, {
+    requestedByMemberId: char('requested_by_member_id', { length: 36 }),
+    requestedByStaffId: char('requested_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
     /** Consigne du client : « numériser aussi les annexes ». Figée. */
@@ -234,28 +238,28 @@ export const mailRequests = pgTable(
      * à côté de l'acte `courrier.reexpedition`. Modifiables tant que la
      * demande n'est pas facturée.
      */
-    postageCents: integer('postage_cents'),
+    postageCents: int('postage_cents'),
     postageCurrency: char('postage_currency', { length: 3 }),
 
     /* Transitions : date posée par la base, auteur posé par le code. */
-    startedAt: timestamp('started_at', { withTimezone: true }),
-    startedByStaffId: uuid('started_by_staff_id').references(() => staffMembers.id, {
+    startedAt: instant('started_at'),
+    startedByStaffId: char('started_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
-    completedAt: timestamp('completed_at', { withTimezone: true }),
-    completedByStaffId: uuid('completed_by_staff_id').references(() => staffMembers.id, {
+    completedAt: instant('completed_at'),
+    completedByStaffId: char('completed_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
-    refusedAt: timestamp('refused_at', { withTimezone: true }),
+    refusedAt: instant('refused_at'),
     /** Nul : refus posé par la base (pli retiré). */
-    refusedByStaffId: uuid('refused_by_staff_id').references(() => staffMembers.id, {
+    refusedByStaffId: char('refused_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
     /** Motif, montré au client. */
     refusalReason: text('refusal_reason'),
-    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
-    cancelledByMemberId: uuid('cancelled_by_member_id'),
-    cancelledByStaffId: uuid('cancelled_by_staff_id').references(() => staffMembers.id, {
+    cancelledAt: instant('cancelled_at'),
+    cancelledByMemberId: char('cancelled_by_member_id', { length: 36 }),
+    cancelledByStaffId: char('cancelled_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
     ...timestamps(),
@@ -282,13 +286,17 @@ export const mailRequests = pgTable(
       foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
     }).onDelete('restrict'),
     // Au plus une demande en cours par pli et par nature : deux clics, deux
-    // collègues, une seule demande.
-    uniqueIndex('mail_requests_pending_key')
-      .on(table.tenantId, table.mailItemId, table.kind)
-      .where(sql`status in ('requested', 'in_progress')`),
+    // collègues, une seule demande. `pending_live` vaut 1 tant que la demande
+    // est en cours, NULL ensuite : l'index unique ignore les NULL.
+    uniqueIndex('mail_requests_pending_key').on(
+      table.tenantId,
+      table.mailItemId,
+      table.kind,
+      table.pendingLive,
+    ),
     check(
       'mail_requests_one_author',
-      sql`num_nonnulls(${table.requestedByMemberId}, ${table.requestedByStaffId}) = 1`,
+      sql`(${table.requestedByMemberId} is not null) + (${table.requestedByStaffId} is not null) = 1`,
     ),
     check(
       'mail_requests_opening_by_client',
@@ -296,12 +304,17 @@ export const mailRequests = pgTable(
     ),
     check(
       'mail_requests_forward_address',
-      sql`case when ${table.kind} = 'forward'
-        then num_nulls(${table.forwardRecipient}, ${table.forwardAddressLine1}, ${table.forwardPostalCode}, ${table.forwardCity}, ${table.forwardCountry}) = 0
-             and btrim(${table.forwardRecipient}) <> '' and btrim(${table.forwardAddressLine1}) <> ''
-             and btrim(${table.forwardPostalCode}) <> '' and btrim(${table.forwardCity}) <> ''
-        else num_nonnulls(${table.forwardRecipient}, ${table.forwardAddressLine1}, ${table.forwardAddressLine2}, ${table.forwardPostalCode}, ${table.forwardCity}, ${table.forwardCountry}, ${table.forwardTrackingNumber}) = 0
-      end`,
+      sql`(${table.kind} = 'forward'
+        and ${table.forwardRecipient} is not null and ${table.forwardAddressLine1} is not null
+             and ${table.forwardPostalCode} is not null and ${table.forwardCity} is not null
+             and ${table.forwardCountry} is not null
+             and trim(${table.forwardRecipient}) <> '' and trim(${table.forwardAddressLine1}) <> ''
+             and trim(${table.forwardPostalCode}) <> '' and trim(${table.forwardCity}) <> '')
+        or (${table.kind} <> 'forward'
+             and ${table.forwardRecipient} is null and ${table.forwardAddressLine1} is null
+             and ${table.forwardAddressLine2} is null and ${table.forwardPostalCode} is null
+             and ${table.forwardCity} is null and ${table.forwardCountry} is null
+             and ${table.forwardTrackingNumber} is null)`,
     ),
     check(
       'mail_requests_postage_valid',
@@ -314,12 +327,12 @@ export const mailRequests = pgTable(
         and (${table.status} = 'done') = (${table.completedAt} is not null)
         and (${table.status} = 'refused') = (${table.refusedAt} is not null)
         and (${table.refusedAt} is null) = (${table.refusalReason} is null)
-        and (${table.refusalReason} is null or btrim(${table.refusalReason}) <> '')
+        and (${table.refusalReason} is null or trim(${table.refusalReason}) <> '')
         and (${table.refusedByStaffId} is null or ${table.refusedAt} is not null)
         and (${table.status} = 'cancelled') = (${table.cancelledAt} is not null)
         and (case when ${table.cancelledAt} is null
-              then num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 0
-              else num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 1 end)
+              then ${table.cancelledByMemberId} is null and ${table.cancelledByStaffId} is null
+              else (${table.cancelledByMemberId} is not null) + (${table.cancelledByStaffId} is not null) = 1 end)
         and (${table.status} <> 'requested' or ${table.startedAt} is null)
         and (${table.status} <> 'in_progress' or ${table.startedAt} is not null)
         and (${table.status} <> 'cancelled' or ${table.startedAt} is null)`,
@@ -328,13 +341,9 @@ export const mailRequests = pgTable(
     index('mail_requests_item_idx').on(table.tenantId, table.mailItemId, table.requestedAt),
     index('mail_requests_client_idx').on(table.tenantId, table.clientId, table.requestedAt),
     // File de l'accueil : les demandes à traiter, dans l'ordre d'arrivée.
-    index('mail_requests_queue_idx')
-      .on(table.tenantId, table.requestedAt)
-      .where(sql`status in ('requested', 'in_progress')`),
+    index('mail_requests_queue_idx').on(table.tenantId, table.status, table.requestedAt),
     // Lot de facturation : les demandes faites d'une période.
-    index('mail_requests_done_idx')
-      .on(table.tenantId, table.completedAt)
-      .where(sql`status = 'done' and kind in ('scan', 'forward')`),
+    index('mail_requests_done_idx').on(table.tenantId, table.status, table.completedAt),
   ],
 )
 
@@ -344,25 +353,25 @@ export type NewMailRequest = typeof mailRequests.$inferInsert
 /** Recto de l'enveloppe, ou contenu du pli une fois ouvert. */
 export const mailScanSides = ['envelope', 'content'] as const
 export type MailScanSide = (typeof mailScanSides)[number]
-export const mailScanSideEnum = pgEnum('mail_scan_side', mailScanSides)
+export const mailScanSideEnum = (name: string) => mysqlEnum(name, mailScanSides)
 
 /**
  * Numérisations. Le fichier vit dans le stockage objet, la base n'en garde que
  * la clé : jamais d'URL publique, chaque lecture passe par l'application et
  * laisse une trace dans `mail_scan_views`.
  */
-export const mailScans = pgTable(
+export const mailScans = mysqlTable(
   'mail_scans',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    mailItemId: uuid('mail_item_id').notNull(),
+    mailItemId: char('mail_item_id', { length: 36 }).notNull(),
     side: mailScanSideEnum('side').notNull(),
-    storageKey: text('storage_key').notNull(),
+    storageKey: varchar('storage_key', { length: 255 }).notNull(),
     /** Déterminé par le contenu du fichier, pas par ce que le navigateur déclare. */
-    contentType: text('content_type').notNull(),
-    byteSize: integer('byte_size').notNull(),
-    uploadedBy: uuid('uploaded_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    contentType: varchar('content_type', { length: 100 }).notNull(),
+    byteSize: int('byte_size').notNull(),
+    uploadedBy: char('uploaded_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     /**
      * Chiffrement au repos de l'objet stocké (R22, ADR 020).
      *
@@ -380,10 +389,19 @@ export const mailScans = pgTable(
      * une numérisation seule d'un pli déjà ouvert. Nulle pour l'enveloppe, et
      * pour un contenu numérisé d'office par le centre.
      */
-    mailRequestId: uuid('mail_request_id'),
+    mailRequestId: char('mail_request_id', { length: 36 }),
     ...timestamps(),
     /** Purge au terme de la durée de conservation : le fichier part, la ligne reste. */
     deletedAt: deletedAt(),
+    /**
+     * Colonne générée portant l'unicité « un contenu par pli et par demande » :
+     * l'identifiant de la demande (ou un UUID nul pour l'enveloppe et le contenu
+     * d'office) tant que la ligne n'est pas purgée, NULL ensuite. Jamais écrite.
+     */
+    liveKey: char('live_key', { length: 36 }).generatedAlwaysAs(
+      sql`if(deleted_at is null, coalesce(mail_request_id, '00000000-0000-0000-0000-000000000000'), null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     foreignKey({
@@ -401,13 +419,8 @@ export const mailScans = pgTable(
     unique('mail_scans_storage_key_key').on(table.storageKey),
     // Une enveloppe par pli ; un contenu par pli et par demande — celui de
     // l'ouverture, puis un par numérisation demandée ensuite (ADR 037).
-    uniqueIndex('mail_scans_item_side_key')
-      .on(
-        table.mailItemId,
-        table.side,
-        sql`coalesce(mail_request_id, '00000000-0000-0000-0000-000000000000'::uuid)`,
-      )
-      .where(sql`deleted_at is null`),
+    // `live_key` est NULL pour une ligne purgée : elle sort de l'unicité.
+    uniqueIndex('mail_scans_item_side_key').on(table.mailItemId, table.side, table.liveKey),
     check(
       'mail_scans_request_content_only',
       sql`${table.mailRequestId} is null or ${table.side} = 'content'`,
@@ -421,11 +434,9 @@ export const mailScans = pgTable(
       'mail_scans_encryption_key_version_positive',
       sql`${table.encryptionKeyVersion} is null or ${table.encryptionKeyVersion} > 0`,
     ),
-    // File de la reprise : les objets encore en clair, du plus ancien au plus
-    // récent. Elle se vide à mesure qu'ils sont chiffrés.
-    index('mail_scans_unencrypted_idx')
-      .on(table.tenantId, table.createdAt)
-      .where(sql`encryption_key_version is null and deleted_at is null`),
+    // File de la reprise : les objets encore en clair (version nulle), du plus
+    // ancien au plus récent. Elle se vide à mesure qu'ils sont chiffrés.
+    index('mail_scans_unencrypted_idx').on(table.tenantId, table.encryptionKeyVersion, table.createdAt),
   ],
 )
 
@@ -436,27 +447,28 @@ export type NewMailScan = typeof mailScans.$inferInsert
  * Journal d'accès aux numérisations, exigé par `CLAUDE.md` (RGPD).
  *
  * Une ligne par consultation, par le centre comme par le client. Le journal ne
- * se corrige pas : le rôle applicatif n'a ni `UPDATE` ni `DELETE` sur cette
- * table (migration 0020). Un journal que l'application peut réécrire ne prouve
- * rien.
+ * se corrige pas : des triggers (`mail_scan_views_append_only_*`,
+ * `src/db/regles/60-courrier.sql`) refusent tout `UPDATE` et tout `DELETE`, sauf
+ * la purge échue `purge_expired_mail_scan_views()`. Un journal que
+ * l'application peut réécrire ne prouve rien.
  */
 export const mailScanViewers = ['staff', 'client'] as const
 export type MailScanViewer = (typeof mailScanViewers)[number]
 
-export const mailScanViews = pgTable(
+export const mailScanViews = mysqlTable(
   'mail_scan_views',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    mailScanId: uuid('mail_scan_id').notNull(),
-    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
-    viewer: text('viewer').$type<MailScanViewer>().notNull(),
-    staffMemberId: uuid('staff_member_id').references(() => staffMembers.id, {
+    mailScanId: char('mail_scan_id', { length: 36 }).notNull(),
+    viewedAt: instant('viewed_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+    viewer: varchar('viewer', { length: 16 }).$type<MailScanViewer>().notNull(),
+    staffMemberId: char('staff_member_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
-    clientMemberId: uuid('client_member_id'),
+    clientMemberId: char('client_member_id', { length: 36 }),
     /** Le compte lui-même : il survit au retrait de la personne de la fiche. */
-    authUserId: text('auth_user_id').notNull(),
+    authUserId: varchar('auth_user_id', { length: 255 }).notNull(),
   },
   (table) => [
     foreignKey({
@@ -471,11 +483,8 @@ export const mailScanViews = pgTable(
     }).onDelete('restrict'),
     check(
       'mail_scan_views_viewer_consistent',
-      sql`case ${table.viewer}
-        when 'staff' then ${table.staffMemberId} is not null and ${table.clientMemberId} is null
-        when 'client' then ${table.clientMemberId} is not null and ${table.staffMemberId} is null
-        else false
-      end`,
+      sql`(${table.viewer} = 'staff' and ${table.staffMemberId} is not null and ${table.clientMemberId} is null)
+        or (${table.viewer} = 'client' and ${table.clientMemberId} is not null and ${table.staffMemberId} is null)`,
     ),
     index('mail_scan_views_scan_idx').on(table.tenantId, table.mailScanId, table.viewedAt),
   ],

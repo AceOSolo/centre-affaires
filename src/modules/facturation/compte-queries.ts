@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, inArray, isNull, ne } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias } from 'drizzle-orm/mysql-core'
 
 import { isUuid } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
@@ -11,9 +11,9 @@ import { invoiceLines, invoices, type Invoice, type InvoiceLine } from './schema
  *
  * Jamais un brouillon, jamais la facture d'une autre entreprise. Trois
  * verrous : le filtre sur `client_id`, le filtre `status <> 'draft'` (un
- * brouillon abandonné compris), et la portée client de la transaction : la
- * politique `invoices_client_scope` (migration 0031) écarte d'elle-même les
- * brouillons et les autres clients, même pour une requête sans filtre.
+ * brouillon abandonné compris), et la portée client de la transaction. La base
+ * ne filtre plus les lectures (pas de RLS sous MySQL, ADR 042) : les deux
+ * filtres de la requête sont donc la seule protection, ils ne s'omettent pas.
  */
 
 export type ClientInvoiceRow = Pick<

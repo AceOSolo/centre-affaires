@@ -3,11 +3,12 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_INSPECTION_LOCKED, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { DB_INSPECTION_LOCKED, dbErrorCode } from '../../db/errors.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import {
   openDocument,
   sealDocument,
@@ -19,22 +20,13 @@ import { rekeyInspectionPhotos } from './rechiffrement.ts'
 
 /**
  * Rechiffrement des photos d'états des lieux après une rotation de clé (R33,
- * ADR 020, ADR 041), sous `app_centre` : chaque photo vivante passe à la clé
- * courante, celles d'un état des lieux clos comprises, sans que rien d'autre
- * ne change ; hors de la fonction de la base, la version de clé reste figée.
+ * ADR 020, ADR 041), sous l'identité applicative : chaque photo vivante passe
+ * à la clé courante, celles d'un état des lieux clos comprises, sans que rien
+ * d'autre ne change ; hors de la fonction de la base, la version de clé reste
+ * figée.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('rechiffrement des photos d’états des lieux', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('rechiffrement des photos d’états des lieux', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000a7c01'
   const CAMILLE = '01a00000-0000-7000-8000-0000000a7e01'
@@ -46,7 +38,21 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
   const avant: DocumentKeyring = { currentVersion: 1, keys: new Map([[1, cle1]]) }
   const apres: DocumentKeyring = { currentVersion: 2, keys: new Map([[1, cle1], [2, cle2]]) }
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
+
+  /** La ligne d'une photo, hors `updated_at` et version de clé (ce qui doit rester identique). */
+  const ligne = async (id: string) => {
+    const [rows] = (await bases.owner.client.query('select * from inspection_photos where id = ?', [
+      id,
+    ])) as unknown as [Record<string, unknown>[]]
+    const { updated_at: _a, encryption_key_version: _b, ...reste } = rows[0]
+    return reste
+  }
 
   /** Le stockage, en mémoire. */
   const objets = new Map<string, Uint8Array>()
@@ -66,35 +72,51 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
     const key = `etats-des-lieux/test/rechiffrement-${numero}.jpg`
     const sealed = sealDocument(contenu, key, keyring)
     objets.set(key, sealed.bytes)
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into inspection_photos (inspection_id, storage_key, encryption_key_version, content_type,
+        insert into inspection_photos (id, inspection_id, storage_key, encryption_key_version, content_type,
                                        byte_size, width, height, uploaded_by)
-        values (${inspectionId}, ${key}, ${sealed.keyVersion}, 'image/jpeg', ${contenu.byteLength}, 1600, 1200, ${CAMILLE})
-        returning id`),
+        values (${id}, ${inspectionId}, ${key}, ${sealed.keyVersion}, 'image/jpeg', ${contenu.byteLength}, 1600, 1200, ${CAMILLE})`),
     )
-    return { id: row.id as string, key, contenu }
+    return { id, key, contenu }
   }
 
   const version = async (id: string) => {
     const [row] = await asTenant((tx) =>
-      tx.execute(sql`select encryption_key_version as v from inspection_photos where id = ${id}`),
+      lire(tx, sql`select encryption_key_version as v from inspection_photos where id = ${id}`),
     )
     return Number(row.v)
   }
 
   const rechiffrer = (apply: boolean, keyring = apres) =>
-    rekeyInspectionPhotos({ database: app.db, tenantId: DEFAULT_TENANT_ID, store, keyring, apply })
+    rekeyInspectionPhotos({ database: bases.app.db, tenantId: DEFAULT_TENANT_ID, store, keyring, apply })
+
+  const toutVider = () =>
+    viderTables(
+      bases.owner,
+      'inspection_photo_views',
+      'inspection_photos',
+      'inspections',
+      'inspection_template_versions',
+      'inspection_templates',
+      'bookings',
+      'contracts',
+      'clients',
+      'resources',
+      'staff_members',
+    )
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
     objets.clear()
-    await owner.client`truncate table bookings, contracts, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table inspection_templates cascade`
+    await toutVider()
     inspectionId = await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email) values (${CAMILLE}, 'camille@centre.fr')`)
       await tx.execute(sql`insert into clients (id, name, status) values (${DURAND}, 'Atelier Durand', 'active')`)
@@ -103,26 +125,26 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
       await tx.execute(sql`
         insert into contracts (id, client_id, reference, contract_type, starts_on, amount_cents)
         values (${CONTRAT}, ${DURAND}, 'RK-1', 'bureau', '2026-01-01', 90000)`)
-      const [modele] = await tx.execute(sql`
-        insert into inspection_templates (resource_type, name) values ('bureau', 'Bureau') returning id`)
-      const [versionModele] = await tx.execute(sql`
-        insert into inspection_template_versions (template_id, version, name, fields, created_by)
-        values (${modele.id as string}, 1, 'Bureau',
-                '[{"id":"murs","label":"Murs","type":"condition","required":true}]'::jsonb, ${CAMILLE})
-        returning id`)
-      const [etat] = await tx.execute(sql`
-        insert into inspections (kind, resource_id, client_id, contract_id, template_version_id, values, created_by)
-        values ('entry', ${BUREAU}, ${DURAND}, ${CONTRAT}, ${versionModele.id as string}, '{"murs":"bon"}'::jsonb, ${CAMILLE})
-        returning id`)
-      return etat.id as string
+      const modele = uuidv7()
+      const versionModele = uuidv7()
+      const etat = uuidv7()
+      await tx.execute(sql`
+        insert into inspection_templates (id, resource_type, name) values (${modele}, 'bureau', 'Bureau')`)
+      await tx.execute(sql`
+        insert into inspection_template_versions (id, template_id, version, name, fields, created_by)
+        values (${versionModele}, ${modele}, 1, 'Bureau',
+                '[{"id":"murs","label":"Murs","type":"condition","required":true}]', ${CAMILLE})`)
+      await tx.execute(sql`
+        insert into inspections (id, kind, resource_id, client_id, contract_id, template_version_id, \`values\`, created_by)
+        values (${etat}, 'entry', ${BUREAU}, ${DURAND}, ${CONTRAT}, ${versionModele}, '{"murs":"bon"}', ${CAMILLE})`)
+      return etat
     })
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table inspection_templates cascade`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await toutVider()
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('rechiffre avec la clé courante les photos d’un état des lieux clos, sans rien changer d’autre', async () => {
@@ -131,8 +153,7 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
     await asTenant((tx) =>
       tx.execute(sql`update inspections set status = 'closed', closed_by = ${CAMILLE} where id = ${inspectionId}`),
     )
-    const [ligneAvant] = await owner.client`
-      select to_jsonb(p) - 'updated_at' - 'encryption_key_version' as ligne from inspection_photos as p where id = ${ancienne.id}`
+    const ligneAvant = await ligne(ancienne.id)
 
     // Essai à blanc : ce qu'il y a à faire, rien de fait.
     const essai = await rechiffrer(false)
@@ -153,9 +174,7 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
       Buffer.from(openDocument(objets.get(ancienne.key) as Uint8Array, 2, ancienne.key, seuleNouvelle)),
       ancienne.contenu,
     )
-    const [ligneApres] = await owner.client`
-      select to_jsonb(p) - 'updated_at' - 'encryption_key_version' as ligne from inspection_photos as p where id = ${ancienne.id}`
-    assert.deepEqual(ligneApres.ligne, ligneAvant.ligne)
+    assert.deepEqual(await ligne(ancienne.id), ligneAvant)
 
     // Rejoué : plus rien à faire.
     assert.deepEqual((await rechiffrer(true)).pending, {})
@@ -188,7 +207,7 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
       try {
         await run()
       } catch (error) {
-        return pgErrorCode(error)
+        return dbErrorCode(error)
       }
       return undefined
     }
@@ -196,17 +215,21 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
       await code(() =>
         asTenant((tx) => tx.execute(sql`update inspection_photos set encryption_key_version = 2 where id = ${deposee.id}`)),
       ),
-      PG_INSPECTION_LOCKED,
+      DB_INSPECTION_LOCKED,
     )
     // Sous le drapeau, seule la version de clé passe.
     assert.equal(
       await code(() =>
         asTenant(async (tx) => {
-          await tx.execute(sql`select set_config('app.inspection_photo_rekey', 'on', true)`)
-          await tx.execute(sql`update inspection_photos set byte_size = 1 where id = ${deposee.id}`)
+          await tx.execute(sql`set @app_inspection_photo_rekey = 'on'`)
+          try {
+            await tx.execute(sql`update inspection_photos set byte_size = 1 where id = ${deposee.id}`)
+          } finally {
+            await tx.execute(sql`set @app_inspection_photo_rekey = null`)
+          }
         }),
       ),
-      PG_INSPECTION_LOCKED,
+      DB_INSPECTION_LOCKED,
     )
     // Depuis un espace client : refusée.
     assert.equal(
@@ -214,17 +237,17 @@ describe('rechiffrement des photos d’états des lieux', { skip: raison }, () =
         withClientScope(
           DEFAULT_TENANT_ID,
           [DURAND],
-          (tx) => tx.execute(sql`select rekey_inspection_photo(${deposee.id}::uuid, 1, 2)`),
-          app.db,
+          (tx) => tx.execute(sql`select rekey_inspection_photo(${deposee.id}, 1, 2)`),
+          bases.app.db,
         ),
       ),
-      PG_INSPECTION_LOCKED,
+      DB_INSPECTION_LOCKED,
     )
     // La version de départ doit être celle de la ligne.
     const [mauvaise] = await asTenant((tx) =>
-      tx.execute(sql`select rekey_inspection_photo(${deposee.id}::uuid, 3, 2) as done`),
+      lire(tx, sql`select rekey_inspection_photo(${deposee.id}, 3, 2) as done`),
     )
-    assert.equal(mauvaise.done, false)
+    assert.equal(Number(mauvaise.done), 0)
     assert.equal(await version(deposee.id), 1)
   })
 })

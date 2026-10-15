@@ -14,7 +14,7 @@ export type MemberFormState = {
   values?: { email: string; fullName: string }
 } | null
 
-/** Contrôle volontairement sommaire : c'est Neon Auth qui vérifiera l'adresse. */
+/** Contrôle volontairement sommaire : c'est l'authentification qui vérifiera l'adresse. */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 export async function addClientMemberAction(

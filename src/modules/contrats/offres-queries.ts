@@ -1,6 +1,6 @@
 import { and, asc, count, eq, isNull } from 'drizzle-orm'
 
-import { PG_EXCLUSION_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_EXCLUSION_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
@@ -219,7 +219,7 @@ export async function createContractFromOffer(input: {
       return contract
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_EXCLUSION_VIOLATION) throw new DuplicateSubscriptionError()
+    if (dbErrorCode(error) === DB_EXCLUSION_VIOLATION) throw new DuplicateSubscriptionError()
     const reference = referenceRefusal(error, input.contract.reference)
     if (reference !== error) throw reference
     throw linesRefusal(error)

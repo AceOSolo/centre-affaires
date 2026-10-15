@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_CHECK_VIOLATION, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { DB_CHECK_VIOLATION, DB_INSUFFICIENT_PRIVILEGE, dbErrorCode } from '../../db/errors.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { purgeExpiredMail } from './conservation.ts'
 import {
@@ -22,28 +23,13 @@ import {
  *
  * Deux choses ne doivent jamais arriver : qu'une entreprise lise le courrier
  * d'une autre, et qu'une ouverture échappe au relevé — ou y figure deux fois.
- * Les requêtes sont appelées telles que l'application les appelle, sous le
- * rôle applicatif soumis à la RLS.
+ * Les requêtes sont appelées telles que l'application les appelle, sous
+ * l'identité applicative. MySQL ne filtre pas les lectures : la portée client
+ * tient aux filtres explicites des requêtes, que ces tests éprouvent.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-/** Droit refusé : le journal d'accès n'accepte ni correction ni effacement. */
-const PG_INSUFFICIENT_PRIVILEGE = '42501'
-
-describe('courrier', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL :
-  // on la fait pointer sur la base de test.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('courrier', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
+  const owner = { get client() { return bases.owner.client } }
 
   const DURAND = '01a00000-0000-7000-8000-00000000c1a1'
   const PETIT = '01a00000-0000-7000-8000-00000000c1a2'
@@ -54,14 +40,18 @@ describe('courrier', { skip: raison }, () => {
 
   const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
 
-  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1], tenant = DEFAULT_TENANT_ID) =>
-    withTenant(tenant, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>, tenant = DEFAULT_TENANT_ID) =>
+    withTenant(tenant, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
 
   const codeErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
@@ -76,46 +66,61 @@ describe('courrier', { skip: raison }, () => {
     } = {},
   ): Promise<string> => {
     const status = openedAt ? 'opened' : requestedAt ? 'opening_requested' : 'received'
-    const [row] = await asTenant((tx) =>
+    // MySQL lit `2026-09-02 08:00:00.000`, pas le format ISO avec `T` et `Z`.
+    const datetime = (iso: string | null) => (iso ? iso.replace('T', ' ').replace('Z', '') : null)
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
         insert into mail_items (
-          client_id, sender, status, received_at,
+          id, client_id, sender, status, received_at,
           opening_requested_at, opening_requested_by, opened_at, opened_by, deleted_at
         ) values (
-          ${clientId}, 'URSSAF', ${status}, '2026-09-01T08:00:00Z',
-          ${requestedAt}, ${requestedAt ? (clientId === DURAND ? JEANNE : PAUL) : null},
-          ${openedAt}, ${openedAt ? CAMILLE : null}, ${deleted ? sql`now()` : null}
-        ) returning id
+          ${id}, ${clientId}, 'URSSAF', ${status}, '2026-09-01 08:00:00.000',
+          ${datetime(requestedAt)}, ${requestedAt ? (clientId === DURAND ? JEANNE : PAUL) : null},
+          ${datetime(openedAt)}, ${openedAt ? CAMILLE : null}, ${deleted ? sql`CURRENT_TIMESTAMP(3)` : null}
+        )
       `),
     )
-    return row.id as string
+    return id
   }
 
   const numeriser = async (mailItemId: string, side = 'envelope'): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size)
-        values (${mailItemId}, ${side}, ${`courrier/test/${mailItemId}-${side}.pdf`}, 'application/pdf', 1200)
-        returning id
+        insert into mail_scans (id, mail_item_id, side, storage_key, content_type, byte_size)
+        values (${id}, ${mailItemId}, ${side}, ${`courrier/test/${mailItemId}-${side}.pdf`}, 'application/pdf', 1200)
       `),
     )
-    return row.id as string
+    return id
   }
 
   const statut = async (id: string) => {
     const [row] = await asTenant((tx) =>
-      tx.execute(sql`select status, opening_requested_by from mail_items where id = ${id}`),
+      lire(tx, sql`select status, opening_requested_by from mail_items where id = ${id}`),
     )
     return row
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : on la fait pointer
+    // sur l'identité applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table clients, staff_members cascade`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'mail_scan_views',
+      'mail_scans',
+      'mail_requests',
+      'mail_items',
+      'client_members',
+      'clients',
+      'staff_members',
+    )
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -132,8 +137,8 @@ describe('courrier', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('cohérence en base', () => {
@@ -145,7 +150,7 @@ describe('courrier', { skip: raison }, () => {
           tx.execute(sql`insert into mail_items (client_id, status) values (${DURAND}, 'opened')`),
         ),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
 
     it('refuse une demande d’ouverture sans demandeur', async () => {
@@ -153,10 +158,10 @@ describe('courrier', { skip: raison }, () => {
         asTenant((tx) =>
           tx.execute(sql`
             insert into mail_items (client_id, status, opening_requested_at)
-            values (${DURAND}, 'opening_requested', now())`),
+            values (${DURAND}, 'opening_requested', CURRENT_TIMESTAMP(3))`),
         ),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
 
     it('distingue un objet stocké en clair d’un objet chiffré, et sa version de clé', async () => {
@@ -170,8 +175,7 @@ describe('courrier', { skip: raison }, () => {
           values (${id}, 'content', 'courrier/test/chiffre.pdf', 'application/pdf', 1200, 1)`),
       )
       const rows = await asTenant((tx) =>
-        tx.execute(sql`
-          select id, encryption_key_version from mail_scans order by side`),
+        lire(tx, sql`select id, encryption_key_version from mail_scans order by side`),
       )
       assert.deepEqual(
         rows.map((row) => [row.id === clair, row.encryption_key_version]),
@@ -183,7 +187,7 @@ describe('courrier', { skip: raison }, () => {
       const code = await codeErreur(() =>
         asTenant((tx) => tx.execute(sql`update mail_scans set encryption_key_version = 0`)),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
 
     it('refuse une numérisation d’un type qui s’exécuterait dans le navigateur', async () => {
@@ -195,7 +199,7 @@ describe('courrier', { skip: raison }, () => {
             values (${id}, 'envelope', 'k', 'text/html', 10)`),
         ),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
 
     it('n’accepte qu’une enveloppe et un contenu par pli', async () => {
@@ -204,12 +208,22 @@ describe('courrier', { skip: raison }, () => {
       await assert.rejects(numeriser(id, 'envelope'))
     })
 
-    it('cache le courrier d’un centre aux autres centres', async () => {
-      await pli(DURAND)
-      await owner.client`
-        insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-courrier')`
-      const rows = await asTenant((tx) => tx.execute(sql`select id from mail_items`), AUTRE_CENTRE)
-      assert.equal(rows.length, 0)
+    it('refuse d’écrire un pli pour un autre centre', async () => {
+      // Remplace l'ancienne isolation par RLS : la base refuse l'écriture
+      // (CA014), la lecture filtre sur `tenant_id` dès qu'un second centre existe.
+      await bases.owner.client.query(
+        'insert into tenants (id, name, slug) values (?, ?, ?)',
+        [AUTRE_CENTRE, 'Autre centre', 'autre-centre-courrier'],
+      )
+      const code = await codeErreur(() =>
+        asTenant(
+          (tx) =>
+            tx.execute(sql`
+              insert into mail_items (id, tenant_id, client_id) values (${uuidv7()}, ${DEFAULT_TENANT_ID}, ${DURAND})`),
+          AUTRE_CENTRE,
+        ),
+      )
+      assert.equal(code, 'CA014')
     })
   })
 
@@ -225,9 +239,9 @@ describe('courrier', { skip: raison }, () => {
       const scanId = await numeriser(await pli(DURAND))
       await consulter(scanId)
       const code = await codeErreur(() =>
-        asTenant((tx) => tx.execute(sql`update mail_scan_views set viewed_at = now() - interval '1 year'`)),
+        asTenant((tx) => tx.execute(sql`update mail_scan_views set viewed_at = date_sub(CURRENT_TIMESTAMP(3), interval 1 year)`)),
       )
-      assert.equal(code, PG_INSUFFICIENT_PRIVILEGE)
+      assert.equal(code, DB_INSUFFICIENT_PRIVILEGE)
     })
 
     it('ne s’efface pas', async () => {
@@ -236,7 +250,7 @@ describe('courrier', { skip: raison }, () => {
       const code = await codeErreur(() =>
         asTenant((tx) => tx.execute(sql`delete from mail_scan_views`)),
       )
-      assert.equal(code, PG_INSUFFICIENT_PRIVILEGE)
+      assert.equal(code, DB_INSUFFICIENT_PRIVILEGE)
     })
 
     it('nomme toujours la personne, du côté qu’elle déclare', async () => {
@@ -248,7 +262,7 @@ describe('courrier', { skip: raison }, () => {
             values (${scanId}, 'client', ${CAMILLE}, 'u-camille')`),
         ),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
   })
 
@@ -365,21 +379,22 @@ describe('courrier', { skip: raison }, () => {
   describe('conservation', () => {
     /** Numérisation déposée il y a `mois` mois. */
     const numeriserIlYa = async (mailItemId: string, mois: number, side = 'envelope') => {
-      const [row] = await asTenant((tx) =>
+      const id = uuidv7()
+      const key = `courrier/test/${mailItemId}-${side}.pdf`
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size, created_at)
-          values (${mailItemId}, ${side}, ${`courrier/test/${mailItemId}-${side}.pdf`}, 'application/pdf', 1200,
-                  now() - make_interval(months => ${mois}))
-          returning id, storage_key`),
+          insert into mail_scans (id, mail_item_id, side, storage_key, content_type, byte_size, created_at)
+          values (${id}, ${mailItemId}, ${side}, ${key}, 'application/pdf', 1200,
+                  TIMESTAMPADD(MONTH, ${-mois}, CURRENT_TIMESTAMP(3)))`),
       )
-      return { id: row.id as string, key: row.storage_key as string }
+      return { id, key }
     }
 
     const consulterIlYa = (scanId: string, mois: number) =>
       asTenant((tx) =>
         tx.execute(sql`
           insert into mail_scan_views (mail_scan_id, viewer, client_member_id, auth_user_id, viewed_at)
-          values (${scanId}, 'client', ${JEANNE}, 'u-jeanne', now() - make_interval(months => ${mois}))`),
+          values (${scanId}, 'client', ${JEANNE}, 'u-jeanne', TIMESTAMPADD(MONTH, ${-mois}, CURRENT_TIMESTAMP(3)))`),
       )
 
     const purger = async () => {
@@ -401,7 +416,7 @@ describe('courrier', { skip: raison }, () => {
       assert.deepEqual(effaces, [ancienne.key])
 
       const rows = await asTenant((tx) =>
-        tx.execute(sql`select id, deleted_at from mail_scans order by created_at`),
+        lire(tx, sql`select id, deleted_at from mail_scans order by created_at`),
       )
       assert.notEqual(rows.find((r) => r.id === ancienne.id)?.deleted_at, null)
       assert.equal(rows.find((r) => r.id === recente.id)?.deleted_at, null)
@@ -412,19 +427,23 @@ describe('courrier', { skip: raison }, () => {
       await numeriserIlYa(id, 13, 'content')
       await purger()
       const [row] = await asTenant((tx) =>
-        tx.execute(sql`select status, deleted_at from mail_items where id = ${id}`),
+        lire(tx, sql`select status, deleted_at from mail_items where id = ${id}`),
       )
       assert.equal(row.status, 'opened')
       assert.equal(row.deleted_at, null)
     })
 
     it('suit la durée fixée par le centre', async () => {
-      await owner.client`update tenants set mail_scan_retention_months = 24 where id = ${DEFAULT_TENANT_ID}`
+      await owner.client.query('update tenants set mail_scan_retention_months = 24 where id = ?', [
+        DEFAULT_TENANT_ID,
+      ])
       try {
         await numeriserIlYa(await pli(DURAND), 13)
         assert.equal((await purger()).scans, 0)
       } finally {
-        await owner.client`update tenants set mail_scan_retention_months = 12 where id = ${DEFAULT_TENANT_ID}`
+        await owner.client.query('update tenants set mail_scan_retention_months = 12 where id = ?', [
+          DEFAULT_TENANT_ID,
+        ])
       }
     })
 
@@ -434,28 +453,31 @@ describe('courrier', { skip: raison }, () => {
       await consulterIlYa(scan.id, 1)
 
       assert.equal((await purger()).views, 1)
-      const rows = await asTenant((tx) => tx.execute(sql`select id from mail_scan_views`))
+      const rows = await asTenant((tx) => lire(tx, sql`select id from mail_scan_views`))
       assert.equal(rows.length, 1)
     })
 
     it('ne purge pas le journal d’un autre centre', async () => {
       const scan = await numeriserIlYa(await pli(DURAND), 1)
       await consulterIlYa(scan.id, 14)
-      await owner.client`
-        insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-courrier')`
+      await owner.client.query('insert into tenants (id, name, slug) values (?, ?, ?)', [
+        AUTRE_CENTRE,
+        'Autre centre',
+        'autre-centre-courrier',
+      ])
 
       const [row] = await asTenant(
-        (tx) => tx.execute(sql`select purge_expired_mail_scan_views() as purged`),
+        (tx) => lire(tx, sql`select purge_expired_mail_scan_views() as purged`),
         AUTRE_CENTRE,
       )
-      assert.equal(row.purged, 0)
+      assert.equal(Number(row.purged), 0)
     })
 
     it('refuse une durée de conservation nulle', async () => {
-      const code = await codeErreur(
-        () => owner.client`update tenants set mail_access_log_retention_months = 0`,
+      const code = await codeErreur(() =>
+        owner.client.query('update tenants set mail_access_log_retention_months = 0'),
       )
-      assert.equal(code, PG_CHECK_VIOLATION)
+      assert.equal(code, DB_CHECK_VIOLATION)
     })
   })
 })

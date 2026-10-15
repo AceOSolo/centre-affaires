@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { PG_OFFER_REQUEST_REFUSED, pgErrorCode } from '../../db/errors.ts'
+import { DB_OFFER_REQUEST_REFUSED, dbErrorCode } from '../../db/errors.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { DISMISSAL_REASON_MAX_LENGTH, dismissOfferRequest } from './offres-portail.ts'
@@ -31,7 +31,7 @@ export async function dismissOfferRequestAction(
       return { error: 'Cette demande est déjà traitée : rechargez la page.' }
     }
   } catch (error) {
-    if (pgErrorCode(error) === PG_OFFER_REQUEST_REFUSED) {
+    if (dbErrorCode(error) === DB_OFFER_REQUEST_REFUSED) {
       return { error: 'Cette demande ne peut plus être écartée : rechargez la page.' }
     }
     throw error

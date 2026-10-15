@@ -100,7 +100,7 @@ export function journalPeriodUtc(
   }
 }
 
-/** Motif `ILIKE` d'une partie d'adresse : `%` et `_` saisis restent des caractères. */
+/** Motif `LIKE` d'une partie d'adresse : `%` et `_` saisis restent des caractères. */
 export function recipientPattern(recipient: string): string {
   return `%${recipient.replace(/[\\%_]/g, (character) => `\\${character}`)}%`
 }

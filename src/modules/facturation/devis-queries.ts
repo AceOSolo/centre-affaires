@@ -132,8 +132,17 @@ async function contractPlanSources(
         isNull(contracts.deletedAt),
         isNotNull(contracts.ratePlanId),
         inArray(contracts.status, ['active', 'terminated']),
-        sql`${contracts.startsOn} <= ${day}::date`,
-        sql`(least(${contracts.endsOn}, ${contracts.terminatedOn}) is null or least(${contracts.endsOn}, ${contracts.terminatedOn}) >= ${day}::date)`,
+        sql`${contracts.startsOn} <= cast(${day} as date)`,
+        // Dernier jour : le plus tôt du terme et de la résiliation, l'un
+        // pouvant manquer (`least()` de MySQL rend nul dès qu'un argument l'est).
+        sql`((case
+          when ${contracts.endsOn} is null then ${contracts.terminatedOn}
+          when ${contracts.terminatedOn} is null then ${contracts.endsOn}
+          else least(${contracts.endsOn}, ${contracts.terminatedOn}) end) is null
+          or (case
+          when ${contracts.endsOn} is null then ${contracts.terminatedOn}
+          when ${contracts.terminatedOn} is null then ${contracts.endsOn}
+          else least(${contracts.endsOn}, ${contracts.terminatedOn}) end) >= cast(${day} as date))`,
       ),
     )
     .orderBy(desc(contracts.startsOn), asc(contracts.reference))

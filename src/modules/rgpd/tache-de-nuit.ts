@@ -1,4 +1,4 @@
-import { pgErrorCode } from '../../db/errors.ts'
+import { dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { purgeExpiredMailScans, purgeExpiredMailScanViews } from '../courrier/conservation.ts'
 import {
@@ -59,7 +59,7 @@ type Logger = Pick<Console, 'info' | 'error'>
 
 /** Le message d'une erreur, sans son détail : code SQL et première phrase. */
 function errorSummary(error: unknown): string {
-  const code = pgErrorCode(error)
+  const code = dbErrorCode(error)
   const message = error instanceof Error ? error.message : String(error)
   return code ? `${code} ${message}` : message
 }

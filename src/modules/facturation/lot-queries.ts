@@ -1,7 +1,9 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, or, sql } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenants, type Tenant } from '../../db/tenants.ts'
 import { dayRangeUtc, formatTime, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
@@ -9,11 +11,13 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { contractTypeLabels } from '../contrats/labels.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
+import { selectPriceVersions, selectSegments } from '../contrats/versions.ts'
 import { mailItems, mailRequests } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { frozenQuoteDisplay } from './devis.ts'
-import { pgMessage } from './factures-erreurs.ts'
+import { dbMessage } from './factures-erreurs.ts'
+import { refreshInvoiceAmounts } from './factures-queries.ts'
 import { invoicePaymentSetup } from './mandats.ts'
 import {
   computeRun,
@@ -125,42 +129,61 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
     .from(contracts)
     .where(
       and(
+        eq(contracts.tenantId, tenantId),
         isNull(contracts.deletedAt),
         inArray(contracts.status, ['active', 'terminated']),
         lte(contracts.startsOn, span.end),
-        sql`coalesce(least(${contracts.endsOn}, ${contracts.terminatedOn}), 'infinity'::date) >= ${span.start}::date`,
+        // Dernier jour du contrat : le plus tôt de son terme et de sa
+        // résiliation. `least()` de MySQL rend nul dès qu'un argument l'est
+        // (celui de PostgreSQL les ignore) : le cas est écrit à la main.
+        sql`((case
+          when ${contracts.endsOn} is null then ${contracts.terminatedOn}
+          when ${contracts.terminatedOn} is null then ${contracts.endsOn}
+          else least(${contracts.endsOn}, ${contracts.terminatedOn}) end) is null
+          or (case
+          when ${contracts.endsOn} is null then ${contracts.terminatedOn}
+          when ${contracts.terminatedOn} is null then ${contracts.endsOn}
+          else least(${contracts.endsOn}, ${contracts.terminatedOn}) end) >= cast(${span.start} as date))`,
       ),
     )
   const contractIds = contractRows.map((row) => row.id)
 
-  const versionRows = contractIds.length
-    ? await tx.execute<{
-        contract_id: string
-        amendment_id: string | null
-        amendment_number: number | null
-        starts_on: string
-        ends_on: string | null
-        amount_cents: number
-      }>(sql`
-        select contracts.id as contract_id, v.amendment_id, v.amendment_number,
-               v.starts_on::text as starts_on, v.ends_on::text as ends_on, v.amount_cents
-          from contracts
-          cross join lateral contract_price_versions(contracts.id) as v
-         where ${inArray(contracts.id, contractIds)}`)
-    : []
-  const segmentRows = contractIds.length
-    ? await tx.execute<{
-        contract_id: string
-        resource_id: string | null
-        starts_on: string
-        ends_on: string | null
-      }>(sql`
-        select contracts.id as contract_id, s.resource_id,
-               s.starts_on::text as starts_on, s.ends_on::text as ends_on
-          from contracts
-          cross join lateral contract_segments(contracts) as s
-         where ${inArray(contracts.id, contractIds)}`)
-    : []
+  // Versions de prix et segments : lus par les fonctions du module contrats
+  // (les fonctions SQL à jeu de résultats de PostgreSQL ne sont plus, ADR 042).
+  const versionRows: {
+    contract_id: string
+    amendment_id: string | null
+    amendment_number: number | null
+    starts_on: string
+    ends_on: string | null
+    amount_cents: number
+  }[] = []
+  const segmentRows: {
+    contract_id: string
+    resource_id: string | null
+    starts_on: string
+    ends_on: string | null
+  }[] = []
+  for (const contractId of contractIds) {
+    for (const version of await selectPriceVersions(tx, contractId)) {
+      versionRows.push({
+        contract_id: contractId,
+        amendment_id: version.amendmentId,
+        amendment_number: version.amendmentNumber,
+        starts_on: version.startsOn,
+        ends_on: version.endsOn,
+        amount_cents: version.amountCents,
+      })
+    }
+    for (const segment of await selectSegments(tx, contractId)) {
+      segmentRows.push({
+        contract_id: contractId,
+        resource_id: segment.resource?.id ?? null,
+        starts_on: segment.startsOn,
+        ends_on: segment.endsOn,
+      })
+    }
+  }
   const lineRows = contractIds.length
     ? await tx
         .select()
@@ -404,7 +427,7 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
   const [pending] = sinceService.length
     ? await tx
         .select({
-          month: sql<string | null>`to_char(min(${mailRequests.completedAt} at time zone ${tenant.timezone}), 'YYYY-MM')`,
+          earliest: sql<Date | null>`min(${mailRequests.completedAt})`.mapWith(mailRequests.completedAt),
         })
         .from(mailRequests)
         .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
@@ -418,7 +441,9 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
           ),
         )
     : []
-  const requestsFrom = pending?.month ? `${pending.month}-01` : windows.consumption.start
+  // Le mois (jour du centre) de la plus ancienne demande à reprendre.
+  const pendingMonth = pending?.earliest ? toIsoDate(pending.earliest, tenant.timezone).slice(0, 7) : null
+  const requestsFrom = pendingMonth ? `${pendingMonth}-01` : windows.consumption.start
   const requestsStartAt = dayRangeUtc(requestsFrom, tenant.timezone).startsAt
   const scanning = await actService(requestServiceRows.scan, requestsFrom)
   const forwarding = await actService(requestServiceRows.forward, requestsFrom)
@@ -542,6 +567,7 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
   const clientRows = await tx
     .select({ id: clients.id, name: clients.name, status: clients.status, deletedAt: clients.deletedAt })
     .from(clients)
+    .where(eq(clients.tenantId, tenantId))
   const existingRows = await tx
     .select({
       id: invoices.id,
@@ -723,27 +749,24 @@ export async function runInvoicing(
         .update(invoiceRuns)
         .set({
           status: 'failed',
-          finishedAt: sql`now()`,
-          result: sql`${invoiceRuns.result} || jsonb_build_object('error', 'Lot interrompu avant sa fin.')`,
+          finishedAt: maintenant(),
+          result: sql`json_set(coalesce(${invoiceRuns.result}, json_object()), '$.error', 'Lot interrompu avant sa fin.')`,
         })
         .where(
           and(
             eq(invoiceRuns.status, 'running'),
-            lt(invoiceRuns.startedAt, sql`now() - make_interval(mins => ${STALE_RUN_MINUTES})`),
+            lt(invoiceRuns.startedAt, new Date(Date.now() - STALE_RUN_MINUTES * 60_000)),
           ),
         )
-      const [run] = await tx
-        .insert(invoiceRuns)
-        .values({
-          periodStart: period.start,
-          periodEnd: period.end,
-          createdBy: staffMemberId,
-        })
-        .returning({ id: invoiceRuns.id })
+      const run = await insertReturning(tx, invoiceRuns, {
+        periodStart: period.start,
+        periodEnd: period.end,
+        createdBy: staffMemberId,
+      })
       return run.id
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new InvoiceRunInProgressError()
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) throw new InvoiceRunInProgressError()
     throw error
   }
 
@@ -780,25 +803,24 @@ export async function runInvoicing(
                 run.clientId,
                 todayIsoDate(loaded.tenant.timezone),
               )
-              const [created] = await savepoint
-                .insert(invoices)
-                .values({
-                  clientId: run.clientId,
-                  invoiceRunId: runId,
-                  periodStart: loaded.settings.windows.invoice.start,
-                  periodEnd: loaded.settings.windows.invoice.end,
-                  currency: loaded.settings.currency,
-                  expectedPaymentMethod: payment.expectedPaymentMethod,
-                  sepaMandateId: payment.sepaMandateId,
-                })
-                .returning({ id: invoices.id })
+              const created = await insertReturning(savepoint, invoices, {
+                clientId: run.clientId,
+                invoiceRunId: runId,
+                periodStart: loaded.settings.windows.invoice.start,
+                periodEnd: loaded.settings.windows.invoice.end,
+                currency: loaded.settings.currency,
+                expectedPaymentMethod: payment.expectedPaymentMethod,
+                sepaMandateId: payment.sepaMandateId,
+              })
               invoiceId = created.id
             }
             const first = existing ? existing.maxPosition + 1 : 0
-            // Une seule instruction : la base recalcule TVA et totaux une fois.
+            // Une seule instruction : les lignes arrivent ensemble.
             await savepoint
               .insert(invoiceLines)
               .values(run.lines.map((line, index) => lineValues(invoiceId as string, line, first + index)))
+            // MySQL n'a pas de trigger d'instruction : les totaux se recalculent ici, une fois.
+            await refreshInvoiceAmounts(savepoint, invoiceId as string)
           })
           billed.add(run.clientId)
           report.linesCreated = (report.linesCreated ?? 0) + run.lines.length
@@ -807,7 +829,7 @@ export async function runInvoicing(
         } catch (error) {
           warnings.push({
             clientId: run.clientId,
-            message: `Facture non préparée, à reprendre : ${pgMessage(error)}`,
+            message: `Facture non préparée, à reprendre : ${dbMessage(error)}`,
           })
         }
       }
@@ -815,7 +837,7 @@ export async function runInvoicing(
       report.clientsSkipped = loaded.activeClientIds.filter((id) => !billed.has(id)).length
       await tx
         .update(invoiceRuns)
-        .set({ status: 'completed', finishedAt: sql`now()`, result: report })
+        .set({ status: 'completed', finishedAt: maintenant(), result: report })
         .where(eq(invoiceRuns.id, runId))
       return report
     })
@@ -824,7 +846,7 @@ export async function runInvoicing(
     await withTenant(tenantId, (tx) =>
       tx
         .update(invoiceRuns)
-        .set({ status: 'failed', finishedAt: sql`now()`, result: { error: pgMessage(error) } })
+        .set({ status: 'failed', finishedAt: maintenant(), result: { error: dbMessage(error) } })
         .where(eq(invoiceRuns.id, runId)),
     )
     throw error

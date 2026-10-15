@@ -1,7 +1,7 @@
 # ADR 008 — Authentification et accès au back-office
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — Neon Auth remplacé par Better Auth auto-hébergé (ADR 042)
 
 ## Contexte
 

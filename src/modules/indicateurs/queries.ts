@@ -65,30 +65,30 @@ export type IndicatorData = {
  * service de la ligne de contrat ou de la souscription.
  */
 const lineSelect = sql`
-  select l.id::text as id,
-         i.kind::text as document_kind,
-         i.currency::text as currency,
-         l.kind::text as kind,
+  select l.id as id,
+         i.kind as document_kind,
+         i.currency as currency,
+         l.kind as kind,
          l.quantity,
          l.net_amount_cents,
-         coalesce(l.resource_id, b.resource_id, cl.resource_id, seg.resource_id)::text as resource_id,
-         coalesce(l.service_id, cl.service_id, ss.service_id)::text as service_id,
-         l.credited_line_id::text as credited_line_id
+         coalesce(l.resource_id, b.resource_id, cl.resource_id, (
+           select s.resource_id
+             from contract_segments as s
+            where l.kind = 'rent'
+              and s.tenant_id = l.tenant_id
+              and s.contract_id = l.contract_id
+              and s.starts_on <= l.period_start
+            order by s.starts_on desc
+            limit 1
+         )) as resource_id,
+         coalesce(l.service_id, cl.service_id, ss.service_id) as service_id,
+         l.credited_line_id as credited_line_id
     from invoice_lines as l
     join invoices as i on i.tenant_id = l.tenant_id and i.id = l.invoice_id
     left join bookings as b on b.tenant_id = l.tenant_id and b.id = l.booking_id
     left join contract_lines as cl on cl.tenant_id = l.tenant_id and cl.id = l.contract_line_id
     left join subscribed_services as ss
-           on ss.tenant_id = l.tenant_id and ss.id = l.subscribed_service_id
-    left join contracts as k
-           on k.tenant_id = l.tenant_id and k.id = l.contract_id and l.kind = 'rent'
-    left join lateral (
-      select s.resource_id
-        from contract_segments(k) as s
-       where k.id is not null and s.starts_on <= l.period_start
-       order by s.starts_on desc
-       limit 1
-    ) as seg on true`
+           on ss.tenant_id = l.tenant_id and ss.id = l.subscribed_service_id`
 
 type LineRow = {
   id: string
@@ -121,13 +121,14 @@ async function readRevenueLines(
   tx: Transaction,
   period: Period,
 ): Promise<{ lines: RevenueLine[]; creditedLines: Map<string, CreditedLineRef> }> {
-  const rows = (await tx.execute(sql`
+  const [rows] = (await tx.execute(sql`
     ${lineSelect}
      where i.status <> 'draft'
        and i.deleted_at is null
        and l.deleted_at is null
-       and i.issue_date between ${period.from}::date and ${period.to}::date
-     order by i.issue_date, i.number, l.position, l.id`)) as unknown as LineRow[]
+       and i.tenant_id = ${currentTenantId()}
+       and i.issue_date between ${period.from} and ${period.to}
+     order by i.issue_date, i.number, l.position, l.id`)) as unknown as [LineRow[]]
   const lines = rows.map(toRevenueLine)
 
   const known = new Set(lines.map((line) => line.id))
@@ -140,12 +141,13 @@ async function readRevenueLines(
   ]
   const creditedLines = new Map<string, CreditedLineRef>()
   if (missing.length > 0) {
-    const older = (await tx.execute(sql`
+    const [older] = (await tx.execute(sql`
       ${lineSelect}
-       where l.id in (${sql.join(
-         missing.map((id) => sql`${id}::uuid`),
-         sql`, `,
-       )})`)) as unknown as LineRow[]
+       where l.tenant_id = ${currentTenantId()}
+         and l.id in (${sql.join(
+           missing.map((id) => sql`${id}`),
+           sql`, `,
+         )})`)) as unknown as [LineRow[]]
     for (const line of older.map(toRevenueLine)) {
       creditedLines.set(line.id, { kind: line.kind, resourceId: line.resourceId, serviceId: line.serviceId })
     }

@@ -2,33 +2,25 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { resolveClientAccounts } from './comptes.ts'
+import { lire, toutVider } from './test-support.ts'
 
 /**
  * Qui lit le courrier de quelle entreprise (ADR 015).
  *
  * Une erreur ici ne mal affiche rien : elle ouvre le courrier d'une entreprise
- * à quelqu'un d'autre. Éprouvé contre une vraie base, sous le rôle applicatif
- * soumis aux politiques d'isolation, comme la résolution des membres de
- * l'équipe (`membre.db.test.ts`).
+ * à quelqu'un d'autre. Éprouvé contre une vraie base, sous l'identité
+ * applicative, comme la résolution des membres de l'équipe
+ * (`membre.db.test.ts`). La base ne filtre plus les lectures par centre : la
+ * résolution porte elle-même le centre de sa transaction.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('accès à l’espace client', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('accès à l’espace client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const HOLDING = '01a00000-0000-7000-8000-00000000c0a1'
   const SCI = '01a00000-0000-7000-8000-00000000c0a2'
@@ -41,7 +33,7 @@ describe('accès à l’espace client', { skip: raison }, () => {
   })
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1], tenant = DEFAULT_TENANT_ID) =>
-    withTenant(tenant, run, app.db)
+    withTenant(tenant, run, bases.app.db)
 
   /** Inscription depuis la fiche client, comme `addClientMember`. */
   const inscrire = (
@@ -60,12 +52,12 @@ describe('accès à l’espace client', { skip: raison }, () => {
     asTenant((tx) => resolveClientAccounts(tx, user, options), tenant)
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table clients cascade`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await toutVider(bases.owner)
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant((tx) =>
       tx.execute(sql`
         insert into clients (id, name, status) values
@@ -76,7 +68,9 @@ describe('accès à l’espace client', { skip: raison }, () => {
   })
 
   after(async () => {
-    await Promise.all([owner.client.end(), app.client.end()])
+    await toutVider(bases.owner)
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
+    await bases.fermer()
   })
 
   it('ne donne rien à un compte dont l’adresse n’est pas inscrite', async () => {
@@ -92,9 +86,7 @@ describe('accès à l’espace client', { skip: raison }, () => {
       comptes.map((c) => [c.clientId, c.clientName]),
       [[HOLDING, 'Durand Holding']],
     )
-    const [ligne] = await asTenant((tx) =>
-      tx.execute(sql`select auth_user_id, full_name from client_members`),
-    )
+    const [ligne] = await asTenant((tx) => lire(tx, sql`select auth_user_id, full_name from client_members`))
     assert.equal(ligne.auth_user_id, 'u1')
     assert.equal(ligne.full_name, 'Jeanne Durand')
   })
@@ -123,7 +115,7 @@ describe('accès à l’espace client', { skip: raison }, () => {
     // Sans vérification, quiconque contrôle l'adresse lirait le courrier.
     await inscrire(HOLDING, 'jeanne@durand.fr')
     assert.deepEqual(await resoudre(compte('u1', 'jeanne@durand.fr'), { emailVerified: false }), [])
-    const [ligne] = await asTenant((tx) => tx.execute(sql`select auth_user_id from client_members`))
+    const [ligne] = await asTenant((tx) => lire(tx, sql`select auth_user_id from client_members`))
     assert.equal(ligne.auth_user_id, null)
   })
 
@@ -150,32 +142,39 @@ describe('accès à l’espace client', { skip: raison }, () => {
 
   it('ferme l’accès à une personne retirée de la fiche', async () => {
     await inscrire(HOLDING, 'jeanne@durand.fr', { authUserId: 'u1' })
-    await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now()`))
+    await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now(3)`))
     assert.deepEqual(await resoudre(compte('u1', 'jeanne@durand.fr')), [])
   })
 
   it('ne ressuscite pas une inscription retirée par l’adresse', async () => {
     await inscrire(HOLDING, 'jeanne@durand.fr')
-    await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now()`))
+    await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = now(3)`))
     assert.deepEqual(await resoudre(compte('u2', 'jeanne@durand.fr')), [])
   })
 
   it('ferme l’accès quand la fiche client est archivée', async () => {
     await inscrire(HOLDING, 'jeanne@durand.fr', { authUserId: 'u1' })
-    await asTenant((tx) => tx.execute(sql`update clients set deleted_at = now() where id = ${HOLDING}`))
+    await asTenant((tx) => tx.execute(sql`update clients set deleted_at = now(3) where id = ${HOLDING}`))
     assert.deepEqual(await resoudre(compte('u1', 'jeanne@durand.fr')), [])
   })
 
   it('ne voit pas une inscription faite dans un autre centre', async () => {
     await inscrire(HOLDING, 'jeanne@durand.fr')
-    await owner.client`
-      insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-comptes')`
+    await bases.owner.client.query(
+      `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-comptes')`,
+      [AUTRE_CENTRE],
+    )
     assert.deepEqual(await resoudre(compte('u1', 'jeanne@durand.fr'), {}, AUTRE_CENTRE), [])
+    // Et ne rattache rien : le compte n'a pas été lié par l'autre centre.
+    const [ligne] = await asTenant((tx) => lire(tx, sql`select auth_user_id from client_members`))
+    assert.equal(ligne.auth_user_id, null)
   })
 
   it('refuse une inscription qui viserait le client d’un autre centre', async () => {
-    await owner.client`
-      insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-comptes')`
+    await bases.owner.client.query(
+      `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-comptes')`,
+      [AUTRE_CENTRE],
+    )
     await assert.rejects(
       asTenant(
         (tx) =>

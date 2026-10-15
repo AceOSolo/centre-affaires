@@ -2,11 +2,14 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { lire, toutVider } from '../clients/test-support.ts'
 import { generateAccountingExport, rebuildAccountingExport } from './comptabilite.ts'
 import { deriveAccountingCode } from './fec.ts'
 import { recordPayment } from './reglements.ts'
@@ -22,21 +25,8 @@ import { invoices } from './schema-factures.ts'
  *   (`derive_accounting_code`, jumeau SQL de `deriveAccountingCode`) ;
  * - deux clients anonymisés ne se disputent donc pas un même compte.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('export comptable et anonymisation', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('export comptable et anonymisation', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000e4d01'
   const DURAND = '01a00000-0000-7000-8000-0000000e4c01'
@@ -45,21 +35,19 @@ describe('export comptable et anonymisation', { skip: raison }, () => {
   const today = () => todayIsoDate('Europe/Paris')
   const periode = () => ({ periodStart: addDaysToIsoDate(today(), -1), periodEnd: addDaysToIsoDate(today(), 1) })
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Facture émise de 100 € HT à 20 %, réglée le jour même. */
   const factureReglee = async (clientId: string) => {
-    const [draft] = await asTenant((tx) =>
-      tx
-        .insert(invoices)
-        .values({ clientId, periodStart: '2026-09-01', periodEnd: '2026-09-30' })
-        .returning({ id: invoices.id }),
+    const draft = await asTenant((tx) =>
+      insertReturning(tx, invoices, { clientId, periodStart: '2026-09-01', periodEnd: '2026-09-30' }),
     )
     await asTenant(async (tx) => {
       await tx.execute(sql`
-        insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
-        values (${draft.id}, 'other', 'Domiciliation — septembre 2026', 10000, 2000)`)
-      await tx.execute(sql`select issue_invoice(${draft.id}::uuid, ${ACCUEIL}::uuid)`)
+        insert into invoice_lines (id, invoice_id, kind, description, unit_price_cents, vat_rate_bp)
+        values (${uuidv7()}, ${draft.id}, 'other', 'Domiciliation — septembre 2026', 10000, 2000)`)
+      await tx.execute(sql`select invoice_refresh_amounts(${draft.id})`)
+      await tx.execute(sql`select issue_invoice(${draft.id}, ${ACCUEIL})`)
     })
     await recordPayment(
       draft.id,
@@ -69,26 +57,27 @@ describe('export comptable et anonymisation', { skip: raison }, () => {
   }
 
   const anonymiser = (clientId: string) =>
-    asTenant((tx) =>
-      tx.execute(sql`select anonymize_client(${clientId}::uuid, ${ACCUEIL}::uuid, 'relationship_ended', null)`),
-    )
+    asTenant((tx) => tx.execute(sql`select anonymize_client(${clientId}, ${ACCUEIL}, 'relationship_ended', null)`))
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`select seed_accounting_accounts(${DEFAULT_TENANT_ID}::uuid)`
-    await owner.client`
-      update tenants set
-        legal_name = 'Centre de démonstration SAS', legal_form = 'SAS', share_capital_cents = 1000000,
-        address_line1 = '1 rue de l''Exemple', postal_code = '38070', city = 'Saint-Quentin-Fallavier',
-        siren = '123456789', siret = '12345678900012', vat_number = 'FR32123456789', rcs_city = 'Vienne',
-        bank_iban = 'FR7630006000011234567890189', bank_bic = 'AGRIFRPP'
-      where id = ${DEFAULT_TENANT_ID}`
+    await toutVider(bases.owner)
+    // `toutVider` a vidé le plan de comptes : la base le repose à la demande.
+    await bases.owner.client.query('select seed_accounting_accounts(?)', [DEFAULT_TENANT_ID])
+    await bases.owner.client.query(
+      `update tenants set
+         legal_name = 'Centre de démonstration SAS', legal_form = 'SAS', share_capital_cents = 1000000,
+         address_line1 = '1 rue de l''Exemple', postal_code = '38070', city = 'Saint-Quentin-Fallavier',
+         siren = '123456789', siret = '12345678900012', vat_number = 'FR32123456789', rcs_city = 'Vienne',
+         bank_iban = 'FR7630006000011234567890189', bank_bic = 'AGRIFRPP'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Claire Accueil')`)
       // Sans compte auxiliaire saisi : l'export le dérive de la raison sociale.
@@ -100,15 +89,16 @@ describe('export comptable et anonymisation', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
-      update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
-        address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
-        vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null
-      where id = ${DEFAULT_TENANT_ID}`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
+         address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
+         vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('dérive en base le compte auxiliaire comme l’export', async () => {
@@ -126,10 +116,9 @@ describe('export comptable et anonymisation', { skip: raison }, () => {
       'ＡＢＣ 漢字 🎉',
       'Un nom de société beaucoup trop long pour un compte',
     ]
-    const rows = await owner.client`
-      select n.nom, derive_accounting_code(n.nom) as code from unnest(${noms}::text[]) as n(nom)`
-    for (const row of rows) {
-      assert.equal(row.code, deriveAccountingCode(row.nom as string), row.nom as string)
+    for (const nom of noms) {
+      const rows = await asTenant((tx) => lire(tx, sql`select derive_accounting_code(${nom}) as code`))
+      assert.equal(rows[0].code, deriveAccountingCode(nom), nom)
     }
   })
 

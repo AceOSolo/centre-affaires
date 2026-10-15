@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import {
   ArchivedRatePlanError,
@@ -20,42 +20,35 @@ import {
  * suppression. Le prix retiré ne s'applique plus et n'apparaît plus, mais sa
  * ligne reste pour expliquer un montant calculé avec lui. Les prix d'une
  * grille archivée sont figés. Fonctions appelées telles que l'application les
- * appelle, sous le rôle applicatif.
+ * appelle, sous l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('retrait des prix d’une grille', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('retrait des prix d’une grille', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const PLAN = '01a00000-0000-7000-8000-000000300a01'
   const SALLE = '01a00000-0000-7000-8000-000000300b01'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const prix = (amountCents: number, resourceId: string | null = null) =>
     addRatePlanItem({ ratePlanId: PLAN, resourceType: 'salle', resourceId, unit: 'hour', amountCents })
 
-  const lignes = async () =>
-    owner.client`select amount_cents, deleted_at from rate_plan_items order by created_at, amount_cents`
+  const lignes = async () => {
+    const [rows] = (await bases.owner.client.query(
+      'select amount_cents, deleted_at from rate_plan_items order by created_at, amount_cents',
+    )) as unknown as [{ amount_cents: number; deleted_at: Date | null }[]]
+    return rows
+  }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await viderTables(bases.owner, 'bookings', 'contracts', 'rate_plan_items', 'rate_plans', 'clients', 'resources')
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into rate_plans (id, name) values (${PLAN}, 'Tarifs 2026')`)
       await tx.execute(sql`
@@ -64,8 +57,8 @@ describe('retrait des prix d’une grille', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('garde la ligne retirée en base, marquée, et la sort de la grille', async () => {

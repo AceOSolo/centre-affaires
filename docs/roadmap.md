@@ -55,9 +55,9 @@ durées, DPA et AIPD (R29), installation des sauvegardes (R30).
 | R25 | Responsive | ◐ | Fait : cibles de 44 px à 8 px d'écart sur tout le portail, navigation du compte en grille sur téléphone, tableaux sous `overflow-x-auto`, gardés par `cibles-tactiles.test.ts` (aucune cible sous 44 px, aucune largeur fixe au-delà de 375 px, aucune rubrique vers une page absente). Reste : constater à l'écran, à 375 px, chaque page du compte (procédure dans l'ADR 036) ; aucun navigateur dans la CI | S | 3 |
 | R26 | Moteur de notifications | ✅ | — (moteur unique `notify()`, modèles éditables par événement avec aperçu, journal des envois filtrable et purgé, préférences par catégorie dans l'espace client ; déclencheurs du courrier, des demandes de courrier, des réservations et demandes, des factures, des relances, des contrats, des états des lieux et des offres ; ADR 038). Effectif en production une fois le SMTP configuré ; textes par défaut à valider | — | 3 |
 | R27 | Rôles exploitant / accueil / client | ✅ | — (matrice des droits, garde par droit, écran Équipe : ADR 019) | — | 1 |
-| R28 | Comptes isolés, second facteur staff | ✅ | — (espace client sous portée client en RLS, ADR 019). Second facteur écarté (ADR 016) | — | 1 |
+| R28 | Comptes isolés, second facteur staff | ✅ | — (espace client sous portée client : filtres explicites et gardes d'écriture en base depuis la migration vers MySQL, ADR 019 et 042 ; RLS à l'origine). Second facteur écarté (ADR 016) | — | 1 |
 | R29 | Registre RGPD, durées de conservation | ◐ | Fait : registre et tableau des durées (`docs/rgpd/`), durées réglées à l'écran `/configuration`, anonymisation chaque nuit des entreprises, contacts, accès et membres retirés au terme, exclusions tenues par la base, effacement à la demande, tracé avec son fondement, la date de la demande et son auteur (ADR 040, ADR 041) ; tâche de nuit dont chaque étape est isolée. Restent : valider les durées proposées, archiver les DPA, évaluer l'AIPD du courrier | S | 0 |
-| R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Restent : installation sur le VPS (rôle `sauvegarde`, destination, clés), premier exercice sur Neon | S | 0 |
+| R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Pile MySQL : `mysqldump` chiffré, restauration et plan de reprise réécrits (ADR 042). Restent : installation sur le VPS (utilisateur `sauvegarde`, destination, clés), premier exercice de restauration sur MySQL | S | 0 |
 | R31 | Indicateurs (occupation, revenu) | ✅ | — (`/indicateurs` : occupation par ressource et par type, chiffre d'affaires des factures et avoirs émis par ressource, service et nature, encaissements, encours, tendance sur 12 mois). Écarts documentés : la rentabilité des services (aucun coût saisi) et les heures administratives économisées ne se mesurent pas dans l'application | — | 2 |
 | R32 | Une seule API métier | ✅ | — | — | — |
 | R33 | Stockage documentaire | ✅ | — (région UE contrôlée par `stockage.ts` ; photos d'états des lieux compressées dans le navigateur, chiffrées, purgées au terme avec leur journal, ADR 039 ; rechiffrées à la rotation de clé comme les numérisations, ADR 041). Le dépôt du contrat signé (scan) est écarté : le cahier des charges ne le demande pas (ADR 041) | — | 4 |
@@ -73,10 +73,10 @@ se trouve en annexe.
   encore sur `main`.** Ils sont sur la branche `feat/compte-client-courrier`
   (commits `aea45b0` et `0627417`, migrations 0019 à 0024, ADR 014 et 015).
   → Pull request vers `main`, puis déploiement.
-- ~~**B3. Les scans sont stockés en clair et les branches Neon les copient.**~~
+- ~~**B3. Les scans sont stockés en clair et les branches Neon les copient.** (les branches n'existent plus depuis la migration vers MySQL, ADR 042)~~
   Résolu dans le code : les documents sont chiffrés avant dépôt, avec une clé
   propre à chaque environnement (ADR 020). Reste en production : lancer la
-  reprise des objets existants, puis supprimer les branches créées avant elle
+  reprise des objets existants, puis détruire les sauvegardes du stockage antérieures à la reprise
   (`infra/serveur/README.md`, « Chiffrement des documents »).
 - **B4. Durées de conservation et purge : en cours pour le courrier.** L'ADR 015
   en fait un préalable à la mise en production du courrier.
@@ -87,7 +87,7 @@ se trouve en annexe.
     terme de leur durée (12 mois par défaut, `infra/configurer-centre.mjs`,
     ADR 020).
   - Reste à faire : poser la tâche nocturne sur le serveur
-    (`infra/serveur/README.md`), et fixer la durée des comptes `neon_auth`.
+    (`infra/serveur/README.md`), et fixer la durée des comptes d'authentification (`auth_*`, Better Auth).
 - **B5. Écarts de gouvernance.**
   - ~~Numéros d'ADR en double (deux 010, deux 013) et pas d'ADR 007.~~ Signalés
     par l'index `docs/decisions/README.md`, sans renuméroter.
@@ -100,7 +100,8 @@ se trouve en annexe.
     Corrigé par le responsable du dépôt (commit `1d55ec2`).
   - ~~`README.md` est encore celui de create-next-app.~~
   - ~~`docker-compose.yml` monte le volume à l'emplacement que l'image 18 refuse.~~
-    Volume neuf sur `/var/lib/postgresql` (README).
+    Volume neuf sur `/var/lib/postgresql` (README). Sans objet depuis ADR 042 :
+    MySQL, volume `db-data`.
 
 ## Décisions (tranchées le 01/10/2026 — ADR 016)
 
@@ -112,7 +113,7 @@ virement et prélèvement suivis à la main.
 |---|---|---|---|
 | D1 | La facturation entre-t-elle dans le périmètre ? | `CLAUDE.md` « hors scope V1 » contre le cahier des charges (lot 2, export cadré dès le lot 1) | Oui. Modèle de facture structuré conforme EN 16931 dès sa création, TVA, numérotation continue par centre, émission par une plateforme agréée à choisir maintenant (émission obligatoire au 01/09/2027). Mettre à jour la section Facturation de `CLAUDE.md`. |
 | D2 | Planning : semaine toutes ressources et vue mois | ADR 011 écarte la semaine toutes ressources | Semaine multi-ressources **filtrée par type** : le filtre répond à l'objection de l'ADR 011 (50 colonnes). Vue mois en taux d'occupation par jour, pas en créneaux. |
-| D3 | Second facteur pour le back-office | Neon Auth géré ne le propose pas (ADR 008) | **Écarté par le centre.** On reste sur Neon Auth géré ; R28 se limite à l'isolation des comptes clients. |
+| D3 | Second facteur pour le back-office | Neon Auth géré ne le propose pas (ADR 008) | **Écarté par le centre.** On reste sur l'authentification par mot de passe (Neon Auth géré à l'époque, Better Auth auto-hébergé depuis ADR 042) ; R28 se limite à l'isolation des comptes clients. |
 | D4 | Réservation par un client connecté : confirmation automatique ou accord préalable ? | ADR 005 ne tranche que pour le public anonyme | **Réglage par ressource** : confirmation immédiate ou accord de l'accueil. |
 | D5 | Remises, engagement, prorata : paramètres en base ou conventions codées ? | ADR 006 et 009 (conventions) contre R10 | Paramètres par centre en base, cohérents avec le multi-centres. Jeu de cas tarifaires figé et validé par l'exploitation avant de coder. |
 | D6 | Occupation par contrat (bureau, boîte aux lettres) | Échappe à la contrainte d'exclusion et aux calendriers | Matérialiser la période du contrat en réservation : la contrainte d'exclusion de la décision 3 la protège sans code supplémentaire. |

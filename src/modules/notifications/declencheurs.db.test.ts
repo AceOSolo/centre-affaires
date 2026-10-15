@@ -2,11 +2,12 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql, type SQL } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { Message, SendResult } from '../../lib/courriel.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import { notifyContractActivated, notifyMemberInvited, notifyOfferRequested } from './declencheurs-clients.ts'
 import {
   notifyMailReceived,
@@ -31,18 +32,8 @@ import {
  * bons destinataires et ne met dans le message ni document, ni expéditeur, ni
  * texte saisi par le client.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('déclencheurs des notifications', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('déclencheurs des notifications', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000f2c01'
   const JEANNE = '01a00000-0000-7000-8000-0000000f2d01'
@@ -52,41 +43,79 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
   const BUREAU = '01a00000-0000-7000-8000-0000000f2b02'
   const CONTRAT = '01a00000-0000-7000-8000-0000000f2f01'
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   let envoyes: Message[] = []
   const send = async (message: Message): Promise<SendResult> => {
     envoyes.push(message)
     return { status: 'sent', recipients: message.to.map((to) => to.toLowerCase()), failed: [], error: null }
   }
-  const options = { database: app.db, send }
+  // `bases` n'existe qu'après `before()` : l'option est lue à l'usage.
+  const options = {
+    get database() {
+      return bases.app.db
+    },
+    send,
+  }
+
+  const lire = async (text: string, params: unknown[] = []) =>
+    (await bases.owner.client.query(text, params))[0] as Record<string, unknown>[]
 
   const journal = () =>
-    owner.client`select event, audience, client_id, recipients, status, related_type, related_id
-                   from notification_deliveries order by sent_at, id`
+    lire(`select event, audience, client_id, recipients, status, related_type, related_id
+            from notification_deliveries order by sent_at, id`)
 
-  const id = async (query: Promise<Record<string, unknown>[]>) => (await query)[0].id as string
+  /** Écrit une ligne dont l'identifiant est posé ici (pas de `RETURNING` en MySQL) et le rend. */
+  const creer = async (ecrire: (tx: Transaction, id: string) => Promise<unknown>) => {
+    const nouveau = uuidv7()
+    await asTenant((tx) => ecrire(tx, nouveau))
+    return nouveau
+  }
 
   let centre: Record<string, unknown>
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    ;[centre] = await owner.client`
-      select email, legal_name, address_line1, postal_code, city, siren, vat_number, bank_iban
-        from tenants where id = ${DEFAULT_TENANT_ID}`
+    bases = await ouvrirBasesDeTest()
+    ;[centre] = await lire(
+      `select email, legal_name, address_line1, postal_code, city, siren, vat_number, bank_iban
+         from tenants where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
   })
 
   beforeEach(async () => {
     envoyes = []
-    await owner.client`truncate table bookings, contracts, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table inspection_templates cascade`
-    await owner.client`truncate table notification_deliveries, notification_templates, notification_preferences`
-    await owner.client`
-      update tenants set email = 'accueil@centre.exemple', legal_name = 'Centre de démonstration SAS',
-        address_line1 = '1 rue de l''Exemple', postal_code = '38070', city = 'Saint-Quentin-Fallavier',
-        siren = '123456789', vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
-      where id = ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contracts',
+      'contract_lines',
+      'contract_amendments',
+      'invoices',
+      'invoice_lines',
+      'mail_requests',
+      'mail_items',
+      'inspections',
+      'inspection_template_versions',
+      'inspection_templates',
+      'client_members',
+      'clients',
+      'resources',
+      'services',
+      'offers',
+      'staff_members',
+      'notification_deliveries',
+      'notification_templates',
+      'notification_preferences',
+    )
+    await lire(
+      `update tenants set email = 'accueil@centre.exemple', legal_name = 'Centre de démonstration SAS',
+         address_line1 = '1 rue de l''Exemple', postal_code = '38070', city = 'Saint-Quentin-Fallavier',
+         siren = '123456789', vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${CAMILLE}, 'camille@centre.exemple', 'Camille')`)
       await tx.execute(sql`
@@ -106,39 +135,50 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table notification_deliveries, notification_templates, notification_preferences`
-    await owner.client`truncate table inspection_templates cascade`
-    await owner.client`
-      update tenants set email = ${centre.email as string | null}, legal_name = ${centre.legal_name as string | null},
-        address_line1 = ${centre.address_line1 as string | null}, postal_code = ${centre.postal_code as string | null},
-        city = ${centre.city as string | null}, siren = ${centre.siren as string | null},
-        vat_number = ${centre.vat_number as string | null}, bank_iban = ${centre.bank_iban as string | null}
-      where id = ${DEFAULT_TENANT_ID}`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await viderTables(
+      bases.owner,
+      'notification_deliveries',
+      'notification_templates',
+      'notification_preferences',
+      'inspection_template_versions',
+      'inspection_templates',
+    )
+    await lire(
+      `update tenants set email = ?, legal_name = ?, address_line1 = ?, postal_code = ?, city = ?,
+         siren = ?, vat_number = ?, bank_iban = ?
+       where id = ?`,
+      [
+        centre.email,
+        centre.legal_name,
+        centre.address_line1,
+        centre.postal_code,
+        centre.city,
+        centre.siren,
+        centre.vat_number,
+        centre.bank_iban,
+        DEFAULT_TENANT_ID,
+      ],
+    )
+    await bases.fermer()
   })
 
   describe('courrier', () => {
     const pli = (ouvert = false) =>
-      id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into mail_items (client_id, kind, sender, note, received_at, status, opened_at, opened_by)
-            values (${DURAND}, 'recommande', 'URSSAF', 'Mise en demeure', '2026-09-30T22:30:00Z',
-                    ${ouvert ? 'opened' : 'received'}, ${ouvert ? sql`now()` : null}, ${ouvert ? CAMILLE : null})
-            returning id`),
-        ),
+      creer((tx, id) =>
+        tx.execute(sql`
+          insert into mail_items (id, client_id, kind, sender, note, received_at, status, opened_at, opened_by)
+          values (${id}, ${DURAND}, 'recommande', 'URSSAF', 'Mise en demeure', '2026-09-30 22:30:00.000',
+                  ${ouvert ? 'opened' : 'received'}, ${ouvert ? sql`CURRENT_TIMESTAMP(3)` : null},
+                  ${ouvert ? CAMILLE : null})`),
       )
 
     const reexpedition = (mailItemId: string) =>
-      id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id, client_note,
-              forward_recipient, forward_address_line1, forward_postal_code, forward_city, forward_country)
-            values (${mailItemId}, ${DURAND}, 'forward', ${JEANNE}, 'Consigne confidentielle',
-                    'Jeanne Durand', '12 rue des Lilas', '38000', 'Grenoble', 'FR')
-            returning id`),
-        ),
+      creer((tx, id) =>
+        tx.execute(sql`
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id, client_note,
+            forward_recipient, forward_address_line1, forward_postal_code, forward_city, forward_country)
+          values (${id}, ${mailItemId}, ${DURAND}, 'forward', ${JEANNE}, 'Consigne confidentielle',
+                  'Jeanne Durand', '12 rue des Lilas', '38000', 'Grenoble', 'FR')`),
       )
 
     it('annonce l’arrivée d’un pli sans l’expéditeur ni la note, à l’heure du centre', async () => {
@@ -201,16 +241,14 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
 
     it('ne double pas le message d’ouverture : la demande faite par l’ouverture ne prévient pas', async () => {
       const mail = await pli()
-      const demande = await id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-            values (${mail}, ${DURAND}, 'open_and_scan', ${JEANNE}) returning id`),
-        ),
+      const demande = await creer((tx, id) =>
+        tx.execute(sql`
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+          values (${id}, ${mail}, ${DURAND}, 'open_and_scan', ${JEANNE})`),
       )
       assert.equal(await notifyMailScanned(mail, options), null)
       await asTenant((tx) =>
-        tx.execute(sql`update mail_items set status = 'opened', opened_at = now(), opened_by = ${CAMILLE} where id = ${mail}`),
+        tx.execute(sql`update mail_items set status = 'opened', opened_at = CURRENT_TIMESTAMP(3), opened_by = ${CAMILLE} where id = ${mail}`),
       )
       assert.equal(await notifyMailRequestDone(demande, options), null)
       assert.equal((await notifyMailScanned(mail, options))?.status, 'sent')
@@ -220,22 +258,24 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
   })
 
   describe('réservations', () => {
-    /** Créneau d'une heure dans trois jours, à 8 h UTC. */
+    /** Créneau d'une heure dans trois jours, une heure plus tard à chaque appel (jamais de chevauchement). */
     let heure = 6
-    const creneau = (): SQL => {
+    const creneau = (): [Date, Date] => {
       heure += 1
-      return sql`date_trunc('day', now()) + make_interval(days => 3, hours => ${heure}),
-                 date_trunc('day', now()) + make_interval(days => 3, hours => ${heure + 1})`
+      const minuit = new Date()
+      minuit.setUTCHours(0, 0, 0, 0)
+      const debut = new Date(minuit.getTime() + (3 * 24 + heure) * 3_600_000)
+      return [debut, new Date(debut.getTime() + 3_600_000)]
     }
 
-    const reserver = (colonnes: SQL, valeurs: SQL) =>
-      id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into bookings (resource_id, title, starts_at, ends_at, ${colonnes})
-            values (${SALLE}, 'Réunion', ${creneau()}, ${valeurs}) returning id`),
-        ),
+    const reserver = (colonnes: SQL, valeurs: SQL) => {
+      const [debut, fin] = creneau()
+      return creer((tx, id) =>
+        tx.execute(sql`
+          insert into bookings (id, resource_id, title, starts_at, ends_at, ${colonnes})
+          values (${id}, ${SALLE}, 'Réunion', ${debut}, ${fin}, ${valeurs})`),
       )
+    }
 
     it('prévient le centre d’une demande de l’espace, puis la personne qui l’a faite quand elle est acceptée', async () => {
       const reservation = await reserver(
@@ -263,7 +303,7 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
       const refuser = (reservation: string) =>
         asTenant((tx) =>
           tx.execute(sql`
-            update bookings set status = 'cancelled', cancelled_at = now(), cancellation_reason = 'Salle fermée ce jour-là.'
+            update bookings set status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP(3), cancellation_reason = 'Salle fermée ce jour-là.'
              where id = ${reservation}`),
         )
       const premiere = await demande()
@@ -276,7 +316,7 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into notification_preferences (client_id, client_member_id, category, enabled)
-          values (${DURAND}, ${JULES}, 'bookings', false)`),
+          values (${DURAND}, ${JULES}, 'bookings', 0)`),
       )
       const seconde = await demande()
       await refuser(seconde)
@@ -303,7 +343,7 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
       await notifyBookingConfirmed(reservation, options)
       assert.deepEqual([...envoyes[0].to].sort(), ['jeanne@durand.fr', 'jules@durand.fr'])
       await asTenant((tx) =>
-        tx.execute(sql`update bookings set status = 'cancelled', cancelled_at = now() where id = ${reservation}`),
+        tx.execute(sql`update bookings set status = 'cancelled', cancelled_at = CURRENT_TIMESTAMP(3) where id = ${reservation}`),
       )
       await notifyBookingCancelled(reservation, options)
       assert.match(envoyes[1].subject, /^Réservation annulée — Salle Atlas, /)
@@ -318,23 +358,21 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
 
   describe('facturation et contrats', () => {
     it('annonce une facture émise, montant et échéance, sans la joindre ; rien pour un brouillon', async () => {
-      const facture = await id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into invoices (client_id, period_start, period_end)
-            values (${DURAND}, '2026-09-01', '2026-09-30') returning id`),
-        ),
+      const facture = await creer((tx, id) =>
+        tx.execute(sql`
+          insert into invoices (id, client_id, period_start, period_end)
+          values (${id}, ${DURAND}, '2026-09-01', '2026-09-30')`),
       )
       await asTenant((tx) =>
         tx.execute(sql`
-          insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
-          values (${facture}, 'other', 'Prestation', 10000, 2000)`),
+          insert into invoice_lines (id, invoice_id, kind, description, unit_price_cents, vat_rate_bp)
+          values (${uuidv7()}, ${facture}, 'other', 'Prestation', 10000, 2000)`),
       )
       assert.equal(await notifyInvoiceIssued(facture, options), null)
 
-      const [{ numero }] = await asTenant((tx) =>
-        tx.execute(sql`select issue_invoice(${facture}::uuid, ${CAMILLE}::uuid) as numero`),
-      )
+      const [[{ numero }]] = (await asTenant((tx) =>
+        tx.execute(sql`select issue_invoice(${facture}, ${CAMILLE}) as numero`),
+      )) as unknown as [{ numero: string }[]]
       const issue = await notifyInvoiceIssued(facture, options)
       assert.equal(issue?.status, 'sent')
       assert.ok(envoyes[0].subject.startsWith(`Votre facture ${numero as string} — `))
@@ -366,14 +404,12 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
     })
 
     it('prévient le centre d’une offre demandée, seulement si elle est montrée aux clients', async () => {
-      const offre = await id(
-        asTenant((tx) =>
-          tx.execute(sql`insert into offers (name, client_visible) values ('Domiciliation premium', false) returning id`),
-        ),
+      const offre = await creer((tx, id) =>
+        tx.execute(sql`insert into offers (id, name, client_visible) values (${id}, 'Domiciliation premium', 0)`),
       )
       const demande = { offerId: offre, clientId: DURAND, memberId: JEANNE, message: 'Dès novembre ?' }
       assert.equal(await notifyOfferRequested(demande, options), null)
-      await asTenant((tx) => tx.execute(sql`update offers set client_visible = true where id = ${offre}`))
+      await asTenant((tx) => tx.execute(sql`update offers set client_visible = 1 where id = ${offre}`))
       await notifyOfferRequested(demande, options)
       assert.deepEqual(envoyes[0].to, ['accueil@centre.exemple'])
       assert.equal(envoyes[0].subject, 'Offre demandée — Domiciliation premium, Atelier Durand')
@@ -383,30 +419,27 @@ describe('déclencheurs des notifications', { skip: raison }, () => {
 
   describe('états des lieux', () => {
     it('demande la validation d’un état clos, puis prévient le centre de la validation, sans les remarques', async () => {
-      const version = await asTenant(async (tx) => {
-        const [modele] = await tx.execute(sql`
-          insert into inspection_templates (resource_type, name) values ('bureau', 'Bureau') returning id`)
-        const [row] = await tx.execute(sql`
-          insert into inspection_template_versions (template_id, version, name, fields, created_by)
-          values (${modele.id as string}, 1, 'Bureau',
-                  '[{"id":"murs","label":"Murs","type":"condition","required":true}]'::jsonb, ${CAMILLE})
-          returning id`)
-        return row.id as string
+      const modele = uuidv7()
+      const version = uuidv7()
+      await asTenant(async (tx) => {
+        await tx.execute(sql`
+          insert into inspection_templates (id, resource_type, name) values (${modele}, 'bureau', 'Bureau')`)
+        await tx.execute(sql`
+          insert into inspection_template_versions (id, template_id, version, name, fields, created_by)
+          values (${version}, ${modele}, 1, 'Bureau',
+                  '[{"id":"murs","label":"Murs","type":"condition","required":true}]', ${CAMILLE})`)
       })
-      const etat = await id(
-        asTenant((tx) =>
-          tx.execute(sql`
-            insert into inspections (kind, resource_id, client_id, contract_id, template_version_id, created_by,
-                                     performed_at)
-            values ('entry', ${BUREAU}, ${DURAND}, ${CONTRAT}, ${version}, ${CAMILLE}, '2026-10-02T08:00:00Z')
-            returning id`),
-        ),
+      const etat = await creer((tx, id) =>
+        tx.execute(sql`
+          insert into inspections (id, kind, resource_id, client_id, contract_id, template_version_id, created_by,
+                                   performed_at)
+          values (${id}, 'entry', ${BUREAU}, ${DURAND}, ${CONTRAT}, ${version}, ${CAMILLE}, '2026-10-02 08:00:00.000')`),
       )
       assert.equal(await notifyInspectionToSign(etat, options), null)
 
       await asTenant((tx) =>
         tx.execute(sql`
-          update inspections set status = 'closed', closed_by = ${CAMILLE}, values = '{"murs":"bon"}'::jsonb
+          update inspections set status = 'closed', closed_by = ${CAMILLE}, \`values\` = '{"murs":"bon"}'
            where id = ${etat}`),
       )
       await notifyInspectionToSign(etat, options)

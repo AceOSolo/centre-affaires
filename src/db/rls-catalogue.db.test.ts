@@ -1,145 +1,134 @@
 import assert from 'node:assert/strict'
 import { after, before, describe, it } from 'node:test'
 
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { sql } from 'drizzle-orm'
 
-import { createDatabase } from './index.ts'
+import { uuidv7 } from '../lib/uuid.ts'
+import { DB_INSUFFICIENT_PRIVILEGE, DB_TENANT_MISMATCH, dbErrorCode } from './errors.ts'
+import { withTenant } from './index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from './test-support.ts'
+import { DEFAULT_TENANT_ID } from './tenants.ts'
 
 /**
- * Le catalogue de la base tient les règles de `CLAUDE.md` et de l'ADR 019 pour
- * toute table, présente ou à venir — une table oubliée échoue ici, avant
- * d'exposer un centre à un autre ou une entreprise à sa voisine :
+ * Le catalogue de la base tient les règles d'isolation pour toute table,
+ * présente ou à venir — une table oubliée échoue ici, avant d'exposer un
+ * centre à un autre.
  *
- * - toute table métier (`tenant_id`) a la RLS activée et forcée, et une
- *   politique d'isolation par centre ;
- * - toute table qui porte `client_id` a une politique RESTRICTIVE qui lit la
- *   portée client (`current_client_ids()`) ;
- * - toute fonction SECURITY DEFINER fige son `search_path` ;
- * - les tables de la vague 3 ne se suppriment pas depuis l'application
- *   (décision 6).
+ * Il n'y a plus de Row Level Security (ADR 042) : la base ne protège plus que
+ * les écritures, par des triggers que génère le migrateur
+ * (`<table>_guard_tenant_insert` / `_update`, `CA014`).
+ *
+ * - toute table qui porte `tenant_id` a ses deux triggers de garde ;
+ * - une écriture sous le contexte d'un autre centre est refusée ;
+ * - les compteurs de numérotation ne s'écrivent pas depuis l'application.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('catalogue : isolation et conservation', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
+describe('catalogue : isolation par centre', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   after(async () => {
-    await owner.client.end()
+    await bases.fermer()
   })
 
-  const tablesAvec = (colonne: string) => owner.client`
-    select c.relname as table, c.relrowsecurity as rls, c.relforcerowsecurity as forcee, c.oid
-      from pg_class c
-      join pg_namespace n on n.oid = c.relnamespace
-     where n.nspname = 'public' and c.relkind = 'r'
-       and exists (
-         select 1 from pg_attribute a
-          where a.attrelid = c.oid and a.attname = ${colonne} and not a.attisdropped)
-     order by c.relname`
+  const lignes = async <T>(requete: string, params: unknown[] = []) =>
+    ((await bases.owner.client.query(requete, params)) as unknown as [T[]])[0]
 
-  it('active et force la RLS, avec l’isolation par centre, sur toute table métier', async () => {
-    const tables = await tablesAvec('tenant_id')
+  const code = async (run: () => Promise<unknown>) => {
+    try {
+      await run()
+    } catch (error) {
+      return dbErrorCode(error)
+    }
+    return undefined
+  }
+
+  it('pose les deux triggers de garde sur toute table qui porte tenant_id', async () => {
+    const tables = await lignes<{ nom: string }>(
+      `select c.table_name as nom
+         from information_schema.columns c
+         join information_schema.tables t
+           on t.table_schema = c.table_schema and t.table_name = c.table_name
+        where c.table_schema = database() and c.column_name = 'tenant_id'
+          and t.table_type = 'BASE TABLE'
+        order by c.table_name`,
+    )
     assert.ok(tables.length > 30, `${tables.length} tables seulement`)
-    const fautives: string[] = []
-    for (const table of tables) {
-      const [politique] = await owner.client`
-        select count(*)::int as n from pg_policy
-         where polrelid = ${table.oid} and polpermissive
-           and pg_get_expr(polqual, polrelid) like '%current_tenant_id()%'`
-      if (!table.rls || !table.forcee || politique.n === 0) fautives.push(table.table)
+    const triggers = new Set(
+      (
+        await lignes<{ nom: string }>(
+          `select trigger_name as nom from information_schema.triggers where trigger_schema = database()`,
+        )
+      ).map((row) => row.nom),
+    )
+    const manquants: string[] = []
+    for (const { nom } of tables) {
+      for (const evenement of ['insert', 'update']) {
+        const trigger = `${nom}_guard_tenant_${evenement}`
+        if (!triggers.has(trigger)) manquants.push(trigger)
+      }
     }
-    assert.deepEqual(fautives, [])
+    assert.deepEqual(manquants, [])
   })
 
-  it('pose la portée client RESTRICTIVE sur toute table qui porte client_id', async () => {
-    const tables = await tablesAvec('client_id')
-    assert.ok(
-      tables.some((table) => table.table === 'mail_requests') &&
-        tables.some((table) => table.table === 'inspections') &&
-        tables.some((table) => table.table === 'offer_requests'),
+  it('refuse d’écrire, ou de déplacer une ligne, pour un autre centre', async () => {
+    const autre = '01999f00-0000-7000-8000-0000000000fd'
+    await bases.owner.client.query(
+      `insert into tenants (id, name, slug) values (?, 'Centre de passage', 'centre-de-passage')
+       on duplicate key update id = id`,
+      [autre],
     )
-    const fautives: string[] = []
-    for (const table of tables) {
-      const [politique] = await owner.client`
-        select count(*)::int as n from pg_policy
-         where polrelid = ${table.oid} and not polpermissive and polcmd = '*'
-           and pg_get_expr(polqual, polrelid) like '%current_client_ids()%'
-           and pg_get_expr(polwithcheck, polrelid) like '%current_client_ids()%'`
-      if (politique.n === 0) fautives.push(table.table)
+    const id = uuidv7()
+    try {
+      const refuse = await code(() =>
+        withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) =>
+            tx.execute(sql`
+              insert into staff_members (id, tenant_id, email)
+              values (${uuidv7()}, ${autre}, 'intrus@exemple.fr')`),
+          bases.app.db,
+        ),
+      )
+      assert.equal(refuse, DB_TENANT_MISMATCH)
+
+      await withTenant(
+        DEFAULT_TENANT_ID,
+        (tx) =>
+          tx.execute(sql`insert into staff_members (id, email) values (${id}, 'garde@exemple.fr')`),
+        bases.app.db,
+      )
+      const deplace = await code(() =>
+        withTenant(
+          DEFAULT_TENANT_ID,
+          (tx) => tx.execute(sql`update staff_members set tenant_id = ${autre} where id = ${id}`),
+          bases.app.db,
+        ),
+      )
+      assert.equal(deplace, DB_TENANT_MISMATCH)
+    } finally {
+      await bases.owner.client.query('delete from staff_members where id = ?', [id])
+      await bases.owner.client.query('delete from tenants where id = ?', [autre])
     }
-    assert.deepEqual(fautives, [])
   })
 
-  it('pose une politique restrictive sur chaque table de la vague 3 qui relève d’un client ou du seul back-office', async () => {
-    const tables = [
-      'mail_requests',
-      'notification_templates',
-      'notification_deliveries',
-      'notification_preferences',
-      'inspection_templates',
-      'inspection_template_versions',
-      'inspections',
-      'inspection_photos',
-      'inspection_photo_views',
-      'offer_requests',
-    ]
-    const rows = await owner.client`
-      select c.relname as table, count(p.oid)::int as n
-        from pg_class c
-        left join pg_policy p on p.polrelid = c.oid and not p.polpermissive
-       where c.relname in ${owner.client(tables)}
-       group by c.relname`
-    assert.deepEqual(
-      rows.filter((row) => row.n === 0).map((row) => row.table),
-      [],
-    )
-    assert.equal(rows.length, tables.length)
-  })
-
-  it('fige le search_path de toute fonction SECURITY DEFINER', async () => {
-    const fautives = await owner.client`
-      select p.proname
-        from pg_proc p
-        join pg_namespace n on n.oid = p.pronamespace
-       where n.nspname = 'public' and p.prosecdef
-         and not exists (select 1 from unnest(coalesce(p.proconfig, '{}')) as c where c like 'search_path=%')
-       order by 1`
-    assert.deepEqual(
-      fautives.map((row) => row.proname),
-      [],
-    )
-  })
-
-  it('ne laisse pas l’application supprimer les lignes de la vague 3', async () => {
-    const tables = [
-      'mail_requests',
-      'notification_templates',
-      'notification_deliveries',
-      'notification_preferences',
-      'inspection_templates',
-      'inspection_template_versions',
-      'inspections',
-      'inspection_photos',
-      'inspection_photo_views',
-      'offer_requests',
-    ]
-    const rows = await owner.client`
-      select t as table, has_table_privilege('app_centre', t, 'DELETE') as supprime
-        from unnest(${tables}::text[]) as t`
-    assert.deepEqual(
-      rows.filter((row) => row.supprime).map((row) => row.table),
-      [],
-    )
+  it('ne laisse pas l’identité applicative écrire les compteurs de numérotation', async (t) => {
+    if (!process.env.TEST_DB_USER) {
+      t.skip('TEST_DB_USER non défini : l’identité applicative est le propriétaire')
+      return
+    }
+    for (const requete of [
+      sql`insert into document_sequences (id, tenant_id, document_type, year, last_value)
+          values (${uuidv7()}, ${DEFAULT_TENANT_ID}, 'invoice', 2026, 41)`,
+      sql`update document_sequences set last_value = 0`,
+      sql`delete from document_sequences`,
+    ]) {
+      const refuse = await code(() =>
+        withTenant(DEFAULT_TENANT_ID, (tx) => tx.execute(requete), bases.app.db),
+      )
+      assert.equal(refuse, DB_INSUFFICIENT_PRIVILEGE)
+    }
   })
 })

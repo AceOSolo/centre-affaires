@@ -2,31 +2,19 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { listClientBookingHistory } from './historique.ts'
+import { toutVider } from './test-support.ts'
 
 /**
  * Historique des réservations sur la fiche client (R07), contre la base et
- * sous `app_centre`.
+ * sous l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('historique des réservations d’un client', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('historique des réservations d’un client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const SALLE = '01a00000-0000-7000-8000-0000000d1a01'
   const SALON = '01a00000-0000-7000-8000-0000000d1a02'
@@ -38,7 +26,10 @@ describe('historique des réservations d’un client', { skip: raison }, () => {
   const NOW = new Date('2026-10-15T10:00:00Z')
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  /** « 2026-10-01T07:00:00Z » en littéral `datetime` (MySQL n'admet pas le `Z`). */
+  const instant = (iso: string) => iso.replace('T', ' ').replace('Z', '')
 
   const reserver = (
     title: string,
@@ -50,18 +41,20 @@ describe('historique des réservations d’un client', { skip: raison }, () => {
       tx.execute(sql`
         insert into bookings (resource_id, client_id, channel, status, cancelled_at, title, starts_at, ends_at)
         values (${resourceId}, ${clientId}, 'staff', ${status},
-                ${status === 'cancelled' ? sql`now()` : sql`null`},
-                ${title}, ${startsAt}, ${endsAt})`),
+                ${status === 'cancelled' ? sql`now(3)` : sql`null`},
+                ${title}, ${instant(startsAt)}, ${instant(endsAt)})`),
     )
 
   const titles = (rows: { title: string }[]) => rows.map((row) => row.title)
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await toutVider(bases.owner)
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name) values
@@ -89,8 +82,9 @@ describe('historique des réservations d’un client', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('sépare l’à venir du passé, dans l’ordre où on les lit', async () => {
@@ -135,9 +129,11 @@ describe('historique des réservations d’un client', { skip: raison }, () => {
         values (${DURAND}, 'bureau', 'active', '2026-09-01', 45000, ${BUREAU})`),
     )
     // Le contrat occupe bien son bureau au nom du client (ADR 018)…
-    const [occupation] = await owner.client`
-      select count(*)::int as n from bookings where kind = 'contract' and client_id = ${DURAND}`
-    assert.equal(occupation.n, 1)
+    const [rows] = (await bases.owner.client.query(
+      `select count(*) as n from bookings where kind = 'contract' and client_id = ?`,
+      [DURAND],
+    )) as unknown as [{ n: number | string }[]]
+    assert.equal(Number(rows[0].n), 1)
 
     // … mais l'historique des réservations ne le répète pas.
     const history = await listClientBookingHistory(DURAND, { now: NOW })
@@ -146,7 +142,7 @@ describe('historique des réservations d’un client', { skip: raison }, () => {
   })
 
   it('ne rend rien pour un client sans réservation', async () => {
-    await owner.client`delete from bookings where client_id = ${PETIT}`
+    await bases.owner.client.query('delete from bookings where client_id = ?', [PETIT])
     assert.deepEqual(await listClientBookingHistory(PETIT, { now: NOW }), {
       upcoming: [],
       upcomingTotal: 0,

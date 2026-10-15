@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { createDatabase, databaseOptionsFromEnv, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { Message, SendResult } from '../../lib/courriel.ts'
 import { notify, type NotificationRequest } from './moteur.ts'
@@ -15,18 +15,8 @@ import { notify, type NotificationRequest } from './moteur.ts'
  * personnes, journal écrit quelle que soit l'issue — envoyé, échec, SMTP non
  * configuré, non envoyé — et jamais le corps du message.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('moteur de notifications', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('moteur de notifications', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000f1c01'
   const PETIT = '01a00000-0000-7000-8000-0000000f1c02'
@@ -36,7 +26,11 @@ describe('moteur de notifications', { skip: raison }, () => {
   const PAUL = '01a00000-0000-7000-8000-0000000f1d04'
   const PLI = '01a00000-0000-7000-8000-0000000f1f01'
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  const lire = async (text: string, params: unknown[] = []) =>
+    (await bases.owner.client.query(text, params))[0] as Record<string, unknown>[]
 
   /** Transport des tests : garde chaque message, rend l'issue demandée. */
   let envoyes: Message[] = []
@@ -49,7 +43,13 @@ describe('moteur de notifications', { skip: raison }, () => {
       ? { status: 'failed', recipients, failed, error: `${failed.length} envoi sur ${recipients.length} en échec : 550 boîte inexistante` }
       : { status: 'sent', recipients, failed: [], error: null }
   }
-  const options = { database: app.db, send }
+  // `bases` n'existe qu'après `before()` : la base est lue à l'usage.
+  const options = {
+    get database() {
+      return bases.app.db
+    },
+    send,
+  }
 
   /** Arrivée d'un pli chez Durand, avec un jeton qui ne doit vivre que dans le corps. */
   const arrivee = (values: NotificationRequest['values'] = {}): NotificationRequest => ({
@@ -66,25 +66,31 @@ describe('moteur de notifications', { skip: raison }, () => {
   })
 
   const journal = () =>
-    owner.client`
-      select event, audience, client_id, recipients, failed_recipients, subject, status, error,
-             related_type, related_id
-        from notification_deliveries order by sent_at, id`
+    lire(`select event, audience, client_id, recipients, failed_recipients, subject, status, error,
+                 related_type, related_id
+            from notification_deliveries order by sent_at, id`)
 
   let centre: { name: string; email: string | null }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    const [row] = await owner.client`select name, email from tenants where id = ${DEFAULT_TENANT_ID}`
+    bases = await ouvrirBasesDeTest()
+    const [row] = await lire('select name, email from tenants where id = ?', [DEFAULT_TENANT_ID])
     centre = { name: row.name as string, email: row.email as string | null }
   })
 
   beforeEach(async () => {
     envoyes = []
     refusees = []
-    await owner.client`truncate table clients, staff_members cascade`
-    await owner.client`truncate table notification_deliveries, notification_templates, notification_preferences`
-    await owner.client`update tenants set email = 'accueil@centre.exemple' where id = ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'notification_deliveries',
+      'notification_templates',
+      'notification_preferences',
+      'client_members',
+      'clients',
+      'staff_members',
+    )
+    await lire(`update tenants set email = 'accueil@centre.exemple' where id = ?`, [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -93,22 +99,22 @@ describe('moteur de notifications', { skip: raison }, () => {
         insert into client_members (id, client_id, email, full_name, deleted_at) values
           (${JEANNE}, ${DURAND}, 'jeanne@durand.fr', 'Jeanne Durand', null),
           (${JULES}, ${DURAND}, 'jules@durand.fr', null, null),
-          (${ANCIEN}, ${DURAND}, 'ancien@durand.fr', null, now()),
+          (${ANCIEN}, ${DURAND}, 'ancien@durand.fr', null, CURRENT_TIMESTAMP(3)),
           (${PAUL}, ${PETIT}, 'paul@petit.fr', null, null)`)
     })
   })
 
   after(async () => {
-    await owner.client`truncate table notification_deliveries, notification_templates, notification_preferences`
-    await owner.client`update tenants set email = ${centre.email} where id = ${DEFAULT_TENANT_ID}`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await viderTables(bases.owner, 'notification_deliveries', 'notification_templates', 'notification_preferences')
+    await lire('update tenants set email = ? where id = ?', [centre.email, DEFAULT_TENANT_ID])
+    await bases.fermer()
   })
 
   const renoncer = (memberId: string, clientId: string, category: string) =>
     asTenant((tx) =>
       tx.execute(sql`
         insert into notification_preferences (client_id, client_member_id, category, enabled)
-        values (${clientId}, ${memberId}, ${category}, false)`),
+        values (${clientId}, ${memberId}, ${category}, 0)`),
     )
 
   describe('rendu et journal', () => {
@@ -134,10 +140,9 @@ describe('moteur de notifications', { skip: raison }, () => {
       assert.equal(ligne.related_id, PLI)
 
       // Aucune donnée du corps dans le journal, quelle que soit la colonne.
-      const [texte] = await owner.client`
-        select string_agg(row_to_json(d)::text, ' ') as tout from notification_deliveries d`
-      assert.doesNotMatch(texte.tout as string, /JETON-DU-CORPS/)
-      assert.doesNotMatch(texte.tout as string, /centre\.exemple\/compte/)
+      const tout = JSON.stringify(await lire('select * from notification_deliveries'))
+      assert.doesNotMatch(tout, /JETON-DU-CORPS/)
+      assert.doesNotMatch(tout, /centre\.exemple\/compte/)
     })
 
     it('applique le modèle du centre, ligne à variable manquante retirée', async () => {
@@ -157,7 +162,7 @@ describe('moteur de notifications', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into notification_templates (event, subject, body, active)
-          values ('mail_received', 'Pli pour {{client}}', 'Texte', false)`),
+          values ('mail_received', 'Pli pour {{client}}', 'Texte', 0)`),
       )
       const issue = await notify(arrivee(), options)
       assert.equal(issue.status, 'skipped')
@@ -240,7 +245,7 @@ describe('moteur de notifications', { skip: raison }, () => {
     })
 
     it('ne prévient plus personne d’une fiche archivée', async () => {
-      await asTenant((tx) => tx.execute(sql`update clients set deleted_at = now() where id = ${DURAND}`))
+      await asTenant((tx) => tx.execute(sql`update clients set deleted_at = CURRENT_TIMESTAMP(3) where id = ${DURAND}`))
       const issue = await notify(arrivee(), options)
       assert.equal(issue.status, 'skipped')
       const [ligne] = await journal()
@@ -261,7 +266,7 @@ describe('moteur de notifications', { skip: raison }, () => {
       await notify(demande, options)
       assert.deepEqual(envoyes[0].to, ['accueil@centre.exemple'])
 
-      await owner.client`update tenants set email = null where id = ${DEFAULT_TENANT_ID}`
+      await lire('update tenants set email = null where id = ?', [DEFAULT_TENANT_ID])
       const issue = await notify(demande, options)
       assert.equal(issue.status, 'skipped')
       const lignes = await journal()
@@ -293,7 +298,7 @@ describe('moteur de notifications', { skip: raison }, () => {
       for (const name of variables) delete process.env[name]
       try {
         // Le vrai transport, sans configuration : celui du développement.
-        const issue = await notify(arrivee(), { database: app.db })
+        const issue = await notify(arrivee(), { database: bases.app.db })
         assert.equal(issue.status, 'not_configured')
       } finally {
         for (const name of variables) if (saved[name] !== undefined) process.env[name] = saved[name]
@@ -306,7 +311,7 @@ describe('moteur de notifications', { skip: raison }, () => {
 
     it('ne lève jamais : un transport qui lève vaut échec, journalisé', async () => {
       const issue = await notify(arrivee(), {
-        database: app.db,
+        database: bases.app.db,
         send: async () => {
           throw new Error('Connexion SMTP refusée')
         },
@@ -319,7 +324,15 @@ describe('moteur de notifications', { skip: raison }, () => {
     })
 
     it('ne lève jamais : une base injoignable rend un échec non journalisé', async () => {
-      const coupee = createDatabase(appUrl ?? '')
+      // Un pool déjà fermé : toute requête échoue.
+      const coupee = createDatabase(
+        databaseOptionsFromEnv('DB', {
+          ...process.env,
+          DB_NAME: process.env.TEST_DB_NAME,
+          DB_USER: process.env.TEST_DB_USER ?? process.env.DB_USER ?? process.env.TEST_DB_ADMIN_USER ?? 'root',
+          DB_PASSWORD: process.env.TEST_DB_PASSWORD ?? process.env.DB_PASSWORD ?? process.env.TEST_DB_ADMIN_PASSWORD,
+        }),
+      )
       await coupee.client.end()
       const issue = await notify(arrivee(), { database: coupee.db, send })
       assert.equal(issue.status, 'failed')

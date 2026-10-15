@@ -47,7 +47,7 @@ export function clientInvoiceState(invoice: InvoiceForClient, today: string): Cl
     return { tone: 'cancelled', label: 'Annulée par avoir', amountDueCents: 0, overdue: false }
   }
   const due = amountDueCents(invoice)
-  // Un brouillon n'atteint jamais l'espace client (portée client en RLS) ; s'il
+  // Un brouillon n'atteint jamais l'espace client (la requête filtre sur les entreprises du compte) ; s'il
   // y arrivait, il ne demanderait rien.
   if (invoice.status === 'draft' || invoice.status === 'paid' || due <= 0) {
     return { tone: 'settled', label: 'Payée', amountDueCents: 0, overdue: false }

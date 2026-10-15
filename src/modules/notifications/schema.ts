@@ -1,19 +1,20 @@
 import { sql } from 'drizzle-orm'
 import {
   boolean,
+  char,
   check,
   foreignKey,
   index,
-  pgEnum,
-  pgTable,
+  json,
+  mysqlEnum,
+  mysqlTable,
   text,
-  timestamp,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { primaryKeyId, timestamps } from '../../db/columns.ts'
+import { instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
@@ -32,7 +33,8 @@ import { clientMembers, clients } from '../clients/schema.ts'
  * Événements qui déclenchent un message. Le destinataire (`audience`) et la
  * catégorie de préférence de chacun sont fixés par la base
  * (`notification_event_audience()`, `notification_event_category()`,
- * migration 0039) et recopiés ici, à l'identique (test en base).
+ * `src/db/regles/70-notifications.sql`) et recopiés ici, à l'identique (test
+ * en base).
  */
 export const notificationEvents = [
   'mail_received',
@@ -54,12 +56,12 @@ export const notificationEvents = [
   'offer_requested',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
-export const notificationEventEnum = pgEnum('notification_event', notificationEvents)
+export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
 
 /** À qui s'adresse un événement : les personnes de l'entreprise, ou l'adresse du centre. */
 export const notificationAudiences = ['client', 'centre'] as const
 export type NotificationAudience = (typeof notificationAudiences)[number]
-export const notificationAudienceEnum = pgEnum('notification_audience', notificationAudiences)
+export const notificationAudienceEnum = (name: string) => mysqlEnum(name, notificationAudiences)
 
 /**
  * Catégories auxquelles une personne de l'espace client peut renoncer
@@ -68,9 +70,9 @@ export const notificationAudienceEnum = pgEnum('notification_audience', notifica
  */
 export const notificationCategories = ['mail', 'bookings', 'invoices', 'contracts', 'inspections'] as const
 export type NotificationCategory = (typeof notificationCategories)[number]
-export const notificationCategoryEnum = pgEnum('notification_category', notificationCategories)
+export const notificationCategoryEnum = (name: string) => mysqlEnum(name, notificationCategories)
 
-/** Miroir de `notification_event_audience()` (migration 0039). */
+/** Miroir de `notification_event_audience()` (`70-notifications.sql`). */
 export const notificationEventAudience: Record<NotificationEvent, NotificationAudience> = {
   mail_received: 'client',
   mail_scanned: 'client',
@@ -91,7 +93,7 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   offer_requested: 'centre',
 }
 
-/** Miroir de `notification_event_category()` (migration 0039). Nul : pas de renoncement possible. */
+/** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
 export const notificationEventCategory: Record<NotificationEvent, NotificationCategory | null> = {
   mail_received: 'mail',
   mail_scanned: 'mail',
@@ -124,10 +126,8 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
  */
 export const notificationDeliveryStatuses = ['sent', 'failed', 'not_configured', 'skipped'] as const
 export type NotificationDeliveryStatus = (typeof notificationDeliveryStatuses)[number]
-export const notificationDeliveryStatusEnum = pgEnum(
-  'notification_delivery_status',
-  notificationDeliveryStatuses,
-)
+export const notificationDeliveryStatusEnum = (name: string) =>
+  mysqlEnum(name, notificationDeliveryStatuses)
 
 /** Nature de l'entité dont parle le message (`related_type`, `related_id`). */
 export const notificationRelatedTypes = [
@@ -141,10 +141,8 @@ export const notificationRelatedTypes = [
   'offer',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
-export const notificationRelatedTypeEnum = pgEnum(
-  'notification_related_type',
-  notificationRelatedTypes,
-)
+export const notificationRelatedTypeEnum = (name: string) =>
+  mysqlEnum(name, notificationRelatedTypes)
 
 /**
  * Modèles de messages du centre, un par événement au plus.
@@ -155,19 +153,20 @@ export const notificationRelatedTypeEnum = pgEnum(
  * l'enregistrement et les remplace à l'envoi. `active` faux : l'événement
  * n'envoie plus rien (journalisé `skipped`).
  *
- * Réglage du back-office seul : invisible et non modifiable sous portée
- * client. Ne se supprime pas (revenir au texte par défaut, c'est le réécrire).
+ * Réglage du back-office seul : non modifiable sous portée client (trigger),
+ * jamais lu par l'espace client. Ne se supprime pas (revenir au texte par
+ * défaut, c'est le réécrire : trigger).
  */
-export const notificationTemplates = pgTable(
+export const notificationTemplates = mysqlTable(
   'notification_templates',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     event: notificationEventEnum('event').notNull(),
-    subject: text('subject').notNull(),
+    subject: varchar('subject', { length: 255 }).notNull(),
     body: text('body').notNull(),
     active: boolean('active').notNull().default(true),
-    updatedBy: uuid('updated_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    updatedBy: char('updated_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     ...timestamps(),
   },
   (table) => [
@@ -175,7 +174,7 @@ export const notificationTemplates = pgTable(
     uniqueIndex('notification_templates_event_key').on(table.tenantId, table.event),
     check(
       'notification_templates_text_valid',
-      sql`btrim(${table.subject}) <> '' and length(${table.subject}) <= 200 and btrim(${table.body}) <> '' and length(${table.body}) <= 10000`,
+      sql`trim(${table.subject}) <> '' and char_length(${table.subject}) <= 200 and trim(${table.body}) <> '' and char_length(${table.body}) <= 10000`,
     ),
   ],
 )
@@ -191,13 +190,15 @@ export type NewNotificationTemplate = typeof notificationTemplates.$inferInsert
  * dire ce qui est parti ; le corps, recomposable depuis le modèle, n'a pas à
  * être une copie de plus des données du client.
  *
- * Ajout seul : le rôle applicatif n'a ni `UPDATE` ni `DELETE` (migration
- * 0042) ; la purge passe par `purge_expired_notification_deliveries()`, au
- * terme de `tenants.notification_log_retention_months`. Sous portée client,
- * une entreprise ne lit que les messages qui lui ont été adressés
- * (`audience = 'client'`). Le journal s'écrit sous `withTenant()`.
+ * Ajout seul : des triggers refusent `UPDATE` et `DELETE`
+ * (`70-notifications.sql`) ; la purge passe par
+ * `purge_expired_notification_deliveries()`, au terme de
+ * `tenants.notification_log_retention_months`. Sous portée client,
+ * une entreprise ne doit lire que les messages qui lui ont été adressés
+ * (`audience = 'client'`) : la base ne filtre plus les lectures, la requête le
+ * fait. Le journal s'écrit sous `withTenant()`.
  */
-export const notificationDeliveries = pgTable(
+export const notificationDeliveries = mysqlTable(
   'notification_deliveries',
   {
     id: primaryKeyId(),
@@ -206,19 +207,22 @@ export const notificationDeliveries = pgTable(
     /** Fixée par l'événement (contrainte `notification_deliveries_audience_matches`). */
     audience: notificationAudienceEnum('audience').notNull(),
     /** Entreprise concernée. Toujours posée pour un message à un client. */
-    clientId: uuid('client_id'),
+    clientId: char('client_id', { length: 36 }),
     /** Adresses, en minuscules. Vide pour un envoi `skipped` faute de destinataire. */
-    recipients: text('recipients').array().notNull().default(sql`'{}'::text[]`),
+    recipients: json('recipients').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
     /** Destinataires refusés par le serveur SMTP, parmi `recipients`. */
-    failedRecipients: text('failed_recipients').array().notNull().default(sql`'{}'::text[]`),
+    failedRecipients: json('failed_recipients')
+      .$type<string[]>()
+      .notNull()
+      .default(sql`(JSON_ARRAY())`),
     subject: text('subject').notNull(),
     status: notificationDeliveryStatusEnum('status').notNull(),
     /** Cause d'un échec ou d'un envoi sauté, lisible par l'équipe. Jamais le contenu du message. */
     error: text('error'),
     relatedType: notificationRelatedTypeEnum('related_type'),
     /** Pas de clé étrangère : l'entité peut être de huit tables ; aucune ne se supprime. */
-    relatedId: uuid('related_id'),
-    sentAt: timestamp('sent_at', { withTimezone: true }).notNull().defaultNow(),
+    relatedId: char('related_id', { length: 36 }),
+    sentAt: instant('sent_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
     foreignKey({
@@ -226,25 +230,25 @@ export const notificationDeliveries = pgTable(
       columns: [table.tenantId, table.clientId],
       foreignColumns: [clients.tenantId, clients.id],
     }).onDelete('restrict'),
-    // La fonction prend du texte : elle est posée avant les énumérations, par
-    // la migration 0039, comme les règles d'arrondi avant les factures (0029).
-    check(
-      'notification_deliveries_audience_matches',
-      sql`${table.audience}::text = notification_event_audience(${table.event}::text)`,
-    ),
+    // `notification_deliveries_audience_matches` (l'audience est celle de
+    // l'événement) n'est pas une contrainte `CHECK` : MySQL n'y accepte pas de
+    // fonction stockée. C'est un trigger (`70-notifications.sql`) qui lève la
+    // même erreur de contrainte (3819).
     check(
       'notification_deliveries_client_audience',
       sql`${table.audience} <> 'client' or ${table.clientId} is not null`,
     ),
-    check('notification_deliveries_subject_not_blank', sql`btrim(${table.subject}) <> ''`),
+    check('notification_deliveries_subject_not_blank', sql`trim(${table.subject}) <> ''`),
     check(
       'notification_deliveries_status_consistent',
-      sql`${table.failedRecipients} <@ ${table.recipients}
+      // `failed <@ recipients` devient `JSON_CONTAINS(recipients, failed)` :
+      // tout élément de `failed_recipients` figure dans `recipients`.
+      sql`JSON_CONTAINS(${table.recipients}, ${table.failedRecipients})
         and case ${table.status}
-          when 'sent' then cardinality(${table.recipients}) > 0 and cardinality(${table.failedRecipients}) = 0
-          when 'failed' then ${table.error} is not null and cardinality(${table.failedRecipients}) > 0
-          when 'not_configured' then cardinality(${table.failedRecipients}) = 0
-          when 'skipped' then ${table.error} is not null and cardinality(${table.failedRecipients}) = 0
+          when 'sent' then JSON_LENGTH(${table.recipients}) > 0 and JSON_LENGTH(${table.failedRecipients}) = 0
+          when 'failed' then ${table.error} is not null and JSON_LENGTH(${table.failedRecipients}) > 0
+          when 'not_configured' then JSON_LENGTH(${table.failedRecipients}) = 0
+          when 'skipped' then ${table.error} is not null and JSON_LENGTH(${table.failedRecipients}) = 0
           else false
         end`,
     ),
@@ -253,12 +257,12 @@ export const notificationDeliveries = pgTable(
       sql`(${table.relatedType} is null) = (${table.relatedId} is null)`,
     ),
     index('notification_deliveries_sent_idx').on(table.tenantId, table.sentAt),
-    index('notification_deliveries_client_idx')
-      .on(table.tenantId, table.clientId, table.sentAt)
-      .where(sql`client_id is not null`),
-    index('notification_deliveries_related_idx')
-      .on(table.tenantId, table.relatedType, table.relatedId)
-      .where(sql`related_id is not null`),
+    index('notification_deliveries_client_idx').on(table.tenantId, table.clientId, table.sentAt),
+    index('notification_deliveries_related_idx').on(
+      table.tenantId,
+      table.relatedType,
+      table.relatedId,
+    ),
   ],
 )
 
@@ -272,13 +276,13 @@ export type NewNotificationDelivery = typeof notificationDeliveries.$inferInsert
  * renoncement ne vaut que pour cet accès : la même personne peut garder les
  * factures d'une société et pas d'une autre.
  */
-export const notificationPreferences = pgTable(
+export const notificationPreferences = mysqlTable(
   'notification_preferences',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
-    clientMemberId: uuid('client_member_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
+    clientMemberId: char('client_member_id', { length: 36 }).notNull(),
     category: notificationCategoryEnum('category').notNull(),
     enabled: boolean('enabled').notNull(),
     ...timestamps(),

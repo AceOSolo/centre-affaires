@@ -3,7 +3,7 @@ import type { BookingStatus } from './schema.ts'
 /**
  * Règles de disponibilité côté code.
  *
- * L'autorité reste la contrainte d'exclusion `bookings_no_overlap` (décision 3) :
+ * L'autorité reste le garde anti-chevauchement de la base (triggers de `bookings`, décision 3) :
  * ces fonctions servent à répondre à l'utilisateur avant l'écriture et à
  * afficher les créneaux libres. Elles doivent donner exactement le même verdict
  * que la base, d'où les bornes semi-ouvertes `[)` reproduites ici.

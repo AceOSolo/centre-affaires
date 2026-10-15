@@ -1,12 +1,14 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import {
-  PG_COMMITMENT_LOCKED,
-  PG_EXCLUSION_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  pgErrorCode,
+  DB_COMMITMENT_LOCKED,
+  DB_EXCLUSION_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { addDaysToIsoDate, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
@@ -113,8 +115,8 @@ export type SubscriptionBilling = {
 async function billingOf(tx: Transaction, subscriptionId: string): Promise<SubscriptionBilling> {
   const [row] = await tx
     .select({
-      billedThrough: sql<string | null>`max(${invoiceLines.periodEnd})::text`,
-      billedLineCount: sql<number>`count(*)::int`,
+      billedThrough: sql<string | null>`max(${invoiceLines.periodEnd})`,
+      billedLineCount: sql<number>`count(*)`.mapWith(Number),
     })
     .from(invoiceLines)
     .where(
@@ -200,14 +202,14 @@ const OVERLAP_MESSAGE =
 /** Traduit les refus de la base en messages ; laisse remonter le reste. */
 function translate(error: unknown): never {
   if (error instanceof SubscriptionRefusedError) throw error
-  switch (pgErrorCode(error)) {
-    case PG_EXCLUSION_VIOLATION:
+  switch (dbErrorCode(error)) {
+    case DB_EXCLUSION_VIOLATION:
       throw new SubscriptionRefusedError(OVERLAP_MESSAGE)
-    case PG_FOREIGN_KEY_VIOLATION:
+    case DB_FOREIGN_KEY_VIOLATION:
       throw new SubscriptionRefusedError(
         'Le contrat choisi n’est pas un contrat de ce client, ou le service n’existe plus.',
       )
-    case PG_COMMITMENT_LOCKED:
+    case DB_COMMITMENT_LOCKED:
       throw new SubscriptionRefusedError(
         'Une souscription ne se réécrit pas : mettez-y fin, puis souscrivez aux nouvelles conditions.',
       )
@@ -267,18 +269,17 @@ export async function subscribe(clientId: string, input: SubscriptionInput): Pro
       if (!service || service.deletedAt || !service.isActive) {
         throw new SubscriptionRefusedError('Ce service n’est plus proposé à la souscription.')
       }
-      const [created] = await tx
-        .insert(subscribedServices)
-        .values(
-          rowFor(
-            { clientId, contractId: input.contractId, serviceId: service.id },
-            service,
-            input,
-            { startsOn: input.startsOn, endsOn: input.endsOn },
-            input.notes,
-          ),
-        )
-        .returning({ id: subscribedServices.id })
+      const created = await insertReturning(
+        tx,
+        subscribedServices,
+        rowFor(
+          { clientId, contractId: input.contractId, serviceId: service.id },
+          service,
+          input,
+          { startsOn: input.startsOn, endsOn: input.endsOn },
+          input.notes,
+        ),
+      )
       return created.id
     })
   } catch (error) {
@@ -339,7 +340,7 @@ export async function changeSubscriptionConditions(
       if (plan.mode === 'replace') {
         await tx
           .update(subscribedServices)
-          .set({ deletedAt: sql`now()` })
+          .set({ deletedAt: maintenant() })
           .where(eq(subscribedServices.id, id))
       } else {
         await tx
@@ -348,18 +349,17 @@ export async function changeSubscriptionConditions(
           .where(eq(subscribedServices.id, id))
       }
 
-      const [created] = await tx
-        .insert(subscribedServices)
-        .values(
-          rowFor(
-            current,
-            { unit: current.unit, currency: current.currency },
-            terms,
-            { startsOn: plan.nextStartsOn, endsOn: plan.nextEndsOn },
-            notes ?? current.notes,
-          ),
-        )
-        .returning({ id: subscribedServices.id })
+      const created = await insertReturning(
+        tx,
+        subscribedServices,
+        rowFor(
+          current,
+          { unit: current.unit, currency: current.currency },
+          terms,
+          { startsOn: plan.nextStartsOn, endsOn: plan.nextEndsOn },
+          notes ?? current.notes,
+        ),
+      )
       return created.id
     })
   } catch (error) {
@@ -383,7 +383,7 @@ export async function setSubscriptionEnd(id: string, endsOn: string | null): Pro
       await tx.update(subscribedServices).set({ endsOn }).where(eq(subscribedServices.id, id))
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_EXCLUSION_VIOLATION) {
+    if (dbErrorCode(error) === DB_EXCLUSION_VIOLATION) {
       throw new SubscriptionRefusedError(
         'Une autre souscription à ce service, pour le même contrat, prend la suite : ' +
           'la fin ne peut pas la recouvrir.',
@@ -406,7 +406,7 @@ export async function cancelSubscription(id: string): Promise<void> {
       if (refusal) throw new SubscriptionRefusedError(refusal)
       await tx
         .update(subscribedServices)
-        .set({ deletedAt: sql`now()` })
+        .set({ deletedAt: maintenant() })
         .where(eq(subscribedServices.id, id))
     })
   } catch (error) {

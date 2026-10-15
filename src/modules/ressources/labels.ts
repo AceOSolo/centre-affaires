@@ -30,7 +30,7 @@ export const resourceStatusStyles: Record<ResourceStatus, string> = {
   retired: 'bg-muted text-muted-foreground',
 }
 
-/** Rend les champs JSONB lisibles sans connaître le type à l'avance. */
+/** Rend les champs JSON lisibles sans connaître le type à l'avance. */
 export function describeAttributes(attributes: Record<string, unknown>): string {
   const labels: Record<string, (value: unknown) => string> = {
     // Format français : une superficie de 12,5 m² ne s'écrit pas « 12.5 ».

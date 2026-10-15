@@ -1,7 +1,8 @@
 import { and, asc, eq, isNotNull, isNull } from 'drizzle-orm'
 
-import { PG_EXCLUSION_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_EXCLUSION_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { formatCalendarDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { tacitRenewalTerm } from './reconduction.ts'
@@ -75,11 +76,12 @@ export async function renewTacitContracts(tx: Transaction, today: string): Promi
     try {
       const written = await tx.transaction(async (savepoint) => {
         // Le terme lu est celui qu'on prolonge : modifié entre-temps, on passe.
-        const updated = await savepoint
-          .update(contracts)
-          .set({ endsOn: newEndsOn })
-          .where(and(eq(contracts.id, contract.id), eq(contracts.endsOn, previousEndsOn)))
-          .returning({ id: contracts.id })
+        const updated = await updateReturning(
+          savepoint,
+          contracts,
+          { endsOn: newEndsOn },
+          and(eq(contracts.id, contract.id), eq(contracts.endsOn, previousEndsOn)),
+        )
         if (updated.length === 0) return false
         await savepoint
           .insert(contractRenewals)
@@ -92,7 +94,7 @@ export async function renewTacitContracts(tx: Transaction, today: string): Promi
         contractId: contract.id,
         reference: contract.reference,
         message:
-          pgErrorCode(error) === PG_EXCLUSION_VIOLATION
+          dbErrorCode(error) === DB_EXCLUSION_VIOLATION
             ? `Reconduction impossible : la ressource du contrat est déjà occupée après le ${formatCalendarDate(previousEndsOn)}. Libérez-la, ou résiliez le contrat à son terme.`
             : `Reconduction impossible : ${error instanceof Error ? error.message : 'erreur inattendue'}.`,
       })

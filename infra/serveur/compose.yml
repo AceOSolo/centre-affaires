@@ -1,17 +1,57 @@
-# Production sur le VPS de production (ADR 013).
+# Production sur le VPS de production (ADR 013, ADR 042).
 #
 # Ce fichier est recopié sur le serveur à chaque déploiement par la CI : la
 # configuration suit le dépôt. Les secrets, eux, vivent dans le `.env` posé à
 # côté, jamais dans le dépôt (modèle : `.env.example`). HTTPS et le domaine
 # sont l'affaire de l'Apache déjà en place (`apache-handfield.conf`).
+#
+# La base MySQL tourne ici, dans le même compose que l'application : elle n'est
+# publiée sur aucun port, seul le conteneur `app` (et `migrer`) l'atteint par
+# le réseau du compose, sous le nom `db`.
 name: centre-affaires
 
 services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --log-bin-trust-function-creators=1
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_as_ci
+      - --default-time-zone=+00:00
+    environment:
+      # Lu dans le `.env` du serveur. Au premier démarrage du volume seulement :
+      # le mot de passe racine ne se change ensuite qu'avec `ALTER USER`.
+      MYSQL_ROOT_PASSWORD: ${DB_ADMIN_PASSWORD:?DB_ADMIN_PASSWORD manquant dans .env}
+      MYSQL_DATABASE: ${DB_NAME:-centre_affaires}
+    # Pas de `ports:` : la base n'est joignable que par le réseau du compose.
+    volumes:
+      - db-data:/var/lib/mysql
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
   app:
     # La CI fixe IMAGE_TAG au commit déployé. Sans lui, la dernière image de main.
     image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file: .env
+    environment:
+      # Prime sur le `.env` : la base est le service `db` de ce compose.
+      DB_HOST: db
+      DB_PORT: "3306"
+    depends_on:
+      db:
+        condition: service_healthy
     # Publié sur la boucle locale seulement : joignable par Apache, jamais
     # depuis l'extérieur. PORT_LOCAL si 3000 est déjà pris sur le serveur.
     ports:
@@ -28,9 +68,32 @@ services:
         max-file: "5"
     healthcheck:
       # Un fichier statique plutôt qu'une page : vérifie le serveur Node sans
-      # réveiller la base Neon toutes les 30 secondes.
+      # solliciter la base toutes les 30 secondes. La base a son propre
+      # contrôle (`db`), dont `app` dépend.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/favicon.ico"]
       interval: 30s
       timeout: 5s
       start_period: 20s
       retries: 3
+
+  # Migrations : à lancer à la main, à chaque version qui touche la base, et à
+  # la première mise en service. Crée la base et l'utilisateur applicatif s'ils
+  # manquent, applique la structure et les règles métier, donne ses droits à
+  # DB_USER. Rejouable sans risque.
+  #
+  #   docker compose run --rm migrer
+  migrer:
+    profiles: ["outils"]
+    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
+    env_file: .env
+    environment:
+      DB_HOST: db
+      DB_PORT: "3306"
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["node", "infra/migrer.ts"]
+    restart: "no"
+
+volumes:
+  db-data:

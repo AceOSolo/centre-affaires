@@ -2,45 +2,34 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_INSUFFICIENT_PRIVILEGE,
-  PG_INVOICE_INVALID,
-  PG_MAIL_REQUEST_REFUSED,
-  PG_UNIQUE_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_INSUFFICIENT_PRIVILEGE,
+  DB_INVOICE_INVALID,
+  DB_MAIL_REQUEST_REFUSED,
+  DB_UNIQUE_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
+import { listRequestsForAccounts } from './demandes-queries.ts'
 import { cancelOpeningRequest, requestOpening } from './queries.ts'
 
 /**
- * Demandes de courrier (R21, R24, ADR 037), éprouvées contre la base, sous le
- * rôle applicatif soumis à la RLS.
+ * Demandes de courrier (R21, R24, ADR 037), éprouvées contre la base, sous
+ * l'identité applicative.
  *
  * Trois garanties : un pli reçoit plusieurs demandes dans le temps, chacune
  * gardée — une annulation ne l'efface pas ; les transitions et leurs auteurs
  * sont tenus par la base ; une demande faite se facture une fois, et une
  * demande refusée jamais.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('demandes de courrier', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('demandes de courrier', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000d0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000d0c02'
@@ -51,48 +40,57 @@ describe('demandes de courrier', { skip: raison }, () => {
   const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
   const asClients = <T>(clientIds: string[], run: (tx: Transaction) => Promise<T>) =>
-    withClientScope(DEFAULT_TENANT_ID, clientIds, run, app.db)
+    withClientScope(DEFAULT_TENANT_ID, clientIds, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
+
+  /** MySQL lit `2026-09-02 08:00:00.000`, pas le format ISO avec `T` et `Z`. */
+  /** Une date lue en SQL brut est une chaîne UTC sans fuseau (ou un Date) : ISO. */
+  const utc = (value: unknown) =>
+    (value instanceof Date ? value : new Date(`${String(value).replace(' ', 'T')}Z`)).toISOString()
+  const datetime = (iso: string) => iso.replace('T', ' ').replace('Z', '')
 
   const codeErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
   /** Un pli de l'entreprise, fermé ou ouvert par l'accueil. */
   const pli = async (clientId = DURAND, { ouvert = false } = {}): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, sender, status, opened_at, opened_by)
-        values (${clientId}, 'URSSAF', ${ouvert ? 'opened' : 'received'},
-                ${ouvert ? sql`now()` : null}, ${ouvert ? CAMILLE : null})
-        returning id`),
+        insert into mail_items (id, client_id, sender, status, opened_at, opened_by)
+        values (${id}, ${clientId}, 'URSSAF', ${ouvert ? 'opened' : 'received'},
+                ${ouvert ? sql`CURRENT_TIMESTAMP(3)` : null}, ${ouvert ? CAMILLE : null})`),
     )
-    return row.id as string
+    return id
   }
 
   const ADRESSE = sql`'Jeanne Durand', '12 rue des Lilas', '38000', 'Grenoble', 'FR'`
 
   /** Demande déposée par Jeanne, depuis l'espace client de Durand. */
   const demander = async (mailItemId: string, kind: 'open_and_scan' | 'scan' | 'forward') => {
-    const [row] = await asClients([DURAND], (tx) =>
+    const id = uuidv7()
+    await asClients([DURAND], (tx) =>
       kind === 'forward'
         ? tx.execute(sql`
-            insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id,
+            insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id,
               forward_recipient, forward_address_line1, forward_postal_code, forward_city, forward_country)
-            values (${mailItemId}, ${DURAND}, 'forward', ${JEANNE}, ${ADRESSE})
-            returning id`)
+            values (${id}, ${mailItemId}, ${DURAND}, 'forward', ${JEANNE}, ${ADRESSE})`)
         : tx.execute(sql`
-            insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-            values (${mailItemId}, ${DURAND}, ${kind}, ${JEANNE})
-            returning id`),
+            insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+            values (${id}, ${mailItemId}, ${DURAND}, ${kind}, ${JEANNE})`),
     )
-    return row.id as string
+    return id
   }
 
   /** L'accueil fait la demande : prise en charge, puis réalisation. */
@@ -110,25 +108,39 @@ describe('demandes de courrier', { skip: raison }, () => {
   }
 
   const demande = async (id: string) => {
-    const [row] = await asTenant((tx) => tx.execute(sql`select * from mail_requests where id = ${id}`))
+    const [row] = await asTenant((tx) => lire(tx, sql`select * from mail_requests where id = ${id}`))
     return row
   }
 
   const resume = async (mailItemId: string) => {
     const [row] = await asTenant((tx) =>
-      tx.execute(sql`
+      lire(tx, sql`
         select status, opening_requested_at, opening_requested_by from mail_items where id = ${mailItemId}`),
     )
     return row
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table clients, services cascade`
-    await owner.client`truncate table staff_members cascade`
+    await viderTables(
+      bases.owner,
+      'invoice_lines',
+      'invoices',
+      'mail_scan_views',
+      'mail_scans',
+      'mail_requests',
+      'mail_items',
+      'client_members',
+      'clients',
+      'services',
+      'staff_members',
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -142,8 +154,8 @@ describe('demandes de courrier', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('plusieurs demandes par pli, dans le temps', () => {
@@ -156,7 +168,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       // L'accueil ouvre le pli : la demande d'ouverture est faite, à son nom.
       await asTenant((tx) =>
         tx.execute(sql`
-          update mail_items set status = 'opened', opened_at = now(), opened_by = ${CAMILLE} where id = ${id}`),
+          update mail_items set status = 'opened', opened_at = CURRENT_TIMESTAMP(3), opened_by = ${CAMILLE} where id = ${id}`),
       )
       const ouverte = await demande(ouverture)
       assert.equal(ouverte.status, 'done')
@@ -166,7 +178,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       await faire(await demander(id, 'forward'), 450)
 
       const historique = await asTenant((tx) =>
-        tx.execute(sql`select kind, status from mail_requests where mail_item_id = ${id} order by requested_at, id`),
+        lire(tx, sql`select kind, status from mail_requests where mail_item_id = ${id} order by requested_at, id`),
       )
       assert.deepEqual(
         historique.map((row) => [row.kind, row.status]),
@@ -177,13 +189,13 @@ describe('demandes de courrier', { skip: raison }, () => {
         ],
       )
       // Réexpédié, le pli a quitté le centre.
-      assert.equal(await codeErreur(() => demander(id, 'scan')), PG_MAIL_REQUEST_REFUSED)
+      assert.equal(await codeErreur(() => demander(id, 'scan')), DB_MAIL_REQUEST_REFUSED)
     })
 
     it('ne garde qu’une demande en cours par pli et par nature', async () => {
       const id = await pli(DURAND, { ouvert: true })
       await demander(id, 'scan')
-      assert.equal(await codeErreur(() => demander(id, 'scan')), PG_UNIQUE_VIOLATION)
+      assert.equal(await codeErreur(() => demander(id, 'scan')), DB_UNIQUE_VIOLATION)
       // Une autre nature, en même temps : oui.
       await demander(id, 'forward')
     })
@@ -191,12 +203,12 @@ describe('demandes de courrier', { skip: raison }, () => {
     it('refuse une ouverture d’un pli ouvert, une numérisation d’un pli fermé, une demande sur un pli retiré', async () => {
       assert.equal(
         await codeErreur(async () => demander(await pli(DURAND, { ouvert: true }), 'open_and_scan')),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
-      assert.equal(await codeErreur(async () => demander(await pli(), 'scan')), PG_MAIL_REQUEST_REFUSED)
+      assert.equal(await codeErreur(async () => demander(await pli(), 'scan')), DB_MAIL_REQUEST_REFUSED)
       const retire = await pli()
-      await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = now() where id = ${retire}`))
-      assert.equal(await codeErreur(() => demander(retire, 'forward')), PG_MAIL_REQUEST_REFUSED)
+      await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = CURRENT_TIMESTAMP(3) where id = ${retire}`))
+      assert.equal(await codeErreur(() => demander(retire, 'forward')), DB_MAIL_REQUEST_REFUSED)
     })
 
     it('laisse l’ouverture au client : l’accueil ouvre de lui-même, sans demande', async () => {
@@ -209,19 +221,24 @@ describe('demandes de courrier', { skip: raison }, () => {
               values (${id}, ${DURAND}, 'open_and_scan', ${CAMILLE})`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
     })
 
     it('date la demande à son dépôt, quoi que le code écrive', async () => {
       const id = await pli(DURAND, { ouvert: true })
-      const [row] = await asTenant((tx) =>
+      const demandeId = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_requests (mail_item_id, client_id, kind, requested_by_staff_id, requested_at)
-          values (${id}, ${DURAND}, 'scan', ${CAMILLE}, '2020-01-01T00:00:00Z')
-          returning requested_at > now() - interval '1 minute' as recente`),
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_staff_id, requested_at)
+          values (${demandeId}, ${id}, ${DURAND}, 'scan', ${CAMILLE}, '2020-01-01 00:00:00.000')`),
       )
-      assert.equal(row.recente, true)
+      const [row] = await asTenant((tx) =>
+        lire(tx, sql`
+          select requested_at > date_sub(CURRENT_TIMESTAMP(3), interval 1 minute) as recente
+            from mail_requests where id = ${demandeId}`),
+      )
+      assert.equal(Number(row.recente), 1)
     })
   })
 
@@ -232,7 +249,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       assert.equal(await cancelOpeningRequest(id, durand), true)
 
       const [annulee] = await asTenant((tx) =>
-        tx.execute(sql`select * from mail_requests where mail_item_id = ${id}`),
+        lire(tx, sql`select * from mail_requests where mail_item_id = ${id}`),
       )
       assert.equal(annulee.status, 'cancelled')
       assert.equal(annulee.requested_by_member_id, JEANNE)
@@ -245,7 +262,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       // Une nouvelle demande s'ajoute à l'historique, elle ne le remplace pas.
       assert.equal(await requestOpening(id, durand), true)
       const lignes = await asTenant((tx) =>
-        tx.execute(sql`select status from mail_requests where mail_item_id = ${id} order by requested_at, id`),
+        lire(tx, sql`select status from mail_requests where mail_item_id = ${id} order by requested_at, id`),
       )
       assert.deepEqual(
         lignes.map((row) => row.status),
@@ -259,12 +276,12 @@ describe('demandes de courrier', { skip: raison }, () => {
         await codeErreur(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              update mail_items set status = 'opening_requested', opening_requested_at = now(),
+              update mail_items set status = 'opening_requested', opening_requested_at = CURRENT_TIMESTAMP(3),
                      opening_requested_by = ${JEANNE}
                where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
       await demander(id, 'open_and_scan')
       // L'ancienne annulation, qui effaçait la demande : refusée.
@@ -276,7 +293,7 @@ describe('demandes de courrier', { skip: raison }, () => {
                where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
 
@@ -284,36 +301,38 @@ describe('demandes de courrier', { skip: raison }, () => {
       const id = await demander(await pli(), 'open_and_scan')
       assert.equal(
         await codeErreur(() => asTenant((tx) => tx.execute(sql`delete from mail_requests where id = ${id}`))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
 
     it('reprend la demande d’un pli inséré avec elle', async () => {
-      const [enCours] = await asTenant((tx) =>
+      const enCours = uuidv7()
+      const ouvert = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_items (client_id, status, opening_requested_at, opening_requested_by)
-          values (${DURAND}, 'opening_requested', '2026-09-02T08:00:00Z', ${JEANNE}) returning id`),
+          insert into mail_items (id, client_id, status, opening_requested_at, opening_requested_by)
+          values (${enCours}, ${DURAND}, 'opening_requested', ${datetime('2026-09-02T08:00:00Z')}, ${JEANNE})`),
       )
-      const [ouvert] = await asTenant((tx) =>
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_items (client_id, status, opening_requested_at, opening_requested_by, opened_at, opened_by)
-          values (${DURAND}, 'opened', '2026-09-02T08:00:00Z', ${JEANNE}, '2026-09-02T10:00:00Z', ${CAMILLE})
-          returning id`),
+          insert into mail_items (id, client_id, status, opening_requested_at, opening_requested_by, opened_at, opened_by)
+          values (${ouvert}, ${DURAND}, 'opened', ${datetime('2026-09-02T08:00:00Z')}, ${JEANNE},
+                  ${datetime('2026-09-02T10:00:00Z')}, ${CAMILLE})`),
       )
       const reprises = await asTenant((tx) =>
-        tx.execute(sql`
+        lire(tx, sql`
           select mail_item_id, status, requested_at, completed_at from mail_requests
-           where mail_item_id in (${enCours.id as string}, ${ouvert.id as string})`),
+           where mail_item_id in (${enCours}, ${ouvert})`),
       )
-      const parPli = new Map(reprises.map((row) => [row.mail_item_id, row]))
-      assert.equal(parPli.get(enCours.id)?.status, 'requested')
+      const parPli = new Map(reprises.map((row) => [row.mail_item_id as string, row]))
+      assert.equal(parPli.get(enCours)?.status, 'requested')
       assert.equal(
-        new Date(parPli.get(enCours.id)?.requested_at as string).toISOString(),
+        utc(parPli.get(enCours)?.requested_at),
         '2026-09-02T08:00:00.000Z',
       )
-      assert.equal(parPli.get(ouvert.id)?.status, 'done')
+      assert.equal(parPli.get(ouvert)?.status, 'done')
       assert.equal(
-        new Date(parPli.get(ouvert.id)?.completed_at as string).toISOString(),
+        utc(parPli.get(ouvert)?.completed_at),
         '2026-09-02T10:00:00.000Z',
       )
     })
@@ -334,7 +353,7 @@ describe('demandes de courrier', { skip: raison }, () => {
                  where id = ${id}`),
             ),
           ),
-          PG_MAIL_REQUEST_REFUSED,
+          DB_MAIL_REQUEST_REFUSED,
           status,
         )
       }
@@ -346,7 +365,7 @@ describe('demandes de courrier', { skip: raison }, () => {
         await codeErreur(() =>
           asTenant((tx) => tx.execute(sql`update mail_requests set status = 'in_progress' where id = ${id}`)),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
       assert.equal(
         await codeErreur(() =>
@@ -354,7 +373,7 @@ describe('demandes de courrier', { skip: raison }, () => {
             tx.execute(sql`update mail_requests set status = 'refused', refusal_reason = 'Illisible' where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
       assert.equal(
         await codeErreur(() =>
@@ -362,7 +381,7 @@ describe('demandes de courrier', { skip: raison }, () => {
             tx.execute(sql`update mail_requests set status = 'refused', refused_by_staff_id = ${CAMILLE} where id = ${id}`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       await asTenant((tx) =>
         tx.execute(sql`
@@ -383,7 +402,7 @@ describe('demandes de courrier', { skip: raison }, () => {
               update mail_requests set status = 'done', completed_by_staff_id = ${CAMILLE} where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
       await asTenant((tx) =>
         tx.execute(sql`update mail_requests set status = 'in_progress', started_by_staff_id = ${CAMILLE} where id = ${id}`),
@@ -395,14 +414,14 @@ describe('demandes de courrier', { skip: raison }, () => {
               update mail_requests set status = 'cancelled', cancelled_by_member_id = ${JEANNE} where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
 
     it('refuse les demandes en cours d’un pli retiré, sans les effacer', async () => {
       const id = await pli()
       const ouverture = await demander(id, 'open_and_scan')
-      await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = now() where id = ${id}`))
+      await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = CURRENT_TIMESTAMP(3) where id = ${id}`))
       const refusee = await demande(ouverture)
       assert.equal(refusee.status, 'refused')
       assert.equal(refusee.refused_by_staff_id, null)
@@ -425,7 +444,7 @@ describe('demandes de courrier', { skip: raison }, () => {
               update mail_requests set status = 'done', completed_by_staff_id = ${CAMILLE} where id = ${reexpedition}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
 
@@ -437,28 +456,30 @@ describe('demandes de courrier', { skip: raison }, () => {
             tx.execute(sql`update mail_requests set forward_city = 'Lyon' where id = ${id}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
   })
 
   describe('facturation d’une demande faite', () => {
     const service = async (code: string, prix: number) => {
-      const [row] = await asTenant((tx) =>
+      const id = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into services (code, name, nature, unit, unit_price_cents)
-          values (${code}, ${code}, 'act', 'unit', ${prix}) returning id`),
+          insert into services (id, code, name, nature, unit, unit_price_cents)
+          values (${id}, ${code}, ${code}, 'act', 'unit', ${prix})`),
       )
-      return row.id as string
+      return id
     }
 
     const brouillon = async (clientId = DURAND) => {
-      const [row] = await asTenant((tx) =>
+      const id = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into invoices (client_id, period_start, period_end)
-          values (${clientId}, '2026-09-01', '2026-09-30') returning id`),
+          insert into invoices (id, client_id, period_start, period_end)
+          values (${id}, ${clientId}, '2026-09-01', '2026-09-30')`),
       )
-      return row.id as string
+      return id
     }
 
     const facturer = (
@@ -481,11 +502,11 @@ describe('demandes de courrier', { skip: raison }, () => {
       await facturer(facture, id, { serviceId: numerisation })
       assert.equal(
         await codeErreur(() => facturer(facture, id, { serviceId: numerisation })),
-        PG_UNIQUE_VIOLATION,
+        DB_UNIQUE_VIOLATION,
       )
       assert.equal(
         await codeErreur(async () => facturer(await brouillon(), id, { serviceId: numerisation })),
-        PG_UNIQUE_VIOLATION,
+        DB_UNIQUE_VIOLATION,
       )
     })
 
@@ -495,7 +516,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       const enCours = await demander(await pli(DURAND, { ouvert: true }), 'scan')
       assert.equal(
         await codeErreur(() => facturer(facture, enCours, { serviceId: numerisation })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
       await asTenant((tx) =>
         tx.execute(sql`
@@ -504,7 +525,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       )
       assert.equal(
         await codeErreur(() => facturer(facture, enCours, { serviceId: numerisation })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
       // Et une demande refusée ne redevient pas faite pour autant.
       assert.equal(
@@ -514,7 +535,7 @@ describe('demandes de courrier', { skip: raison }, () => {
               update mail_requests set status = 'done', completed_by_staff_id = ${CAMILLE} where id = ${enCours}`),
           ),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
     })
 
@@ -524,11 +545,11 @@ describe('demandes de courrier', { skip: raison }, () => {
       const ouverture = await demander(id, 'open_and_scan')
       await asTenant((tx) =>
         tx.execute(sql`
-          update mail_items set status = 'opened', opened_at = now(), opened_by = ${CAMILLE} where id = ${id}`),
+          update mail_items set status = 'opened', opened_at = CURRENT_TIMESTAMP(3), opened_by = ${CAMILLE} where id = ${id}`),
       )
       assert.equal(
         await codeErreur(async () => facturer(await brouillon(), ouverture, { serviceId: ouvertureService })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
 
@@ -538,7 +559,7 @@ describe('demandes de courrier', { skip: raison }, () => {
       await faire(id)
       assert.equal(
         await codeErreur(async () => facturer(await brouillon(), id, { serviceId: reexpedition })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
 
@@ -549,20 +570,20 @@ describe('demandes de courrier', { skip: raison }, () => {
       const facture = await brouillon()
       assert.equal(
         await codeErreur(() => facturer(facture, id, { kind: 'other', prix: 500 })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
       await facturer(facture, id, { serviceId: reexpedition, prix: 500 })
       await facturer(facture, id, { kind: 'other', prix: 450 })
       assert.equal(
         await codeErreur(() => facturer(facture, id, { kind: 'other', prix: 450 })),
-        PG_UNIQUE_VIOLATION,
+        DB_UNIQUE_VIOLATION,
       )
       // Facturés, les frais ne changent plus.
       assert.equal(
         await codeErreur(() =>
           asTenant((tx) => tx.execute(sql`update mail_requests set postage_cents = 600 where id = ${id}`)),
         ),
-        PG_MAIL_REQUEST_REFUSED,
+        DB_MAIL_REQUEST_REFUSED,
       )
       // Le numéro de suivi, lui, se relève encore.
       await asTenant((tx) =>
@@ -573,17 +594,18 @@ describe('demandes de courrier', { skip: raison }, () => {
     it('ne facture pas la demande d’un autre client, ni un pli et une demande sur la même ligne', async () => {
       const numerisation = await service('courrier.numerisation', 300)
       const pliPetit = await pli(PETIT, { ouvert: true })
-      const [autre] = await asTenant((tx) =>
+      const autre = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-          values (${pliPetit}, ${PETIT}, 'scan', ${PAUL}) returning id`),
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+          values (${autre}, ${pliPetit}, ${PETIT}, 'scan', ${PAUL})`),
       )
-      await faire(autre.id as string)
+      await faire(autre)
       assert.equal(
         await codeErreur(async () =>
-          facturer(await brouillon(DURAND), autre.id as string, { serviceId: numerisation }),
+          facturer(await brouillon(DURAND), autre, { serviceId: numerisation }),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
       const facturePetit = await brouillon(PETIT)
       assert.equal(
@@ -592,27 +614,37 @@ describe('demandes de courrier', { skip: raison }, () => {
             tx.execute(sql`
               insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp,
                                          service_id, mail_item_id, mail_request_id)
-              values (${facturePetit}, 'act', 'Double', 300, 2000, ${numerisation}, ${pliPetit}, ${autre.id as string})`),
+              values (${facturePetit}, 'act', 'Double', 300, 2000, ${numerisation}, ${pliPetit}, ${autre})`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
     })
   })
 
   describe('portée client', () => {
-    it('une entreprise ne voit que ses demandes, même sans filtre', async () => {
+    it('une entreprise ne voit que ses demandes : le filtre est celui de la requête', async () => {
+      // MySQL ne filtre plus les lectures : sans RLS, c'est `listRequestsForAccounts`
+      // qui porte le filtre sur `client_id`. Un autre client ne voit rien de Durand.
       await demander(await pli(), 'open_and_scan')
       const pliPetit = await pli(PETIT)
       await asTenant((tx) =>
         tx.execute(sql`
-          insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-          values (${pliPetit}, ${PETIT}, 'open_and_scan', ${PAUL})`),
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+          values (${uuidv7()}, ${pliPetit}, ${PETIT}, 'open_and_scan', ${PAUL})`),
       )
-      const vues = await asClients([DURAND], (tx) => tx.execute(sql`select client_id from mail_requests`))
+      const statuses = ['requested', 'in_progress', 'done', 'refused', 'cancelled'] as const
+      const page = { number: 1, size: 50 }
+      const duDurand = await listRequestsForAccounts(durand, { statuses }, page)
       assert.deepEqual(
-        vues.map((row) => row.client_id),
+        duDurand.rows.map((row) => row.clientId),
         [DURAND],
+      )
+      const petit: ClientAccount[] = [{ memberId: PAUL, clientId: PETIT, clientName: 'Boulangerie Petit' }]
+      const duPetit = await listRequestsForAccounts(petit, { statuses }, page)
+      assert.deepEqual(
+        duPetit.rows.map((row) => row.clientId),
+        [PETIT],
       )
     })
 
@@ -622,11 +654,11 @@ describe('demandes de courrier', { skip: raison }, () => {
         await codeErreur(() =>
           asClients([DURAND], (tx) =>
             tx.execute(sql`
-              insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-              values (${pliPetit}, ${PETIT}, 'open_and_scan', ${PAUL})`),
+              insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+              values (${uuidv7()}, ${pliPetit}, ${PETIT}, 'open_and_scan', ${PAUL})`),
           ),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
     })
   })

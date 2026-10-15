@@ -2,13 +2,15 @@ import { randomBytes } from 'node:crypto'
 
 import { and, desc, eq, isNull } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { tenants, type PaymentMethod } from '../../db/tenants.ts'
 import { DocumentKeyError, documentKeyringFromEnv } from '../../lib/chiffrement-documents.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { clients } from '../clients/schema.ts'
+import { mentionsConstraint } from './erreurs-base.ts'
 import { sealIban } from './iban.ts'
 import { expectedPaymentFor } from './lot.ts'
 import { generateMandateReference, isMandateLapsed, type MandateInput } from './mandats-regles.ts'
@@ -24,7 +26,7 @@ import { sepaMandates, type SepaMandate } from './schema-factures.ts'
  */
 
 /** Ce que l'écran montre d'un mandat : jamais l'IBAN, ni même son chiffré. */
-export type MandateRow = Omit<SepaMandate, 'ibanCiphertext' | 'ibanKeyVersion'> & {
+export type MandateRow = Omit<SepaMandate, 'ibanCiphertext' | 'ibanKeyVersion' | 'activeLive'> & {
   /** Caduc de fait : 36 mois sans prélèvement, même si le statut n'a pas encore suivi. */
   lapsed: boolean
 }
@@ -117,27 +119,23 @@ export async function createMandate(
           .where(and(eq(clients.id, clientId), isNull(clients.deletedAt)))
           .for('share')
         if (!client) throw new MandateClientUnavailableError()
-        const [created] = await tx
-          .insert(sepaMandates)
-          .values({
-            clientId,
-            reference,
-            debtorName: input.debtorName,
-            ibanCiphertext: sealed.ciphertext,
-            ibanKeyVersion: sealed.keyVersion,
-            ibanLast4: sealed.last4,
-            bic: input.bic,
-            signedOn: input.signedOn,
-            sequenceType: input.sequenceType,
-          })
-          .returning({ id: sepaMandates.id, reference: sepaMandates.reference })
-        return created
+        const created = await insertReturning(tx, sepaMandates, {
+          clientId,
+          reference,
+          debtorName: input.debtorName,
+          ibanCiphertext: sealed.ciphertext,
+          ibanKeyVersion: sealed.keyVersion,
+          ibanLast4: sealed.last4,
+          bic: input.bic,
+          signedOn: input.signedOn,
+          sequenceType: input.sequenceType,
+        })
+        return { id: created.id, reference: created.reference }
       })
     } catch (error) {
-      if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
-        const constraint = pgConstraintName(error)
-        if (constraint === 'sepa_mandates_one_active_key') throw new ActiveMandateExistsError()
-        if (constraint === 'sepa_mandates_tenant_reference_key' && attempt < REFERENCE_ATTEMPTS) continue
+      if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) {
+        if (mentionsConstraint(error, 'sepa_mandates_one_active_key')) throw new ActiveMandateExistsError()
+        if (mentionsConstraint(error, 'sepa_mandates_tenant_reference_key') && attempt < REFERENCE_ATTEMPTS) continue
       }
       throw error
     }
@@ -191,18 +189,17 @@ export async function invoicePaymentSetup(
 export async function revokeMandate(clientId: string, mandateId: string, today: string): Promise<boolean> {
   if (!isUuid(clientId) || !isUuid(mandateId)) return false
   const revoked = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(sepaMandates)
-      .set({ status: 'revoked', revokedOn: today })
-      .where(
-        and(
-          eq(sepaMandates.id, mandateId),
-          eq(sepaMandates.clientId, clientId),
-          eq(sepaMandates.status, 'active'),
-          isNull(sepaMandates.deletedAt),
-        ),
-      )
-      .returning({ id: sepaMandates.id }),
+    updateReturning(
+      tx,
+      sepaMandates,
+      { status: 'revoked', revokedOn: today },
+      and(
+        eq(sepaMandates.id, mandateId),
+        eq(sepaMandates.clientId, clientId),
+        eq(sepaMandates.status, 'active'),
+        isNull(sepaMandates.deletedAt),
+      ),
+    ),
   )
   return revoked.length > 0
 }

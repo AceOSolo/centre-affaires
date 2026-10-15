@@ -3,10 +3,10 @@ import { createHash } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import {
   AmendmentRefusedError,
   abandonAmendment,
@@ -54,23 +54,30 @@ import { findContractTerms, listCurrentTerms, scheduleVersions, segmentOn } from
  * l'activation et à la signature, avec leur empreinte.
  *
  * Les règles tenues par la base sont éprouvées par `avenants.db.test.ts` ;
- * celui-ci éprouve le code qu'utilisent les écrans, sous `app_centre`.
+ * celui-ci éprouve le code qu'utilisent les écrans, sous l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
+const TABLES = [
+  'bookings',
+  'contract_documents',
+  'contract_amendments',
+  'contract_lines',
+  'contract_renewals',
+  'contracts',
+  'subscribed_services',
+  'offer_items',
+  'offer_requests',
+  'rate_plan_items',
+  'rate_plans',
+  'clients',
+  'resources',
+  'services',
+  'offers',
+  'staff_members',
+  'document_sequences',
+]
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('contrats versionnés, par les écrans', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('contrats versionnés, par les écrans', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACME = '01a00000-0000-7000-8000-0000000e0c01'
   const BETA = '01a00000-0000-7000-8000-0000000e0c02'
@@ -83,7 +90,7 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
   const EXPLOITANT = '01a00000-0000-7000-8000-0000000e0d01'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const saisie = (overrides: Partial<ContractInput> = {}): ContractInput => ({
     clientId: ACME,
@@ -138,22 +145,45 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
     assert.fail('l’opération aurait dû échouer')
   }
 
-  const souscriptions = async (contractId: string) => [
-    ...(await owner.client`
-      select service_id, included_quantity, unit_price_cents, discount_bp, starts_on::text,
-             ends_on::text, deleted_at is not null as archived
-        from subscribed_services where contract_id = ${contractId} order by created_at, id`),
-  ]
+  const souscriptions = async (contractId: string) => {
+    const [rows] = (await bases.owner.client.query(
+      `select service_id, included_quantity, unit_price_cents, discount_bp,
+              cast(starts_on as char) as starts_on, cast(ends_on as char) as ends_on,
+              deleted_at is not null as archived
+         from subscribed_services where contract_id = ? order by created_at, id`,
+      [contractId],
+    )) as unknown as [
+      {
+        service_id: string
+        included_quantity: number | null
+        unit_price_cents: number
+        discount_bp: number | null
+        starts_on: string
+        ends_on: string | null
+        archived: number
+      }[],
+    ]
+    return rows.map((row) => ({
+      service_id: row.service_id,
+      included_quantity: row.included_quantity,
+      unit_price_cents: row.unit_price_cents,
+      discount_bp: row.discount_bp,
+      starts_on: row.starts_on,
+      ends_on: row.ends_on,
+      archived: Boolean(row.archived),
+    }))
+  }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(bases.owner, ...TABLES)
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name, role)
         values (${EXPLOITANT}, 'exploitant@centre.fr', 'Camille Exploitante', 'admin')`)
@@ -170,10 +200,9 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await viderTables(bases.owner, ...TABLES)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('contrat tiré d’une offre (R09)', () => {
@@ -322,9 +351,11 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
         ]),
       )
       assert.equal((await findContract(created.id))?.amountCents, 85_000)
-      const [{ n }] = await owner.client`
-        select count(*)::int as n from contract_lines where contract_id = ${created.id} and deleted_at is not null`
-      assert.equal(n, 1)
+      const [rows] = (await bases.owner.client.query(
+        'select count(*) as n from contract_lines where contract_id = ? and deleted_at is not null',
+        [created.id],
+      )) as unknown as [{ n: number | string }[]]
+      assert.equal(Number(rows[0].n), 1)
 
       assert.ok(await activateContract(created.id, EXPLOITANT))
       assert.equal(await saveDraftContractLines(created.id, [ligne()]), false)
@@ -350,8 +381,13 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
       assert.equal(document.amendmentId, null)
       assert.equal(document.generatedBy, 'Camille Exploitante')
 
-      const [{ texte, empreinte }] = await owner.client`
-        select snapshot::text as texte, sha256 as empreinte from contract_documents where contract_id = ${id}`
+      // Forme canonique du `json` de MySQL, sur laquelle la base calcule l'empreinte.
+      const [rows] = (await bases.owner.client.query(
+        `select cast(snapshot as char character set utf8mb4) as texte, sha256 as empreinte
+           from contract_documents where contract_id = ?`,
+        [id],
+      )) as unknown as [{ texte: string; empreinte: string }[]]
+      const { texte, empreinte } = rows[0]
       assert.equal(empreinte, createHash('sha256').update(texte, 'utf8').digest('hex'))
 
       const archived = await findContractDocument(id, 1)
@@ -473,7 +509,7 @@ describe('contrats versionnés, par les écrans', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into bookings (resource_id, channel, starts_at, ends_at, title)
-          values (${AUTRE_BUREAU}, 'staff', '2026-06-10T08:00:00Z', '2026-06-10T09:00:00Z', 'Rendez-vous')`),
+          values (${AUTRE_BUREAU}, 'staff', '2026-06-10 08:00:00', '2026-06-10 09:00:00', 'Rendez-vous')`),
       )
       const created = await createAmendment(id, avenant({ effectiveOn: '2026-05-01', changesResource: true, resourceId: AUTRE_BUREAU }))
       const error = await rejects(() => signAmendment(id, created.id, EXPLOITANT), ContractOccupationConflictError)

@@ -30,7 +30,7 @@ export const currentTenant = cache(async (): Promise<Tenant> => {
   )
   if (!tenant) {
     throw new Error(
-      "Le centre unique est absent de la base. Appliquer les migrations : `npx drizzle-kit migrate`.",
+      "Le centre unique est absent de la base. Appliquer les migrations et les règles : `infra/migrer.ts`.",
     )
   }
   return tenant

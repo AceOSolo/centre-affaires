@@ -69,7 +69,7 @@ export type RateLookup = {
  * la ligne de type — « les salles à 25 € de l'heure ». C'est ce qui permet de
  * faire payer plus cher la grande salle sans dupliquer toute la grille.
  *
- * L'unicité des lignes est tenue par deux index partiels (migration 0005) : à
+ * L'unicité des lignes est tenue par deux index partiels (index uniques sur colonnes générées) : à
  * précision égale il ne peut pas y avoir deux candidats.
  *
  * Une grille absente, archivée ou hors de ses dates de validité le jour

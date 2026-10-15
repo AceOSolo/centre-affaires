@@ -1,7 +1,9 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, isNull } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientSearchCondition, clientSearchTerms } from './recherche.ts'
 import { clients, type Client, type ClientStatus } from './schema.ts'
@@ -64,17 +66,14 @@ export class DuplicateSiretError extends Error {
 
 export async function createClient(input: ClientInput): Promise<Client> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
-        .insert(clients)
-        .values({ ...input, country: input.country || 'FR' })
-        .returning(),
+    return await withTenant(currentTenantId(), (tx) =>
+      insertReturning(tx, clients, { ...input, country: input.country || 'FR' }),
     )
-    return created
   } catch (error) {
-    // L'unicité est tenue par un index partiel : la vérifier en amont laisserait
+    // L'unicité est tenue par un index unique (partiel : colonne `live`) : la
+    // vérifier en amont laisserait
     // passer deux créations simultanées.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && input.siret) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION && input.siret) {
       throw new DuplicateSiretError(input.siret)
     }
     throw error
@@ -90,7 +89,7 @@ export async function updateClient(id: string, input: ClientInput): Promise<void
         .where(and(eq(clients.id, id), isNull(clients.deletedAt))),
     )
   } catch (error) {
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && input.siret) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION && input.siret) {
       throw new DuplicateSiretError(input.siret)
     }
     throw error
@@ -105,7 +104,7 @@ export async function archiveClient(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(clients)
-      .set({ deletedAt: sql`now()`, status: 'inactive' })
+      .set({ deletedAt: maintenant(), status: 'inactive' })
       .where(and(eq(clients.id, id), isNull(clients.deletedAt))),
   )
 }

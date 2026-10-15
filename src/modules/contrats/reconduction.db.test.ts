@@ -2,12 +2,13 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { and, eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import { POST } from '../../app/api/maintenance/contrats/route.ts'
-import { PG_INSUFFICIENT_PRIVILEGE, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { DB_INSUFFICIENT_PRIVILEGE, dbErrorCode } from '../../db/errors.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { bookings } from '../reservations/schema.ts'
 import { renewTacitContracts } from './reconduction-queries.ts'
 import { contractRenewals, contracts } from './schema.ts'
@@ -15,51 +16,37 @@ import { contractRenewals, contracts } from './schema.ts'
 /**
  * Reconduction tacite (R10, ADR 023, ADR 033) : la tâche nocturne prolonge un
  * contrat dès que la reconduction est acquise, l'occupation suit, et le
- * journal garde l'ancien et le nouveau terme. Éprouvée sous `app_centre`.
+ * journal garde l'ancien et le nouveau terme. Éprouvée sous l'identité
+ * applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('reconduction tacite', { skip: raison }, () => {
-  // La route ouvre sa propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('reconduction tacite', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
   const TOKEN = 'jeton-de-maintenance-de-test'
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
 
   const CLIENT = '01a00000-0000-7000-8000-0000000e4c01'
   const BUREAU = '01a00000-0000-7000-8000-0000000e4b01'
   const AUTRE_BUREAU = '01a00000-0000-7000-8000-0000000e4b02'
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Bureau annuel en cours jusqu'au 31 décembre 2026, reconduction de douze mois, préavis de 90 jours. */
   const contrat = async (values: Partial<typeof contracts.$inferInsert> = {}): Promise<string> => {
-    const [row] = await asTenant((tx) =>
-      tx
-        .insert(contracts)
-        .values({
-          clientId: CLIENT,
-          reference: 'BUR-RECONDUIT',
-          contractType: 'bureau',
-          status: 'active',
-          startsOn: '2026-01-01',
-          endsOn: '2026-12-31',
-          amountCents: 90_000,
-          resourceId: BUREAU,
-          tacitRenewal: true,
-          renewalMonths: 12,
-          noticeDays: 90,
-          ...values,
-        })
-        .returning({ id: contracts.id }),
+    const row = await asTenant((tx) =>
+      insertReturning(tx, contracts, {
+        clientId: CLIENT,
+        reference: 'BUR-RECONDUIT',
+        contractType: 'bureau',
+        status: 'active',
+        startsOn: '2026-01-01',
+        endsOn: '2026-12-31',
+        amountCents: 90_000,
+        resourceId: BUREAU,
+        tacitRenewal: true,
+        renewalMonths: 12,
+        noticeDays: 90,
+        ...values,
+      }),
     )
     return row.id
   }
@@ -77,12 +64,24 @@ describe('reconduction tacite', { skip: raison }, () => {
   const saved = process.env.MAINTENANCE_TOKEN
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // La route de maintenance passe par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
     process.env.MAINTENANCE_TOKEN = TOKEN
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contract_renewals',
+      'contract_lines',
+      'contract_amendments',
+      'contracts',
+      'clients',
+      'resources',
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into clients (id, name) values (${CLIENT}, 'Acme SAS')`)
       await tx.execute(sql`
@@ -95,9 +94,18 @@ describe('reconduction tacite', { skip: raison }, () => {
   after(async () => {
     if (saved === undefined) delete process.env.MAINTENANCE_TOKEN
     else process.env.MAINTENANCE_TOKEN = saved
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contract_renewals',
+      'contract_lines',
+      'contract_amendments',
+      'contracts',
+      'clients',
+      'resources',
+    )
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('attend le dernier jour de préavis, puis prolonge d’une période et l’inscrit au journal', async () => {
@@ -148,7 +156,7 @@ describe('reconduction tacite', { skip: raison }, () => {
     await asTenant((tx) =>
       tx.execute(sql`
         insert into bookings (resource_id, channel, starts_at, ends_at, title)
-        values (${BUREAU}, 'staff', '2027-01-15T08:00:00Z', '2027-01-15T10:00:00Z', 'Visite')`),
+        values (${BUREAU}, 'staff', '2027-01-15 08:00:00', '2027-01-15 10:00:00', 'Visite')`),
     )
     const autre = await contrat({ reference: 'BUR-LIBRE', resourceId: AUTRE_BUREAU })
 
@@ -176,7 +184,7 @@ describe('reconduction tacite', { skip: raison }, () => {
         await tentative()
         assert.fail('le journal ne devrait pas changer')
       } catch (error) {
-        assert.equal(pgErrorCode(error), PG_INSUFFICIENT_PRIVILEGE)
+        assert.equal(dbErrorCode(error), DB_INSUFFICIENT_PRIVILEGE)
       }
     }
   })

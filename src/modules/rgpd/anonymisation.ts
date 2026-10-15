@@ -1,8 +1,10 @@
-import { and, asc, desc, eq, isNotNull, sql, type AnyColumn } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { and, asc, desc, eq, isNotNull, isNull, sql, type AnyColumn } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/mysql-core'
 
-import { PG_ANONYMIZATION_REFUSED, pgErrorCode } from '../../db/errors.ts'
+import { DB_ANONYMIZATION_REFUSED, dbErrorCode } from '../../db/errors.ts'
+import { tenantContext } from '../../db/contexte.ts'
 import { withTenant, type Database, type Transaction } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { staffMembers, type AnonymizationBasis } from '../../db/staff.ts'
 import { tenants } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -14,10 +16,12 @@ import type { OnRequestBasis } from './fondement.ts'
  *
  * La base décide de tout : ce qui part, ce qui reste, et les exclusions
  * (`client_anonymization_blockers()`). Le code déclenche les fonctions
- * `anonymize_*` de la migration 0043 et rapporte des nombres — jamais un nom,
- * une adresse ou un objet de message. Il ne pose jamais `anonymized_at` ni le
- * drapeau de session `app.anonymization` : le garde `anonymized_rows_guard`
- * le refuserait (`CA012`).
+ * `anonymize_*` (`src/db/regles/90-rgpd.sql`, ADR 040) et rapporte des
+ * nombres — jamais un nom, une adresse ou un objet de message. Il ne pose
+ * jamais `anonymized_at` ni la variable de session `@app_anonymization` : les
+ * triggers de garde le refuseraient (`CA012`).
+ *
+ * Signatures : `docs/migration-mysql/routines-rgpd.md`.
  */
 
 /* ------------------------------------------------------------------------ */
@@ -49,30 +53,68 @@ export type RemovedMembersReport = {
 const count = (value: unknown) => Number(value ?? 0)
 
 /**
+ * Centre de la transaction en cours : celui que `withTenant()` a posé, qui peut
+ * différer de `currentTenantId()` (la tâche de nuit reçoit le sien). La base ne
+ * filtre plus les lectures : chaque requête le porte elle-même.
+ */
+const transactionTenantId = () => tenantContext.getStore() ?? currentTenantId()
+
+/**
+ * `client_anonymization_blockers()` rend un tableau JSON de phrases ; selon le
+ * pilote il arrive déjà décodé ou en chaîne.
+ */
+function parseBlockers(value: string[] | string | null | undefined): string[] {
+  if (value === null || value === undefined) return []
+  return typeof value === 'string' ? (JSON.parse(value) as string[]) : value
+}
+
+/**
  * Prospects sans suite et clients partis, au terme des durées du centre
  * (`prospect_retention_months`, `client_retention_months`) :
  * `anonymize_expired_clients()` passe les entreprises sous exclusion sans
  * erreur — facture non soldée, contrat vivant, réservation à venir… — et
  * celles qu'une autre transaction tient (elles le seront au passage suivant).
  *
- * Le détail se compte après coup, dans la même transaction : la fonction pose
- * `anonymized_at = now()`, et `now()` est l'heure de début de la transaction.
- * Les lignes marquées à cet instant sont exactement celles de ce passage.
+ * Le détail se compte par différence, dans la même transaction : on compte les
+ * lignes déjà anonymisées avant et après l'appel. (PostgreSQL retrouvait les
+ * lignes du passage par `anonymized_at = now()`, constant dans la transaction ;
+ * `CURRENT_TIMESTAMP` de MySQL change à chaque instruction.)
  */
 export async function anonymizeExpiredClients(tx: Transaction): Promise<ExpiredClientsReport> {
-  const [done] = await tx.execute<{ clients: number }>(
+  const before = await countAnonymized(tx)
+  const [rows] = (await tx.execute(
     sql`select anonymize_expired_clients() as clients`,
-  )
-  const [detail] = await tx.execute<{ contacts: number; accesses: number; mail_senders: number }>(sql`
-    select
-      (select count(*) from client_contacts where anonymized_at = now()) as contacts,
-      (select count(*) from client_members where anonymized_at = now()) as accesses,
-      (select count(*) from mail_items where sender_anonymized_at = now()) as mail_senders`)
+  )) as unknown as [{ clients: number | string | null }[]]
+  const after = await countAnonymized(tx)
   return {
-    clients: count(done?.clients),
-    contacts: count(detail?.contacts),
-    accesses: count(detail?.accesses),
-    mailSenders: count(detail?.mail_senders),
+    clients: count(rows[0]?.clients),
+    contacts: after.contacts - before.contacts,
+    accesses: after.accesses - before.accesses,
+    mailSenders: after.mailSenders - before.mailSenders,
+  }
+}
+
+/** Lignes déjà anonymisées du centre courant, par famille. */
+async function countAnonymized(tx: Transaction) {
+  const tenantId = transactionTenantId()
+  const [rows] = (await tx.execute(sql`
+    select
+      (select count(*) from client_contacts
+        where tenant_id = ${tenantId} and anonymized_at is not null) as contacts,
+      (select count(*) from client_members
+        where tenant_id = ${tenantId} and anonymized_at is not null) as accesses,
+      (select count(*) from mail_items
+        where tenant_id = ${tenantId} and sender_anonymized_at is not null) as mail_senders,
+      (select count(*) from staff_members
+        where tenant_id = ${tenantId} and anonymized_at is not null) as staff`)) as unknown as [
+    { contacts: unknown; accesses: unknown; mail_senders: unknown; staff: unknown }[],
+  ]
+  const row = rows[0]
+  return {
+    contacts: count(row?.contacts),
+    accesses: count(row?.accesses),
+    mailSenders: count(row?.mail_senders),
+    staff: count(row?.staff),
   }
 }
 
@@ -82,12 +124,10 @@ export async function anonymizeExpiredClients(tx: Transaction): Promise<ExpiredC
  * la ligne reste (elle signe des demandes, des ouvertures, des consultations).
  */
 export async function anonymizeRemovedMembers(tx: Transaction): Promise<RemovedMembersReport> {
+  const before = await countAnonymized(tx)
   await tx.execute(sql`select anonymize_removed_members()`)
-  const [detail] = await tx.execute<{ accesses: number; staff: number }>(sql`
-    select
-      (select count(*) from client_members where anonymized_at = now()) as accesses,
-      (select count(*) from staff_members where anonymized_at = now()) as staff`)
-  return { accesses: count(detail?.accesses), staff: count(detail?.staff) }
+  const after = await countAnonymized(tx)
+  return { accesses: after.accesses - before.accesses, staff: after.staff - before.staff }
 }
 
 /* ------------------------------------------------------------------------ */
@@ -97,15 +137,25 @@ export async function anonymizeRemovedMembers(tx: Transaction): Promise<RemovedM
 export type AnonymizationOutcome = { ok: true } | { ok: false; reason: string }
 
 /**
- * Message d'un refus `CA012`, avec son conseil (`HINT`) quand la base en
- * donne un : il énumère les exclusions, puis dit quoi faire. Seulement pour ce
- * code : le message d'une autre erreur pourrait citer une valeur saisie.
+ * Conseil donné après l'énumération des exclusions. PostgreSQL le portait en
+ * `HINT` ; `SIGNAL` de MySQL n'a qu'un message (et court), il est donc ajouté
+ * ici, pour le seul refus qui énumère des exclusions.
+ */
+const BLOCKERS_HINT =
+  'Soldez ou annulez par avoir, terminez les contrats et services, révoquez le mandat, traitez les demandes, puis recommencez.'
+
+/**
+ * Message d'un refus `CA012`, sans son préfixe de code, avec le conseil quand
+ * le refus énumère des exclusions. Seulement pour ce code : le message d'une
+ * autre erreur pourrait citer une valeur saisie.
  */
 export function refusalMessage(error: unknown): string | undefined {
+  if (dbErrorCode(error) !== DB_ANONYMIZATION_REFUSED) return undefined
   for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
-    const { code, message, hint } = cause as { code?: unknown; message?: unknown; hint?: unknown }
-    if (code === PG_ANONYMIZATION_REFUSED && typeof message === 'string') {
-      return typeof hint === 'string' && hint ? `${message} ${hint}` : message
+    const { sqlMessage } = cause as { sqlMessage?: unknown }
+    if (typeof sqlMessage === 'string') {
+      const message = sqlMessage.replace(/^CA\d{3}:\s*/, '')
+      return message.startsWith('Anonymisation refusée') ? `${message} ${BLOCKERS_HINT}` : message
     }
     cause = (cause as { cause?: unknown }).cause
   }
@@ -124,7 +174,7 @@ async function attempt(
     await withTenant(currentTenantId(), run, database)
     return { ok: true }
   } catch (error) {
-    if (pgErrorCode(error) !== PG_ANONYMIZATION_REFUSED) throw error
+    if (dbErrorCode(error) !== DB_ANONYMIZATION_REFUSED) throw error
     return { ok: false, reason: refusalMessage(error) ?? 'Anonymisation refusée par la base.' }
   }
 }
@@ -143,22 +193,39 @@ export type AnonymizationRequest = {
 }
 
 const requestArguments = (request: AnonymizationRequest) =>
-  sql`${request.staffMemberId}::uuid, ${request.basis}::anonymization_basis, ${request.erasureRequestedOn}::date`
+  sql`${request.staffMemberId}, ${request.basis}, ${request.erasureRequestedOn}`
 
 /**
  * Droit à l'effacement d'une entreprise (ou fin de relation constatée) : sans
  * attendre sa durée, jamais contre une exclusion. Le refus énumère ce qui
  * l'empêche.
  */
-export function anonymizeClientOnRequest(
+export async function anonymizeClientOnRequest(
   clientId: string,
   request: AnonymizationRequest,
   database?: Database,
-) {
-  return attempt(
-    (tx) => tx.execute(sql`select anonymize_client(${clientId}::uuid, ${requestArguments(request)})`),
+): Promise<AnonymizationOutcome> {
+  const outcome = await attempt(
+    (tx) => tx.execute(sql`select anonymize_client(${clientId}, ${requestArguments(request)})`),
     database,
   )
+  if (outcome.ok || !outcome.reason.startsWith('Anonymisation refusée')) return outcome
+
+  // Le `SIGNAL` de MySQL tient en 128 caractères : le message de la base est
+  // abrégé. L'énumération complète des exclusions se relit par la fonction qui
+  // les calcule — la transaction du refus est annulée, rien n'a changé.
+  const blockers = await withTenant(
+    currentTenantId(),
+    async (tx) => {
+      const [rows] = (await tx.execute(
+        sql`select client_anonymization_blockers(${clientId}) as raisons`,
+      )) as unknown as [{ raisons: string[] | string | null }[]]
+      return parseBlockers(rows[0]?.raisons)
+    },
+    database,
+  )
+  if (blockers.length === 0) return outcome
+  return { ok: false, reason: `Anonymisation refusée : ${blockers.join(' ')} ${BLOCKERS_HINT}` }
 }
 
 /** Un accès à l'espace client **déjà retiré**, à la demande de la personne. */
@@ -168,7 +235,7 @@ export function anonymizeClientMemberOnRequest(
   database?: Database,
 ) {
   return attempt(
-    (tx) => tx.execute(sql`select anonymize_client_member(${memberId}::uuid, ${requestArguments(request)})`),
+    (tx) => tx.execute(sql`select anonymize_client_member(${memberId}, ${requestArguments(request)})`),
     database,
   )
 }
@@ -180,7 +247,7 @@ export function anonymizeStaffMemberOnRequest(
   database?: Database,
 ) {
   return attempt(
-    (tx) => tx.execute(sql`select anonymize_staff_member(${staffMemberId}::uuid, ${requestArguments(request)})`),
+    (tx) => tx.execute(sql`select anonymize_staff_member(${staffMemberId}, ${requestArguments(request)})`),
     database,
   )
 }
@@ -205,30 +272,34 @@ export async function readClientRetention(
   tx: Transaction,
   clientId: string,
 ): Promise<ClientRetention | undefined> {
-  const [row] = await tx.execute<{
-    last_activity_on: string | null
-    retention_months: number
-    due_after: string | null
-    blockers: string[] | null
-  }>(sql`
-    select activity.day::text as last_activity_on,
+  const [rows] = (await tx.execute(sql`
+    select cast(activity.day as char) as last_activity_on,
            activity.months as retention_months,
-           (activity.day + make_interval(months => activity.months))::date::text as due_after,
-           client_anonymization_blockers(c.id) as blockers
-      from clients as c
-      join tenants as t on t.id = c.tenant_id
-      cross join lateral (
-        select client_last_activity_on(c.id) as day,
+           cast(date_add(activity.day, interval activity.months month) as char) as due_after,
+           client_anonymization_blockers(activity.id) as blockers
+      from (
+        select c.id,
+               client_last_activity_on(c.id) as day,
                case when c.status = 'prospect' then t.prospect_retention_months
                     else t.client_retention_months end as months
-      ) as activity
-     where c.id = ${clientId}`)
+          from clients as c
+          join tenants as t on t.id = c.tenant_id
+         where c.id = ${clientId} and c.tenant_id = ${transactionTenantId()}
+      ) as activity`)) as unknown as [
+    {
+      last_activity_on: string | null
+      retention_months: number | string
+      due_after: string | null
+      blockers: string[] | string | null
+    }[],
+  ]
+  const row = rows[0]
   if (!row?.last_activity_on || !row.due_after) return undefined
   return {
     lastActivityOn: row.last_activity_on,
     retentionMonths: count(row.retention_months),
     dueAfter: row.due_after,
-    blockers: row.blockers ?? [],
+    blockers: parseBlockers(row.blockers),
   }
 }
 
@@ -256,7 +327,7 @@ const anonymizer = alias(staffMembers, 'anonymizer')
 const anonymizerName = sql<string | null>`coalesce(${anonymizer.fullName}, ${anonymizer.email})`
 
 const dueAfter = (removedAt: AnyColumn) =>
-  sql<Date>`${removedAt} + make_interval(months => ${tenants.removedMemberRetentionMonths})`
+  sql<Date>`date_add(${removedAt}, interval ${tenants.removedMemberRetentionMonths} month)`
 
 /** Accès retirés d'une entreprise, les plus récents d'abord. */
 export function readRemovedClientMembers(tx: Transaction, clientId: string): Promise<RemovedPerson[]> {
@@ -275,7 +346,13 @@ export function readRemovedClientMembers(tx: Transaction, clientId: string): Pro
     .from(clientMembers)
     .innerJoin(tenants, eq(tenants.id, clientMembers.tenantId))
     .leftJoin(anonymizer, eq(anonymizer.id, clientMembers.anonymizedBy))
-    .where(and(eq(clientMembers.clientId, clientId), isNotNull(clientMembers.deletedAt)))
+    .where(
+      and(
+        eq(clientMembers.tenantId, transactionTenantId()),
+        eq(clientMembers.clientId, clientId),
+        isNotNull(clientMembers.deletedAt),
+      ),
+    )
     .orderBy(desc(clientMembers.deletedAt), asc(clientMembers.email))
 }
 
@@ -300,7 +377,7 @@ export function readRemovedStaffMembers(tx: Transaction): Promise<RemovedPerson[
     .from(staffMembers)
     .innerJoin(tenants, eq(tenants.id, staffMembers.tenantId))
     .leftJoin(anonymizer, eq(anonymizer.id, staffMembers.anonymizedBy))
-    .where(isNotNull(staffMembers.deletedAt))
+    .where(and(eq(staffMembers.tenantId, transactionTenantId()), isNotNull(staffMembers.deletedAt)))
     .orderBy(desc(staffMembers.deletedAt), asc(staffMembers.email))
 }
 
@@ -315,7 +392,7 @@ export async function findClientAnonymizer(clientId: string): Promise<string | n
       .select({ name: anonymizerName })
       .from(clients)
       .innerJoin(anonymizer, eq(anonymizer.id, clients.anonymizedBy))
-      .where(eq(clients.id, clientId))
+      .where(and(eq(clients.tenantId, transactionTenantId()), eq(clients.id, clientId)))
       .limit(1),
   )
   return row?.name ?? null
@@ -342,33 +419,33 @@ export async function readAnonymizationOutlook(
   tx: Transaction,
   limit = 20,
 ): Promise<AnonymizationOutlook> {
-  const rows = await tx.execute<{ id: string; name: string; blockers: string[] }>(sql`
-    with t as (
-      select id, prospect_retention_months, client_retention_months,
-             (now() at time zone timezone)::date as today
-        from tenants where id = current_tenant_id()
-    )
+  const tenantId = transactionTenantId()
+  const [clientRows] = (await tx.execute(sql`
     select c.id, c.name, client_anonymization_blockers(c.id) as blockers
       from clients as c
-      join t on t.id = c.tenant_id
-     where c.anonymized_at is null
-       and client_last_activity_on(c.id) < (t.today - make_interval(months => case
-             when c.status = 'prospect' then t.prospect_retention_months
-             else t.client_retention_months end))::date
-     order by c.name, c.id`)
-  const [members] = await tx.execute<{ n: number }>(sql`
+      join tenants as t on t.id = c.tenant_id
+     where c.tenant_id = ${tenantId} and c.anonymized_at is null
+       and client_last_activity_on(c.id) < date_sub(
+             rgpd_local_date(current_timestamp(3), t.timezone),
+             interval case when c.status = 'prospect' then t.prospect_retention_months
+                           else t.client_retention_months end month)
+     order by c.name, c.id`)) as unknown as [
+    { id: string; name: string; blockers: string[] | string | null }[],
+  ]
+  const [memberRows] = (await tx.execute(sql`
     select (
       (select count(*) from client_members as m join tenants as t on t.id = m.tenant_id
-        where m.anonymized_at is null and m.deleted_at is not null
-          and m.deleted_at < now() - make_interval(months => t.removed_member_retention_months))
+        where m.tenant_id = ${tenantId} and m.anonymized_at is null and m.deleted_at is not null
+          and m.deleted_at < date_sub(current_timestamp(3), interval t.removed_member_retention_months month))
       + (select count(*) from staff_members as s join tenants as t on t.id = s.tenant_id
-        where s.anonymized_at is null and s.deleted_at is not null
-          and s.deleted_at < now() - make_interval(months => t.removed_member_retention_months))
-    ) as n`)
-  const held = rows.filter((row) => (row.blockers ?? []).length > 0)
+        where s.tenant_id = ${tenantId} and s.anonymized_at is null and s.deleted_at is not null
+          and s.deleted_at < date_sub(current_timestamp(3), interval t.removed_member_retention_months month))
+    ) as n`)) as unknown as [{ n: unknown }[]]
+  const rows = clientRows.map((row) => ({ ...row, blockers: parseBlockers(row.blockers) }))
+  const held = rows.filter((row) => row.blockers.length > 0)
   return {
     clients: rows.length - held.length,
-    members: count(members?.n),
+    members: count(memberRows[0]?.n),
     held: held.length,
     heldClients: held.slice(0, limit).map((row) => ({
       id: row.id,
@@ -396,11 +473,16 @@ export async function writeLastContact(
   clientId: string,
   isoDate: string,
 ): Promise<boolean> {
-  const updated = await tx
-    .update(clients)
-    .set({ lastContactOn: isoDate })
-    .where(and(eq(clients.id, clientId), sql`${clients.anonymizedAt} is null`))
-    .returning({ id: clients.id })
+  const updated = await updateReturning(
+    tx,
+    clients,
+    { lastContactOn: isoDate },
+    and(
+      eq(clients.tenantId, transactionTenantId()),
+      eq(clients.id, clientId),
+      isNull(clients.anonymizedAt),
+    ),
+  )
   return updated.length > 0
 }
 

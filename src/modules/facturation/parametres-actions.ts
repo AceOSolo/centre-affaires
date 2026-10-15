@@ -3,7 +3,7 @@
 import { eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 
-import { PG_CHECK_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_CHECK_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { tenants } from '../../db/tenants.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
@@ -52,7 +52,7 @@ async function saveSection(
       tx.update(tenants).set(result.update).where(eq(tenants.id, currentTenantId())),
     )
   } catch (error) {
-    if (pgErrorCode(error) === PG_CHECK_VIOLATION) {
+    if (dbErrorCode(error) === DB_CHECK_VIOLATION) {
       return { error: 'Valeur refusée par la base : vérifiez la saisie.', values }
     }
     throw error

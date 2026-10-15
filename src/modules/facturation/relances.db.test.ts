@@ -2,51 +2,91 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_INSUFFICIENT_PRIVILEGE,
-  PG_INVOICE_INVALID,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_INSUFFICIENT_PRIVILEGE,
+  DB_INVOICE_INVALID,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { lastRemindersFor, listInvoiceReminders, recordReminder, type ReminderInput } from './relances.ts'
 import { invoiceReminders } from './schema-factures.ts'
 
 /**
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
  * Journal des relances (R16, ADR 034) : chaque relance d'une facture émise
  * s'y inscrit, avec son palier, son canal et le reste dû réclamé ; la liste
  * des impayés en lit la dernière. Une preuve : l'application ne la réécrit
- * pas. Sous `app_centre`.
+ * pas. Sous l'utilisateur applicatif.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
+describe('journal des relances', { skip: raisonDeSaut }, () => {
 
-describe('journal des relances', { skip: raison }, () => {
-  // Les lectures du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000f6d01'
   const CLIENT = '01a00000-0000-7000-8000-0000000f6c01'
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const errorCode = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
@@ -54,14 +94,14 @@ describe('journal des relances', { skip: raison }, () => {
   /** Facture de 100 € HT à 20 %, émise, ou laissée brouillon. */
   const facture = async (emise = true): Promise<string> =>
     asTenant(async (tx) => {
-      const [row] = await tx.execute(sql`
-        insert into invoices (client_id, period_start, period_end)
-        values (${CLIENT}, '2026-09-01', '2026-09-30') returning id`)
-      const id = row.id as string
+      const id = uuidv7()
+      await tx.execute(sql`
+        insert into invoices (id, client_id, period_start, period_end)
+        values (${id}, ${CLIENT}, '2026-09-01', '2026-09-30')`)
       await tx.execute(sql`
         insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
         values (${id}, 'other', 'Prestation', 10000, 2000)`)
-      if (emise) await tx.execute(sql`select issue_invoice(${id}::uuid, ${ACCUEIL}::uuid)`)
+      if (emise) await tx.execute(sql`select issue_invoice(${id}, ${ACCUEIL})`)
       return id
     })
 
@@ -82,17 +122,18 @@ describe('journal des relances', { skip: raison }, () => {
     )
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
+    await bases.owner.db.execute(sql`
       update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
         postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
         vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
-      where id = ${DEFAULT_TENANT_ID}`
+      where id = ${DEFAULT_TENANT_ID}`)
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Camille Accueil')`)
       await tx.execute(sql`
@@ -102,14 +143,13 @@ describe('journal des relances', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
+    await bases.owner.db.execute(sql`
       update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
         siren = null, vat_number = null, bank_iban = null
-      where id = ${DEFAULT_TENANT_ID}`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+      where id = ${DEFAULT_TENANT_ID}`)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('inscrit chaque relance, et la liste des impayés en lit la dernière', async () => {
@@ -134,25 +174,26 @@ describe('journal des relances', { skip: raison }, () => {
 
   it('ne relance qu’une facture émise', async () => {
     const brouillon = await facture(false)
-    assert.equal(await errorCode(() => relance(brouillon)), PG_INVOICE_INVALID)
+    assert.equal(await errorCode(() => relance(brouillon)), DB_INVOICE_INVALID)
   })
 
   it('exige des destinataires pour un courriel, aucun pour un courrier, et un palier connu', async () => {
     const id = await facture()
-    assert.equal(await errorCode(() => relance(id, { recipients: [] })), PG_CHECK_VIOLATION)
-    assert.equal(await errorCode(() => relance(id, { channel: 'post' })), PG_CHECK_VIOLATION)
-    assert.equal(await errorCode(() => relance(id, { level: 4 as 3 })), PG_CHECK_VIOLATION)
-    assert.equal(await errorCode(() => relance(id, { amountDueCents: 0 })), PG_CHECK_VIOLATION)
+    assert.equal(await errorCode(() => relance(id, { recipients: [] })), DB_CHECK_VIOLATION)
+    assert.equal(await errorCode(() => relance(id, { channel: 'post' })), DB_CHECK_VIOLATION)
+    assert.equal(await errorCode(() => relance(id, { level: 4 as 3 })), DB_CHECK_VIOLATION)
+    assert.equal(await errorCode(() => relance(id, { amountDueCents: 0 })), DB_CHECK_VIOLATION)
   })
 
   it('tient une preuve que l’application ne réécrit pas', async () => {
+    // Un trigger refuse UPDATE et DELETE (42501), pour tout utilisateur.
     const id = await facture()
     const inscrite = await relance(id)
     for (const tentative of [
       () => asTenant((tx) => tx.update(invoiceReminders).set({ level: 2 }).where(eq(invoiceReminders.id, inscrite.id))),
       () => asTenant((tx) => tx.delete(invoiceReminders).where(eq(invoiceReminders.id, inscrite.id))),
     ]) {
-      assert.equal(await errorCode(tentative), PG_INSUFFICIENT_PRIVILEGE)
+      assert.equal(await errorCode(tentative), DB_INSUFFICIENT_PRIVILEGE)
     }
   })
 })

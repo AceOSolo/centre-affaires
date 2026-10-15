@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, sql } from 'drizzle-orm'
 
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenants } from '../../db/tenants.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
@@ -29,7 +30,7 @@ import {
  * Documents d'un contrat (R12, ADR 025) : chaque version remise au client —
  * le contrat à son activation, chaque avenant à sa signature — archivée en
  * instantané structuré dans `contract_documents`. La base attribue la version
- * (1, 2, 3…) et calcule l'empreinte SHA-256 de `snapshot::text` ; un document
+ * (1, 2, 3…) et calcule l'empreinte SHA-256 de `cast(snapshot as char)` ; un document
  * ne se réécrit pas.
  */
 
@@ -173,16 +174,12 @@ export async function archiveContractDocument(
 ): Promise<ContractDocument> {
   const input = await selectSnapshotInput(tx, target.contractId, target.amendmentId)
   if (!input) throw new Error('Contrat ou avenant introuvable : document non établi.')
-  const [document] = await tx
-    .insert(contractDocuments)
-    .values({
-      contractId: target.contractId,
-      amendmentId: target.amendmentId,
-      snapshot: buildContractSnapshot(input) as unknown as Record<string, unknown>,
-      generatedBy: target.generatedBy,
-    })
-    .returning()
-  return document
+  return insertReturning(tx, contractDocuments, {
+    contractId: target.contractId,
+    amendmentId: target.amendmentId,
+    snapshot: buildContractSnapshot(input) as unknown as Record<string, unknown>,
+    generatedBy: target.generatedBy,
+  })
 }
 
 /**
@@ -213,7 +210,7 @@ export async function establishContractDocument(
       .select({ status: contracts.status })
       .from(contracts)
       .where(eq(contracts.id, contractId))
-      .for('no key update')
+      .for('update')
     if (!contract || contract.status === 'draft') return false
     const [existing] = await tx
       .select({ id: contractDocuments.id })
@@ -294,7 +291,7 @@ export async function findContractDocument(
         author: staffMembers.fullName,
         authorEmail: staffMembers.email,
         snapshot: contractDocuments.snapshot,
-        intact: sql<boolean>`encode(sha256(convert_to(${contractDocuments.snapshot}::text, 'UTF8')), 'hex') = ${contractDocuments.sha256}`,
+        intact: sql<boolean>`sha2(cast(${contractDocuments.snapshot} as char character set utf8mb4), 256) = ${contractDocuments.sha256}`.mapWith(Boolean),
       })
       .from(contractDocuments)
       .leftJoin(contractAmendments, eq(contractAmendments.id, contractDocuments.amendmentId))

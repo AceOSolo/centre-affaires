@@ -5,9 +5,10 @@ import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
  * courrier et photos d'enveloppe aujourd'hui, photos d'états des lieux demain
  * (R22, ADR 020).
  *
- * Une branche Neon copie le stockage de sa branche parente. Chiffrés avec une
- * clé propre à chaque environnement, les documents de production y sont
- * illisibles (bloquant B3). Le fournisseur de stockage, lui, ne voit jamais
+ * Une copie du stockage de production (réplication, sauvegarde restaurée,
+ * bucket de développement alimenté depuis lui) emporte les documents. Chiffrés
+ * avec une clé propre à chaque environnement, ils y sont illisibles (bloquant
+ * B3). Le fournisseur de stockage, lui, ne voit jamais
  * que du chiffré.
  *
  * AES-256-GCM, comme `sealSecret` : authentifié, donc un document altéré est

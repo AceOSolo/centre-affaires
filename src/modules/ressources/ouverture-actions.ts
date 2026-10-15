@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { listBookableResources } from './queries.ts'
@@ -62,9 +62,9 @@ export async function addOpeningHourAction(
       closesAt,
     })
   } catch (error) {
-    // L'unicité est tenue par un index partiel : deux plages identiques le même
+    // L'unicité est tenue par un index unique : deux plages identiques le même
     // jour sont une saisie en double, pas une intention.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) {
       return { error: 'Cette plage existe déjà pour ce jour.' }
     }
     throw error

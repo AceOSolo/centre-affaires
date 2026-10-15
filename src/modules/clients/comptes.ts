@@ -1,6 +1,8 @@
 import { and, asc, eq, isNull, notInArray, sql } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
+import { tenantContext } from '../../db/contexte.ts'
 import { withClientScope, withTenant, type Database, type Transaction } from '../../db/index.ts'
 import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -13,6 +15,12 @@ import { clientMembers, clients, type ClientMember } from './schema.ts'
  * ni la session, ce qui permet d'éprouver la résolution contre une vraie base.
  * `session.ts` fait la jonction.
  */
+
+/**
+ * Centre de la transaction en cours (celui de `withTenant()`) : la base ne
+ * filtre plus les lectures par centre.
+ */
+const transactionTenantId = () => tenantContext.getStore() ?? currentTenantId()
 
 /** Une entreprise à laquelle le compte connecté a accès. */
 export type ClientAccount = {
@@ -40,10 +48,14 @@ export async function resolveClientAccounts(
   // Le rattachement se fait sur l'adresse : sans vérification, quiconque la
   // contrôle lirait le courrier de l'entreprise. Même règle que pour l'équipe.
   if (options.emailVerified !== false) {
-    const alreadyLinked = tx
-      .select({ clientId: clientMembers.clientId })
-      .from(clientMembers)
-      .where(and(eq(clientMembers.authUserId, user.id), isNull(clientMembers.deletedAt)))
+    // Lues avant l'`update` : MySQL refuse une sous-requête sur la table
+    // qu'on met à jour (erreur 1093), là où PostgreSQL l'acceptait.
+    const alreadyLinked = (
+      await tx
+        .select({ clientId: clientMembers.clientId })
+        .from(clientMembers)
+        .where(and(eq(clientMembers.authUserId, user.id), isNull(clientMembers.deletedAt)))
+    ).map((row) => row.clientId)
 
     await tx
       .update(clientMembers)
@@ -53,12 +65,13 @@ export async function resolveClientAccounts(
       })
       .where(
         and(
+          eq(clientMembers.tenantId, transactionTenantId()),
           eq(clientMembers.email, user.email),
           isNull(clientMembers.authUserId),
           isNull(clientMembers.deletedAt),
           // Un compte déjà rattaché à l'entreprise par une autre adresse ne
           // l'est pas une seconde fois.
-          notInArray(clientMembers.clientId, alreadyLinked),
+          alreadyLinked.length > 0 ? notInArray(clientMembers.clientId, alreadyLinked) : undefined,
         ),
       )
   }
@@ -76,6 +89,7 @@ export async function resolveClientAccounts(
     )
     .where(
       and(
+        eq(clientMembers.tenantId, transactionTenantId()),
         eq(clientMembers.authUserId, user.id),
         isNull(clientMembers.deletedAt),
         // Une fiche archivée ferme l'accès à ses personnes.
@@ -92,10 +106,10 @@ export async function resolveClientAccounts(
  * Toute lecture ou écriture faite pour une personne connectée à son espace
  * passe par ici, après la résolution de ses entreprises
  * (`resolveClientAccounts`, seule requête de l'espace faite sous
- * `withTenant()`). Les politiques restrictives de la migration 0026 ne
- * laissent alors voir ni écrire que les lignes de ces entreprises : un filtre
- * `where client_id …` oublié ne montre rien de plus. Les filtres applicatifs
- * restent ; la portée est le second verrou.
+ * `withTenant()`). Les triggers de garde (`30-clients.sql`) refusent
+ * d'écrire hors de ces entreprises ; **les lectures, elles, ne sont plus
+ * filtrées par la base** (pas de RLS en MySQL, ADR 042) : chaque requête
+ * passée à `inClientSpace` filtre elle-même sur les `clientId` du compte.
  *
  * Une liste vide ne voit rien : les appelants la refusent en amont.
  */
@@ -147,7 +161,7 @@ export async function addClientMember(input: {
   } catch (error) {
     // L'unicité est tenue par un index partiel : la vérifier avant laisserait
     // passer deux inscriptions simultanées.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) {
       throw new DuplicateClientMemberError(input.email)
     }
     throw error
@@ -159,7 +173,7 @@ export async function removeClientMember(id: string, clientId: string): Promise<
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(clientMembers)
-      .set({ deletedAt: sql`now()` })
+      .set({ deletedAt: maintenant() })
       .where(
         and(
           eq(clientMembers.id, id),

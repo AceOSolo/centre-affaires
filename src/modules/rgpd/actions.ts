@@ -4,7 +4,7 @@ import { eq } from 'drizzle-orm'
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { PG_CHECK_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_CHECK_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { tenants } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
@@ -76,7 +76,7 @@ export async function saveRetentionDurationsAction(
       tx.update(tenants).set(result.update).where(eq(tenants.id, currentTenantId())),
     )
   } catch (error) {
-    if (pgErrorCode(error) === PG_CHECK_VIOLATION) {
+    if (dbErrorCode(error) === DB_CHECK_VIOLATION) {
       return { error: 'Durée refusée par la base : de 1 à 120 mois.', values }
     }
     throw error

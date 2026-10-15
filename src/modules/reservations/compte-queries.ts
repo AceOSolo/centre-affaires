@@ -1,6 +1,8 @@
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { and, desc, eq, gt, gte, inArray, sql } from 'drizzle-orm'
+import { alias } from 'drizzle-orm/mysql-core'
 
+import { maintenant } from '../../db/columns.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
@@ -9,9 +11,10 @@ import { bookings, type Booking } from './schema.ts'
 
 /**
  * Réservations vues depuis l'espace client (ADR 015) : celles des entreprises
- * du compte, et d'elles seules. Deux verrous : le filtre sur `client_id`, et
- * la portée client de la transaction (`inClientSpace`, ADR 019), qui tiendrait
- * sans lui.
+ * du compte, et d'elles seules. Le filtre sur `client_id` est
+ * obligatoire : MySQL n'a pas de RLS, la base ne filtre pas les lectures sous
+ * `inClientSpace` (ADR 019, conventions §6). Les écritures, elles, sont
+ * gardées par les triggers de `bookings`.
  */
 export type ClientBookingRow = Pick<
   Booking,
@@ -84,7 +87,7 @@ export async function listBookingsForAccounts(accounts: ClientAccount[]): Promis
         cancelledByMember: sql<
           string | null
         >`coalesce(${cancelledByMembers.fullName}, ${cancelledByMembers.email})`,
-        cancelledByCentre: sql<boolean>`${bookings.cancelledByStaffId} is not null`,
+        cancelledByCentre: sql<boolean>`${bookings.cancelledByStaffId} is not null`.mapWith(Boolean),
       })
       .from(bookings)
       .innerJoin(resources, eq(resources.id, bookings.resourceId))
@@ -129,23 +132,22 @@ export async function cancelRequestForAccounts(
       .limit(1)
     const account = booking && accounts.find((candidate) => candidate.clientId === booking.clientId)
     if (!account) return []
-    return tx
-      .update(bookings)
-      .set({
+    return updateReturning(
+      tx,
+      bookings,
+      {
         status: 'cancelled',
-        cancelledAt: sql`now()`,
+        cancelledAt: maintenant(),
         cancellationReason: 'Annulée par le client',
         cancelledByMemberId: account.memberId,
-      })
-      .where(
-        and(
-          eq(bookings.id, id),
-          eq(bookings.status, 'pending'),
-          sql`${bookings.startsAt} > now()`,
-          inArray(bookings.clientId, clientIds),
-        ),
-      )
-      .returning({ id: bookings.id })
+      },
+      and(
+        eq(bookings.id, id),
+        eq(bookings.status, 'pending'),
+        gt(bookings.startsAt, maintenant()),
+        inArray(bookings.clientId, clientIds),
+      ),
+    )
   })
   return updated.length > 0
 }

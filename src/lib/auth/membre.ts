@@ -1,12 +1,15 @@
 import { and, eq, isNull } from 'drizzle-orm'
 
+import { tenantContext } from '../../db/contexte.ts'
 import type { Transaction } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { staffMembers, type StaffMember } from '../../db/staff.ts'
+import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 
 /**
  * Identité d'un compte connecté, réduite à ce dont l'autorisation a besoin.
  *
- * Ce module ne connaît ni Next, ni React, ni le service d'authentification :
+ * Ce module ne connaît ni Next, ni React, ni le service d'authentification (Better Auth) :
  * c'est ce qui permet de l'éprouver contre une vraie base sans monter un
  * serveur. `staff.ts` fait la jonction avec la session.
  */
@@ -16,6 +19,14 @@ export type AuthenticatedUser = {
   email: string
   name: string | null
 }
+
+/**
+ * Filtre sur le centre de la transaction (`withTenant()`). MySQL n'a pas de
+ * Row Level Security : sans lui, une résolution dans un centre verrait les
+ * membres des autres.
+ */
+export const inCurrentTenant = () =>
+  eq(staffMembers.tenantId, tenantContext.getStore() ?? DEFAULT_TENANT_ID)
 
 /**
  * Membre correspondant au compte connecté, dans une transaction déjà placée
@@ -36,7 +47,13 @@ export async function resolveStaffMember(
   const [linked] = await tx
     .select()
     .from(staffMembers)
-    .where(and(eq(staffMembers.authUserId, user.id), isNull(staffMembers.deletedAt)))
+    .where(
+      and(
+        inCurrentTenant(),
+        eq(staffMembers.authUserId, user.id),
+        isNull(staffMembers.deletedAt),
+      ),
+    )
     .limit(1)
   if (linked) return linked
 
@@ -54,6 +71,7 @@ export async function resolveStaffMember(
     .from(staffMembers)
     .where(
       and(
+        inCurrentTenant(),
         eq(staffMembers.email, user.email),
         isNull(staffMembers.authUserId),
         isNull(staffMembers.deletedAt),
@@ -62,12 +80,13 @@ export async function resolveStaffMember(
     .limit(1)
   if (!invited) return undefined
 
-  const [claimed] = await tx
-    .update(staffMembers)
-    .set({ authUserId: user.id, fullName: invited.fullName ?? user.name })
+  const [claimed] = await updateReturning(
+    tx,
+    staffMembers,
+    { authUserId: user.id, fullName: invited.fullName ?? user.name },
     // La condition sur `auth_user_id` rejoue le filtre de la lecture : entre
     // les deux requêtes, une autre connexion a pu rattacher le même membre.
-    .where(and(eq(staffMembers.id, invited.id), isNull(staffMembers.authUserId)))
-    .returning()
+    and(inCurrentTenant(), eq(staffMembers.id, invited.id), isNull(staffMembers.authUserId)),
+  )
   return claimed
 }

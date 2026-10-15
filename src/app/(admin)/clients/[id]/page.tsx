@@ -69,7 +69,7 @@ export default async function ClientPage({
     params,
     searchParams,
   ])
-  // Un identifiant illisible ferait lever Postgres (22P02) : c'est une fiche
+  // Un identifiant mal formé ne doit pas atteindre la base : c’est une fiche
   // introuvable, pas une panne.
   if (!isUuid(id)) notFound()
   const client = await findClient(id)

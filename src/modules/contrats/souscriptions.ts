@@ -1,5 +1,6 @@
 import { and, asc, eq, gt, isNull, lte, or, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { subscribedServices } from '../facturation/schema-factures.ts'
@@ -77,7 +78,7 @@ export async function alignDraftSubscriptions(
     }
     await tx
       .update(subscribedServices)
-      .set({ deletedAt: sql`now()` })
+      .set({ deletedAt: maintenant() })
       .where(eq(subscribedServices.id, subscription.id))
     await tx.insert(subscribedServices).values({
       clientId: subscription.clientId,
@@ -109,7 +110,7 @@ export async function endContractSubscriptions(
 ): Promise<void> {
   await tx
     .update(subscribedServices)
-    .set({ deletedAt: sql`now()` })
+    .set({ deletedAt: maintenant() })
     .where(and(live(contractId), gt(subscribedServices.startsOn, lastDay)))
   await tx
     .update(subscribedServices)
@@ -123,14 +124,22 @@ export async function endContractSubscriptions(
     )
 }
 
-/** Archivage du contrat : ses souscriptions vivantes sont archivées au même instant. */
+/**
+ * Archivage du contrat : ses souscriptions vivantes sont archivées au même
+ * instant que lui. À appeler **après** l'archivage du contrat, dans la même
+ * transaction : l'instant est celui de `contracts.deleted_at`, recopié (en
+ * MySQL, `CURRENT_TIMESTAMP` est l'instant de l'instruction, pas de la
+ * transaction).
+ */
 export async function archiveContractSubscriptions(
   tx: Transaction,
   contractId: string,
 ): Promise<void> {
   await tx
     .update(subscribedServices)
-    .set({ deletedAt: sql`now()` })
+    .set({
+      deletedAt: sql`(select k.deleted_at from ${contracts} as k where k.id = ${contractId})`,
+    })
     .where(live(contractId))
 }
 
@@ -144,7 +153,7 @@ export async function restoreContractSubscriptions(
   tx: Transaction,
   contractId: string,
 ): Promise<void> {
-  // Comparé en base : un `Date` JavaScript perdrait les microsecondes.
+  // Comparé en base : même instant que `contracts.deleted_at`, à la milliseconde.
   const archived = await tx
     .select({ id: subscribedServices.id })
     .from(subscribedServices)

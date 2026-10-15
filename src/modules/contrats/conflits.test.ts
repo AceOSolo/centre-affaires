@@ -5,7 +5,7 @@ import { contractRange } from './occupation.ts'
 import { occupationConflictMessage } from './conflits.ts'
 
 /**
- * Le refus d'une occupation (`23P01`) se dit en clair : la ressource, ce qui
+ * Le refus d'une occupation (`CA000`) se dit en clair : la ressource, ce qui
  * l'occupe et que faire — jamais l'erreur SQL brute (ADR 018).
  */
 const PARIS = 'Europe/Paris'

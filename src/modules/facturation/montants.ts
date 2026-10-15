@@ -2,7 +2,7 @@ import type { InvoiceKind, InvoiceStatus, VatCategory } from './schema-factures.
 
 /**
  * Règles d'arrondi de l'argent (ADR 023, ADR 026), jumelles des fonctions SQL
- * de la migration 0029 et 0031. L'autorité est en base : les colonnes
+ * de `src/db/regles/50-facturation.sql`. L'autorité est en base : les colonnes
  * `net_amount_cents`, la TVA des lignes et les totaux d'une facture y sont
  * calculés. Ces fonctions servent à **annoncer** un montant avant écriture —
  * un devis à l'écran, l'aperçu d'un brouillon — et doivent tomber au même

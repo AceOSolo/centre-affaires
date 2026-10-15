@@ -10,6 +10,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 
+# Dépendances d'exécution seules, pour l'outil de migration (voir plus bas).
+FROM node:24-alpine AS deps-prod
+WORKDIR /app
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
 FROM node:24-alpine AS build
 WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
@@ -28,6 +34,17 @@ ENV NODE_ENV=production \
 COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
+# Outillage d'exploitation (`node infra/migrer.ts`, configurer-centre,
+# chiffrer-documents… lancés par le service `migrer` de
+# infra/serveur/compose.yml). Il importe le schéma Drizzle et lit les fichiers
+# SQL de `src/db`, que `standalone` ne recopie pas : on joint le code source de
+# `src` (du TypeScript, que Node 24 exécute tel quel) et les dépendances
+# d'exécution complètes (mysql2, drizzle-orm). Elles recouvrent celles, tracées
+# en partie, de `standalone` : mêmes versions, issues du même package-lock.
+COPY --from=deps-prod --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/src ./src
+COPY --from=build --chown=node:node /app/infra ./infra
+COPY --from=build --chown=node:node /app/package.json ./package.json
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]

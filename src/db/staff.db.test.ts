@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from './errors.ts'
-import { createDatabase, withTenant } from './index.ts'
+import { uuidv7 } from '../lib/uuid.ts'
+import { DB_TENANT_MISMATCH, DB_UNIQUE_VIOLATION, dbErrorCode } from './errors.ts'
+import { withTenant } from './index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from './test-support.ts'
 import { DEFAULT_TENANT_ID } from './tenants.ts'
 
 /**
@@ -15,19 +16,9 @@ import { DEFAULT_TENANT_ID } from './tenants.ts'
  * traduit pas par un écran mal affiché mais par un accès accordé à quelqu'un
  * qui ne devrait pas l'avoir, ou refusé à quelqu'un qui devrait.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('accès au back-office', { skip: raison }, () => {
+describe('accès au back-office', { skip: raisonDeSaut }, () => {
   {
-    const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-    const app = createDatabase(appUrl ?? '')
+    let bases: TestDatabases
 
     const AUTRE_CENTRE = '01999f00-0000-7000-8000-0000000000fe'
 
@@ -41,42 +32,54 @@ describe('accès au back-office', { skip: raison }, () => {
         tenantId,
         (tx) =>
           tx.execute(sql`
-            insert into staff_members (email, role, auth_user_id)
-            values (${email}, ${role}, ${authUserId})
+            insert into staff_members (id, tenant_id, email, role, auth_user_id)
+            values (${uuidv7()}, ${tenantId}, ${email}, ${role}, ${authUserId})
           `),
-        app.db,
+        bases.app.db,
       )
 
-    const membres = (tenantId = DEFAULT_TENANT_ID) =>
-      withTenant(
+    type Membre = { email: string; role: string; tenant_id: string; deleted_at: Date | null }
+
+    /** Les membres vus du centre donné : le filtre est explicite, la base ne filtre plus les lectures. */
+    const membres = async (tenantId = DEFAULT_TENANT_ID) => {
+      const [rows] = (await withTenant(
         tenantId,
-        (tx) => tx.execute(sql`select * from staff_members order by email`),
-        app.db,
+        (tx) =>
+          tx.execute(sql`select * from staff_members where tenant_id = ${tenantId} order by email`),
+        bases.app.db,
+      )) as unknown as [Membre[]]
+      return rows
+    }
+
+    const retirer = () =>
+      withTenant(
+        DEFAULT_TENANT_ID,
+        (tx) => tx.execute(sql`update staff_members set deleted_at = CURRENT_TIMESTAMP(3)`),
+        bases.app.db,
       )
 
     const codeErreur = async (run: () => Promise<unknown>) => {
       try {
         await run()
       } catch (error) {
-        return pgErrorCode(error)
+        return dbErrorCode(error)
       }
       return undefined
     }
 
     before(async () => {
-      await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+      bases = await ouvrirBasesDeTest()
     })
 
     beforeEach(async () => {
-      // `cascade` : le courrier référence les membres de l'équipe (qui l'a
-      // enregistré, ouvert, consulté), et Postgres refuse de vider une table
-      // référencée, même quand les tables qui la visent sont vides.
-      await owner.client`truncate table staff_members cascade`
-      await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+      // `viderTables` suspend les clés étrangères : le courrier référence les
+      // membres de l'équipe, et MySQL refuse de vider une table référencée.
+      await viderTables(bases.owner, 'staff_members')
+      await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     })
 
     after(async () => {
-      await Promise.all([owner.client.end(), app.client.end()])
+      await bases.fermer()
     })
 
     describe('unicité de l’adresse', () => {
@@ -84,7 +87,7 @@ describe('accès au back-office', { skip: raison }, () => {
         await inscrire('alexis@exemple.fr')
         assert.equal(
           await codeErreur(() => inscrire('alexis@exemple.fr')),
-          PG_UNIQUE_VIOLATION,
+          DB_UNIQUE_VIOLATION,
         )
       })
 
@@ -92,11 +95,7 @@ describe('accès au back-office', { skip: raison }, () => {
         // L'index est partiel : un retrait libère l'adresse, sans effacer la
         // ligne d'origine (décision 6).
         await inscrire('alexis@exemple.fr')
-        await withTenant(
-          DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`update staff_members set deleted_at = now()`),
-          app.db,
-        )
+        await retirer()
         await inscrire('alexis@exemple.fr')
 
         const lignes = await membres()
@@ -112,7 +111,7 @@ describe('accès au back-office', { skip: raison }, () => {
         await inscrire('alexis@exemple.fr', 'admin', 'compte-1')
         assert.equal(
           await codeErreur(() => inscrire('camille@exemple.fr', 'staff', 'compte-1')),
-          PG_UNIQUE_VIOLATION,
+          DB_UNIQUE_VIOLATION,
         )
       })
 
@@ -127,31 +126,40 @@ describe('accès au back-office', { skip: raison }, () => {
 
       it('libère le compte quand le membre est retiré', async () => {
         await inscrire('alexis@exemple.fr', 'admin', 'compte-1')
-        await withTenant(
-          DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`update staff_members set deleted_at = now()`),
-          app.db,
-        )
+        await retirer()
         await inscrire('alexis@exemple.fr', 'admin', 'compte-1')
         assert.equal((await membres()).length, 2)
       })
     })
 
     describe('isolation par centre', () => {
-      it('ne renvoie rien hors contexte de centre', async () => {
-        await inscrire('alexis@exemple.fr')
-        const horsContexte = await app.db.execute(
-          sql`select count(*)::int as n from staff_members`,
+      it('refuse d’inscrire quelqu’un dans un autre centre que celui du contexte', async () => {
+        // Remplace la RLS : la garde d'écriture (CA014) est ce qui reste.
+        await bases.owner.client.query(
+          `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre')`,
+          [AUTRE_CENTRE],
         )
-        assert.equal(horsContexte[0].n, 0)
-        assert.equal((await membres()).length, 1)
+        assert.equal(
+          await codeErreur(() =>
+            withTenant(
+              DEFAULT_TENANT_ID,
+              (tx) =>
+                tx.execute(sql`
+                  insert into staff_members (id, tenant_id, email)
+                  values (${uuidv7()}, ${AUTRE_CENTRE}, 'intrus@exemple.fr')`),
+              bases.app.db,
+            ),
+          ),
+          DB_TENANT_MISMATCH,
+        )
       })
 
       it('ne montre pas l’équipe d’un centre à un autre', async () => {
         await inscrire('alexis@exemple.fr')
-        await owner.client`
-          insert into tenants (id, name, slug)
-          values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre')`
+        await bases.owner.client.query(
+          `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre')`,
+          [AUTRE_CENTRE],
+        )
 
         assert.equal((await membres(AUTRE_CENTRE)).length, 0)
       })
@@ -159,9 +167,10 @@ describe('accès au back-office', { skip: raison }, () => {
       it('laisse la même adresse appartenir à deux centres', async () => {
         // L'unicité porte sur (centre, adresse) : quelqu'un peut travailler
         // dans deux centres le jour du multi-centres.
-        await owner.client`
-          insert into tenants (id, name, slug)
-          values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre')`
+        await bases.owner.client.query(
+          `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre')`,
+          [AUTRE_CENTRE],
+        )
         await inscrire('alexis@exemple.fr')
         await inscrire('alexis@exemple.fr', 'staff', null, AUTRE_CENTRE)
 
@@ -174,8 +183,11 @@ describe('accès au back-office', { skip: raison }, () => {
       it('attribue le rôle le moins puissant par défaut', async () => {
         await withTenant(
           DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`insert into staff_members (email) values ('neuf@exemple.fr')`),
-          app.db,
+          (tx) =>
+            tx.execute(
+              sql`insert into staff_members (id, email) values (${uuidv7()}, 'neuf@exemple.fr')`,
+            ),
+          bases.app.db,
         )
         const [ligne] = await membres()
         assert.equal(ligne.role, 'staff')
@@ -184,12 +196,20 @@ describe('accès au back-office', { skip: raison }, () => {
 
       it('met à jour updated_at sans que le code y pense', async () => {
         await inscrire('alexis@exemple.fr')
-        const [avant] = await owner.client`select created_at, updated_at from staff_members`
-        await owner.client`update staff_members set role = 'admin'`
-        const [apres] = await owner.client`select created_at, updated_at from staff_members`
+        const lire = async () =>
+          (
+            (await bases.owner.client.query(
+              'select created_at, updated_at from staff_members',
+            )) as unknown as [{ created_at: Date; updated_at: Date }[]]
+          )[0][0]
+        const avant = await lire()
+        // Au moins une milliseconde d'écart : `updated_at` a cette précision.
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        await bases.owner.client.query(`update staff_members set role = 'admin'`)
+        const apres = await lire()
 
         assert.deepEqual(apres.created_at, avant.created_at)
-        assert.ok(apres.updated_at > avant.updated_at)
+        assert.ok(apres.updated_at.getTime() > avant.updated_at.getTime())
       })
     })
   }

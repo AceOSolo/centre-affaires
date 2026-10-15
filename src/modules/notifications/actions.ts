@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
-import { PG_CHECK_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_CHECK_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { defaultTemplates } from './catalogue.ts'
 import { findTemplateState, saveTemplate } from './queries.ts'
@@ -55,7 +55,7 @@ export async function saveTemplateAction(
   try {
     await saveTemplate(event, values, member.id)
   } catch (error) {
-    if (pgErrorCode(error) === PG_CHECK_VIOLATION) {
+    if (dbErrorCode(error) === DB_CHECK_VIOLATION) {
       return { error: 'La base a refusé ce modèle : objet ou texte vide, ou trop long.', values }
     }
     throw error

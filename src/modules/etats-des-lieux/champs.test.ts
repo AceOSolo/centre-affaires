@@ -93,7 +93,7 @@ describe('modèle de champs', () => {
     assert.match(issues[0].message, /« kilometrage » : identifiant en double/)
   })
 
-  it('compte les caractères comme Postgres, pas en UTF-16', () => {
+  it('compte les caractères comme MySQL, pas en UTF-16', () => {
     // 200 émojis : 400 unités UTF-16, mais 200 caractères.
     const label = '🚗'.repeat(200)
     assert.equal(inspectionFieldsError([{ id: 'auto', label, type: 'text', required: false }]), null)

@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
-import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { eq, inArray, sql } from 'drizzle-orm'
 
-import { PG_INSUFFICIENT_PRIVILEGE, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { DB_INSUFFICIENT_PRIVILEGE, dbErrorCode } from '../../db/errors.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
-import { contracts } from '../contrats/schema.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import {
   cancelOpeningRequest,
   findScanForAccounts,
@@ -16,57 +16,50 @@ import {
   logScanView,
   requestOpening,
 } from '../courrier/queries.ts'
-import { mailItems, mailScans, mailScanViews } from '../courrier/schema.ts'
+import { mailItems, mailScanViews } from '../courrier/schema.ts'
 import { cancelRequestForAccounts, listBookingsForAccounts } from '../reservations/compte-queries.ts'
 import { bookings } from '../reservations/schema.ts'
 import { inClientSpace, type ClientAccount } from './comptes.ts'
+import { findAccountHistoryStart, loadAccountHistory } from './historique-compte-queries.ts'
 import { clientContacts, clientMembers, clients } from './schema.ts'
+import { lire, toutVider } from './test-support.ts'
 
 /**
  * Isolation des entreprises dans l'espace client (R28, ADR 019), éprouvée
  * avec le code de l'espace lui-même.
  *
- * `src/db/portee-client.db.test.ts` prouve les politiques en SQL. Ici, on
- * prouve que l'espace client s'en sert : ses requêtes passent par
- * `inClientSpace`, et une requête qui oublierait son filtre — ou filtrerait
- * sur la mauvaise entreprise — ne rendrait toujours que les lignes de
- * l'entreprise du compte connecté.
- *
- * Sous le rôle applicatif, soumis à la RLS : sous le propriétaire, tout
- * passerait sans rien prouver.
+ * MySQL n'a pas de Row Level Security : **la base ne filtre plus les
+ * lectures** (ADR 042). Chaque requête exécutée sous `inClientSpace` filtre
+ * donc elle-même sur les entreprises du compte, et ce fichier prouve, pour
+ * chaque lecture du portail, que celle de l'entreprise voisine n'en sort pas.
+ * Les écritures, elles, restent gardées par les triggers de portée
+ * (`30-clients.sql` et ceux des autres modules) : un `update` sans filtre
+ * échoue au lieu de toucher l'autre entreprise.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('espace client : une entreprise ne voit pas une autre', { skip: raison }, () => {
-  // Les requêtes de l'espace ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('espace client : une entreprise ne voit pas une autre', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000ec001'
   const PETIT = '01a00000-0000-7000-8000-0000000ec002'
   const JEANNE = '01a00000-0000-7000-8000-0000000ec101'
   const PAUL = '01a00000-0000-7000-8000-0000000ec102'
   const SALLE = '01a00000-0000-7000-8000-0000000ec201'
+  /** Écriture sous portée client hors de ses entreprises (`30-clients.sql`). */
+  const CLIENT_SCOPE_REFUSED = 'CA015'
 
   /** Jeanne, connectée, gère l'atelier Durand et lui seul. */
   const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Identifiants des lignes de chaque entreprise, posées par `peupler`. */
   const ids: Record<string, { mail: string; scan: string; booking: string }> = {}
 
   const peupler = async (clientId: string, memberId: string, index: number) => {
+    const booking = uuidv7()
+    const item = uuidv7()
+    const scan = uuidv7()
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into client_members (id, client_id, email, auth_user_id)
@@ -77,46 +70,40 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
       await tx.execute(sql`
         insert into contracts (client_id, contract_type, starts_on, amount_cents)
         values (${clientId}, 'domiciliation', '2026-01-01', 9000)`)
-      const [booking] = await tx.execute(sql`
-        insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
-        values (${SALLE}, ${clientId}, 'booking', 'client', 'pending', ${`Réunion ${index}`},
-                now() + make_interval(days => ${index + 2}),
-                now() + make_interval(days => ${index + 2}, hours => 1))
-        returning id`)
-      const [item] = await tx.execute(sql`
-        insert into mail_items (client_id, sender) values (${clientId}, ${`Expéditeur ${index}`})
-        returning id`)
-      const [scan] = await tx.execute(sql`
-        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size)
-        values (${item.id as string}, 'envelope', ${`courrier/${clientId}.pdf`}, 'application/pdf', 100)
-        returning id`)
+      await tx.execute(sql`
+        insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
+        values (${booking}, ${SALLE}, ${clientId}, 'booking', 'client', 'pending', ${`Réunion ${index}`},
+                date_add(now(3), interval ${index + 2} day),
+                date_add(date_add(now(3), interval ${index + 2} day), interval 1 hour))`)
+      await tx.execute(sql`
+        insert into mail_items (id, client_id, sender) values (${item}, ${clientId}, ${`Expéditeur ${index}`})`)
+      await tx.execute(sql`
+        insert into mail_scans (id, mail_item_id, side, storage_key, content_type, byte_size)
+        values (${scan}, ${item}, 'envelope', ${`courrier/${clientId}.pdf`}, 'application/pdf', 100)`)
       await tx.execute(sql`
         insert into mail_scan_views (mail_scan_id, viewer, client_member_id, auth_user_id)
-        values (${scan.id as string}, 'client', ${memberId}, ${`u-${index}`})`)
-      ids[clientId] = {
-        mail: item.id as string,
-        scan: scan.id as string,
-        booking: booking.id as string,
-      }
+        values (${scan}, 'client', ${memberId}, ${`u-${index}`})`)
     })
+    ids[clientId] = { mail: item, scan, booking }
   }
 
   const errorCode = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes de l'espace passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
-    await owner.client`truncate table document_sequences`
+    await toutVider(bases.owner)
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -129,66 +116,9 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
-  })
-
-  it('une requête de l’espace sans aucun filtre ne rend que l’entreprise du compte', async () => {
-    // Le filtre `where client_id in (…)` est oublié partout : la portée tient seule.
-    const vu = await inClientSpace(durand, async (tx) => ({
-      clients: await tx.select({ clientId: clients.id }).from(clients),
-      membres: await tx.select({ clientId: clientMembers.clientId }).from(clientMembers),
-      contacts: await tx.select({ clientId: clientContacts.clientId }).from(clientContacts),
-      contrats: await tx.select({ clientId: contracts.clientId }).from(contracts),
-      reservations: await tx.select({ clientId: bookings.clientId }).from(bookings),
-      plis: await tx.select({ clientId: mailItems.clientId }).from(mailItems),
-      numerisations: await tx.select({ id: mailScans.id }).from(mailScans),
-      consultations: await tx.select({ id: mailScanViews.id }).from(mailScanViews),
-    }))
-
-    for (const table of ['clients', 'membres', 'contacts', 'contrats', 'reservations', 'plis'] as const) {
-      assert.deepEqual(
-        vu[table].map((row) => row.clientId),
-        [DURAND],
-        table,
-      )
-    }
-    assert.deepEqual(
-      vu.numerisations.map((row) => row.id),
-      [ids[DURAND].scan],
-    )
-    assert.equal(vu.consultations.length, 1)
-  })
-
-  it('un filtre qui désigne l’autre entreprise ne rend rien', async () => {
-    // Le cas d'un identifiant venu de l'URL, accepté sans vérifier à qui il est.
-    const vu = await inClientSpace(durand, async (tx) => ({
-      plis: await tx.select().from(mailItems).where(eq(mailItems.clientId, PETIT)),
-      numerisation: await tx
-        .select()
-        .from(mailScans)
-        .innerJoin(mailItems, eq(mailItems.id, mailScans.mailItemId))
-        .where(eq(mailScans.id, ids[PETIT].scan)),
-      reservation: await tx.select().from(bookings).where(eq(bookings.id, ids[PETIT].booking)),
-    }))
-    assert.deepEqual(vu, { plis: [], numerisation: [], reservation: [] })
-  })
-
-  it('une écriture de l’espace sans filtre n’atteint pas l’autre entreprise', async () => {
-    const touches = await inClientSpace(durand, (tx) =>
-      tx
-        .update(mailItems)
-        .set({ note: 'vu' })
-        .returning({ clientId: mailItems.clientId }),
-    )
-    assert.deepEqual(
-      touches.map((row) => row.clientId),
-      [DURAND],
-    )
-    const [petit] = await asTenant((tx) =>
-      tx.select({ note: mailItems.note }).from(mailItems).where(eq(mailItems.clientId, PETIT)),
-    )
-    assert.equal(petit.note, null)
+    await toutVider(bases.owner)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('les lectures du portail ne rendent que l’entreprise du compte', async () => {
@@ -201,7 +131,31 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
       [ids[DURAND].booking],
     )
     assert.ok(await findScanForAccounts(ids[DURAND].scan, durand))
+    // Un identifiant venu de l'URL, accepté sans vérifier à qui il est.
     assert.equal(await findScanForAccounts(ids[PETIT].scan, durand), undefined)
+  })
+
+  it('l’historique du compte ne remonte rien de l’entreprise voisine', async () => {
+    const { sources } = await loadAccountHistory(durand, {
+      year: new Date().getUTCFullYear(),
+      timeZone: 'Europe/Paris',
+    })
+    assert.deepEqual(
+      sources.bookings.map((row) => row.id),
+      [ids[DURAND].booking],
+    )
+    for (const rubrique of Object.values(sources)) {
+      for (const row of rubrique as unknown as { clientId: string; clientName: string }[]) {
+        assert.equal(row.clientId, DURAND)
+        assert.equal(row.clientName, 'Atelier Durand')
+      }
+    }
+    // Le premier instant de l'historique vient lui aussi des seules entreprises du compte.
+    assert.ok(await findAccountHistoryStart(durand))
+    // Un compte sans entreprise n'a pas d'historique.
+    assert.equal(await findAccountHistoryStart([]), null)
+    const vide = await loadAccountHistory([], { year: 2026, timeZone: 'Europe/Paris' })
+    assert.equal(vide.sources.bookings.length, 0)
   })
 
   it('les écritures du portail n’atteignent pas l’autre entreprise', async () => {
@@ -223,6 +177,60 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
     assert.equal(await cancelRequestForAccounts(ids[DURAND].booking, durand), true)
   })
 
+  it('une écriture sans filtre sous la portée d’un client échoue, sans rien modifier chez l’autre', async () => {
+    // Plus de politique qui « ne voit pas » l'autre ligne : c'est le trigger de
+    // garde qui refuse, et la transaction entière est annulée.
+    const code = await errorCode(() =>
+      inClientSpace(durand, (tx) => tx.update(clientContacts).set({ phone: '0102030405' })),
+    )
+    assert.equal(code, CLIENT_SCOPE_REFUSED)
+    const code2 = await errorCode(() =>
+      inClientSpace(durand, (tx) => tx.update(clientMembers).set({ fullName: 'Détourné' })),
+    )
+    assert.equal(code2, CLIENT_SCOPE_REFUSED)
+    const code3 = await errorCode(() =>
+      inClientSpace(durand, (tx) => tx.update(clients).set({ notes: 'Détourné' })),
+    )
+    assert.equal(code3, CLIENT_SCOPE_REFUSED)
+
+    const autres = await asTenant((tx) =>
+      lire(
+        tx,
+        sql`select (select count(*) from client_contacts where client_id = ${PETIT} and phone is not null) as contacts,
+                   (select count(*) from client_members where client_id = ${PETIT} and full_name is not null) as membres,
+                   (select count(*) from clients where id = ${PETIT} and notes is not null) as clients`,
+      ),
+    )
+    assert.deepEqual(
+      { contacts: Number(autres[0].contacts), membres: Number(autres[0].membres), clients: Number(autres[0].clients) },
+      { contacts: 0, membres: 0, clients: 0 },
+    )
+  })
+
+  it('une écriture filtrée sur l’autre entreprise, ou une insertion pour elle, est refusée', async () => {
+    assert.equal(
+      await errorCode(() =>
+        inClientSpace(durand, (tx) =>
+          tx.update(clientContacts).set({ phone: '0102030405' }).where(eq(clientContacts.clientId, PETIT)),
+        ),
+      ),
+      // Aucune ligne de Petit n'est écrite : le filtre `where` les atteint, le trigger les refuse.
+      CLIENT_SCOPE_REFUSED,
+    )
+    assert.equal(
+      await errorCode(() =>
+        inClientSpace(durand, (tx) =>
+          tx.execute(sql`insert into client_contacts (client_id, full_name) values (${PETIT}, 'Intrus')`),
+        ),
+      ),
+      CLIENT_SCOPE_REFUSED,
+    )
+    // Pour ses propres entreprises, l'écriture passe.
+    await inClientSpace(durand, (tx) =>
+      tx.update(clientContacts).set({ phone: '0102030405' }).where(inArray(clientContacts.clientId, [DURAND])),
+    )
+  })
+
   it('le journal d’accès refuse la consultation d’un pli d’une autre entreprise', async () => {
     // Même si la route avait laissé passer la numérisation de Petit, sa
     // consultation ne s'inscrirait pas au nom de Durand : et sans journal, pas
@@ -236,7 +244,7 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
         clientId: DURAND,
       }),
     )
-    assert.equal(code, PG_INSUFFICIENT_PRIVILEGE)
+    assert.equal(code, DB_INSUFFICIENT_PRIVILEGE)
 
     await logScanView({
       viewer: 'client',
@@ -251,10 +259,18 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raison 
     assert.equal(vues.length, 2)
   })
 
-  it('un compte sans entreprise ne voit rien', async () => {
-    const vu = await inClientSpace([], (tx) => tx.select().from(mailItems))
-    assert.deepEqual(vu, [])
+  it('un compte sans entreprise ne voit rien et n’écrit rien', async () => {
     assert.deepEqual(await listMailForAccounts([]), [])
+    assert.equal(await findScanForAccounts(ids[DURAND].scan, []), undefined)
+    // Portée vide : défaut fermé, toute écriture est refusée.
+    assert.equal(
+      await errorCode(() =>
+        inClientSpace([], (tx) =>
+          tx.execute(sql`insert into client_contacts (client_id, full_name) values (${DURAND}, 'x')`),
+        ),
+      ),
+      CLIENT_SCOPE_REFUSED,
+    )
   })
 
   it('le back-office, sans portée, voit toujours toutes les entreprises', async () => {

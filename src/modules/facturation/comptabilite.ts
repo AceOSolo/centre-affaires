@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto'
 
 import { and, asc, between, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 
-import { PG_CHECK_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_CHECK_VIOLATION, DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenants } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -78,14 +79,21 @@ export async function updateAccountingAccount(
   }
   if (!label) throw new AccountingAccountError('Le libellé du compte est obligatoire.')
   if (!isUuid(id)) return false
-  const updated = await withTenant(currentTenantId(), (tx) =>
-    tx
+  // MySQL compte les lignes « trouvées » seulement si on le lui demande :
+  // on relit donc l'existence plutôt que de se fier à `affectedRows`
+  // (qui vaut 0 quand le compte est déjà tel qu'on le pose).
+  return withTenant(currentTenantId(), async (tx) => {
+    await tx
       .update(accountingAccounts)
       .set({ accountNumber, label })
       .where(eq(accountingAccounts.id, id))
-      .returning({ id: accountingAccounts.id }),
-  )
-  return updated.length > 0
+    const [row] = await tx
+      .select({ id: accountingAccounts.id })
+      .from(accountingAccounts)
+      .where(eq(accountingAccounts.id, id))
+      .limit(1)
+    return row !== undefined
+  })
 }
 
 function chartOf(accounts: readonly AccountingAccount[]): FecChart {
@@ -107,7 +115,7 @@ function chartOf(accounts: readonly AccountingAccount[]): FecChart {
  * jamais `clients.name` : renommer ou anonymiser une fiche (ADR 040) ne
  * réécrit pas le livre d'une période passée.
  */
-const buyerNameAtIssue = sql<string>`${invoices.buyerSnapshot}->>'name'`
+const buyerNameAtIssue = sql<string>`json_unquote(json_extract(${invoices.buyerSnapshot}, '$.name'))`
 
 /** Factures et avoirs émis dans la période, paiements non annulés datés de la période. */
 async function loadFecSource(tx: Transaction, periodStart: string, periodEnd: string) {
@@ -262,19 +270,15 @@ export async function generateAccountingExport({
   return withTenant(currentTenantId(), async (tx) => {
     const file = await buildFile(tx, periodStart, periodEnd)
     if (file.entryCount === 0) throw new EmptyExportError()
-    const [created] = await tx
-      .insert(accountingExports)
-      .values({
-        format: 'fec',
-        periodStart,
-        periodEnd,
-        fileName: file.fileName,
-        fileSha256: file.sha256,
-        entryCount: file.entryCount,
-        generatedBy,
-      })
-      .returning()
-    return created
+    return insertReturning(tx, accountingExports, {
+      format: 'fec',
+      periodStart,
+      periodEnd,
+      fileName: file.fileName,
+      fileSha256: file.sha256,
+      entryCount: file.entryCount,
+      generatedBy,
+    })
   })
 }
 
@@ -381,8 +385,8 @@ export async function saveClientAccountingCodes(
       }
     })
   } catch (error) {
-    const sqlState = pgErrorCode(error)
-    if (sqlState === PG_UNIQUE_VIOLATION || sqlState === PG_CHECK_VIOLATION) {
+    const sqlState = dbErrorCode(error)
+    if (sqlState === DB_UNIQUE_VIOLATION || sqlState === DB_CHECK_VIOLATION) {
       return { '': 'Un de ces comptes est déjà donné à un autre client : choisissez-en un autre.' }
     }
     throw error

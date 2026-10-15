@@ -2,9 +2,14 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import {
+  ouvrirBasesDeTest,
+  raisonDeSaut,
+  viderTables,
+  type TestDatabases,
+} from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { addTeamMember, changeTeamMember, checkTeamChange, listTeam } from './equipe.ts'
 import { resolveStaffMember } from './membre.ts'
@@ -97,21 +102,11 @@ describe('règle des changements dans l’équipe', () => {
   })
 })
 
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('gestion de l’équipe en base', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('gestion de l’équipe en base', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const inscrire = async (email: string, role: 'admin' | 'staff') => {
     const member = await asTenant((tx) => addTeamMember(tx, { email, fullName: null, role }))
@@ -120,15 +115,15 @@ describe('gestion de l’équipe en base', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table staff_members cascade`
+    await viderTables(bases.owner, 'staff_members')
   })
 
   after(async () => {
-    await Promise.all([owner.client.end(), app.client.end()])
+    await bases.fermer()
   })
 
   it('inscrit un membre par son adresse, en minuscules', async () => {
@@ -173,10 +168,10 @@ describe('gestion de l’équipe en base', { skip: raison }, () => {
     assert.equal(result.ok, true)
 
     // Décision 6 : la ligne reste, datée.
-    const [ligne] = await asTenant((tx) =>
+    const [lignes] = (await asTenant((tx) =>
       tx.execute(sql`select deleted_at from staff_members where id = ${camille.id}`),
-    )
-    assert.ok(ligne.deleted_at)
+    )) as unknown as [{ deleted_at: Date | null }[]]
+    assert.ok(lignes[0].deleted_at)
     assert.deepEqual(
       (await asTenant(listTeam)).map((member) => member.email),
       ['moi@exemple.fr'],
@@ -194,11 +189,11 @@ describe('gestion de l’équipe en base', { skip: raison }, () => {
       const result = await asTenant((tx) => changeTeamMember(tx, moi.id, moi.id, change))
       assert.deepEqual(result, { ok: false, refusal: 'soi-meme' })
     }
-    const [ligne] = await asTenant((tx) =>
+    const [lignes] = (await asTenant((tx) =>
       tx.execute(sql`select role, deleted_at from staff_members where id = ${moi.id}`),
-    )
-    assert.equal(ligne.role, 'admin')
-    assert.equal(ligne.deleted_at, null)
+    )) as unknown as [{ role: string; deleted_at: Date | null }[]]
+    assert.equal(lignes[0].role, 'admin')
+    assert.equal(lignes[0].deleted_at, null)
   })
 
   it('refuse de retirer ou de rétrograder le dernier exploitant', async () => {
@@ -225,7 +220,7 @@ describe('gestion de l’équipe en base', { skip: raison }, () => {
     const accueil = await inscrire('accueil@exemple.fr', 'staff')
     const ancien = await inscrire('ancien@exemple.fr', 'admin')
     const actuel = await inscrire('actuel@exemple.fr', 'admin')
-    await asTenant((tx) => tx.execute(sql`update staff_members set deleted_at = now() where id = ${ancien.id}`))
+    await asTenant((tx) => tx.execute(sql`update staff_members set deleted_at = CURRENT_TIMESTAMP(3) where id = ${ancien.id}`))
     const result = await asTenant((tx) => changeTeamMember(tx, accueil.id, actuel.id, { kind: 'retrait' }))
     assert.deepEqual(result, { ok: false, refusal: 'dernier-exploitant' })
   })
@@ -264,6 +259,8 @@ describe('gestion de l’équipe en base', { skip: raison }, () => {
     valider()
 
     const results = await Promise.all([premiere, seconde])
+    // MySQL : la seconde transaction attend le verrou, relit après la
+    // validation de la première et se voit refuser le retrait du dernier.
     assert.equal(results.filter((result) => result.ok).length, 1)
     assert.deepEqual(
       results.filter((result) => !result.ok),

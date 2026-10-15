@@ -1,13 +1,15 @@
 import { and, asc, eq, gt, gte, isNull, lt, ne, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import {
-  PG_CHECK_VIOLATION,
-  PG_CONTRACT_OCCUPATION_LOCKED,
-  PG_EXCLUSION_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_CONTRACT_OCCUPATION_LOCKED,
+  DB_EXCLUSION_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { tenants } from '../../db/tenants.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -155,9 +157,10 @@ export class ContractOccupationLockedError extends Error {
 /**
  * Réservations qui occupent déjà la ressource sur l'intervalle.
  *
- * Reproduit le prédicat de `bookings_no_overlap` : bornes `[)` et annulées
- * exclues. Sert à nommer le conflit dans le message d'erreur, jamais à
- * autoriser l'écriture — c'est la contrainte qui tranche (décision 3).
+ * Reproduit le prédicat des triggers `bookings_before_insert` / `_update` :
+ * bornes `[)` et annulées exclues. Sert à nommer le conflit dans le message
+ * d'erreur, jamais à autoriser l'écriture — c'est la base qui tranche
+ * (décision 3).
  */
 function selectConflicts(
   tx: Transaction,
@@ -292,11 +295,12 @@ async function requoteMovedBooking(tx: Transaction, row: Booking): Promise<Booki
   if (!result.ok && result.reason === 'remise-excessive') {
     result = await quoteInTransaction(tx, { ...request, discount: null })
   }
-  const [requoted] = await tx
-    .update(bookings)
-    .set(result.ok ? bookingQuoteColumns(result.quote, new Date()) : NO_BOOKING_QUOTE)
-    .where(eq(bookings.id, row.id))
-    .returning()
+  const [requoted] = await updateReturning(
+    tx,
+    bookings,
+    result.ok ? bookingQuoteColumns(result.quote, new Date()) : NO_BOOKING_QUOTE,
+    eq(bookings.id, row.id),
+  )
   return requoted
 }
 
@@ -314,7 +318,7 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
-    const [created] = await withTenant(currentTenantId(), async (tx) => {
+    const created = await withTenant(currentTenantId(), async (tx) => {
       if (input.contractId) {
         await assertBookingContract(tx, input.contractId, {
           clientId: input.clientId ?? null,
@@ -333,26 +337,23 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
         },
         input.pricing,
       )
-      return tx
-        .insert(bookings)
-        .values({
-          resourceId: input.resourceId,
-          startsAt: input.startsAt,
-          endsAt: input.endsAt,
-          title: input.title,
-          notes: input.notes ?? null,
-          clientId: input.clientId ?? null,
-          contractId: input.contractId ?? null,
-          // Saisie du back-office (R05).
-          channel: 'staff',
-          ...quote,
-        })
-        .returning()
+      return insertReturning(tx, bookings, {
+        resourceId: input.resourceId,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        title: input.title,
+        notes: input.notes ?? null,
+        clientId: input.clientId ?? null,
+        contractId: input.contractId ?? null,
+        // Saisie du back-office (R05).
+        channel: 'staff',
+        ...quote,
+      })
     })
     return created
   } catch (error) {
-    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
-    // La contrainte a refusé l'écriture ; on relit pour dire au staff quelle
+    if (dbErrorCode(error) !== DB_EXCLUSION_VIOLATION) throw error
+    // La base a refusé l'écriture ; on relit pour dire au staff quelle
     // réservation occupe le créneau plutôt que « conflit ».
     const conflicts = await withTenant(currentTenantId(), (tx) => selectConflicts(tx, input))
     throw new BookingConflictError(conflicts)
@@ -395,21 +396,20 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
 
   try {
     const moved = await withTenant(currentTenantId(), async (tx) => {
-      const [row] = await tx
-        .update(bookings)
-        .set({
+      const [row] = await updateReturning(
+        tx,
+        bookings,
+        {
           resourceId: input.resourceId,
           startsAt: input.startsAt,
           endsAt: input.endsAt,
-        })
-        .where(
-          and(
-            eq(bookings.id, input.id),
-            ne(bookings.status, 'cancelled'),
-            ne(bookings.kind, 'contract'),
-          ),
-        )
-        .returning()
+        },
+        and(
+          eq(bookings.id, input.id),
+          ne(bookings.status, 'cancelled'),
+          ne(bookings.kind, 'contract'),
+        ),
+      )
       if (!row) {
         const [occupation] = await tx
           .select({ id: bookings.id })
@@ -422,10 +422,10 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
     })
     return moved
   } catch (error) {
-    if (pgErrorCode(error) === PG_CONTRACT_OCCUPATION_LOCKED) {
+    if (dbErrorCode(error) === DB_CONTRACT_OCCUPATION_LOCKED) {
       throw new ContractOccupationLockedError()
     }
-    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
+    if (dbErrorCode(error) !== DB_EXCLUSION_VIOLATION) throw error
     const conflicts = await withTenant(currentTenantId(), (tx) =>
       selectConflicts(tx, input, input.id),
     )
@@ -455,7 +455,7 @@ export async function cancelBooking(
       .update(bookings)
       .set({
         status: 'cancelled',
-        cancelledAt: sql`now()`,
+        cancelledAt: maintenant(),
         cancellationReason: reason?.trim() || null,
         cancelledByStaffId: staffId ?? null,
       })
@@ -525,7 +525,7 @@ export async function countRecentRequestsByEmail(
   const since = new Date(Date.now() - windowHours * 3_600_000)
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({ count: sql<number>`count(*)::int` })
+      .select({ count: sql<number>`count(*)`.mapWith(Number) })
       .from(bookings)
       .where(
         and(eq(bookings.requesterEmail, email.trim().toLowerCase()), gte(bookings.createdAt, since)),
@@ -552,7 +552,7 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
-    const [created] = await withTenant(currentTenantId(), async (tx) => {
+    const created = await withTenant(currentTenantId(), async (tx) => {
       // Le montant affiché au demandeur est figé sur sa demande (R11) : celui
       // que l'équipe validera et que la facture reprendra.
       const quote = await quoteColumnsFor(
@@ -565,29 +565,26 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
         },
         input.pricing,
       )
-      return tx
-        .insert(bookings)
-        .values({
-          resourceId: input.resourceId,
-          startsAt: input.startsAt,
-          endsAt: input.endsAt,
-          title: input.title,
-          notes: input.notes ?? null,
-          status: 'pending',
-          requesterName: input.requesterName.trim(),
-          requesterEmail: input.requesterEmail.trim().toLowerCase(),
-          requesterPhone: input.requesterPhone.trim(),
-          clientId: input.clientId ?? null,
-          // Rattachée à son entreprise, la demande vient d'une personne
-          // connectée à son espace (ADR 015) ; sinon d'un visiteur (ADR 005).
-          channel: input.clientId ? 'client' : 'public',
-          ...quote,
-        })
-        .returning()
+      return insertReturning(tx, bookings, {
+        resourceId: input.resourceId,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        title: input.title,
+        notes: input.notes ?? null,
+        status: 'pending',
+        requesterName: input.requesterName.trim(),
+        requesterEmail: input.requesterEmail.trim().toLowerCase(),
+        requesterPhone: input.requesterPhone.trim(),
+        clientId: input.clientId ?? null,
+        // Rattachée à son entreprise, la demande vient d'une personne
+        // connectée à son espace (ADR 015) ; sinon d'un visiteur (ADR 005).
+        channel: input.clientId ? 'client' : 'public',
+        ...quote,
+      })
     })
     return created
   } catch (error) {
-    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
+    if (dbErrorCode(error) !== DB_EXCLUSION_VIOLATION) throw error
     const conflicts = await withTenant(currentTenantId(), (tx) => selectConflicts(tx, input))
     throw new BookingConflictError(conflicts)
   }
@@ -639,7 +636,7 @@ export async function refuseBooking(
       .update(bookings)
       .set({
         status: 'cancelled',
-        cancelledAt: sql`now()`,
+        cancelledAt: maintenant(),
         cancellationReason: reason?.trim() || 'Demande refusée',
         cancelledByStaffId: staffId ?? null,
       })
@@ -656,11 +653,11 @@ function bookingClientFacts(tx: Transaction, id: string) {
       cancelledByMemberId: bookings.cancelledByMemberId,
       inspected: sql<boolean>`exists (
         select 1 from inspections as x
-         where x.tenant_id = ${bookings.tenantId} and x.booking_id = ${bookings.id})`,
+         where x.tenant_id = ${bookings.tenantId} and x.booking_id = ${bookings.id})`.mapWith(Boolean),
       invoiced: sql<boolean>`exists (
         select 1 from invoice_lines as l
          where l.tenant_id = ${bookings.tenantId} and l.booking_id = ${bookings.id}
-           and l.deleted_at is null and l.released_at is null)`,
+           and l.deleted_at is null and l.released_at is null)`.mapWith(Boolean),
     })
     .from(bookings)
     .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract')))
@@ -694,7 +691,7 @@ export type AssignBookingClientOutcome = { ok: true } | { ok: false; message: st
 export async function assignBookingClient(id: string, clientId: string | null): Promise<AssignBookingClientOutcome> {
   try {
     return await withTenant(currentTenantId(), async (tx) => {
-      const [facts] = await bookingClientFacts(tx, id).for('update', { of: bookings })
+      const [facts] = await bookingClientFacts(tx, id).for('update')
       if (!facts) return { ok: false, message: 'Réservation introuvable.' }
       if (facts.clientId === clientId) return { ok: true }
       const lock = bookingClientLock(facts)
@@ -703,22 +700,25 @@ export async function assignBookingClient(id: string, clientId: string | null): 
         .update(bookings)
         .set({
           clientId,
-          // Les expressions de `SET` lisent l'ancienne ligne : le contrat n'est
-          // gardé que si le client ne change pas.
-          contractId: sql`case when ${bookings.clientId} is not distinct from ${clientId}::uuid then ${bookings.contractId} end`,
+          // Le client change (le cas « inchangé » est sorti plus haut) : le
+          // contrat de l'ancien ne couvre plus la réservation (R05). Écrit en
+          // clair et non par une expression lisant l'ancienne ligne : MySQL
+          // évalue les affectations de gauche à droite, sur la valeur déjà
+          // modifiée.
+          contractId: null,
         })
         .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract')))
       return { ok: true }
     })
   } catch (error) {
-    const code = pgErrorCode(error)
-    if (code === PG_FOREIGN_KEY_VIOLATION) {
+    const code = dbErrorCode(error)
+    if (code === DB_FOREIGN_KEY_VIOLATION) {
       return {
         ok: false,
         message: 'Ce client ne peut pas être rattaché : la réservation est liée à des éléments de son client actuel. Rien n’a été modifié.',
       }
     }
-    if (code === PG_CHECK_VIOLATION) {
+    if (code === DB_CHECK_VIOLATION) {
       return {
         ok: false,
         message: 'Cette réservation ne peut pas rester sans client. Rien n’a été modifié.',

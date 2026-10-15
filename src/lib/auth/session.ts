@@ -1,5 +1,7 @@
 import { cache } from 'react'
 
+import { headers } from 'next/headers'
+
 import type { AuthenticatedUser } from './membre.ts'
 import { getAuth } from './server.ts'
 
@@ -15,7 +17,7 @@ import { getAuth } from './server.ts'
  */
 export const sessionUser = cache(
   async (): Promise<{ user: AuthenticatedUser; emailVerified?: boolean } | undefined> => {
-    const { data: session } = await getAuth().getSession()
+    const session = await getAuth().api.getSession({ headers: await headers() })
     const raw = session?.user as
       | { id?: string; email?: string; name?: string | null; emailVerified?: boolean }
       | undefined

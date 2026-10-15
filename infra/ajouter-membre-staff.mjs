@@ -8,7 +8,7 @@
  *
  * Amorçage : personne ne peut inscrire un membre depuis l'application tant
  * qu'aucun membre n'existe. Ce script est la porte d'entrée initiale, et il
- * s'exécute avec le rôle applicatif — donc sous les politiques d'isolation par
+ * s'exécute avec l'identité applicative — donc sous les gardes d'écriture par
  * centre, comme le ferait l'application.
  *
  * Une fois le premier exploitant (`--role admin`) inscrit, l'équipe se gère
@@ -21,16 +21,9 @@
  * /auth/connexion avec cette adresse, et le rattachement se fait à la première
  * connexion.
  */
-import postgres from 'postgres'
+import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs'
 
-const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
 const ROLES = ['admin', 'staff']
-
-const url = process.env.APP_DATABASE_URL
-if (!url) {
-  console.error('APP_DATABASE_URL manquant (voir .env.example).')
-  process.exit(1)
-}
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -43,23 +36,19 @@ const email = args.find((arg) => !arg.startsWith('--') && arg.includes('@'))?.tr
 const role = flag('role') ?? 'staff'
 const fullName = flag('nom') ?? null
 
-const sql = postgres(url, { prepare: false })
-
-const inTenant = (run) =>
-  sql.begin(async (tx) => {
-    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
-    return run(tx)
-  })
+const { client } = ouvrirBase()
 
 try {
   if (has('lister')) {
-    const rows = await inTenant(
-      (tx) => tx`
-        select email, role, full_name, auth_user_id is not null as connecte, created_at
-          from staff_members
-         where deleted_at is null
-         order by created_at`,
-    )
+    const rows = await dansLeCentre(client, async (cnx) => {
+      const [lignes] = await cnx.query(
+        `select email, role, full_name, auth_user_id is not null as connecte, created_at
+           from staff_members
+          where deleted_at is null
+          order by created_at`,
+      )
+      return lignes
+    })
     if (rows.length === 0) {
       console.log("Aucun membre : le back-office n'est accessible à personne.")
     } else {
@@ -83,15 +72,17 @@ try {
 
   if (has('retirer')) {
     // Retrait logique : l'accès cesse, la trace du passage reste (décision 6).
-    const removed = await inTenant(
-      (tx) => tx`
-        update staff_members
-           set deleted_at = now()
-         where email = ${email} and deleted_at is null
-         returning email`,
-    )
+    const removed = await dansLeCentre(client, async (cnx) => {
+      const [header] = await cnx.query(
+        `update staff_members
+            set deleted_at = CURRENT_TIMESTAMP(3)
+          where email = ? and deleted_at is null`,
+        [email],
+      )
+      return header.affectedRows
+    })
     console.log(
-      removed.length > 0
+      removed > 0
         ? `${email} n'a plus accès au back-office.`
         : `${email} ne fait pas partie de l'équipe.`,
     )
@@ -103,24 +94,35 @@ try {
     process.exit(1)
   }
 
-  const [membre] = await inTenant(
-    (tx) => tx`
-      insert into staff_members (email, role, full_name)
-      values (${email}, ${role}, ${fullName})
-      on conflict do nothing
-      returning email, role`,
-  )
+  const inscrit = await dansLeCentre(client, async (cnx) => {
+    // Base vide : la ligne du centre est posée au premier ajout.
+    await assurerCentre(cnx)
+    // Lecture puis écriture : l'unicité de l'adresse ne vaut que pour les
+    // membres vivants, un doublon est refusé ici plutôt que par un index.
+    const [[existant]] = await cnx.query(
+      'select id from staff_members where email = ? and deleted_at is null',
+      [email],
+    )
+    if (existant) return false
+    await cnx.query('insert into staff_members (id, email, role, full_name) values (?, ?, ?, ?)', [
+      uuidv7(),
+      email,
+      role,
+      fullName,
+    ])
+    return true
+  })
 
-  if (!membre) {
+  if (!inscrit) {
     console.log(`${email} fait déjà partie de l'équipe.`)
     process.exit(0)
   }
 
-  console.log(`${membre.email} inscrit comme « ${membre.role} ».`)
+  console.log(`${email} inscrit comme « ${role} ».`)
   console.log(
     "Prochaine étape : la personne crée son compte sur /auth/connexion avec cette adresse ; " +
       'le rattachement se fait tout seul à la première connexion.',
   )
 } finally {
-  await sql.end()
+  await client.end()
 }

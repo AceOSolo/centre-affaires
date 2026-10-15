@@ -6,8 +6,8 @@ import type { ContractStatus } from './schema.ts'
 /**
  * Occupation d'une ressource par son contrat (ADR 018), vue du code.
  *
- * L'autorité est en base : `apply_contract_occupation` (migration 0026) écrit
- * la ligne de `bookings`, et la contrainte d'exclusion tranche. Ces fonctions
+ * L'autorité est en base : `apply_contract_occupation` (`src/db/regles/40-contrats.sql`) écrit
+ * la ligne de `bookings`, et le trigger anti-chevauchement tranche. Ces fonctions
  * reproduisent les mêmes règles pour trois usages seulement : annoncer sur la
  * fiche ce que l'activation occupera, nommer la réservation qui bloque quand la
  * base refuse, et dire si un contrat couvre un créneau (R05). Elles doivent

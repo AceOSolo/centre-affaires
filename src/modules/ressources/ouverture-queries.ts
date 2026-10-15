@@ -1,6 +1,7 @@
 import { and, asc, eq, gte, isNull, lte } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { planCopieHoraires, type ClosurePeriod, type OpeningRule } from './ouverture.ts'
 import {
@@ -68,18 +69,14 @@ export type OpeningHourInput = {
 }
 
 export async function addOpeningHour(input: OpeningHourInput): Promise<OpeningHour> {
-  const [created] = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .insert(openingHours)
-      .values({
-        resourceId: input.resourceId || null,
-        weekday: input.weekday,
-        opensAt: input.opensAt,
-        closesAt: input.closesAt,
-      })
-      .returning(),
+  return withTenant(currentTenantId(), (tx) =>
+    insertReturning(tx, openingHours, {
+      resourceId: input.resourceId || null,
+      weekday: input.weekday,
+      opensAt: input.opensAt,
+      closesAt: input.closesAt,
+    }),
   )
-  return created
 }
 
 /**
@@ -126,18 +123,14 @@ export type ClosureInput = {
 }
 
 export async function addClosure(input: ClosureInput): Promise<Closure> {
-  const [created] = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .insert(closures)
-      .values({
-        resourceId: input.resourceId || null,
-        startsOn: input.startsOn,
-        endsOn: input.endsOn,
-        reason: input.reason?.trim() || null,
-      })
-      .returning(),
+  return withTenant(currentTenantId(), (tx) =>
+    insertReturning(tx, closures, {
+      resourceId: input.resourceId || null,
+      startsOn: input.startsOn,
+      endsOn: input.endsOn,
+      reason: input.reason?.trim() || null,
+    }),
   )
-  return created
 }
 
 export async function removeClosure(id: string): Promise<void> {

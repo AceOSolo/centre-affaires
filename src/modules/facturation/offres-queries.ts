@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { tenants } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
@@ -69,7 +71,7 @@ export async function countContractsFromOffer(offerId: string): Promise<number> 
   if (!isUuid(offerId)) return 0
   const [row] = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({ total: sql<number>`count(*)::int` })
+      .select({ total: sql<number>`count(*)`.mapWith(Number) })
       .from(contracts)
       .where(and(eq(contracts.offerId, offerId), isNull(contracts.deletedAt))),
   )
@@ -213,10 +215,7 @@ async function assertOfferActive(tx: Transaction, offerId: string): Promise<void
 export async function createOffer(
   input: OfferHeaderInput & { currency?: string },
 ): Promise<Offer> {
-  const [created] = await withTenant(currentTenantId(), (tx) =>
-    tx.insert(offers).values(input).returning(),
-  )
-  return created
+  return withTenant(currentTenantId(), (tx) => insertReturning(tx, offers, input))
 }
 
 export async function updateOffer(id: string, input: OfferHeaderInput): Promise<void> {
@@ -233,11 +232,7 @@ export async function updateOffer(id: string, input: OfferHeaderInput): Promise<
 export async function archiveOffer(id: string): Promise<boolean> {
   if (!isUuid(id)) return false
   const archived = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(offers)
-      .set({ deletedAt: sql`now()` })
-      .where(and(eq(offers.id, id), isNull(offers.deletedAt)))
-      .returning({ id: offers.id }),
+    updateReturning(tx, offers, { deletedAt: maintenant() }, and(eq(offers.id, id), isNull(offers.deletedAt))),
   )
   return archived.length > 0
 }
@@ -247,14 +242,10 @@ export async function addOfferItem(offerId: string, input: OfferItemInput): Prom
   return withTenant(currentTenantId(), async (tx) => {
     await assertOfferActive(tx, offerId)
     const [last] = await tx
-      .select({ position: sql<number>`coalesce(max(${offerItems.position}), -1)::int` })
+      .select({ position: sql<number>`coalesce(max(${offerItems.position}), -1)`.mapWith(Number) })
       .from(offerItems)
       .where(and(eq(offerItems.offerId, offerId), isNull(offerItems.deletedAt)))
-    const [created] = await tx
-      .insert(offerItems)
-      .values({ ...input, offerId, position: (last?.position ?? -1) + 1 })
-      .returning()
-    return created
+    return insertReturning(tx, offerItems, { ...input, offerId, position: (last?.position ?? -1) + 1 })
   })
 }
 
@@ -267,13 +258,12 @@ export async function updateOfferItem(
   if (!isUuid(id)) return false
   return withTenant(currentTenantId(), async (tx) => {
     await assertOfferActive(tx, offerId)
-    const updated = await tx
-      .update(offerItems)
-      .set(input)
-      .where(
-        and(eq(offerItems.id, id), eq(offerItems.offerId, offerId), isNull(offerItems.deletedAt)),
-      )
-      .returning({ id: offerItems.id })
+    const updated = await updateReturning(
+      tx,
+      offerItems,
+      input,
+      and(eq(offerItems.id, id), eq(offerItems.offerId, offerId), isNull(offerItems.deletedAt)),
+    )
     return updated.length > 0
   })
 }
@@ -286,13 +276,12 @@ export async function removeOfferItem(offerId: string, id: string): Promise<bool
   if (!isUuid(id)) return false
   return withTenant(currentTenantId(), async (tx) => {
     await assertOfferActive(tx, offerId)
-    const removed = await tx
-      .update(offerItems)
-      .set({ deletedAt: sql`now()` })
-      .where(
-        and(eq(offerItems.id, id), eq(offerItems.offerId, offerId), isNull(offerItems.deletedAt)),
-      )
-      .returning({ id: offerItems.id })
+    const removed = await updateReturning(
+      tx,
+      offerItems,
+      { deletedAt: maintenant() },
+      and(eq(offerItems.id, id), eq(offerItems.offerId, offerId), isNull(offerItems.deletedAt)),
+    )
     return removed.length > 0
   })
 }

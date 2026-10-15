@@ -3,23 +3,26 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { and, eq, isNull, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_EXCLUSION_VIOLATION,
-  PG_INSUFFICIENT_PRIVILEGE,
-  PG_INVOICE_INVALID,
-  PG_INVOICE_LOCKED,
-  PG_PAYMENT_REFUSED,
-  PG_SEPA_MANDATE_LOCKED,
-  PG_UNIQUE_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_EXCLUSION_VIOLATION,
+  DB_INSUFFICIENT_PRIVILEGE,
+  DB_INVOICE_INVALID,
+  DB_INVOICE_LOCKED,
+  DB_PAYMENT_REFUSED,
+  DB_SEPA_MANDATE_LOCKED,
+  DB_UNIQUE_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { createDatabase, databaseOptionsFromEnv, withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { DocumentKeyring } from '../../lib/chiffrement-documents.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { lire, sansTriggers, toutVider } from '../clients/test-support.ts'
 import { openIban, sealIban } from './iban.ts'
 import { invoiceAmounts } from './montants.ts'
 import {
@@ -32,34 +35,29 @@ import {
 
 /**
  * Factures structurées (R13, R15, R16, ADR 026, ADR 027) : les garanties sont
- * en base, éprouvées ici sous `app_centre`, comme l'application les écrit.
+ * en base (`src/db/regles/50-facturation.sql`), éprouvées ici sous l'identité
+ * applicative, comme l'application les écrit.
  *
  * - une facture naît brouillon, sans numéro ; `issue_invoice()` la numérote
  *   sans trou, la date, fige le vendeur, l'acheteur et les mentions ;
  * - émise, elle ne change plus : toute correction passe par un avoir ;
  * - une source (réservation, pli, période d'un contrat ou d'une souscription)
  *   n'est facturée qu'une fois, hors avoir ;
- * - TVA par taux et totaux sont recalculés par la base depuis les lignes ;
+ * - TVA par taux et totaux sont recalculés par la base depuis les lignes, à
+ *   l'appel de `invoice_refresh_amounts()` (MySQL n'a pas de trigger
+ *   d'instruction : le code l'appelle après ses écritures de lignes, les
+ *   assistants de ce fichier font de même) ;
  * - le statut de paiement se déduit des paiements et des avoirs ;
  * - un IBAN de mandat n'est jamais en clair.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
 const PARIS = 'Europe/Paris'
 /** Année civile du centre : celle que porte le numéro. */
 const ANNEE = todayIsoDate(PARIS).slice(0, 4)
 
-describe('factures', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
+describe('factures', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
   // Assez de connexions pour que les émissions concurrentes le soient vraiment.
-  const app = createDatabase(appUrl ?? '', { max: 12 })
+  let concurrent: ReturnType<typeof createDatabase>
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000f0d01'
   const DURAND = '01a00000-0000-7000-8000-0000000f0c01'
@@ -70,7 +68,7 @@ describe('factures', { skip: raison }, () => {
   const trousseau: DocumentKeyring = { currentVersion: 1, keys: new Map([[1, randomBytes(32)]]) }
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const errorOf = async (run: () => Promise<unknown>): Promise<unknown> => {
     try {
@@ -80,49 +78,56 @@ describe('factures', { skip: raison }, () => {
     }
     return undefined
   }
-  const errorCode = async (run: () => Promise<unknown>) => pgErrorCode(await errorOf(run))
+  const errorCode = async (run: () => Promise<unknown>) => dbErrorCode(await errorOf(run))
 
-  /** Message de Postgres, sous l'enveloppe de Drizzle. */
+  /** Message de MySQL, sous l'enveloppe de Drizzle. */
   const messageOf = (error: unknown): string => {
     const messages: string[] = []
     for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
       messages.push(String((cause as { message?: unknown }).message ?? ''))
+      messages.push(String((cause as { sqlMessage?: unknown }).sqlMessage ?? ''))
       cause = (cause as { cause?: unknown }).cause
     }
     return messages.join(' | ')
   }
 
+  /** Une ligne d'une requête brute sous la transaction du centre. */
+  const une = async (requete: ReturnType<typeof sql>) => (await asTenant((tx) => lire(tx, requete)))[0]
+
   /** Brouillon de facture de septembre pour un client. */
-  const brouillon = async (
-    values: Partial<typeof invoices.$inferInsert> = {},
-  ): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+  const brouillon = async (values: Partial<typeof invoices.$inferInsert> = {}): Promise<string> => {
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx
         .insert(invoices)
-        .values({ clientId: DURAND, periodStart: '2026-09-01', periodEnd: '2026-09-30', ...values })
-        .returning({ id: invoices.id }),
+        .values({ id, clientId: DURAND, periodStart: '2026-09-01', periodEnd: '2026-09-30', ...values }),
     )
-    return row.id
+    return id
   }
 
   type LigneSaisie = Omit<NewInvoiceLine, 'invoiceId' | 'kind' | 'description' | 'unitPriceCents' | 'vatRateBp'> &
     Partial<Pick<NewInvoiceLine, 'kind' | 'description' | 'unitPriceCents' | 'vatRateBp'>>
 
+  /** Recalcul des montants du brouillon, comme le fait le code après ses écritures. */
+  const recalculer = (invoiceId: string) =>
+    asTenant((tx) => tx.execute(sql`select invoice_refresh_amounts(${invoiceId})`))
+
   /** Ligne libre à 20 % par défaut. */
   const ligne = async (invoiceId: string, values: LigneSaisie = {}) => {
-    const [row] = await asTenant((tx) =>
-      tx
-        .insert(invoiceLines)
-        .values({
-          invoiceId,
-          kind: 'other',
-          description: 'Prestation',
-          unitPriceCents: 10_000,
-          vatRateBp: 2_000,
-          ...values,
-        })
-        .returning(),
+    const id = uuidv7()
+    await asTenant((tx) =>
+      tx.insert(invoiceLines).values({
+        id,
+        invoiceId,
+        kind: 'other',
+        description: 'Prestation',
+        unitPriceCents: 10_000,
+        vatRateBp: 2_000,
+        ...values,
+      }),
     )
+    await recalculer(invoiceId)
+    const [row] = await asTenant((tx) => tx.select().from(invoiceLines).where(eq(invoiceLines.id, id)))
     return row
   }
 
@@ -140,35 +145,26 @@ describe('factures', { skip: raison }, () => {
         .orderBy(invoiceLines.position, invoiceLines.id),
     )
 
-  const emettre = async (id: string): Promise<string> => {
-    const [row] = await asTenant((tx) =>
-      tx.execute(sql`select issue_invoice(${id}::uuid, ${ACCUEIL}::uuid) as numero`),
-    )
-    return row.numero as string
-  }
+  const emettre = async (id: string): Promise<string> =>
+    (await une(sql`select issue_invoice(${id}, ${ACCUEIL}) as numero`)).numero as string
 
   const brouillonAvoir = async (invoiceId: string, motif = 'Erreur de facturation'): Promise<string> => {
-    const [row] = await asTenant((tx) =>
-      tx.execute(sql`select draft_credit_note(${invoiceId}::uuid, ${motif}) as id`),
-    )
-    return row.id as string
+    const id = uuidv7()
+    await asTenant((tx) => tx.execute(sql`call draft_credit_note(${id}, ${invoiceId}, ${motif})`))
+    return id
   }
 
   const payer = (invoiceId: string, amountCents: number, values: Partial<typeof payments.$inferInsert> = {}) =>
-    asTenant(async (tx) => {
-      const [row] = await tx
-        .insert(payments)
-        .values({
-          invoiceId,
-          amountCents,
-          paidOn: '2026-10-05',
-          method: 'transfer',
-          recordedBy: ACCUEIL,
-          ...values,
-        })
-        .returning()
-      return row
-    })
+    asTenant((tx) =>
+      insertReturning(tx, payments, {
+        invoiceId,
+        amountCents,
+        paidOn: '2026-10-05',
+        method: 'transfer',
+        recordedBy: ACCUEIL,
+        ...values,
+      }),
+    )
 
   /** Facture émise d'une ligne de 100 € HT à 20 %. */
   const factureEmise = async (values: Partial<typeof invoices.$inferInsert> = {}) => {
@@ -180,55 +176,100 @@ describe('factures', { skip: raison }, () => {
 
   /** Réservation de deux heures de salle à 25 € HT, prix figé (R11). */
   const reservation = async (clientId = DURAND, jour = '2026-09-10'): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title,
+        insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title,
                               quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp,
                               quote_currency, quoted_at)
-        values (${SALLE}, ${clientId}, 'staff', ${`${jour}T08:00:00Z`}, ${`${jour}T10:00:00Z`}, 'Réunion',
-                'hour', 2, 2500, 2000, 'EUR', now())
-        returning id`),
+        values (${id}, ${SALLE}, ${clientId}, 'staff', ${`${jour} 08:00:00.000`}, ${`${jour} 10:00:00.000`},
+                'Réunion', 'hour', 2, 2500, 2000, 'EUR', current_timestamp(3))`),
     )
-    return row.id as string
+    return id
   }
 
   /** Pli ouvert et numérisé : un acte à facturer (R14). */
   const pliOuvert = async (clientId = DURAND): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, status, opened_at, opened_by, sender)
-        values (${clientId}, 'opened', '2026-09-12T09:00:00Z', ${ACCUEIL}, 'URSSAF')
-        returning id`),
+        insert into mail_items (id, client_id, status, opened_at, opened_by, sender)
+        values (${id}, ${clientId}, 'opened', '2026-09-12 09:00:00.000', ${ACCUEIL}, 'URSSAF')`),
     )
-    return row.id as string
+    return id
   }
 
   /** Service du catalogue : l'ouverture d'un pli, ou un forfait mensuel. */
   const service = async (nature: 'act' | 'package'): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       nature === 'act'
         ? tx.execute(sql`
-            insert into services (code, name, nature, unit, unit_price_cents)
-            values ('courrier.ouverture', 'Ouverture et numérisation', 'act', 'unit', 300) returning id`)
+            insert into services (id, code, name, nature, unit, unit_price_cents)
+            values (${id}, 'courrier.ouverture', 'Ouverture et numérisation', 'act', 'unit', 300)`)
         : tx.execute(sql`
-            insert into services (name, nature, unit, unit_price_cents)
-            values ('Standard téléphonique', 'package', 'month', 5000) returning id`),
+            insert into services (id, name, nature, unit, unit_price_cents)
+            values (${id}, 'Standard téléphonique', 'package', 'month', 5000)`),
     )
-    return row.id as string
+    return id
   }
 
   /** Contrat de bureau actif, sans ressource (l'occupation n'est pas le sujet). */
   const contrat = async (clientId = DURAND): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into contracts (client_id, reference, contract_type, status, starts_on, amount_cents)
-        values (${clientId}, ${`BUR-${clientId.slice(-2)}`}, 'bureau', 'active', '2026-01-01', 90000)
-        returning id`),
+        insert into contracts (id, client_id, reference, contract_type, status, starts_on, amount_cents)
+        values (${id}, ${clientId}, ${`BUR-${clientId.slice(-2)}`}, 'bureau', 'active', '2026-01-01', 90000)`),
     )
-    return row.id as string
+    return id
   }
 
-  const identiteDuCentre = sql`
+  /** Contrat de bureau brouillon : `id`, à activer ensuite. */
+  const contratBrouillon = async (reference: string, contractType: string, startsOn: string, amountCents: number) => {
+    const id = uuidv7()
+    await asTenant((tx) =>
+      tx.execute(sql`
+        insert into contracts (id, client_id, reference, contract_type, starts_on, amount_cents)
+        values (${id}, ${DURAND}, ${reference}, ${contractType}, ${startsOn}, ${amountCents})`),
+    )
+    return id
+  }
+
+  const ligneDeContrat = async (
+    contractId: string,
+    prix: number,
+    { amendmentId = null, unit = null, recurrente = true }: { amendmentId?: string | null; unit?: string | null; recurrente?: boolean } = {},
+  ) => {
+    const id = uuidv7()
+    await asTenant((tx) =>
+      tx.execute(
+        unit
+          ? sql`
+              insert into contract_lines (id, contract_id, amendment_id, description, unit, unit_price_cents, is_recurring)
+              values (${id}, ${contractId}, ${amendmentId}, 'Ligne', ${unit}, ${prix}, ${recurrente})`
+          : sql`
+              insert into contract_lines (id, contract_id, amendment_id, description, unit_price_cents, is_recurring)
+              values (${id}, ${contractId}, ${amendmentId}, 'Bureau', ${prix}, ${recurrente})`,
+      ),
+    )
+    return id
+  }
+
+  const activer = (contractId: string) =>
+    asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contractId}`))
+
+  const avenant = async (contractId: string, effectiveOn: string) => {
+    const id = uuidv7()
+    await asTenant((tx) =>
+      tx.execute(sql`
+        insert into contract_amendments (id, contract_id, effective_on, reason)
+        values (${id}, ${contractId}, ${effectiveOn}, 'Indexation')`),
+    )
+    return id
+  }
+
+  const identiteDuCentre = `
     update tenants set
       legal_name = 'Centre de démonstration SAS',
       legal_form = 'SAS',
@@ -243,18 +284,31 @@ describe('factures', { skip: raison }, () => {
       bank_iban = 'FR7630006000011234567890189',
       bank_bic = 'AGRIFRPP',
       sepa_creditor_id = 'FR12ZZZ123456'
-    where id = ${DEFAULT_TENANT_ID}`
+    where id = ?`
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    const e = process.env
+    concurrent = createDatabase(
+      databaseOptionsFromEnv(e.TEST_DB_USER || e.DB_USER ? 'DB' : 'DB_ADMIN', {
+        DB_HOST: e.TEST_DB_HOST ?? e.DB_HOST ?? '127.0.0.1',
+        DB_PORT: e.TEST_DB_PORT ?? e.DB_PORT ?? '3306',
+        DB_NAME: e.TEST_DB_NAME,
+        DB_USER: e.TEST_DB_USER ?? e.DB_USER,
+        DB_PASSWORD: e.TEST_DB_PASSWORD ?? e.DB_PASSWORD,
+        DB_ADMIN_USER: e.TEST_DB_ADMIN_USER ?? e.DB_ADMIN_USER ?? 'root',
+        DB_ADMIN_PASSWORD: e.TEST_DB_ADMIN_PASSWORD ?? e.DB_ADMIN_PASSWORD ?? '',
+      } as unknown as NodeJS.ProcessEnv),
+      { connectionLimit: 12 },
+    )
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
-    await owner.db.execute(identiteDuCentre)
+    await toutVider(bases.owner)
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
+    // `toutVider` a aussi vidé le plan de comptes, posé par la base à la création du centre.
+    await bases.owner.client.query('select seed_accounting_accounts(?)', [DEFAULT_TENANT_ID])
+    await bases.owner.client.query(identiteDuCentre, [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email) values (${ACCUEIL}, 'accueil@centre.fr')`)
       await tx.execute(sql`
@@ -267,14 +321,16 @@ describe('factures', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
-      update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
-        address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
-        vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null, sepa_creditor_id = null
-      where id = ${DEFAULT_TENANT_ID}`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
+         address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
+         vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null, sepa_creditor_id = null
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    await concurrent.client.end()
+    await bases.fermer()
   })
 
   describe('montants tenus par la base', () => {
@@ -338,6 +394,7 @@ describe('factures', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.update(invoiceLines).set({ deletedAt: new Date() }).where(eq(invoiceLines.id, premiere.id)),
       )
+      await recalculer(id)
       const apres = await facture(id)
       assert.equal(apres.totalExclTaxCents, 5_000)
       assert.equal(apres.totalInclTaxCents, 6_000)
@@ -371,12 +428,13 @@ describe('factures', { skip: raison }, () => {
       assert.equal(emise.buyerSnapshot?.siren, '987654321')
       assert.equal(emise.legalMentions?.recoveryIndemnityCents, 4_000)
       assert.equal(emise.legalMentions?.operationCategory, 'services')
+      assert.equal(emise.legalMentions?.vatOnDebits, false)
       assert.match(emise.legalMentions?.latePaymentPenaltyText ?? '', /L\. 441-10/)
     })
 
     it('garde l’identité figée quand le centre ou le client change ensuite', async () => {
       const { id } = await factureEmise()
-      await owner.client`update tenants set legal_name = 'Nouveau nom' where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.client.query('update tenants set legal_name = ? where id = ?', ['Nouveau nom', DEFAULT_TENANT_ID])
       await asTenant((tx) => tx.execute(sql`update clients set name = 'Durand et fils' where id = ${DURAND}`))
       const emise = await facture(id)
       assert.equal(emise.sellerSnapshot?.legalName, 'Centre de démonstration SAS')
@@ -388,7 +446,7 @@ describe('factures', { skip: raison }, () => {
 
       // Un brouillon vide est refusé : son numéro n'est pas pris.
       const vide = await brouillon()
-      assert.equal(await errorCode(() => emettre(vide)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => emettre(vide)), DB_INVOICE_INVALID)
 
       assert.equal((await factureEmise()).numero, `FA-${ANNEE}-0002`)
       assert.equal((await factureEmise()).numero, `FA-${ANNEE}-0003`)
@@ -401,7 +459,15 @@ describe('factures', { skip: raison }, () => {
         await ligne(id)
         brouillons.push(id)
       }
-      const numeros = await Promise.all(brouillons.map((id) => emettre(id)))
+      const numeros = await Promise.all(
+        brouillons.map((id) =>
+          withTenant(
+            DEFAULT_TENANT_ID,
+            async (tx) => (await lire(tx, sql`select issue_invoice(${id}, ${ACCUEIL}) as numero`))[0].numero as string,
+            concurrent.db,
+          ),
+        ),
+      )
       assert.deepEqual(
         [...numeros].sort(),
         Array.from({ length: 10 }, (_, index) => `FA-${ANNEE}-${String(index + 1).padStart(4, '0')}`),
@@ -409,12 +475,15 @@ describe('factures', { skip: raison }, () => {
     })
 
     it('refuse d’émettre sans les mentions obligatoires, et dit lesquelles', async () => {
-      await owner.client`update tenants set siren = null, siret = null, bank_iban = null where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.client.query(
+        'update tenants set siren = null, siret = null, bank_iban = null where id = ?',
+        [DEFAULT_TENANT_ID],
+      )
       const id = await brouillon({ clientId: PETIT })
       await ligne(id, {})
       await asTenant((tx) => tx.execute(sql`update clients set address_line1 = null where id = ${PETIT}`))
       const erreur = await errorOf(() => emettre(id))
-      assert.equal(pgErrorCode(erreur), PG_INVOICE_INVALID)
+      assert.equal(dbErrorCode(erreur), DB_INVOICE_INVALID)
       const message = messageOf(erreur)
       assert.match(message, /SIREN du centre/)
       assert.match(message, /adresse du client/)
@@ -428,7 +497,7 @@ describe('factures', { skip: raison }, () => {
       const exoneree = await ligne(id, { description: 'Débours', vatRateBp: 0, vatCategory: 'E', unitPriceCents: 500 })
       await ligne(id, { description: 'Taux zéro', vatRateBp: 0, vatCategory: 'Z', unitPriceCents: 300 })
       const refus = await errorOf(() => emettre(id))
-      assert.equal(pgErrorCode(refus), PG_INVOICE_INVALID)
+      assert.equal(dbErrorCode(refus), DB_INVOICE_INVALID)
       assert.match(messageOf(refus), /motif d'exonération de TVA/)
       assert.equal((await facture(id)).number, null)
 
@@ -438,7 +507,7 @@ describe('factures', { skip: raison }, () => {
           .set({ vatExemptionReason: '   ' })
           .where(eq(invoiceLines.id, exoneree.id)),
       )
-      assert.equal(await errorCode(() => emettre(id)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => emettre(id)), DB_INVOICE_INVALID)
 
       await asTenant((tx) =>
         tx
@@ -451,11 +520,11 @@ describe('factures', { skip: raison }, () => {
 
     it('refuse une facture vide ou négative', async () => {
       const vide = await brouillon()
-      assert.equal(await errorCode(() => emettre(vide)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => emettre(vide)), DB_INVOICE_INVALID)
 
       const negative = await brouillon()
       await ligne(negative, { kind: 'discount', description: 'Geste commercial', unitPriceCents: -500 })
-      assert.equal(await errorCode(() => emettre(negative)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => emettre(negative)), DB_INVOICE_INVALID)
     })
 
     it('n’émet que par issue_invoice : ni statut ni numéro écrits par le code', async () => {
@@ -465,18 +534,19 @@ describe('factures', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) => tx.update(invoices).set({ status: 'issued' }).where(eq(invoices.id, id))),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
       assert.equal(
         await errorCode(() =>
           asTenant((tx) => tx.update(invoices).set({ number: 'FA-2026-9999' }).where(eq(invoices.id, id))),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       assert.equal(
         await errorCode(() =>
           asTenant((tx) =>
             tx.insert(invoices).values({
+              id: uuidv7(),
               clientId: DURAND,
               periodStart: '2026-09-01',
               periodEnd: '2026-09-30',
@@ -484,34 +554,31 @@ describe('factures', { skip: raison }, () => {
             }),
           ),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
 
     it('n’émet pas deux fois la même facture', async () => {
       const { id } = await factureEmise()
-      assert.equal(await errorCode(() => emettre(id)), PG_INVOICE_LOCKED)
+      assert.equal(await errorCode(() => emettre(id)), DB_INVOICE_LOCKED)
     })
 
     it('exige un mandat actif pour un prélèvement, et en fige la RUM', async () => {
       const id = await brouillon({ expectedPaymentMethod: 'direct_debit' })
       await ligne(id)
-      assert.equal(await errorCode(() => emettre(id)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => emettre(id)), DB_INVOICE_INVALID)
 
       const sealed = sealIban('FR7630006000011234567890189', { tenantId: DEFAULT_TENANT_ID, reference: 'RUM-DURAND-1' }, trousseau)
-      const [mandat] = await asTenant((tx) =>
-        tx
-          .insert(sepaMandates)
-          .values({
-            clientId: DURAND,
-            reference: 'RUM-DURAND-1',
-            debtorName: 'Atelier Durand',
-            ibanCiphertext: sealed.ciphertext,
-            ibanKeyVersion: sealed.keyVersion,
-            ibanLast4: sealed.last4,
-            signedOn: '2026-09-01',
-          })
-          .returning(),
+      const mandat = await asTenant((tx) =>
+        insertReturning(tx, sepaMandates, {
+          clientId: DURAND,
+          reference: 'RUM-DURAND-1',
+          debtorName: 'Atelier Durand',
+          ibanCiphertext: sealed.ciphertext,
+          ibanKeyVersion: sealed.keyVersion,
+          ibanLast4: sealed.last4,
+          signedOn: '2026-09-01',
+        }),
       )
       await asTenant((tx) => tx.update(invoices).set({ sepaMandateId: mandat.id }).where(eq(invoices.id, id)))
       await emettre(id)
@@ -535,7 +602,7 @@ describe('factures', { skip: raison }, () => {
         () => ligne(id),
       ]
       for (const tentative of tentatives) {
-        assert.equal(await errorCode(tentative), PG_INVOICE_LOCKED)
+        assert.equal(await errorCode(tentative), DB_INVOICE_LOCKED)
       }
       const inchangee = await facture(id)
       assert.equal(inchangee.totalInclTaxCents, 12_000)
@@ -544,18 +611,19 @@ describe('factures', { skip: raison }, () => {
 
     it('ne laisse supprimer ni une facture ni une ligne', async () => {
       const { id } = await factureEmise()
+      // PostgreSQL retirait `DELETE` au rôle ; MySQL refuse par trigger, à tous,
+      // propriétaire compris, avec le même code (42501).
       assert.equal(
         await errorCode(() => asTenant((tx) => tx.delete(invoiceLines).where(eq(invoiceLines.invoiceId, id)))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
       assert.equal(
         await errorCode(() => asTenant((tx) => tx.delete(invoices).where(eq(invoices.id, id)))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
-      // Même le propriétaire, qui contourne les droits, est arrêté par la garde.
       assert.equal(
-        await errorCode(() => owner.client`delete from invoices where id = ${id}`),
-        PG_INVOICE_LOCKED,
+        await errorCode(() => bases.owner.client.query('delete from invoices where id = ?', [id])),
+        DB_INSUFFICIENT_PRIVILEGE,
       )
     })
   })
@@ -569,7 +637,7 @@ describe('factures', { skip: raison }, () => {
       const erreur = await errorOf(() =>
         ligne(second, { kind: 'booking', bookingId: reservationId, unitPriceCents: 5_000 }),
       )
-      assert.equal(pgErrorCode(erreur), PG_UNIQUE_VIOLATION)
+      assert.equal(dbErrorCode(erreur), DB_UNIQUE_VIOLATION)
     })
 
     it('refuse de facturer deux fois le même pli', async () => {
@@ -580,7 +648,7 @@ describe('factures', { skip: raison }, () => {
       const second = await brouillon({ periodStart: '2026-09-02' })
       assert.equal(
         await errorCode(() => ligne(second, { kind: 'act', serviceId: acte, mailItemId: pli, unitPriceCents: 300 })),
-        PG_UNIQUE_VIOLATION,
+        DB_UNIQUE_VIOLATION,
       )
     })
 
@@ -605,7 +673,7 @@ describe('factures', { skip: raison }, () => {
             unitPriceCents: 90_000,
           }),
         ),
-        PG_EXCLUSION_VIOLATION,
+        DB_EXCLUSION_VIOLATION,
       )
       await ligne(autre, {
         kind: 'rent',
@@ -618,14 +686,15 @@ describe('factures', { skip: raison }, () => {
 
     it('refuse deux fois la même période d’une souscription', async () => {
       const forfait = await service('package')
-      const [souscription] = await asTenant((tx) =>
+      const souscriptionId = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into subscribed_services (client_id, service_id, unit, unit_price_cents, vat_rate_bp, starts_on)
-          values (${DURAND}, ${forfait}, 'month', 5000, 2000, '2026-01-01') returning id`),
+          insert into subscribed_services (id, client_id, service_id, unit, unit_price_cents, vat_rate_bp, starts_on)
+          values (${souscriptionId}, ${DURAND}, ${forfait}, 'month', 5000, 2000, '2026-01-01')`),
       )
       const valeurs = {
         kind: 'package' as const,
-        subscribedServiceId: souscription.id as string,
+        subscribedServiceId: souscriptionId,
         serviceId: forfait,
         periodStart: '2026-09-01',
         periodEnd: '2026-09-30',
@@ -634,7 +703,7 @@ describe('factures', { skip: raison }, () => {
       await ligne(await brouillon(), valeurs)
       assert.equal(
         await errorCode(async () => ligne(await brouillon({ periodStart: '2026-09-02' }), valeurs)),
-        PG_EXCLUSION_VIOLATION,
+        DB_EXCLUSION_VIOLATION,
       )
     })
 
@@ -651,7 +720,7 @@ describe('factures', { skip: raison }, () => {
         unitPriceCents: 5_000,
       })
       // Abandonné, il ne se modifie plus.
-      assert.equal(await errorCode(() => ligne(abandonne)), PG_INVOICE_LOCKED)
+      assert.equal(await errorCode(() => ligne(abandonne)), DB_INVOICE_LOCKED)
     })
 
     it('refuse une source d’un autre client, ou une source qui ne correspond pas à la nature', async () => {
@@ -659,42 +728,25 @@ describe('factures', { skip: raison }, () => {
       const id = await brouillon()
       assert.equal(
         await errorCode(() => ligne(id, { kind: 'booking', bookingId: reservationPetit, unitPriceCents: 5_000 })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
-      assert.equal(await errorCode(() => ligne(id, { kind: 'rent', unitPriceCents: 5_000 })), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => ligne(id, { kind: 'rent', unitPriceCents: 5_000 })), DB_INVOICE_INVALID)
       assert.equal(
         await errorCode(async () =>
           ligne(id, { kind: 'other', bookingId: await reservation(DURAND, '2026-09-11'), unitPriceCents: 1 }),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
 
     it('facture chaque version d’un contrat à ses propres lignes, jamais à cheval', async () => {
-      const [k] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${DURAND}, 'BUR-VERSIONS', 'bureau', '2026-01-01', 0) returning id`),
-      )
-      const contratId = k.id as string
-      const [initiale] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, description, unit_price_cents)
-          values (${contratId}, 'Bureau', 90000) returning id`),
-      )
-      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`))
-      const [avenant] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_amendments (contract_id, effective_on, reason)
-          values (${contratId}, '2026-07-01', 'Indexation') returning id`),
-      )
-      const [indexee] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, amendment_id, description, unit_price_cents)
-          values (${contratId}, ${avenant.id as string}, 'Bureau', 92000) returning id`),
-      )
+      const contratId = await contratBrouillon('BUR-VERSIONS', 'bureau', '2026-01-01', 0)
+      const initiale = await ligneDeContrat(contratId, 90_000)
+      await activer(contratId)
+      const avenantId = await avenant(contratId, '2026-07-01')
+      const indexee = await ligneDeContrat(contratId, 92_000, { amendmentId: avenantId })
       await asTenant((tx) =>
-        tx.execute(sql`update contract_amendments set status = 'signed' where id = ${avenant.id as string}`),
+        tx.execute(sql`update contract_amendments set status = 'signed' where id = ${avenantId}`),
       )
 
       const loyer = (lineId: string | null, periodStart: string, periodEnd: string) => async () =>
@@ -708,77 +760,66 @@ describe('factures', { skip: raison }, () => {
         })
 
       // La ligne remplacée ne se facture plus après la date d'effet…
-      assert.equal(await errorCode(loyer(initiale.id as string, '2026-07-01', '2026-07-31')), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(loyer(initiale, '2026-07-01', '2026-07-31')), DB_INVOICE_INVALID)
       // …ni une période à cheval sur la date d'effet…
-      assert.equal(await errorCode(loyer(initiale.id as string, '2026-06-15', '2026-07-14')), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(loyer(initiale, '2026-06-15', '2026-07-14')), DB_INVOICE_INVALID)
       // …ni un loyer global à côté des lignes.
-      assert.equal(await errorCode(loyer(null, '2026-07-01', '2026-07-31')), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(loyer(null, '2026-07-01', '2026-07-31')), DB_INVOICE_INVALID)
       // Chaque version, à ses lignes.
-      await loyer(initiale.id as string, '2026-06-01', '2026-06-30')()
-      await loyer(indexee.id as string, '2026-07-01', '2026-07-31')()
+      await loyer(initiale, '2026-06-01', '2026-06-30')()
+      await loyer(indexee, '2026-07-01', '2026-07-31')()
     })
 
     it('ne facture ni un contrat en brouillon, ni hors d’une souscription, ni un pli fermé', async () => {
-      const [brouillonContrat] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${DURAND}, 'DOM-BROUILLON', 'domiciliation', '2026-01-01', 3000) returning id`),
-      )
+      const brouillonContrat = await contratBrouillon('DOM-BROUILLON', 'domiciliation', '2026-01-01', 3_000)
       assert.equal(
         await errorCode(async () =>
           ligne(await brouillon(), {
             kind: 'rent',
-            contractId: brouillonContrat.id as string,
+            contractId: brouillonContrat,
             periodStart: '2026-09-01',
             periodEnd: '2026-09-30',
           }),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
 
       const forfait = await service('package')
-      const [souscription] = await asTenant((tx) =>
+      const souscriptionId = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into subscribed_services (client_id, service_id, unit, unit_price_cents, vat_rate_bp, starts_on, ends_on)
-          values (${DURAND}, ${forfait}, 'month', 5000, 2000, '2026-01-01', '2026-09-15') returning id`),
+          insert into subscribed_services (id, client_id, service_id, unit, unit_price_cents, vat_rate_bp, starts_on, ends_on)
+          values (${souscriptionId}, ${DURAND}, ${forfait}, 'month', 5000, 2000, '2026-01-01', '2026-09-15')`),
       )
       assert.equal(
         await errorCode(async () =>
           ligne(await brouillon(), {
             kind: 'package',
-            subscribedServiceId: souscription.id as string,
+            subscribedServiceId: souscriptionId,
             periodStart: '2026-09-01',
             periodEnd: '2026-09-30',
           }),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
 
       const acte = await service('act')
-      const [ferme] = await asTenant((tx) =>
-        tx.execute(sql`insert into mail_items (client_id, sender) values (${DURAND}, 'Banque') returning id`),
+      const ferme = uuidv7()
+      await asTenant((tx) =>
+        tx.execute(sql`insert into mail_items (id, client_id, sender) values (${ferme}, ${DURAND}, 'Banque')`),
       )
       assert.equal(
         await errorCode(async () =>
-          ligne(await brouillon(), { kind: 'act', serviceId: acte, mailItemId: ferme.id as string, unitPriceCents: 300 }),
+          ligne(await brouillon(), { kind: 'act', serviceId: acte, mailItemId: ferme, unitPriceCents: 300 }),
         ),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
 
     it('facture le loyer d’une version à côté de ses lignes ponctuelles (ADR 032)', async () => {
-      const [k] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${DURAND}, 'DOM-FRAIS', 'domiciliation', '2026-09-01', 3000) returning id`),
-      )
-      const contratId = k.id as string
-      const [frais] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, description, unit, unit_price_cents, is_recurring)
-          values (${contratId}, 'Frais de dossier', 'unit', 5000, false) returning id`),
-      )
-      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`))
+      const contratId = await contratBrouillon('DOM-FRAIS', 'domiciliation', '2026-09-01', 3_000)
+      const frais = await ligneDeContrat(contratId, 5_000, { unit: 'unit', recurrente: false })
+      await activer(contratId)
       const id = await brouillon()
       await ligne(id, {
         kind: 'rent',
@@ -790,7 +831,7 @@ describe('factures', { skip: raison }, () => {
       await ligne(id, {
         kind: 'rent',
         contractId: contratId,
-        contractLineId: frais.id as string,
+        contractLineId: frais,
         periodStart: '2026-09-01',
         periodEnd: '2026-09-01',
         unitPriceCents: 5_000,
@@ -799,33 +840,16 @@ describe('factures', { skip: raison }, () => {
     })
 
     it('refuse un loyer sur des jours qu’une autre version du contrat tient déjà (ADR 032)', async () => {
-      const [k] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${DURAND}, 'BUR-REPRISE', 'bureau', '2026-01-01', 0) returning id`),
-      )
-      const contratId = k.id as string
-      const [initiale] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, description, unit_price_cents)
-          values (${contratId}, 'Bureau', 90000) returning id`),
-      )
-      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`))
-      const [avenant] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_amendments (contract_id, effective_on, reason)
-          values (${contratId}, '2026-07-15', 'Indexation') returning id`),
-      )
-      const [indexee] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, amendment_id, description, unit_price_cents)
-          values (${contratId}, ${avenant.id as string}, 'Bureau', 92000) returning id`),
-      )
+      const contratId = await contratBrouillon('BUR-REPRISE', 'bureau', '2026-01-01', 0)
+      const initiale = await ligneDeContrat(contratId, 90_000)
+      await activer(contratId)
+      const avenantId = await avenant(contratId, '2026-07-15')
+      const indexee = await ligneDeContrat(contratId, 92_000, { amendmentId: avenantId })
       // Juillet facturé à l'ancienne version, puis l'avenant au 15 juillet.
       await ligne(await brouillon({ periodStart: '2026-07-01', periodEnd: '2026-07-31' }), {
         kind: 'rent',
         contractId: contratId,
-        contractLineId: initiale.id as string,
+        contractLineId: initiale,
         periodStart: '2026-07-01',
         periodEnd: '2026-07-31',
         unitPriceCents: 90_000,
@@ -833,28 +857,30 @@ describe('factures', { skip: raison }, () => {
       // La signature le refuse désormais (avenants.db.test.ts) ; un avenant
       // signé avant cette garde, ou en concurrence, laisse cet état : on le pose
       // sans les gardes de la base.
-      await owner.client.begin(async (tx) => {
-        await tx`set local session_replication_role = replica`
-        await tx`update contract_amendments set status = 'signed', signed_at = now() where id = ${avenant.id as string}`
-      })
+      await sansTriggers(bases.owner, ['contract_amendments'], (connexion) =>
+        connexion.query(
+          `update contract_amendments set status = 'signed', signed_at = current_timestamp(3) where id = ?`,
+          [avenantId],
+        ),
+      )
 
       const refus = await errorOf(async () =>
         ligne(await brouillon({ periodStart: '2026-08-01', periodEnd: '2026-08-31' }), {
           kind: 'rent',
           contractId: contratId,
-          contractLineId: indexee.id as string,
+          contractLineId: indexee,
           periodStart: '2026-07-15',
           periodEnd: '2026-07-31',
           unitPriceCents: 92_000,
         }),
       )
-      assert.equal(pgErrorCode(refus), PG_INVOICE_INVALID)
+      assert.equal(dbErrorCode(refus), DB_INVOICE_INVALID)
       assert.match(messageOf(refus), /autre version/)
       // Août, que rien ne tient, se facture à la nouvelle version.
       await ligne(await brouillon({ periodStart: '2026-08-01', periodEnd: '2026-08-31' }), {
         kind: 'rent',
         contractId: contratId,
-        contractLineId: indexee.id as string,
+        contractLineId: indexee,
         periodStart: '2026-08-01',
         periodEnd: '2026-08-31',
         unitPriceCents: 92_000,
@@ -862,21 +888,13 @@ describe('factures', { skip: raison }, () => {
     })
 
     it('facture une ligne ponctuelle de contrat une seule fois, au premier jour de sa version', async () => {
-      const [k] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${DURAND}, 'DOM-PONCTUEL', 'domiciliation', '2026-09-01', 0) returning id`),
-      )
-      const [frais] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into contract_lines (contract_id, description, unit, unit_price_cents, is_recurring)
-          values (${k.id as string}, 'Frais de dossier', 'unit', 5000, false) returning id`),
-      )
-      await asTenant((tx) => tx.execute(sql`update contracts set status = 'active' where id = ${k.id as string}`))
+      const contratId = await contratBrouillon('DOM-PONCTUEL', 'domiciliation', '2026-09-01', 0)
+      const frais = await ligneDeContrat(contratId, 5_000, { unit: 'unit', recurrente: false })
+      await activer(contratId)
       const valeurs = {
         kind: 'package' as const,
-        contractId: k.id as string,
-        contractLineId: frais.id as string,
+        contractId: contratId,
+        contractLineId: frais,
         periodStart: '2026-09-01',
         periodEnd: '2026-09-30',
         unitPriceCents: 5_000,
@@ -892,7 +910,7 @@ describe('factures', { skip: raison }, () => {
             periodEnd: '2026-10-31',
           }),
         ),
-        PG_EXCLUSION_VIOLATION,
+        DB_EXCLUSION_VIOLATION,
       )
     })
   })
@@ -937,6 +955,7 @@ describe('factures', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.update(invoiceLines).set({ unitPriceCents: 2_500 }).where(eq(invoiceLines.id, reprise.id)),
       )
+      await recalculer(avoirId)
       await emettre(avoirId)
       const partielle = await facture(id)
       assert.equal(partielle.creditedCents, 3_000)
@@ -953,7 +972,8 @@ describe('factures', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.update(invoiceLines).set({ unitPriceCents: 9_000 }).where(eq(invoiceLines.id, ligneExcessive.id)),
       )
-      assert.equal(await errorCode(() => emettre(excessif)), PG_INVOICE_INVALID)
+      await recalculer(excessif)
+      assert.equal(await errorCode(() => emettre(excessif)), DB_INVOICE_INVALID)
     })
 
     it('annule par deux avoirs ligne à ligne, au centime du TTC de la facture (ADR 032)', async () => {
@@ -970,6 +990,7 @@ describe('factures', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.update(invoiceLines).set({ deletedAt: new Date() }).where(eq(invoiceLines.id, repriseB.id)),
       )
+      await recalculer(premier)
       await emettre(premier)
       // Second avoir : ce qui reste, la ligne B.
       const second = await brouillonAvoir(id)
@@ -1001,6 +1022,7 @@ describe('factures', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.update(invoiceLines).set({ unitPriceCents: 5_001 }).where(eq(invoiceLines.id, reprise.id)),
       )
+      await recalculer(partiel)
       await emettre(partiel)
       // 50,01 € HT : sa propre TVA, 10,00 €.
       assert.equal((await facture(partiel)).totalInclTaxCents, 6_001)
@@ -1019,13 +1041,13 @@ describe('factures', { skip: raison }, () => {
     it('ne corrige qu’une facture émise, et une ligne d’avoir ne porte pas de source', async () => {
       const brouillonId = await brouillon()
       await ligne(brouillonId)
-      assert.equal(await errorCode(() => brouillonAvoir(brouillonId)), PG_INVOICE_INVALID)
+      assert.equal(await errorCode(() => brouillonAvoir(brouillonId)), DB_INVOICE_INVALID)
 
       const { id } = await factureEmise()
       const avoirId = await brouillonAvoir(id)
       assert.equal(
         await errorCode(async () => ligne(avoirId, { kind: 'booking', bookingId: await reservation() })),
-        PG_INVOICE_INVALID,
+        DB_INVOICE_INVALID,
       )
     })
   })
@@ -1054,14 +1076,14 @@ describe('factures', { skip: raison }, () => {
     it('refuse un paiement sur un brouillon, un avoir, ou dans une autre devise', async () => {
       const brouillonId = await brouillon()
       await ligne(brouillonId)
-      assert.equal(await errorCode(() => payer(brouillonId, 1_000)), PG_PAYMENT_REFUSED)
+      assert.equal(await errorCode(() => payer(brouillonId, 1_000)), DB_PAYMENT_REFUSED)
 
       const { id } = await factureEmise()
-      assert.equal(await errorCode(() => payer(id, 1_000, { currency: 'USD' })), PG_PAYMENT_REFUSED)
+      assert.equal(await errorCode(() => payer(id, 1_000, { currency: 'USD' })), DB_PAYMENT_REFUSED)
 
       const avoirId = await brouillonAvoir(id)
       await emettre(avoirId)
-      assert.equal(await errorCode(() => payer(avoirId, 1_000)), PG_PAYMENT_REFUSED)
+      assert.equal(await errorCode(() => payer(avoirId, 1_000)), DB_PAYMENT_REFUSED)
     })
 
     it('ne laisse ni modifier ni supprimer un paiement', async () => {
@@ -1071,11 +1093,11 @@ describe('factures', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) => tx.update(payments).set({ amountCents: 12_000 }).where(eq(payments.id, paiement.id))),
         ),
-        PG_PAYMENT_REFUSED,
+        DB_PAYMENT_REFUSED,
       )
       assert.equal(
         await errorCode(() => asTenant((tx) => tx.delete(payments).where(eq(payments.id, paiement.id)))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
     })
 
@@ -1096,32 +1118,30 @@ describe('factures', { skip: raison }, () => {
 
     const mandat = (values: Partial<typeof sepaMandates.$inferInsert> = {}) => {
       const sealed = sealIban(IBAN, MANDAT, trousseau)
-      return asTenant(async (tx) => {
-        const [row] = await tx
-          .insert(sepaMandates)
-          .values({
-            clientId: DURAND,
-            reference: MANDAT.reference,
-            debtorName: 'Atelier Durand',
-            ibanCiphertext: sealed.ciphertext,
-            ibanKeyVersion: sealed.keyVersion,
-            ibanLast4: sealed.last4,
-            signedOn: '2026-09-01',
-            ...values,
-          })
-          .returning()
-        return row
-      })
+      return asTenant((tx) =>
+        insertReturning(tx, sepaMandates, {
+          clientId: DURAND,
+          reference: MANDAT.reference,
+          debtorName: 'Atelier Durand',
+          ibanCiphertext: sealed.ciphertext,
+          ibanKeyVersion: sealed.keyVersion,
+          ibanLast4: sealed.last4,
+          signedOn: '2026-09-01',
+          ...values,
+        }),
+      )
     }
 
     it('ne stocke jamais l’IBAN en clair, et le relit par la clé', async () => {
       const cree = await mandat()
-      const [brut] = await owner.client`
-        select iban_ciphertext, encode(iban_ciphertext, 'escape') as texte from sepa_mandates where id = ${cree.id}`
-      const octets = brut.iban_ciphertext as Buffer
+      const [rows] = (await bases.owner.client.query(
+        'select iban_ciphertext, cast(iban_ciphertext as char) as texte from sepa_mandates where id = ?',
+        [cree.id],
+      )) as unknown as [{ iban_ciphertext: Buffer; texte: string }[]]
+      const octets = rows[0].iban_ciphertext
       assert.ok(!octets.includes(IBAN))
       assert.ok(!octets.includes('30006000011234567890'))
-      assert.ok(!String(brut.texte).includes('30006000011234567890'))
+      assert.ok(!String(rows[0].texte).includes('30006000011234567890'))
 
       const [relu] = await asTenant((tx) => tx.select().from(sepaMandates).where(eq(sepaMandates.id, cree.id)))
       assert.equal(openIban(relu.ibanCiphertext, relu.ibanKeyVersion, MANDAT, trousseau), IBAN)
@@ -1132,7 +1152,7 @@ describe('factures', { skip: raison }, () => {
       for (const ibanCiphertext of [Buffer.from(IBAN), Buffer.from(`CAD1${IBAN}`)]) {
         assert.equal(
           await errorCode(() => mandat({ ibanCiphertext, reference: `RUM-${ibanCiphertext.length}` })),
-          PG_CHECK_VIOLATION,
+          DB_CHECK_VIOLATION,
         )
       }
     })
@@ -1143,15 +1163,15 @@ describe('factures', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) => tx.update(sepaMandates).set({ reference: 'RUM-AUTRE' }).where(eq(sepaMandates.id, cree.id))),
         ),
-        PG_SEPA_MANDATE_LOCKED,
+        DB_SEPA_MANDATE_LOCKED,
       )
       assert.equal(
         await errorCode(() =>
           asTenant((tx) => tx.update(sepaMandates).set({ clientId: PETIT }).where(eq(sepaMandates.id, cree.id))),
         ),
-        PG_SEPA_MANDATE_LOCKED,
+        DB_SEPA_MANDATE_LOCKED,
       )
-      assert.equal(await errorCode(() => mandat({ reference: 'RUM-2026-0002' })), PG_UNIQUE_VIOLATION)
+      assert.equal(await errorCode(() => mandat({ reference: 'RUM-2026-0002' })), DB_UNIQUE_VIOLATION)
 
       await asTenant((tx) =>
         tx
@@ -1159,26 +1179,30 @@ describe('factures', { skip: raison }, () => {
           .set({ status: 'revoked', revokedOn: '2026-09-30' })
           .where(eq(sepaMandates.id, cree.id)),
       )
-      assert.equal(await errorCode(() => mandat({ clientId: PETIT })), PG_UNIQUE_VIOLATION)
+      assert.equal(await errorCode(() => mandat({ clientId: PETIT })), DB_UNIQUE_VIOLATION)
       await mandat({ reference: 'RUM-2026-0002' })
     })
   })
 
   describe('plan de comptes', () => {
     it('est posé pour chaque centre, et part avec lui', async () => {
-      const [ici] = await asTenant((tx) =>
-        tx.execute(sql`
-          select count(*)::int as n,
-                 max(account_number) filter (where purpose = 'vat_collected' and vat_rate_bp = 2000) as tva20
-            from accounting_accounts`),
-      )
-      assert.equal(ici.n, 12)
+      const ici = await une(sql`
+        select count(*) as n,
+               max(case when purpose = 'vat_collected' and vat_rate_bp = 2000 then account_number end) as tva20
+          from accounting_accounts`)
+      assert.equal(Number(ici.n), 12)
       assert.equal(ici.tva20, '445711')
 
-      await owner.client`insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-compta')`
-      const [ailleurs] = await owner.client`select count(*)::int as n from accounting_accounts where tenant_id = ${AUTRE_CENTRE}`
-      assert.equal(ailleurs.n, 12)
-      await owner.client`delete from tenants where id = ${AUTRE_CENTRE}`
+      await bases.owner.client.query(
+        `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-compta')`,
+        [AUTRE_CENTRE],
+      )
+      const [rows] = (await bases.owner.client.query(
+        'select count(*) as n from accounting_accounts where tenant_id = ?',
+        [AUTRE_CENTRE],
+      )) as unknown as [{ n: number }[]]
+      assert.equal(Number(rows[0].n), 12)
+      await bases.owner.client.query('delete from tenants where id = ?', [AUTRE_CENTRE])
     })
 
     it('refuse un compte de TVA sans taux, ou un compte de vente sans nature', async () => {
@@ -1186,36 +1210,36 @@ describe('factures', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              insert into accounting_accounts (purpose, account_number, label)
-              values ('vat_collected', '445710', 'TVA')`),
+              insert into accounting_accounts (id, purpose, account_number, label)
+              values (${uuidv7()}, 'vat_collected', '445710', 'TVA')`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       assert.equal(
         await errorCode(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              insert into accounting_accounts (purpose, line_kind, account_number, label)
-              values ('revenue', 'rent', '706999', 'Doublon')`),
+              insert into accounting_accounts (id, purpose, line_kind, account_number, label)
+              values (${uuidv7()}, 'revenue', 'rent', '706999', 'Doublon')`),
           ),
         ),
-        PG_UNIQUE_VIOLATION,
+        DB_UNIQUE_VIOLATION,
       )
     })
 
     it('garde un journal des exports que l’application ne réécrit pas', async () => {
-      const [export_] = await asTenant((tx) =>
+      const id = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into accounting_exports (period_start, period_end, file_name, file_sha256, entry_count, generated_by)
-          values ('2026-09-01', '2026-09-30', 'FEC-2026-09.txt', ${'a'.repeat(64)}, 12, ${ACCUEIL})
-          returning id`),
+          insert into accounting_exports (id, period_start, period_end, file_name, file_sha256, entry_count, generated_by)
+          values (${id}, '2026-09-01', '2026-09-30', 'FEC-2026-09.txt', ${'a'.repeat(64)}, 12, ${ACCUEIL})`),
       )
       assert.equal(
         await errorCode(() =>
-          asTenant((tx) => tx.execute(sql`update accounting_exports set entry_count = 0 where id = ${export_.id as string}`)),
+          asTenant((tx) => tx.execute(sql`update accounting_exports set entry_count = 0 where id = ${id}`)),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
     })
   })
@@ -1228,7 +1252,7 @@ describe('factures', { skip: raison }, () => {
       const reprix = () =>
         asTenant((tx) => tx.execute(sql`update bookings set quote_unit_price_cents = 3000 where id = ${id}`))
       const refus = await errorOf(reprix)
-      assert.equal(pgErrorCode(refus), PG_INVOICE_LOCKED)
+      assert.equal(dbErrorCode(refus), DB_INVOICE_LOCKED)
       assert.match(messageOf(refus), /repris par une facture/)
       // Le reste de la réservation suit ses propres règles.
       await asTenant((tx) => tx.execute(sql`update bookings set title = 'Réunion de rentrée' where id = ${id}`))
@@ -1238,15 +1262,13 @@ describe('factures', { skip: raison }, () => {
         tx.update(invoiceLines).set({ deletedAt: new Date() }).where(eq(invoiceLines.id, tenue.id)),
       )
       await reprix()
-      const [row] = await asTenant((tx) => tx.execute(sql`select quote_amount_cents from bookings where id = ${id}`))
+      const row = await une(sql`select quote_amount_cents from bookings where id = ${id}`)
       assert.equal(row.quote_amount_cents, 6_000)
     })
 
     it('calcule le montant du devis par la règle commune', async () => {
       const id = await reservation()
-      const [row] = await asTenant((tx) =>
-        tx.execute(sql`select quote_amount_cents from bookings where id = ${id}`),
-      )
+      const row = await une(sql`select quote_amount_cents from bookings where id = ${id}`)
       assert.equal(row.quote_amount_cents, 5_000)
     })
 
@@ -1255,35 +1277,36 @@ describe('factures', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              insert into bookings (resource_id, channel, starts_at, ends_at, title, quote_unit, quote_quantity)
-              values (${SALLE}, 'staff', '2026-09-20T08:00:00Z', '2026-09-20T09:00:00Z', 'Réunion', 'hour', 1)`),
+              insert into bookings (id, resource_id, channel, starts_at, ends_at, title, quote_unit, quote_quantity)
+              values (${uuidv7()}, ${SALLE}, 'staff', '2026-09-20 08:00:00.000', '2026-09-20 09:00:00.000',
+                      'Réunion', 'hour', 1)`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       assert.equal(
         await errorCode(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              insert into bookings (resource_id, kind, channel, starts_at, ends_at, title,
+              insert into bookings (id, resource_id, kind, channel, starts_at, ends_at, title,
                                     quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp,
                                     quote_currency, quoted_at)
-              values (${SALLE}, 'unavailability', 'staff', '2026-09-20T08:00:00Z', '2026-09-20T09:00:00Z',
-                      'Entretien', 'hour', 1, 2500, 2000, 'EUR', now())`),
+              values (${uuidv7()}, ${SALLE}, 'unavailability', 'staff', '2026-09-20 08:00:00.000',
+                      '2026-09-20 09:00:00.000', 'Entretien', 'hour', 1, 2500, 2000, 'EUR', current_timestamp(3))`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
     })
 
     it('accepte l’unité semaine (R08)', async () => {
       await asTenant((tx) =>
         tx.execute(sql`
-          insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title,
+          insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title,
                                 quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp,
                                 quote_currency, quoted_at)
-          values (${SALLE}, ${DURAND}, 'staff', '2026-11-02T07:00:00Z', '2026-11-07T17:00:00Z', 'Séminaire',
-                  'week', 1, 50000, 2000, 'EUR', now())`),
+          values (${uuidv7()}, ${SALLE}, ${DURAND}, 'staff', '2026-11-02 07:00:00.000', '2026-11-07 17:00:00.000',
+                  'Séminaire', 'week', 1, 50000, 2000, 'EUR', current_timestamp(3))`),
       )
     })
   })

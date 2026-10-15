@@ -3,11 +3,12 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import { resourceTypes } from '../ressources/schema.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { inspectionFieldsError, inspectionValuesError } from './champs.ts'
@@ -37,24 +38,12 @@ import { serveInspectionPhoto } from './servir.ts'
 
 /**
  * États des lieux de l'écran à la base (R06, R33, ADR 039) : les requêtes et
- * les écritures du back-office et de l'espace client, éprouvées sous le rôle
- * applicatif soumis à la RLS. Le stockage est une table en mémoire.
+ * les écritures du back-office et de l'espace client, éprouvées sous
+ * l'identité applicative (sans RLS : la portée client tient aux filtres des
+ * requêtes). Le stockage est une table en mémoire.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000e0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000e0c02'
@@ -71,7 +60,11 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
   const petit: ClientAccount[] = [{ memberId: PAUL, clientId: PETIT, clientName: 'Boulangerie Petit' }]
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
 
   const refus = async (run: () => Promise<unknown>): Promise<string | undefined> => {
     try {
@@ -118,27 +111,47 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
   let photos = 0
   const photo = async (inspectionId: string, storageKey?: string, keyVersion = 1) => {
     photos += 1
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into inspection_photos (inspection_id, storage_key, encryption_key_version, content_type,
+        insert into inspection_photos (id, inspection_id, storage_key, encryption_key_version, content_type,
                                        byte_size, width, height, uploaded_by)
-        values (${inspectionId}, ${storageKey ?? `etats-des-lieux/test/${photos}.jpg`}, ${keyVersion},
-                'image/jpeg', 4, 2, 2, ${CAMILLE})
-        returning id`),
+        values (${id}, ${inspectionId}, ${storageKey ?? `etats-des-lieux/test/${photos}.jpg`}, ${keyVersion},
+                'image/jpeg', 4, 2, 2, ${CAMILLE})`),
     )
-    return row.id as string
+    return id
   }
 
+  const toutVider = () =>
+    viderTables(
+      bases.owner,
+      'inspection_photo_views',
+      'inspection_photos',
+      'inspections',
+      'inspection_template_versions',
+      'inspection_templates',
+      'bookings',
+      'contracts',
+      'client_members',
+      'clients',
+      'resources',
+      'staff_members',
+    )
+
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
     photos = 0
-    await owner.client`truncate table bookings, contracts, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table inspection_templates cascade`
-    await owner.client`update tenants set inspection_photo_retention_months = 36, inspection_access_log_retention_months = 12 where id = ${DEFAULT_TENANT_ID}`
+    await toutVider()
+    await bases.owner.client.query(
+      'update tenants set inspection_photo_retention_months = 36, inspection_access_log_retention_months = 12 where id = ?',
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${CAMILLE}, 'camille@centre.fr', 'Camille Martin')`)
       await tx.execute(sql`
@@ -157,22 +170,22 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
       await tx.execute(sql`
         insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
           (${LOCATION}, ${VOITURE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Déménagement',
-           now() + interval '1 hour', now() + interval '5 hours'),
+           date_add(CURRENT_TIMESTAMP(3), interval 1 hour), date_add(CURRENT_TIMESTAMP(3), interval 5 hour)),
           (${LOCATION_PETIT}, ${VOITURE}, ${PETIT}, 'booking', 'staff', 'confirmed', 'Livraison',
-           now() + interval '1 day', now() + interval '1 day 4 hours')`)
+           date_add(CURRENT_TIMESTAMP(3), interval 1 day), date_add(CURRENT_TIMESTAMP(3), interval 28 hour))`)
     })
   })
 
   after(async () => {
-    await owner.client`truncate table inspection_templates cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider()
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('validation : le code dit ce que dit la base', () => {
     const premier = (fields: unknown) =>
       asTenant(async (tx) => {
-        const [row] = await tx.execute(sql`select inspection_fields_error(${JSON.stringify(fields)}::jsonb) as erreur`)
+        const [row] = await lire(tx, sql`select inspection_fields_error(${JSON.stringify(fields)}) as erreur`)
         return row.erreur as string | null
       })
 
@@ -223,9 +236,9 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
       ]
       for (const [values, complete] of cas) {
         const [row] = await asTenant((tx) =>
-          tx.execute(sql`
-            select inspection_values_error(${JSON.stringify(fields)}::jsonb, ${JSON.stringify(values)}::jsonb,
-                                           ${complete}) as erreur`),
+          lire(tx, sql`
+            select inspection_values_error(${JSON.stringify(fields)}, ${JSON.stringify(values)},
+                                           ${complete ? 1 : 0}) as erreur`),
         )
         assert.equal(inspectionValuesError(fields, values, complete), row.erreur, JSON.stringify(values))
       }
@@ -515,7 +528,7 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
           async (stored) => store.get(stored)!,
         )
         const journal = await asTenant((tx) =>
-          tx.execute(sql`select viewer, client_member_id, staff_member_id from inspection_photo_views order by viewed_at`),
+          lire(tx, sql`select viewer, client_member_id, staff_member_id from inspection_photo_views order by viewed_at, viewer`),
         )
         assert.deepEqual(
           journal.map((row) => [row.viewer, row.client_member_id, row.staff_member_id]),
@@ -540,7 +553,7 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
           async () => sealed,
         )
         assert.equal(response.status, 500)
-        const journal = await asTenant((tx) => tx.execute(sql`select 1 from inspection_photo_views`))
+        const journal = await asTenant((tx) => lire(tx, sql`select 1 from inspection_photo_views`))
         assert.equal(journal.length, 0)
       })
     })
@@ -548,11 +561,19 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
 
   describe('conservation des photos', () => {
     /** Recule la clôture d'un état des lieux, sous le propriétaire (hors de l'application). */
-    const reculerCloture = (id: string, mois: number) =>
-      owner.client.begin(async (tx) => {
-        await tx`select set_config('app.anonymization', 'on', true)`
-        await tx`update inspections set closed_at = now() - make_interval(months => ${mois}) where id = ${id}`
-      })
+    const reculerCloture = async (id: string, mois: number) => {
+      const connection = await bases.owner.client.getConnection()
+      try {
+        await connection.query("set @app_anonymization = 'on'")
+        await connection.query(
+          'update inspections set closed_at = TIMESTAMPADD(MONTH, ?, CURRENT_TIMESTAMP(3)) where id = ?',
+          [-mois, id],
+        )
+      } finally {
+        await connection.query('set @app_anonymization = null').catch(() => {})
+        connection.release()
+      }
+    }
 
     it('efface le fichier puis marque la ligne, au terme compté depuis la sortie', async () => {
       const entree = await ouvrir()
@@ -592,8 +613,8 @@ describe('états des lieux, de l’écran à la base', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into inspection_photo_views (photo_id, viewer, staff_member_id, auth_user_id, viewed_at)
-          values (${photoId}, 'staff', ${CAMILLE}, 'u-camille', now() - interval '13 months'),
-                 (${photoId}, 'staff', ${CAMILLE}, 'u-camille', now())`),
+          values (${photoId}, 'staff', ${CAMILLE}, 'u-camille', TIMESTAMPADD(MONTH, -13, CURRENT_TIMESTAMP(3))),
+                 (${photoId}, 'staff', ${CAMILLE}, 'u-camille', CURRENT_TIMESTAMP(3))`),
       )
       assert.equal(await asTenant(purgeExpiredInspectionPhotoViews), 1)
     })

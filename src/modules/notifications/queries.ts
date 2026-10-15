@@ -1,4 +1,4 @@
-import { and, count, desc, eq, gte, lt, sql, type SQL } from 'drizzle-orm'
+import { and, count, desc, eq, gte, inArray, lt, sql, type SQL } from 'drizzle-orm'
 
 import { withTenant, type Database, type Transaction } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
@@ -120,13 +120,14 @@ export async function saveTemplate(
       tx
         .insert(notificationTemplates)
         .values({ event, ...template, updatedBy: staffMemberId })
-        .onConflictDoUpdate({
-          target: [notificationTemplates.tenantId, notificationTemplates.event],
+        .onDuplicateKeyUpdate({
+          // L'unicité (centre, événement) est celle de l'index
+          // `notification_templates_event_key` : MySQL la reconnaît seul.
           set: {
-            subject: sql`excluded.subject`,
-            body: sql`excluded.body`,
-            active: sql`excluded.active`,
-            updatedBy: sql`excluded.updated_by`,
+            subject: template.subject,
+            body: template.body,
+            active: template.active,
+            updatedBy: staffMemberId,
           },
         }),
     database,
@@ -153,8 +154,12 @@ export async function listDeliveries(
     filters.status ? eq(notificationDeliveries.status, filters.status) : undefined,
     period.from ? gte(notificationDeliveries.sentAt, period.from) : undefined,
     period.to ? lt(notificationDeliveries.sentAt, period.to) : undefined,
+    // Les adresses sont un tableau JSON : on cherche dans son texte (les
+    // adresses ne contiennent ni guillemet ni barre oblique inverse). La
+    // collation `as_ci` garde la recherche insensible à la casse et sensible
+    // aux accents, comme `ilike` d'origine.
     filters.recipient
-      ? sql`exists (select 1 from unnest(${notificationDeliveries.recipients}) as address where address ilike ${recipientPattern(filters.recipient)})`
+      ? sql`cast(${notificationDeliveries.recipients} as char character set utf8mb4) collate utf8mb4_0900_as_ci like ${recipientPattern(filters.recipient)}`
       : undefined,
   ]
   const where = and(...conditions)
@@ -184,8 +189,12 @@ export async function listDeliveries(
 
 /** Purge du journal au terme de la durée du centre (tâche nocturne). */
 export async function purgeExpiredNotificationDeliveries(tx: Transaction): Promise<number> {
-  const [row] = await tx.execute(sql`select purge_expired_notification_deliveries() as purged`)
-  return Number(row?.purged ?? 0)
+  // Procédure et non fonction : elle écrit (voir routines-notifications.md).
+  await tx.execute(sql`call purge_expired_notification_deliveries(@purged)`)
+  const [rows] = (await tx.execute(sql`select @purged as purged`)) as unknown as [
+    { purged: number | string | null }[],
+  ]
+  return Number(rows[0]?.purged ?? 0)
 }
 
 /* ------------------------------------------------------------------------ */
@@ -216,7 +225,18 @@ export async function listMemberPreferences(
           category: notificationPreferences.category,
           enabled: notificationPreferences.enabled,
         })
-        .from(notificationPreferences),
+        .from(notificationPreferences)
+        // La base ne filtre plus les lectures : sous portée client, le filtre
+        // sur les entreprises du compte est celui-ci (conventions §6).
+        .where(
+          and(
+            eq(notificationPreferences.tenantId, currentTenantId()),
+            inArray(
+              notificationPreferences.clientId,
+              accounts.map((account) => account.clientId),
+            ),
+          ),
+        ),
     database,
   )
   return accounts.map((account) => {
@@ -246,25 +266,22 @@ export async function saveMemberPreferences(
   if (!account) return false
   await inClientSpace(
     accounts,
-    (tx) =>
-      tx
-        .insert(notificationPreferences)
-        .values(
-          notificationCategories.map((category) => ({
+    async (tx) => {
+      // Une écriture par catégorie : la valeur à mettre à jour diffère d'une
+      // ligne à l'autre. L'unicité (centre, accès, catégorie) est celle de
+      // l'index `notification_preferences_member_category_key`.
+      for (const category of notificationCategories) {
+        await tx
+          .insert(notificationPreferences)
+          .values({
             clientId: account.clientId,
             clientMemberId: account.memberId,
             category,
             enabled: enabled[category],
-          })),
-        )
-        .onConflictDoUpdate({
-          target: [
-            notificationPreferences.tenantId,
-            notificationPreferences.clientMemberId,
-            notificationPreferences.category,
-          ],
-          set: { enabled: sql`excluded.enabled` },
-        }),
+          })
+          .onDuplicateKeyUpdate({ set: { enabled: enabled[category] } })
+      }
+    },
     database,
   )
   return true

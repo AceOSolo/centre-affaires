@@ -3,19 +3,20 @@ import { createHash } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { and, asc, eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
-  PG_AMENDMENT_INVALID,
-  PG_CHECK_VIOLATION,
-  PG_COMMITMENT_LOCKED,
-  PG_EXCLUSION_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  PG_INSUFFICIENT_PRIVILEGE,
-  pgErrorCode,
+  DB_AMENDMENT_INVALID,
+  DB_CHECK_VIOLATION,
+  DB_COMMITMENT_LOCKED,
+  DB_EXCLUSION_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import { bookings, OPEN_ENDED_BOOKING_END } from '../reservations/schema.ts'
 import { contractAmendments, contractDocuments, contractLines, contracts } from './schema.ts'
 
@@ -26,23 +27,13 @@ import { contractAmendments, contractDocuments, contractLines, contracts } from 
  * Un contrat engagé ne se réécrit pas : son prix change par avenant, à une
  * date d'effet. Un avenant qui change la ressource en cours de contrat garde
  * l'occupation exacte — l'ancienne ressource jusqu'à la veille, la nouvelle
- * ensuite — sous la même contrainte d'exclusion (décision 3). Les cas de
+ * ensuite — sous le même contrôle de chevauchement (décision 3). Les cas de
  * l'ADR 018 sans avenant restent éprouvés par `occupation.db.test.ts`.
  *
- * Tout est éprouvé sous `app_centre`.
+ * Tout est éprouvé sous l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('contrats versionnés', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('contrats versionnés', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const CLIENT = '01a00000-0000-7000-8000-0000000a0c01'
   const AUTRE_CLIENT = '01a00000-0000-7000-8000-0000000a0c02'
@@ -51,32 +42,29 @@ describe('contrats versionnés', { skip: raison }, () => {
   const ACCUEIL = '01a00000-0000-7000-8000-0000000a0d01'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const errorCode = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
   /** Contrat de bureau du 1er mars 2026, sans terme, en brouillon par défaut. */
   const contrat = async (values: Partial<typeof contracts.$inferInsert> = {}): Promise<string> => {
-    const [row] = await asTenant((tx) =>
-      tx
-        .insert(contracts)
-        .values({
-          clientId: CLIENT,
-          reference: 'BUR-2026-010',
-          contractType: 'bureau',
-          startsOn: '2026-03-01',
-          amountCents: 90_000,
-          resourceId: BUREAU,
-          ...values,
-        })
-        .returning({ id: contracts.id }),
+    const row = await asTenant((tx) =>
+      insertReturning(tx, contracts, {
+        clientId: CLIENT,
+        reference: 'BUR-2026-010',
+        contractType: 'bureau',
+        startsOn: '2026-03-01',
+        amountCents: 90_000,
+        resourceId: BUREAU,
+        ...values,
+      }),
     )
     return row.id
   }
@@ -90,22 +78,19 @@ describe('contrats versionnés', { skip: raison }, () => {
   }
 
   const ligne = (contractId: string, values: Partial<typeof contractLines.$inferInsert> = {}) =>
-    asTenant(async (tx) => {
-      const [row] = await tx
-        .insert(contractLines)
-        .values({ contractId, description: 'Bureau équipé', unitPriceCents: 90_000, ...values })
-        .returning()
-      return row
-    })
+    asTenant((tx) =>
+      insertReturning(tx, contractLines, {
+        contractId,
+        description: 'Bureau équipé',
+        unitPriceCents: 90_000,
+        ...values,
+      }),
+    )
 
   const avenant = (contractId: string, values: Partial<typeof contractAmendments.$inferInsert> = {}) =>
-    asTenant(async (tx) => {
-      const [row] = await tx
-        .insert(contractAmendments)
-        .values({ contractId, effectiveOn: '2026-05-01', ...values })
-        .returning()
-      return row
-    })
+    asTenant((tx) =>
+      insertReturning(tx, contractAmendments, { contractId, effectiveOn: '2026-05-01', ...values }),
+    )
 
   const signer = (id: string) =>
     asTenant((tx) =>
@@ -130,13 +115,29 @@ describe('contrats versionnés', { skip: raison }, () => {
     )
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contract_documents',
+      'contract_amendments',
+      'contract_lines',
+      'contracts',
+      'subscribed_services',
+      'invoice_lines',
+      'invoices',
+      'rate_plan_items',
+      'rate_plans',
+      'clients',
+      'resources',
+      'services',
+      'offers',
+      'staff_members',
+    )
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email) values (${ACCUEIL}, 'accueil@centre.fr')`)
       await tx.execute(sql`
@@ -149,9 +150,25 @@ describe('contrats versionnés', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contract_documents',
+      'contract_amendments',
+      'contract_lines',
+      'contracts',
+      'subscribed_services',
+      'invoice_lines',
+      'invoices',
+      'rate_plan_items',
+      'rate_plans',
+      'clients',
+      'resources',
+      'services',
+      'offers',
+      'staff_members',
+    )
+    await bases.fermer()
   })
 
   describe('lignes et prix d’un contrat', () => {
@@ -194,12 +211,14 @@ describe('contrats versionnés', { skip: raison }, () => {
         () => asTenant((tx) => tx.update(contracts).set({ vatRateBp: 1_000 }).where(eq(contracts.id, id))),
         () => asTenant((tx) => tx.update(contracts).set({ commitmentMonths: 12 }).where(eq(contracts.id, id))),
       ]
-      for (const tentative of tentatives) assert.equal(await errorCode(tentative), PG_COMMITMENT_LOCKED)
+      for (const tentative of tentatives) assert.equal(await errorCode(tentative), DB_COMMITMENT_LOCKED)
       // Le reste se modifie comme avant (ADR 018).
       await asTenant((tx) => tx.update(contracts).set({ notes: 'Clés remises' }).where(eq(contracts.id, id)))
+      // Une ligne ne se supprime jamais (trigger : MySQL n'a pas de droit par
+      // table dans ce montage).
       assert.equal(
         await errorCode(() => asTenant((tx) => tx.delete(contractLines).where(eq(contractLines.id, premiere.id)))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_COMMITMENT_LOCKED,
       )
     })
 
@@ -210,10 +229,10 @@ describe('contrats versionnés', { skip: raison }, () => {
 
       const terme = (noticeOn: string) =>
         asTenant(async (tx) => {
-          const [row] = await tx.execute(
-            sql`select contract_earliest_end_on(${id}::uuid, ${noticeOn}::date)::text as terme`,
-          )
-          return row.terme
+          const [rows] = (await tx.execute(
+            sql`select date_format(contract_earliest_end_on(${id}, ${noticeOn}), '%Y-%m-%d') as terme`,
+          )) as unknown as [{ terme: string }[]]
+          return rows[0].terme
         })
       // Préavis donné pendant l'engagement : le terme est la fin de l'engagement.
       assert.equal(await terme('2026-04-01'), '2027-03-09')
@@ -222,7 +241,7 @@ describe('contrats versionnés', { skip: raison }, () => {
     })
 
     it('exige une reconduction tacite complète', async () => {
-      assert.equal(await errorCode(() => contrat({ tacitRenewal: true })), PG_CHECK_VIOLATION)
+      assert.equal(await errorCode(() => contrat({ tacitRenewal: true })), DB_CHECK_VIOLATION)
       await contrat({ tacitRenewal: true, renewalMonths: 12, endsOn: '2027-02-28' })
     })
   })
@@ -230,7 +249,7 @@ describe('contrats versionnés', { skip: raison }, () => {
   describe('avenants', () => {
     it('ne s’établissent que sur un contrat en cours, numérotés par contrat', async () => {
       const id = await contrat()
-      assert.equal(await errorCode(() => avenant(id)), PG_AMENDMENT_INVALID)
+      assert.equal(await errorCode(() => avenant(id)), DB_AMENDMENT_INVALID)
       await activer(id)
       assert.equal((await avenant(id)).number, 1)
       assert.equal((await avenant(id, { effectiveOn: '2026-06-01' })).number, 2)
@@ -245,14 +264,14 @@ describe('contrats versionnés', { skip: raison }, () => {
       const prix = { amountCents: 95_000 }
       for (const effectiveOn of ['2026-03-01', '2026-02-01', '2027-01-01']) {
         const brouillon = await avenant(id, { effectiveOn, ...prix })
-        assert.equal(await errorCode(() => signer(brouillon.id)), PG_AMENDMENT_INVALID, effectiveOn)
+        assert.equal(await errorCode(() => signer(brouillon.id)), DB_AMENDMENT_INVALID, effectiveOn)
       }
       await signer((await avenant(id, { effectiveOn: '2026-06-01', ...prix })).id)
       const anterieur = await avenant(id, { effectiveOn: '2026-05-01', ...prix })
-      assert.equal(await errorCode(() => signer(anterieur.id)), PG_AMENDMENT_INVALID)
+      assert.equal(await errorCode(() => signer(anterieur.id)), DB_AMENDMENT_INVALID)
       // Un avenant qui ne change rien ne se signe pas.
       const vide = await avenant(id, { effectiveOn: '2026-09-01' })
-      assert.equal(await errorCode(() => signer(vide.id)), PG_AMENDMENT_INVALID)
+      assert.equal(await errorCode(() => signer(vide.id)), DB_AMENDMENT_INVALID)
     })
 
     it('signé, ne change plus, ni ses lignes ; il fige la date de début du contrat', async () => {
@@ -279,12 +298,12 @@ describe('contrats versionnés', { skip: raison }, () => {
         () => ligne(id, { amendmentId: brouillon.id }),
         () => asTenant((tx) => tx.update(contracts).set({ startsOn: '2026-02-01' }).where(eq(contracts.id, id))),
       ]
-      for (const tentative of tentatives) assert.equal(await errorCode(tentative), PG_COMMITMENT_LOCKED)
+      for (const tentative of tentatives) assert.equal(await errorCode(tentative), DB_COMMITMENT_LOCKED)
       assert.equal(
         await errorCode(() =>
           asTenant((tx) => tx.delete(contractAmendments).where(eq(contractAmendments.id, brouillon.id))),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_COMMITMENT_LOCKED,
       )
     })
 
@@ -292,22 +311,23 @@ describe('contrats versionnés', { skip: raison }, () => {
       const id = await contrat()
       await activer(id)
       // Mai facturé au loyer du contrat, sur un brouillon de facture.
-      const [facture] = await asTenant((tx) =>
+      const facture = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into invoices (client_id, period_start, period_end)
-          values (${CLIENT}, '2026-05-01', '2026-05-31') returning id`),
+          insert into invoices (id, client_id, period_start, period_end)
+          values (${facture}, ${CLIENT}, '2026-05-01', '2026-05-31')`),
       )
       await asTenant((tx) =>
         tx.execute(sql`
           insert into invoice_lines (invoice_id, kind, description, contract_id, period_start, period_end,
                                      unit_price_cents, vat_rate_bp)
-          values (${facture.id as string}, 'rent', 'Loyer de mai', ${id}, '2026-05-01', '2026-05-31', 90000, 2000)`),
+          values (${facture}, 'rent', 'Loyer de mai', ${id}, '2026-05-01', '2026-05-31', 90000, 2000)`),
       )
       const factureJusquAu = async () => {
-        const [row] = await asTenant((tx) =>
-          tx.execute(sql`select contract_billed_through(${id}::uuid)::text as jour`),
-        )
-        return row.jour
+        const [rows] = (await asTenant((tx) =>
+          tx.execute(sql`select date_format(contract_billed_through(${id}), '%Y-%m-%d') as jour`),
+        )) as unknown as [{ jour: string | null }[]]
+        return rows[0].jour
       }
       assert.equal(await factureJusquAu(), '2026-05-31')
 
@@ -319,8 +339,9 @@ describe('contrats versionnés', { skip: raison }, () => {
       let message = ''
       try {
         await signer(hausse.id)
+        assert.fail('la signature aurait dû être refusée')
       } catch (error) {
-        assert.equal(pgErrorCode(error), PG_AMENDMENT_INVALID)
+        assert.equal(dbErrorCode(error), DB_AMENDMENT_INVALID)
         for (let cause: unknown = error; cause; cause = (cause as { cause?: unknown }).cause) {
           message += String((cause as { message?: unknown }).message ?? '')
         }
@@ -329,7 +350,7 @@ describe('contrats versionnés', { skip: raison }, () => {
 
       // La ligne retirée du brouillon ne tient plus la période : l'avenant se signe.
       await asTenant((tx) =>
-        tx.execute(sql`update invoices set deleted_at = now() where id = ${facture.id as string}`),
+        tx.execute(sql`update invoices set deleted_at = current_timestamp(3) where id = ${facture}`),
       )
       assert.equal(await factureJusquAu(), null)
       await signer(hausse.id)
@@ -345,11 +366,22 @@ describe('contrats versionnés', { skip: raison }, () => {
       // Un avenant de ressource seule ne crée pas de version de prix.
       await signer((await avenant(id, { effectiveOn: '2026-09-01', changesResource: true, resourceId: AUTRE_BUREAU })).id)
 
-      const versions = await asTenant((tx) =>
+      const [versions] = (await asTenant((tx) =>
         tx.execute(sql`
-          select amendment_id, amendment_number, starts_on::text, ends_on::text, amount_cents
-            from contract_price_versions(${id}::uuid)`),
-      )
+          select amendment_id, amendment_number, cast(starts_on as char) as starts_on,
+                 cast(ends_on as char) as ends_on, amount_cents
+            from contract_price_versions
+           where contract_id = ${id}
+           order by starts_on`),
+      )) as unknown as [
+        {
+          amendment_id: string | null
+          amendment_number: number | null
+          starts_on: string
+          ends_on: string
+          amount_cents: number
+        }[],
+      ]
       assert.deepEqual(
         versions.map((v) => [v.amendment_number, v.starts_on, v.ends_on, v.amount_cents]),
         [
@@ -397,23 +429,23 @@ describe('contrats versionnés', { skip: raison }, () => {
 
       // L'ancien bureau est libre dès la date d'effet, occupé avant ; le
       // nouveau est occupé dès la date d'effet.
-      await reserver('2026-05-10T08:00:00Z', '2026-05-10T09:00:00Z', BUREAU)
+      await reserver('2026-05-10 08:00:00', '2026-05-10 09:00:00', BUREAU)
       assert.equal(
-        await errorCode(() => reserver('2026-04-20T08:00:00Z', '2026-04-20T09:00:00Z', BUREAU)),
-        PG_EXCLUSION_VIOLATION,
+        await errorCode(() => reserver('2026-04-20 08:00:00', '2026-04-20 09:00:00', BUREAU)),
+        DB_EXCLUSION_VIOLATION,
       )
       assert.equal(
-        await errorCode(() => reserver('2026-05-10T08:00:00Z', '2026-05-10T09:00:00Z', AUTRE_BUREAU)),
-        PG_EXCLUSION_VIOLATION,
+        await errorCode(() => reserver('2026-05-10 08:00:00', '2026-05-10 09:00:00', AUTRE_BUREAU)),
+        DB_EXCLUSION_VIOLATION,
       )
-      await reserver('2026-04-20T08:00:00Z', '2026-04-20T09:00:00Z', AUTRE_BUREAU)
+      await reserver('2026-04-20 08:00:00', '2026-04-20 09:00:00', AUTRE_BUREAU)
     })
 
     it('refuse la signature si la nouvelle ressource est prise, sans rien changer', async () => {
       const id = await contratActif()
-      await reserver('2026-06-10T08:00:00Z', '2026-06-10T09:00:00Z', AUTRE_BUREAU)
+      await reserver('2026-06-10 08:00:00', '2026-06-10 09:00:00', AUTRE_BUREAU)
       const brouillon = await avenant(id, { changesResource: true, resourceId: AUTRE_BUREAU })
-      assert.equal(await errorCode(() => signer(brouillon.id)), PG_EXCLUSION_VIOLATION)
+      assert.equal(await errorCode(() => signer(brouillon.id)), DB_EXCLUSION_VIOLATION)
 
       const [seul, ...reste] = await occupations(id)
       assert.deepEqual(reste, [])
@@ -508,29 +540,29 @@ describe('contrats versionnés', { skip: raison }, () => {
       const id = await contrat()
       const snapshot = { reference: 'BUR-2026-010', client: { name: 'Acme SAS' }, montant: 90_000 }
       const ecrire = () =>
-        asTenant(async (tx) => {
-          const [row] = await tx
-            .insert(contractDocuments)
-            .values({ contractId: id, snapshot, generatedBy: ACCUEIL })
-            .returning()
-          return row
-        })
+        asTenant((tx) =>
+          insertReturning(tx, contractDocuments, { contractId: id, snapshot, generatedBy: ACCUEIL }),
+        )
       const premier = await ecrire()
       const second = await ecrire()
       assert.equal(premier.version, 1)
       assert.equal(second.version, 2)
 
-      const [canonique] = await asTenant((tx) =>
-        tx.execute(sql`select snapshot::text as texte from contract_documents where id = ${premier.id}`),
-      )
-      const attendu = createHash('sha256').update(String(canonique.texte), 'utf8').digest('hex')
+      // L'empreinte porte sur la forme canonique du `json` de MySQL
+      // (`cast(snapshot as char)`) : on la recalcule ici sur ce texte.
+      const [rows] = (await asTenant((tx) =>
+        tx.execute(sql`
+          select cast(snapshot as char character set utf8mb4) as texte
+            from contract_documents where id = ${premier.id}`),
+      )) as unknown as [{ texte: string }[]]
+      const attendu = createHash('sha256').update(String(rows[0].texte), 'utf8').digest('hex')
       assert.equal(premier.sha256, attendu)
     })
 
     it('ne se réécrivent pas', async () => {
       const id = await contrat()
-      const [document] = await asTenant((tx) =>
-        tx.insert(contractDocuments).values({ contractId: id, snapshot: { v: 1 } }).returning(),
+      const document = await asTenant((tx) =>
+        insertReturning(tx, contractDocuments, { contractId: id, snapshot: { v: 1 } }),
       )
       assert.equal(
         await errorCode(() =>
@@ -538,11 +570,22 @@ describe('contrats versionnés', { skip: raison }, () => {
             tx.update(contractDocuments).set({ snapshot: { v: 2 } }).where(eq(contractDocuments.id, document.id)),
           ),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_COMMITMENT_LOCKED,
+      )
+      // Le propriétaire non plus : le trigger ne fait pas de différence.
+      assert.equal(
+        await errorCode(() =>
+          bases.owner.db.execute(
+            sql`update contract_documents set snapshot = '{"v": 2}' where id = ${document.id}`,
+          ),
+        ),
+        DB_COMMITMENT_LOCKED,
       )
       assert.equal(
-        await errorCode(() => owner.client`update contract_documents set snapshot = '{"v": 2}' where id = ${document.id}`),
-        PG_COMMITMENT_LOCKED,
+        await errorCode(() =>
+          asTenant((tx) => tx.delete(contractDocuments).where(eq(contractDocuments.id, document.id))),
+        ),
+        DB_COMMITMENT_LOCKED,
       )
     })
   })
@@ -550,14 +593,16 @@ describe('contrats versionnés', { skip: raison }, () => {
   describe('services souscrits (R18)', () => {
     const souscrire = (values: Record<string, unknown> = {}) =>
       asTenant(async (tx) => {
-        const [service] = await tx.execute(sql`select id from services where name = 'Standard'`)
-        const serviceId =
-          (service?.id as string | undefined) ??
-          ((
-            await tx.execute(sql`
-              insert into services (name, nature, unit, unit_price_cents)
-              values ('Standard', 'package', 'month', 5000) returning id`)
-          )[0].id as string)
+        const [services] = (await tx.execute(sql`select id from services where name = 'Standard'`)) as unknown as [
+          { id: string }[],
+        ]
+        let serviceId = services[0]?.id
+        if (!serviceId) {
+          serviceId = uuidv7()
+          await tx.execute(sql`
+            insert into services (id, name, nature, unit, unit_price_cents)
+            values (${serviceId}, 'Standard', 'package', 'month', 5000)`)
+        }
         const v = {
           clientId: CLIENT,
           contractId: null as string | null,
@@ -565,17 +610,17 @@ describe('contrats versionnés', { skip: raison }, () => {
           endsOn: null as string | null,
           ...values,
         }
-        const [row] = await tx.execute(sql`
-          insert into subscribed_services (client_id, contract_id, service_id, unit, unit_price_cents, vat_rate_bp,
-                                           starts_on, ends_on)
-          values (${v.clientId}, ${v.contractId}, ${serviceId}, 'month', 5000, 2000, ${v.startsOn}, ${v.endsOn})
-          returning id`)
-        return row.id as string
+        const id = uuidv7()
+        await tx.execute(sql`
+          insert into subscribed_services (id, client_id, contract_id, service_id, unit, unit_price_cents,
+                                           vat_rate_bp, starts_on, ends_on)
+          values (${id}, ${v.clientId}, ${v.contractId}, ${serviceId}, 'month', 5000, 2000, ${v.startsOn}, ${v.endsOn})`)
+        return id
       })
 
     it('refusent une seconde souscription au même service sur une période qui recouvre la première', async () => {
       await souscrire({ endsOn: '2026-06-30' })
-      assert.equal(await errorCode(() => souscrire({ startsOn: '2026-06-30' })), PG_EXCLUSION_VIOLATION)
+      assert.equal(await errorCode(() => souscrire({ startsOn: '2026-06-30' })), DB_EXCLUSION_VIOLATION)
       await souscrire({ startsOn: '2026-07-01' })
       // Pour un autre client, rien ne bloque.
       await souscrire({ clientId: AUTRE_CLIENT })
@@ -587,7 +632,7 @@ describe('contrats versionnés', { skip: raison }, () => {
         await errorCode(() =>
           asTenant((tx) => tx.execute(sql`update subscribed_services set unit_price_cents = 1 where id = ${id}`)),
         ),
-        PG_COMMITMENT_LOCKED,
+        DB_COMMITMENT_LOCKED,
       )
       await asTenant((tx) =>
         tx.execute(sql`update subscribed_services set ends_on = '2026-12-31' where id = ${id}`),
@@ -598,7 +643,7 @@ describe('contrats versionnés', { skip: raison }, () => {
       const contratAutre = await contrat({ clientId: AUTRE_CLIENT, resourceId: null })
       assert.equal(
         await errorCode(() => souscrire({ contractId: contratAutre })),
-        PG_FOREIGN_KEY_VIOLATION,
+        DB_FOREIGN_KEY_VIOLATION,
       )
       await souscrire({ contractId: await contrat({ reference: 'DOM-1', resourceId: null }) })
     })

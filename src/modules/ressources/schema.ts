@@ -1,23 +1,24 @@
 import { sql } from 'drizzle-orm'
 import {
+  char,
   check,
   date,
   foreignKey,
   index,
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
+  int,
+  json,
+  mysqlEnum,
+  mysqlTable,
   smallint,
   text,
   time,
-  timestamp,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { tenantId } from '../../db/tenants.ts'
 
 /**
@@ -33,7 +34,7 @@ export const resourceTypes = [
   'boite_aux_lettres',
 ] as const
 export type ResourceType = (typeof resourceTypes)[number]
-export const resourceTypeEnum = pgEnum('resource_type', resourceTypes)
+export const resourceTypeEnum = (name: string) => mysqlEnum(name, resourceTypes)
 
 /**
  * `active` : réservable. `maintenance` : indisponible temporairement.
@@ -41,7 +42,7 @@ export const resourceTypeEnum = pgEnum('resource_type', resourceTypes)
  */
 export const resourceStatuses = ['active', 'maintenance', 'retired'] as const
 export type ResourceStatus = (typeof resourceStatuses)[number]
-export const resourceStatusEnum = pgEnum('resource_status', resourceStatuses)
+export const resourceStatusEnum = (name: string) => mysqlEnum(name, resourceStatuses)
 
 /**
  * Réservation par un client connecté à son espace (R23, ADR 016 décision D4,
@@ -62,9 +63,9 @@ export const resourceStatusEnum = pgEnum('resource_status', resourceStatuses)
  */
 export const clientBookingModes = ['instant', 'approval', 'closed'] as const
 export type ClientBookingMode = (typeof clientBookingModes)[number]
-export const clientBookingModeEnum = pgEnum('client_booking_mode', clientBookingModes)
+export const clientBookingModeEnum = (name: string) => mysqlEnum(name, clientBookingModes)
 
-/** Champs propres à chaque type, stockés en JSONB. */
+/** Champs propres à chaque type, stockés en JSON. */
 export type ResourceAttributes = {
   salle: { superficieM2?: number; equipements?: string[] }
   bureau: { superficieM2?: number; postes?: number }
@@ -74,18 +75,18 @@ export type ResourceAttributes = {
   boite_aux_lettres: Record<string, never>
 }
 
-export const resources = pgTable(
+export const resources = mysqlTable(
   'resources',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     resourceType: resourceTypeEnum('resource_type').notNull(),
     /** Référence interne affichée au staff (« S-101 », « VH-2 »). */
-    code: text('code').notNull(),
-    name: text('name').notNull(),
+    code: varchar('code', { length: 64 }).notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
     /** Nombre de personnes ; nul pour un casier ou une boîte aux lettres. */
-    capacity: integer('capacity'),
+    capacity: int('capacity'),
     status: resourceStatusEnum('status').notNull().default('active'),
     /** Réservation depuis l'espace client (R23, ADR 036) : voir `clientBookingModes`. */
     clientBookingMode: clientBookingModeEnum('client_booking_mode').notNull().default('approval'),
@@ -97,32 +98,44 @@ export const resources = pgTable(
      * type, tous les types en ont une. `attributes` est réservé à ce qui ne vaut
      * que pour un type (décision 2).
      */
-    photoPath: text('photo_path'),
-    attributes: jsonb('attributes')
+    photoPath: varchar('photo_path', { length: 512 }),
+    attributes: json('attributes')
       .$type<ResourceAttributes[ResourceType]>()
       .notNull()
-      .default({}),
+      .default(sql`(JSON_OBJECT())`),
     ...timestamps(),
     deletedAt: deletedAt(),
+    /**
+     * Colonnes générées qui remplacent les index partiels de PostgreSQL : un
+     * index unique MySQL ignore les `NULL`, donc une ligne qui sort de la
+     * condition (archivée) rend son code et son numéro.
+     */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
+    /**
+     * Numéro de casier en minuscules tant que le casier est vivant, sinon
+     * `NULL` (R01). `nullif(…, 'null')` : un `null` JSON explicite ne compte pas.
+     */
+    lockerNumeroKey: varchar('locker_numero_key', { length: 100 }).generatedAlwaysAs(
+      sql`if(resource_type = 'casier' and deleted_at is null, lower(nullif(json_unquote(json_extract(attributes, '$.numero')), 'null')), null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     // Cible de la clé étrangère composite de `bookings` : une réservation ne
     // peut pas pointer sur une ressource d'un autre centre.
-    // Contrainte et non index : Postgres exige qu'elle existe avant la clé
-    // étrangère qui la référence, et Drizzle émet les contraintes dans le
-    // CREATE TABLE alors que les index viennent après.
+    // Contrainte et non index : elle doit exister avant la clé étrangère qui la
+    // référence, et Drizzle émet les contraintes dans le CREATE TABLE alors que
+    // les index viennent après.
     unique('resources_tenant_id_id_key').on(table.tenantId, table.id),
     // Le code est unique dans le centre, mais réutilisable après archivage.
-    uniqueIndex('resources_tenant_code_key')
-      .on(table.tenantId, table.code)
-      .where(sql`deleted_at is null`),
+    uniqueIndex('resources_tenant_code_key').on(table.tenantId, table.code, table.live),
     index('resources_tenant_type_idx').on(table.tenantId, table.resourceType),
     // Deux casiers vivants ne portent pas le même numéro, à la casse près (R01).
     // L'index tranche, y compris entre deux saisies simultanées ; un casier
     // archivé rend son numéro.
-    uniqueIndex('resources_tenant_locker_numero_key')
-      .on(table.tenantId, sql`lower(attributes ->> 'numero')`)
-      .where(sql`resource_type = 'casier' and deleted_at is null`),
+    uniqueIndex('resources_tenant_locker_numero_key').on(table.tenantId, table.lockerNumeroKey),
   ],
 )
 
@@ -138,22 +151,27 @@ export type NewResource = typeof resources.$inferInsert
  * ajouter — voir `rulesForResource()`. Une salle ouverte le samedi dans un
  * centre fermé le samedi doit être exprimable.
  *
- * `weekday` suit ISO 8601 : 1 = lundi … 7 = dimanche, comme `extract(isodow)`.
+ * `weekday` suit ISO 8601 : 1 = lundi … 7 = dimanche, comme `WEEKDAY() + 1` de MySQL.
  *
- * Les heures sont en `time`, pas en `timestamptz` : « ouvre à 9h00 » est une
+ * Les heures sont en `time`, pas en `datetime` UTC : « ouvre à 9h00 » est une
  * heure murale qui ne bouge pas aux changements d'heure, contrairement à
  * l'instant qu'elle désigne (décision 4, voir aussi ADR 010).
  */
-export const openingHours = pgTable(
+export const openingHours = mysqlTable(
   'opening_hours',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    resourceId: uuid('resource_id'),
+    resourceId: char('resource_id', { length: 36 }),
     weekday: smallint('weekday').notNull(),
     opensAt: time('opens_at').notNull(),
     closesAt: time('closes_at').notNull(),
     ...timestamps(),
+    /** Plage du centre (`resource_id` nul) ramenée à une valeur comparable par l'index unique. */
+    resourceKey: char('resource_key', { length: 36 }).generatedAlwaysAs(
+      sql`coalesce(resource_id, '00000000-0000-0000-0000-000000000000')`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     foreignKey({
@@ -168,7 +186,7 @@ export const openingHours = pgTable(
     // lecture : c'est la seule interprétation raisonnable.
     uniqueIndex('opening_hours_slot_key').on(
       table.tenantId,
-      sql`coalesce(resource_id, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      table.resourceKey,
       table.weekday,
       table.opensAt,
     ),
@@ -183,13 +201,13 @@ export const openingHours = pgTable(
  * statut de la ressource (`maintenance`) ou d'une réservation de blocage — pas
  * d'un troisième mécanisme.
  */
-export const closures = pgTable(
+export const closures = mysqlTable(
   'closures',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     /** Nul : tout le centre est fermé. */
-    resourceId: uuid('resource_id'),
+    resourceId: char('resource_id', { length: 36 }),
     startsOn: date('starts_on', { mode: 'string' }).notNull(),
     endsOn: date('ends_on', { mode: 'string' }).notNull(),
     reason: text('reason'),
@@ -222,24 +240,27 @@ export type NewClosure = typeof closures.$inferInsert
  * Le `slug` est stocké et non calculé : il paraît dans l'URL publique et dans
  * les moteurs de recherche, il doit survivre à un renommage de la ressource.
  */
-export const listings = pgTable(
+export const listings = mysqlTable(
   'listings',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    resourceId: uuid('resource_id').notNull(),
-    slug: text('slug').notNull(),
+    resourceId: char('resource_id', { length: 36 }).notNull(),
+    slug: varchar('slug', { length: 191 }).notNull(),
     /** Titre de l'annonce, distinct du nom interne de la ressource. */
-    headline: text('headline').notNull(),
+    headline: varchar('headline', { length: 255 }).notNull(),
     description: text('description'),
     /** Points forts, affichés en liste courte. */
-    highlights: jsonb('highlights').$type<string[]>().notNull().default([]),
+    highlights: json('highlights').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
     /** Clés de stockage des photos, dans l'ordre d'affichage. */
-    photos: jsonb('photos').$type<string[]>().notNull().default([]),
+    photos: json('photos').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
     /** Nul : brouillon, invisible du public. */
-    publishedAt: timestamp('published_at', { withTimezone: true }),
+    publishedAt: instant('published_at'),
     ...timestamps(),
     deletedAt: deletedAt(),
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     foreignKey({
@@ -250,9 +271,7 @@ export const listings = pgTable(
     // Une annonce par ressource : deux vitrines pour la même salle donneraient
     // deux disponibilités à tenir d'accord.
     unique('listings_tenant_resource_key').on(table.tenantId, table.resourceId),
-    uniqueIndex('listings_tenant_slug_key')
-      .on(table.tenantId, table.slug)
-      .where(sql`deleted_at is null`),
+    uniqueIndex('listings_tenant_slug_key').on(table.tenantId, table.slug, table.live),
     index('listings_tenant_published_idx').on(table.tenantId, table.publishedAt),
   ],
 )

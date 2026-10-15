@@ -1,21 +1,22 @@
 import { sql } from 'drizzle-orm'
 import {
+  char,
   check,
   foreignKey,
   index,
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
+  int,
+  json,
+  mysqlEnum,
+  mysqlTable,
   smallint,
   text,
-  timestamp,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
@@ -39,13 +40,13 @@ export type InspectionFieldType = (typeof inspectionFieldTypes)[number]
 
 /**
  * Échelle de la note d'état, du meilleur au pire. Miroir de
- * `inspection_condition_levels()` (migration 0039).
+ * `inspection_values_error()` (`src/db/regles/80-etats-des-lieux.sql`).
  */
 export const inspectionConditionLevels = ['neuf', 'bon', 'usage', 'mauvais'] as const
 export type InspectionConditionLevel = (typeof inspectionConditionLevels)[number]
 
 /**
- * Un champ du formulaire. Validé par la base (`inspection_fields_error()`) :
+ * Un champ du formulaire. Validé par la base (`inspection_fields_error()`, trigger des versions) :
  *
  * - `id` : `^[a-z][a-z0-9_]{0,62}$`, unique dans le modèle — c'est la clé de
  *   la valeur dans `inspections.values` et de `inspection_photos.field_id` ;
@@ -79,7 +80,7 @@ export type InspectionValues = Record<string, string | number | boolean | null>
  * Lisible sous portée client (l'espace montre les libellés des champs),
  * modifiable seulement par le back-office.
  */
-export const inspectionTemplates = pgTable(
+export const inspectionTemplates = mysqlTable(
   'inspection_templates',
   {
     id: primaryKeyId(),
@@ -88,13 +89,16 @@ export const inspectionTemplates = pgTable(
     name: text('name').notNull(),
     ...timestamps(),
     deletedAt: deletedAt(),
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     unique('inspection_templates_tenant_id_id_key').on(table.tenantId, table.id),
-    uniqueIndex('inspection_templates_type_key')
-      .on(table.tenantId, table.resourceType)
-      .where(sql`deleted_at is null`),
-    check('inspection_templates_name_not_blank', sql`btrim(${table.name}) <> ''`),
+    // Un seul modèle vivant par type : `live` (colonne générée) vaut NULL une
+    // fois le modèle retiré, ce que l'index unique ignore.
+    uniqueIndex('inspection_templates_type_key').on(table.tenantId, table.resourceType, table.live),
+    check('inspection_templates_name_not_blank', sql`trim(${table.name}) <> ''`),
   ],
 )
 
@@ -104,25 +108,26 @@ export type NewInspectionTemplate = typeof inspectionTemplates.$inferInsert
 /**
  * Version d'un modèle : la liste de ses champs, figée. Modifier un modèle,
  * c'est en publier une version de plus (`version` = la précédente + 1, posée
- * par le code ; l'unicité tranche entre deux publications simultanées). Le
- * rôle applicatif n'a ni `UPDATE` ni `DELETE` sur cette table.
+ * par le code ; l'unicité tranche entre deux publications simultanées). La
+ * base refuse tout `UPDATE` et tout `DELETE` sur cette table (triggers
+ * `inspection_template_versions_before_update` / `_delete`).
  */
-export const inspectionTemplateVersions = pgTable(
+export const inspectionTemplateVersions = mysqlTable(
   'inspection_template_versions',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    templateId: uuid('template_id').notNull(),
-    version: integer('version').notNull(),
+    templateId: char('template_id', { length: 36 }).notNull(),
+    version: int('version').notNull(),
     /**
      * Nom du modèle à cette version (ADR 041) : un état des lieux clos montre
      * le nom qu'il portait, même si le modèle est renommé depuis. Renommer un
      * modèle en publie une version.
      */
     name: text('name').notNull(),
-    fields: jsonb('fields').$type<InspectionField[]>().notNull(),
-    createdBy: uuid('created_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
-    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    fields: json('fields').$type<InspectionField[]>().notNull(),
+    createdBy: char('created_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
+    createdAt: instant('created_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
   },
   (table) => [
     unique('inspection_template_versions_tenant_id_id_key').on(table.tenantId, table.id),
@@ -137,12 +142,9 @@ export const inspectionTemplateVersions = pgTable(
       table.version,
     ),
     check('inspection_template_versions_version_positive', sql`${table.version} >= 1`),
-    check('inspection_template_versions_name_not_blank', sql`btrim(${table.name}) <> ''`),
-    // La fonction est posée par la migration 0039, avant cette table.
-    check(
-      'inspection_template_versions_fields_valid',
-      sql`inspection_fields_error(${table.fields}) is null`,
-    ),
+    check('inspection_template_versions_name_not_blank', sql`trim(${table.name}) <> ''`),
+    // `fields` est validé par le trigger `inspection_template_versions_before_insert`
+    // (`inspection_fields_error()`) : MySQL refuse une routine stockée dans un check.
   ],
 )
 
@@ -151,7 +153,7 @@ export type NewInspectionTemplateVersion = typeof inspectionTemplateVersions.$in
 
 export const inspectionKinds = ['entry', 'exit'] as const
 export type InspectionKind = (typeof inspectionKinds)[number]
-export const inspectionKindEnum = pgEnum('inspection_kind', inspectionKinds)
+export const inspectionKindEnum = (name: string) => mysqlEnum(name, inspectionKinds)
 
 /**
  * `draft` : en saisie au centre, invisible du client, modifiable, retirable.
@@ -160,14 +162,14 @@ export const inspectionKindEnum = pgEnum('inspection_kind', inspectionKinds)
  */
 export const inspectionStatuses = ['draft', 'closed'] as const
 export type InspectionStatus = (typeof inspectionStatuses)[number]
-export const inspectionStatusEnum = pgEnum('inspection_status', inspectionStatuses)
+export const inspectionStatusEnum = (name: string) => mysqlEnum(name, inspectionStatuses)
 
 /**
  * Un état des lieux d'entrée ou de sortie d'une ressource, pour un client, au
  * titre d'une réservation et/ou d'un contrat. Une sortie désigne l'entrée
  * qu'elle clôt (même ressource, même client).
  *
- * Garanties tenues par la base (migration 0042, ADR 039) :
+ * Garanties tenues par la base (`src/db/regles/80-etats-des-lieux.sql`, ADR 039) :
  *
  * - les valeurs suivent la version du modèle : clés connues, types justes,
  *   options et échelle respectées (`CA011`) ; à la clôture, tout champ
@@ -178,40 +180,47 @@ export const inspectionStatusEnum = pgEnum('inspection_status', inspectionStatus
  * - sous portée client : seuls les états clos de l'entreprise sont visibles,
  *   et seule la validation passe.
  */
-export const inspections = pgTable(
+export const inspections = mysqlTable(
   'inspections',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     kind: inspectionKindEnum('kind').notNull(),
     status: inspectionStatusEnum('status').notNull().default('draft'),
-    resourceId: uuid('resource_id').notNull(),
-    clientId: uuid('client_id').notNull(),
-    bookingId: uuid('booking_id'),
-    contractId: uuid('contract_id'),
+    resourceId: char('resource_id', { length: 36 }).notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
+    bookingId: char('booking_id', { length: 36 }),
+    contractId: char('contract_id', { length: 36 }),
     /** Pour une sortie : l'entrée correspondante, close. */
-    entryInspectionId: uuid('entry_inspection_id'),
+    entryInspectionId: char('entry_inspection_id', { length: 36 }),
     /** Version du modèle avec laquelle il est saisi. Ne change jamais. */
-    templateVersionId: uuid('template_version_id').notNull(),
+    templateVersionId: char('template_version_id', { length: 36 }).notNull(),
     /** Date de l'état des lieux, sur place. */
-    performedAt: timestamp('performed_at', { withTimezone: true }).notNull().defaultNow(),
-    values: jsonb('values').$type<InspectionValues>().notNull().default({}),
+    performedAt: instant('performed_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+    values: json('values')
+      .$type<InspectionValues>()
+      .notNull()
+      .default(sql`(JSON_OBJECT())`),
     /** Observations générales de l'équipe. */
     observations: text('observations'),
-    createdBy: uuid('created_by')
+    createdBy: char('created_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
     /** Clôture : date posée par la base, auteur par le code. */
-    closedAt: timestamp('closed_at', { withTimezone: true }),
-    closedBy: uuid('closed_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    closedAt: instant('closed_at'),
+    closedBy: char('closed_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     /** Validation par le client depuis son espace : date posée par la base. */
-    signedAt: timestamp('signed_at', { withTimezone: true }),
-    signedByMemberId: uuid('signed_by_member_id'),
+    signedAt: instant('signed_at'),
+    signedByMemberId: char('signed_by_member_id', { length: 36 }),
     /** Réserves du client, saisies à la validation. */
     clientRemarks: text('client_remarks'),
     ...timestamps(),
     /** Brouillon retiré (saisi par erreur). Un état clos ne se retire pas. */
     deletedAt: deletedAt(),
+    exitLive: tinyint('exit_live').generatedAlwaysAs(
+      sql`if(entry_inspection_id is not null and deleted_at is null, 1, null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     unique('inspections_tenant_id_id_key').on(table.tenantId, table.id),
@@ -259,18 +268,21 @@ export const inspections = pgTable(
       foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
     }).onDelete('restrict'),
     // Une sortie par entrée.
-    uniqueIndex('inspections_exit_per_entry_key')
-      .on(table.tenantId, table.entryInspectionId)
-      .where(sql`entry_inspection_id is not null and deleted_at is null`),
+    // `exit_live` : 1 pour une sortie vivante liée à une entrée, NULL sinon.
+    uniqueIndex('inspections_exit_per_entry_key').on(
+      table.tenantId,
+      table.entryInspectionId,
+      table.exitLive,
+    ),
     check(
       'inspections_occupation_given',
-      sql`num_nonnulls(${table.bookingId}, ${table.contractId}) >= 1`,
+      sql`${table.bookingId} is not null or ${table.contractId} is not null`,
     ),
     check(
       'inspections_entry_for_exit',
       sql`${table.entryInspectionId} is null or ${table.kind} = 'exit'`,
     ),
-    check('inspections_values_object', sql`jsonb_typeof(${table.values}) = 'object'`),
+    check('inspections_values_object', sql`json_type(${table.values}) = 'OBJECT'`),
     // Même borne que la saisie (`MAX_REMARKS`, compte-actions.ts), tenue par la base (ADR 041).
     check(
       'inspections_client_remarks_length',
@@ -287,12 +299,8 @@ export const inspections = pgTable(
     ),
     index('inspections_client_idx').on(table.tenantId, table.clientId, table.performedAt),
     index('inspections_resource_idx').on(table.tenantId, table.resourceId, table.performedAt),
-    index('inspections_booking_idx')
-      .on(table.tenantId, table.bookingId)
-      .where(sql`booking_id is not null`),
-    index('inspections_contract_idx')
-      .on(table.tenantId, table.contractId)
-      .where(sql`contract_id is not null`),
+    index('inspections_booking_idx').on(table.tenantId, table.bookingId),
+    index('inspections_contract_idx').on(table.tenantId, table.contractId),
   ],
 )
 
@@ -318,27 +326,27 @@ export const INSPECTION_PHOTO_MAX_BYTES = 10 * 1024 * 1024
  * fichier est effacé et la ligne marquée `deleted_at`
  * (`expired_inspection_photos()`, puis `mark_inspection_photo_purged()`).
  */
-export const inspectionPhotos = pgTable(
+export const inspectionPhotos = mysqlTable(
   'inspection_photos',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    inspectionId: uuid('inspection_id').notNull(),
-    storageKey: text('storage_key').notNull(),
+    inspectionId: char('inspection_id', { length: 36 }).notNull(),
+    storageKey: varchar('storage_key', { length: 255 }).notNull(),
     /** Version de la clé de chiffrement des documents (ADR 020). */
     encryptionKeyVersion: smallint('encryption_key_version').notNull(),
     /** Déterminé par le contenu du fichier, pas par ce que le navigateur déclare. */
-    contentType: text('content_type').notNull(),
+    contentType: varchar('content_type', { length: 100 }).notNull(),
     /** Taille du document en clair. */
-    byteSize: integer('byte_size').notNull(),
+    byteSize: int('byte_size').notNull(),
     /** Dimensions, pour réserver la place à l'affichage. */
-    width: integer('width').notNull(),
-    height: integer('height').notNull(),
+    width: int('width').notNull(),
+    height: int('height').notNull(),
     caption: text('caption'),
     /** Champ du modèle illustré ; nul pour une photo d'ensemble. */
-    fieldId: text('field_id'),
+    fieldId: varchar('field_id', { length: 64 }),
     position: smallint('position').notNull().default(0),
-    uploadedBy: uuid('uploaded_by')
+    uploadedBy: char('uploaded_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
     ...timestamps(),
@@ -379,24 +387,24 @@ export type InspectionPhotoViewer = (typeof inspectionPhotoViewers)[number]
 
 /**
  * Journal des consultations des photos, sur le modèle de `mail_scan_views` :
- * ajout seul (ni `UPDATE` ni `DELETE` pour le rôle applicatif), purge par
+ * ajout seul (triggers `inspection_photo_views_before_update` / `_delete`), purge par
  * `purge_expired_inspection_photo_views()` au terme de
  * `tenants.inspection_access_log_retention_months`.
  */
-export const inspectionPhotoViews = pgTable(
+export const inspectionPhotoViews = mysqlTable(
   'inspection_photo_views',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    photoId: uuid('photo_id').notNull(),
-    viewedAt: timestamp('viewed_at', { withTimezone: true }).notNull().defaultNow(),
-    viewer: text('viewer').$type<InspectionPhotoViewer>().notNull(),
-    staffMemberId: uuid('staff_member_id').references(() => staffMembers.id, {
+    photoId: char('photo_id', { length: 36 }).notNull(),
+    viewedAt: instant('viewed_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+    viewer: varchar('viewer', { length: 16 }).$type<InspectionPhotoViewer>().notNull(),
+    staffMemberId: char('staff_member_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
-    clientMemberId: uuid('client_member_id'),
+    clientMemberId: char('client_member_id', { length: 36 }),
     /** Le compte lui-même : il survit au retrait de la personne. */
-    authUserId: text('auth_user_id').notNull(),
+    authUserId: varchar('auth_user_id', { length: 255 }).notNull(),
   },
   (table) => [
     foreignKey({
@@ -411,11 +419,9 @@ export const inspectionPhotoViews = pgTable(
     }).onDelete('restrict'),
     check(
       'inspection_photo_views_viewer_consistent',
-      sql`case ${table.viewer}
-        when 'staff' then ${table.staffMemberId} is not null and ${table.clientMemberId} is null
-        when 'client' then ${table.clientMemberId} is not null and ${table.staffMemberId} is null
-        else false
-      end`,
+      // Écrit en OU de cas : MySQL refuse un `CASE` nu comme expression de check.
+      sql`(${table.viewer} = 'staff' and ${table.staffMemberId} is not null and ${table.clientMemberId} is null)
+        or (${table.viewer} = 'client' and ${table.clientMemberId} is not null and ${table.staffMemberId} is null)`,
     ),
     index('inspection_photo_views_photo_idx').on(table.tenantId, table.photoId, table.viewedAt),
   ],

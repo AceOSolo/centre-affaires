@@ -11,7 +11,7 @@ import { MIN_REQUEST_MINUTES } from './requests.ts'
  *
  * La base a le dernier mot : elle pose le statut d'une réservation du portail
  * selon le réglage de sa ressource (`bookings_apply_client_booking_mode`),
- * refuse une ressource fermée (CA009) et un créneau pris (23P01). Ce module
+ * refuse une ressource fermée (CA009) et un créneau pris (CA000). Ce module
  * annonce au client ce qui va se passer, et refuse avant l'écriture ce qu'il
  * peut corriger lui-même.
  */
@@ -30,7 +30,7 @@ export type PortalBookingOutcome = 'confirmed' | 'pending'
  * Le statut que la base posera, annoncé avant l'envoi : confirmée d'emblée
  * pour une ressource à confirmation immédiate **dont le tarif est calculé**
  * (le devis est figé à l'écriture) ; en attente de l'accueil sinon. Jumeau du
- * trigger `bookings_apply_client_booking_mode` (migration 0041) ; après
+ * trigger `bookings_before_insert` (`src/db/regles/20-reservations.sql`) ; après
  * l'écriture, l'écran lit le statut rendu par la base, pas celui-ci.
  */
 export function expectedPortalOutcome(mode: PortalBookingMode, priced: boolean): PortalBookingOutcome {

@@ -2,34 +2,27 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { DB_CLIENT_SCOPE_REFUSED, DB_INVOICE_LOCKED, dbErrorCode } from '../../db/errors.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
+import { lire, toutVider } from '../clients/test-support.ts'
 import { findInvoiceForAccounts, listInvoicesForAccounts } from './compte-queries.ts'
 
 /**
- * « Mes factures » (R17), contre la base et sous le rôle applicatif : jamais
- * un brouillon, jamais la facture d'une autre entreprise — par les filtres
- * des requêtes, et par la portée client en RLS, qui tient seule même pour une
- * requête sans filtre.
+ * « Mes factures » (R17), contre la base et sous l'identité applicative :
+ * jamais un brouillon, jamais la facture d'une autre entreprise.
+ *
+ * MySQL ne filtre plus les lectures (pas de RLS, ADR 042) : ce sont les
+ * requêtes qui portent les filtres `client_id` et `status <> 'draft'`, et ce
+ * fichier les éprouve une à une. La base garde les écritures : sous la
+ * portée d'une entreprise, rien ne s'écrit pour une autre (`CA015`).
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('factures de l’espace client', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('factures de l’espace client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000f0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000f0c02'
@@ -40,51 +33,54 @@ describe('factures de l’espace client', { skip: raison }, () => {
   const petit: ClientAccount[] = [{ memberId: PAUL, clientId: PETIT, clientName: 'Boulangerie Petit' }]
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
-  /** Identité du centre avant le test, rendue à la fin : d'autres tests la lisent. */
-  let identite: Record<string, unknown> | undefined
+  /** Dernier jour du mois `AAAA-MM`. */
+  const finDeMois = (mois: string) => {
+    const [annee, m] = mois.split('-').map(Number)
+    return `${mois}-${String(new Date(Date.UTC(annee, m, 0)).getUTCDate()).padStart(2, '0')}`
+  }
 
   /** Une facture d'une ligne ; émise si demandé. */
   const facturer = async (clientId: string, { emettre = true, mois = '2026-09' } = {}) => {
-    const [row] = await asTenant(async (tx) => {
-      const [invoice] = await tx.execute(sql`
-        insert into invoices (client_id, period_start, period_end)
-        values (${clientId}, ${`${mois}-01`}::date, (${`${mois}-01`}::date + interval '1 month - 1 day')::date)
-        returning id`)
+    const id = uuidv7()
+    await asTenant(async (tx) => {
       await tx.execute(sql`
-        insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
-        values (${invoice.id as string}, 'other', 'Domiciliation', 10000, 2000)`)
-      if (emettre) await tx.execute(sql`select issue_invoice(${invoice.id as string}::uuid)`)
-      return [invoice]
+        insert into invoices (id, client_id, period_start, period_end)
+        values (${id}, ${clientId}, ${`${mois}-01`}, ${finDeMois(mois)})`)
+      await tx.execute(sql`
+        insert into invoice_lines (id, invoice_id, kind, description, unit_price_cents, vat_rate_bp)
+        values (${uuidv7()}, ${id}, 'other', 'Domiciliation', 10000, 2000)`)
+      await tx.execute(sql`select invoice_refresh_amounts(${id})`)
+      if (emettre) await tx.execute(sql`select issue_invoice(${id}, null)`)
     })
-    return row.id as string
+    return id
   }
 
   const avoir = async (invoiceId: string) => {
-    const [row] = await asTenant(async (tx) => {
-      const [draft] = await tx.execute(sql`select draft_credit_note(${invoiceId}::uuid, 'Erreur de période') as id`)
-      await tx.execute(sql`select issue_invoice(${draft.id as string}::uuid)`)
-      return [draft]
+    const id = uuidv7()
+    await asTenant(async (tx) => {
+      await tx.execute(sql`call draft_credit_note(${id}, ${invoiceId}, 'Erreur de période')`)
+      await tx.execute(sql`select issue_invoice(${id}, null)`)
     })
-    return row.id as string
+    return id
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    const [row] = await owner.client`
-      select legal_name, address_line1, postal_code, city, siren, vat_number, bank_iban
-        from tenants where id = ${DEFAULT_TENANT_ID}`
-    identite = row
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, clients, services, offers cascade`
-    await owner.client`
-      update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
-        postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
-        vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
-      where id = ${DEFAULT_TENANT_ID}`
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
+         postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
+         vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status, address_line1, postal_code, city) values
@@ -98,17 +94,15 @@ describe('factures de l’espace client', { skip: raison }, () => {
   })
 
   after(async () => {
-    if (identite) {
-      await owner.client`
-        update tenants set legal_name = ${identite.legal_name as string | null},
-          address_line1 = ${identite.address_line1 as string | null},
-          postal_code = ${identite.postal_code as string | null}, city = ${identite.city as string | null},
-          siren = ${identite.siren as string | null}, vat_number = ${identite.vat_number as string | null},
-          bank_iban = ${identite.bank_iban as string | null}
-        where id = ${DEFAULT_TENANT_ID}`
-    }
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
+         siren = null, vat_number = null, bank_iban = null
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('ne montre que les factures et avoirs émis des entreprises du compte', async () => {
@@ -131,7 +125,7 @@ describe('factures de l’espace client', { skip: raison }, () => {
     const emise = await facturer(DURAND)
     const brouillon = await facturer(DURAND, { emettre: false, mois: '2026-10' })
     const abandonne = await facturer(DURAND, { emettre: false, mois: '2026-11' })
-    await asTenant((tx) => tx.execute(sql`update invoices set deleted_at = now() where id = ${abandonne}`))
+    await asTenant((tx) => tx.execute(sql`update invoices set deleted_at = current_timestamp(3) where id = ${abandonne}`))
     const autre = await facturer(PETIT)
 
     assert.equal(await findInvoiceForAccounts(brouillon, durand), undefined)
@@ -157,9 +151,9 @@ describe('factures de l’espace client', { skip: raison }, () => {
     const facture = await facturer(DURAND)
     const avoirId = await avoir(facture)
     const detail = await findInvoiceForAccounts(avoirId, durand)
-    const [{ number }] = await asTenant((tx) => tx.execute(sql`select number from invoices where id = ${facture}`))
+    const rows = await asTenant((tx) => lire(tx, sql`select number from invoices where id = ${facture}`))
     assert.equal(detail?.invoice.kind, 'credit_note')
-    assert.equal(detail?.original?.number, number)
+    assert.equal(detail?.original?.number, rows[0].number)
   })
 
   it('montre à un compte de deux entreprises les factures des deux, jamais leurs brouillons', async () => {
@@ -170,30 +164,36 @@ describe('factures de l’espace client', { skip: raison }, () => {
     assert.deepEqual(rows.map((row) => row.id).sort(), [deDurand, dePetit].sort())
   })
 
-  it('tient par la portée client seule, sans aucun filtre', async () => {
+  it('refuse, sous la portée d’une entreprise, d’écrire pour une autre ou sur un brouillon', async () => {
     const emise = await facturer(DURAND)
     const brouillon = await facturer(DURAND, { emettre: false, mois: '2026-10' })
-    await facturer(PETIT)
-    // Une requête qui aurait oublié tous ses filtres : la RLS ne laisse passer
-    // que les documents émis de l'entreprise de la portée (migration 0031).
-    const { factures, lignes } = await withClientScope(
-      DEFAULT_TENANT_ID,
-      [DURAND],
-      async (tx) => ({
-        factures: await tx.execute(sql`select id from invoices`),
-        lignes: await tx.execute(sql`select invoice_id from invoice_lines`),
-      }),
-      app.db,
+    const autre = await facturer(PETIT)
+
+    const code = async (run: () => Promise<unknown>) => {
+      try {
+        await run()
+      } catch (error) {
+        return dbErrorCode(error)
+      }
+      return undefined
+    }
+    const sousPortee = <T>(run: (tx: Transaction) => Promise<T>) =>
+      withClientScope(DEFAULT_TENANT_ID, [DURAND], run, bases.app.db)
+
+    // La facture d'une autre entreprise, comme un brouillon, est hors d'atteinte.
+    assert.equal(
+      await code(() => sousPortee((tx) => tx.execute(sql`update invoices set notes = 'x' where id = ${autre}`))),
+      DB_CLIENT_SCOPE_REFUSED,
     )
-    assert.deepEqual(
-      factures.map((row) => row.id),
-      [emise],
+    assert.equal(
+      await code(() => sousPortee((tx) => tx.execute(sql`update invoices set notes = 'x' where id = ${brouillon}`))),
+      DB_CLIENT_SCOPE_REFUSED,
     )
-    assert.deepEqual(
-      lignes.map((row) => row.invoice_id),
-      [emise],
+    // Une facture émise de l'entreprise reste figée (CA002), la portée n'y change rien.
+    assert.equal(
+      await code(() => sousPortee((tx) => tx.execute(sql`update invoices set notes = 'x' where id = ${emise}`))),
+      DB_INVOICE_LOCKED,
     )
-    assert.ok(!lignes.some((row) => row.invoice_id === brouillon))
   })
 
   it('ne montre rien à un compte sans entreprise', async () => {

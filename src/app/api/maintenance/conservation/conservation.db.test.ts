@@ -2,10 +2,16 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../../../db/index.ts'
+import { withTenant } from '../../../../db/index.ts'
+import {
+  ouvrirBasesDeTest,
+  raisonDeSaut,
+  viderTables,
+  type TestDatabases,
+} from '../../../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../../../db/tenants.ts'
+import { uuidv7 } from '../../../../lib/uuid.ts'
 import { runNightlyConservation } from '../../../../modules/rgpd/tache-de-nuit.ts'
 import { POST } from './route.ts'
 
@@ -15,26 +21,18 @@ import { POST } from './route.ts'
  * Éprouvée telle que le serveur l'appelle, contre la base de test ; une panne
  * du stockage ne retient aucune des autres étapes.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('route de conservation', { skip: raison }, () => {
-  // La route ouvre sa propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('route de conservation', { skip: raisonDeSaut }, () => {
   const TOKEN = 'jeton-de-maintenance-de-test'
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
   const SALLE = '01a00000-0000-7000-8000-000000200b01'
 
+  let bases: TestDatabases
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  const lire = async (requete: string, params: unknown[] = []) => {
+    const [rows] = await bases.owner.client.query(requete, params)
+    return rows as Record<string, unknown>[]
+  }
 
   const appeler = (authorization?: string) =>
     POST(
@@ -44,6 +42,16 @@ describe('route de conservation', { skip: raison }, () => {
       }),
     )
 
+  /** Toutes les tables métier : les clés étrangères entre elles rendent un vidage partiel inutilisable. */
+  const toutVider = async () => {
+    const tables = await lire(
+      `select table_name as name from information_schema.tables
+        where table_schema = database() and table_type = 'BASE TABLE'
+          and table_name not in ('tenants', '__migrations') and table_name not like 'auth\\_%'`,
+    )
+    await viderTables(bases.owner, ...tables.map((table) => String(table.name)))
+  }
+
   /** Une demande publique dont le créneau s'est terminé il y a `mois` mois. */
   let heure = 0
   const demande = async (titre: string, mois: number) => {
@@ -51,35 +59,51 @@ describe('route de conservation', { skip: raison }, () => {
     await asTenant((tx) =>
       tx.execute(sql`
         insert into bookings (
-          resource_id, channel, status, title, requester_name, requester_email, requester_phone,
+          id, resource_id, channel, status, title, requester_name, requester_email, requester_phone,
           starts_at, ends_at
         ) values (
-          ${SALLE}, 'public', 'pending', ${titre}, 'Camille Rousseau', 'camille@exemple.fr', '06 12 34 56 78',
-          now() - make_interval(months => ${mois}, hours => ${heure + 1}),
-          now() - make_interval(months => ${mois}, hours => ${heure})
+          ${uuidv7()}, ${SALLE}, 'public', 'pending', ${titre}, 'Camille Rousseau', 'camille@exemple.fr', '06 12 34 56 78',
+          CURRENT_TIMESTAMP(3) - interval ${mois} month - interval ${heure + 1} hour,
+          CURRENT_TIMESTAMP(3) - interval ${mois} month - interval ${heure} hour
         )`),
     )
   }
 
   const demandeur = async (titre: string) => {
-    const [row] = await owner.client`
-      select requester_email, requester_anonymized_at from bookings where title = ${titre}`
+    const [row] = await lire(
+      'select requester_email, requester_anonymized_at from bookings where title = ?',
+      [titre],
+    )
     return row
   }
+
+  const reglerDurees = () =>
+    bases.owner.client.query(
+      `update tenants set public_request_retention_months = 12, prospect_retention_months = 36,
+                          removed_member_retention_months = 12`,
+    )
 
   const saved = process.env.MAINTENANCE_TOKEN
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // La route ouvre sa propre connexion, par `DB_*` : on la pointe sur la
+    // base de test, sous l'identité applicative.
+    const e = process.env
+    e.DB_HOST = e.TEST_DB_HOST ?? e.DB_HOST ?? '127.0.0.1'
+    e.DB_PORT = e.TEST_DB_PORT ?? e.DB_PORT ?? '3306'
+    e.DB_NAME = e.TEST_DB_NAME
+    e.DB_USER = e.TEST_DB_USER ?? e.TEST_DB_ADMIN_USER ?? e.DB_ADMIN_USER ?? 'root'
+    e.DB_PASSWORD = e.TEST_DB_USER
+      ? (e.TEST_DB_PASSWORD ?? '')
+      : (e.TEST_DB_ADMIN_PASSWORD ?? e.DB_ADMIN_PASSWORD ?? '')
   })
 
   beforeEach(async () => {
     process.env.MAINTENANCE_TOKEN = TOKEN
     heure = 0
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`update tenants set public_request_retention_months = 12`
-    await owner.client`update tenants set prospect_retention_months = 36, removed_member_retention_months = 12`
+    await toutVider()
+    await reglerDurees()
     await asTenant((tx) =>
       tx.execute(sql`
         insert into resources (id, resource_type, code, name) values (${SALLE}, 'salle', 'SAL-C', 'Salle')`),
@@ -89,10 +113,10 @@ describe('route de conservation', { skip: raison }, () => {
   after(async () => {
     if (saved === undefined) delete process.env.MAINTENANCE_TOKEN
     else process.env.MAINTENANCE_TOKEN = saved
-    await owner.client`update tenants set public_request_retention_months = 12`
-    await owner.client`update tenants set prospect_retention_months = 36, removed_member_retention_months = 12`
+    await reglerDurees()
+    await toutVider()
     const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await Promise.all([bases.fermer(), global.database?.client.end()])
   })
 
   it('efface les coordonnées des demandes publiques échues, et elles seules', async () => {
@@ -121,7 +145,7 @@ describe('route de conservation', { skip: raison }, () => {
 
   it('suit la durée réglée pour le centre', async () => {
     await demande('Il y a trois mois', 3)
-    await owner.client`update tenants set public_request_retention_months = 2`
+    await bases.owner.client.query('update tenants set public_request_retention_months = 2')
     const response = await appeler(`Bearer ${TOKEN}`)
     assert.equal((await response.json()).publicRequests, 1)
   })
@@ -136,15 +160,16 @@ describe('route de conservation', { skip: raison }, () => {
   it('anonymise les entreprises et les personnes retirées au terme, et ne journalise que des nombres', async (t) => {
     const journal = t.mock.method(console, 'info', () => {})
     await asTenant(async (tx) => {
+      const prospect = uuidv7()
       await tx.execute(sql`
-        insert into clients (name, status, created_at, email)
-        values ('Prospect oublié', 'prospect', '2020-01-01T09:00:00Z', 'oublie@exemple.fr')`)
+        insert into clients (id, name, status, created_at, email)
+        values (${prospect}, 'Prospect oublié', 'prospect', '2020-01-01 09:00:00.000', 'oublie@exemple.fr')`)
       await tx.execute(sql`
-        insert into client_contacts (client_id, full_name, email)
-        select id, 'Paul Prospect', 'paul@exemple.fr' from clients where name = 'Prospect oublié'`)
+        insert into client_contacts (id, client_id, full_name, email)
+        values (${uuidv7()}, ${prospect}, 'Paul Prospect', 'paul@exemple.fr')`)
       await tx.execute(sql`
-        insert into staff_members (email, full_name, deleted_at)
-        values ('parti@centre.fr', 'Ancienne accueil', now() - interval '2 years')`)
+        insert into staff_members (id, email, full_name, deleted_at)
+        values (${uuidv7()}, 'parti@centre.fr', 'Ancienne accueil', CURRENT_TIMESTAMP(3) - interval 2 year)`)
     })
 
     const response = await appeler(`Bearer ${TOKEN}`)
@@ -164,49 +189,53 @@ describe('route de conservation', { skip: raison }, () => {
   })
 
   it('purge le journal des messages au terme de sa durée (ADR 038)', async () => {
-    await owner.client`truncate table notification_deliveries`
-    await owner.client`update tenants set notification_log_retention_months = 12`
+    await bases.owner.client.query('update tenants set notification_log_retention_months = 12')
+    // `recipients` est une colonne JSON : la liste des adresses.
     await asTenant((tx) =>
       tx.execute(sql`
-        insert into notification_deliveries (event, audience, recipients, subject, status, sent_at) values
-          ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Ancienne', 'sent', now() - interval '13 months'),
-          ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Récente', 'sent', now() - interval '1 month')`),
+        insert into notification_deliveries (id, event, audience, recipients, subject, status, sent_at) values
+          (${uuidv7()}, 'mail_request_submitted', 'centre', ${JSON.stringify(['accueil@centre.fr'])}, 'Ancienne', 'sent',
+           CURRENT_TIMESTAMP(3) - interval 13 month),
+          (${uuidv7()}, 'mail_request_submitted', 'centre', ${JSON.stringify(['accueil@centre.fr'])}, 'Récente', 'sent',
+           CURRENT_TIMESTAMP(3) - interval 1 month)`),
     )
     const response = await appeler(`Bearer ${TOKEN}`)
     assert.equal((await response.json()).notificationDeliveries, 1)
-    const restants = await owner.client`select subject from notification_deliveries`
+    const restants = await lire('select subject from notification_deliveries')
     assert.deepEqual(
       restants.map((row) => row.subject),
       ['Récente'],
     )
-    await owner.client`truncate table notification_deliveries`
   })
 
   it('mène les autres étapes à terme quand le stockage est injoignable, et le dit', async (t) => {
     const erreurs = t.mock.method(console, 'error', () => {})
     t.mock.method(console, 'info', () => {})
     const ACCUEIL = '01a00000-0000-7000-8000-000000200d01'
-    await owner.client`truncate table notification_deliveries`
-    await owner.client`
-      update tenants set notification_log_retention_months = 12, mail_scan_retention_months = 12,
-                         mail_access_log_retention_months = 12`
+    await bases.owner.client.query(
+      `update tenants set notification_log_retention_months = 12, mail_scan_retention_months = 12,
+                          mail_access_log_retention_months = 12`,
+    )
     await demande('Séminaire 2024', 24)
     const scanId = await asTenant(async (tx) => {
+      const clientId = uuidv7()
+      const pliId = uuidv7()
+      const scanId = uuidv7()
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Accueil')`)
-      const [client] = await tx.execute(sql`insert into clients (name, status) values ('Atelier Durand', 'active') returning id`)
-      const [pli] = await tx.execute(sql`insert into mail_items (client_id) values (${client.id as string}) returning id`)
-      const [scan] = await tx.execute(sql`
-        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size, created_at)
-        values (${pli.id as string}, 'content', 'courrier/test/conservation.pdf', 'application/pdf', 1200,
-                now() - interval '13 months')
-        returning id`)
+      await tx.execute(sql`insert into clients (id, name, status) values (${clientId}, 'Atelier Durand', 'active')`)
+      await tx.execute(sql`insert into mail_items (id, client_id) values (${pliId}, ${clientId})`)
       await tx.execute(sql`
-        insert into mail_scan_views (mail_scan_id, viewer, staff_member_id, auth_user_id, viewed_at)
-        values (${scan.id as string}, 'staff', ${ACCUEIL}, 'u-accueil', now() - interval '13 months')`)
+        insert into mail_scans (id, mail_item_id, side, storage_key, content_type, byte_size, created_at)
+        values (${scanId}, ${pliId}, 'content', 'courrier/test/conservation.pdf', 'application/pdf', 1200,
+                CURRENT_TIMESTAMP(3) - interval 13 month)`)
       await tx.execute(sql`
-        insert into notification_deliveries (event, audience, recipients, subject, status, sent_at)
-        values ('mail_request_submitted', 'centre', '{accueil@centre.fr}', 'Ancienne', 'sent', now() - interval '13 months')`)
-      return scan.id as string
+        insert into mail_scan_views (id, mail_scan_id, viewer, staff_member_id, auth_user_id, viewed_at)
+        values (${uuidv7()}, ${scanId}, 'staff', ${ACCUEIL}, 'u-accueil', CURRENT_TIMESTAMP(3) - interval 13 month)`)
+      await tx.execute(sql`
+        insert into notification_deliveries (id, event, audience, recipients, subject, status, sent_at)
+        values (${uuidv7()}, 'mail_request_submitted', 'centre', ${JSON.stringify(['accueil@centre.fr'])}, 'Ancienne', 'sent',
+                CURRENT_TIMESTAMP(3) - interval 13 month)`)
+      return scanId
     })
 
     const bilan = await runNightlyConservation(DEFAULT_TENANT_ID, async () => {
@@ -222,7 +251,7 @@ describe('route de conservation', { skip: raison }, () => {
     assert.equal(bilan.inspectionPhotoViews, 0)
     assert.equal(bilan.inspectionPhotos, 0)
     // La numérisation reste à reprendre : sa ligne n'est pas marquée.
-    const [scan] = await owner.client`select deleted_at from mail_scans where id = ${scanId}`
+    const [scan] = await lire('select deleted_at from mail_scans where id = ?', [scanId])
     assert.equal(scan.deleted_at, null)
     // Le journal nomme l'étape, sans le détail de l'erreur.
     assert.equal(erreurs.mock.calls.length, 1)
@@ -239,7 +268,6 @@ describe('route de conservation', { skip: raison }, () => {
     } finally {
       if (endpoint !== undefined) process.env.AWS_ENDPOINT_URL_S3 = endpoint
     }
-    await owner.client`truncate table notification_deliveries`
   })
 
   it('n’existe pas sans le bon jeton', async () => {

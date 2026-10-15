@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { DocumentKeyring } from '../../lib/chiffrement-documents.ts'
+import { toutVider } from '../clients/test-support.ts'
 import { openIban, sealIban } from './iban.ts'
 import { rekeyMandateIbans } from './mandats-rechiffrement.ts'
 import { sepaMandates } from './schema-factures.ts'
@@ -15,20 +17,11 @@ import { sepaMandates } from './schema-factures.ts'
 /**
  * Rechiffrement des IBAN des mandats après une rotation de clé (R16, ADR 020,
  * ADR 034) : chaque IBAN passe à la clé courante, reste lié à son mandat, et
- * un mandat qu'on ne sait pas lire est signalé, pas perdu. Sous `app_centre`.
+ * un mandat qu'on ne sait pas lire est signalé, pas perdu. Sous l'identité
+ * applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('rechiffrement des mandats SEPA', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('rechiffrement des mandats SEPA', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const CLIENT = '01a00000-0000-7000-8000-0000000f5c01'
   const AUTRE = '01a00000-0000-7000-8000-0000000f5c02'
@@ -39,25 +32,21 @@ describe('rechiffrement des mandats SEPA', { skip: raison }, () => {
   const avant: DocumentKeyring = { currentVersion: 1, keys: new Map([[1, cle1]]) }
   const apres: DocumentKeyring = { currentVersion: 2, keys: new Map([[1, cle1], [2, cle2]]) }
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const mandat = async (clientId: string, reference: string, keyring = avant) => {
     const sealed = sealIban(IBAN, { tenantId: DEFAULT_TENANT_ID, reference }, keyring)
-    const [row] = await asTenant((tx) =>
-      tx
-        .insert(sepaMandates)
-        .values({
-          clientId,
-          reference,
-          debtorName: 'Atelier Durand',
-          ibanCiphertext: sealed.ciphertext,
-          ibanKeyVersion: sealed.keyVersion,
-          ibanLast4: sealed.last4,
-          signedOn: '2026-09-01',
-        })
-        .returning()
+    return asTenant((tx) =>
+      insertReturning(tx, sepaMandates, {
+        clientId,
+        reference,
+        debtorName: 'Atelier Durand',
+        ibanCiphertext: sealed.ciphertext,
+        ibanKeyVersion: sealed.keyVersion,
+        ibanLast4: sealed.last4,
+        signedOn: '2026-09-01',
+      }),
     )
-    return row
   }
 
   const relire = async (id: string) => {
@@ -66,22 +55,22 @@ describe('rechiffrement des mandats SEPA', { skip: raison }, () => {
   }
 
   const rechiffrer = (keyring: DocumentKeyring, apply = true) =>
-    rekeyMandateIbans({ database: app.db, tenantId: DEFAULT_TENANT_ID, keyring, apply })
+    rekeyMandateIbans({ database: bases.app.db, tenantId: DEFAULT_TENANT_ID, keyring, apply })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
+    await toutVider(bases.owner)
     await asTenant((tx) =>
       tx.execute(sql`insert into clients (id, name) values (${CLIENT}, 'Atelier Durand'), (${AUTRE}, 'Boulangerie Petit')`),
     )
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await toutVider(bases.owner)
+    await bases.fermer()
   })
 
   it('compte à blanc, puis rechiffre chaque IBAN avec la clé courante, sans changer de mandat', async () => {

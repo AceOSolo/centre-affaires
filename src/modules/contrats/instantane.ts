@@ -16,7 +16,7 @@ import type { BillingPeriod, ContractType } from './schema.ts'
  * rend depuis l'instantané seul, sans relire le contrat, le client ni le
  * centre. Tout ce qu'il affiche y est donc copié, libellés compris : renommer
  * un type de contrat ou une unité dans le code ne change pas un document
- * remis. La base en calcule l'empreinte SHA-256 (`snapshot::text`).
+ * remis. La base en calcule l'empreinte SHA-256 (`cast(snapshot as char)`).
  *
  * Module pur : `buildContractSnapshot` assemble l'instantané depuis des
  * données déjà lues (`documents.ts` les lit dans la transaction qui

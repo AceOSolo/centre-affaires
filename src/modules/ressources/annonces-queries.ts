@@ -1,7 +1,9 @@
-import { and, asc, desc, eq, isNotNull, isNull, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNotNull, isNull } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { uniqueSlug } from '../../lib/slug.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { listings, resources, type Listing, type Resource } from './schema.ts'
@@ -140,28 +142,24 @@ export async function saveListing(input: ListingInput): Promise<Listing> {
   try {
     if (existing) {
       const [updated] = await withTenant(currentTenantId(), (tx) =>
-        tx.update(listings).set(values).where(eq(listings.id, existing.id)).returning(),
+        updateReturning(tx, listings, values, eq(listings.id, existing.id)),
       )
       return updated
     }
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
-        .insert(listings)
-        .values({ ...values, resourceId: input.resourceId })
-        .returning(),
+    return await withTenant(currentTenantId(), (tx) =>
+      insertReturning(tx, listings, { ...values, resourceId: input.resourceId }),
     )
-    return created
   } catch (error) {
-    // L'unicité est tenue par un index partiel : la vérifier en amont laisserait
+    // L'unicité est tenue par un index unique : la vérifier en amont laisserait
     // passer deux enregistrements simultanés.
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new DuplicateSlugError(slug)
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) throw new DuplicateSlugError(slug)
     throw error
   }
 }
 
 export async function publishListing(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
-    tx.update(listings).set({ publishedAt: sql`now()` }).where(eq(listings.id, id)),
+    tx.update(listings).set({ publishedAt: maintenant() }).where(eq(listings.id, id)),
   )
 }
 

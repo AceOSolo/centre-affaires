@@ -2,312 +2,202 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { pgErrorCode } from './errors.ts'
-import { createDatabase, withClientScope, withTenant } from './index.ts'
+import { uuidv7 } from '../lib/uuid.ts'
+import { DB_TENANT_MISMATCH, dbErrorCode } from './errors.ts'
+import {
+  createDatabase,
+  databaseOptionsFromEnv,
+  scopeClientIds,
+  withClientScope,
+  withTenant,
+} from './index.ts'
+import {
+  ouvrirBasesDeTest,
+  raisonDeSaut,
+  viderTables,
+  type TestDatabases,
+} from './test-support.ts'
 import { DEFAULT_TENANT_ID } from './tenants.ts'
 
 /**
- * Isolation des clients entre eux, en base (R28, ADR 019).
+ * Portée client en base (R28, ADR 019), sans Row Level Security.
  *
- * Sous `withClientScope()`, une requête **sans aucun filtre** ne doit rendre
- * que les lignes des entreprises de la portée : c'est ce qui protège l'espace
- * client d'un `where` oublié. Sans portée — le back-office — rien ne change.
+ * MySQL ne filtre plus les lectures : c'est chaque requête de l'espace client
+ * qui filtre sur les entreprises du compte, et le test de portée de chaque
+ * module le vérifie requête par requête. Ce que la base garantit encore, et
+ * que ce fichier éprouve :
  *
- * Éprouvé sous `app_centre` : sous le propriétaire, qui contourne la RLS, tout
- * passerait sans rien prouver.
+ * - `withClientScope()` pose la liste des entreprises (`@app_client_ids`),
+ *   relue par `scopeClientIds()`, et la retire en fin de transaction ;
+ * - sous portée, une écriture pour une autre entreprise ou pour aucune est
+ *   refusée par un trigger (`CAnnn`) ;
+ * - une écriture pour un autre centre est refusée (`CA014`) ;
+ * - sans portée (back-office), rien n'est restreint.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-/** Ligne refusée par une politique (`new row violates row-level security policy`). */
-const PG_RLS_VIOLATION = '42501'
-
-describe('portée client', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
+describe('portée client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
   // Une seule connexion : la portée d'une transaction doit être retombée quand
   // la suivante réutilise la même session.
-  const app = createDatabase(appUrl ?? '', { max: 1 })
+  let unique: ReturnType<typeof createDatabase>
 
   const DURAND = '01a00000-0000-7000-8000-0000000e0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000e0c02'
   const SALLE = '01a00000-0000-7000-8000-0000000e0b01'
   const BUREAU = '01a00000-0000-7000-8000-0000000e0b02'
-  const ACCUEIL = '01a00000-0000-7000-8000-0000000e0d01'
   const AUTRE_CENTRE = '01999f00-0000-7000-8000-0000000000f5'
 
-  /** Tables qui relèvent d'un client, et comment retrouver ce client. */
-  const TABLES = {
-    clients: sql`select id as client_id from clients`,
-    client_members: sql`select client_id from client_members`,
-    client_contacts: sql`select client_id from client_contacts`,
-    contracts: sql`select client_id from contracts`,
-    bookings: sql`select client_id from bookings`,
-    mail_items: sql`select client_id from mail_items`,
-    mail_scans: sql`select mail_item_id from mail_scans`,
-    mail_scan_views: sql`select mail_scan_id from mail_scan_views`,
-  }
-
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const asClients = <T>(clientIds: string[], run: Parameters<typeof withClientScope<T>>[2]) =>
-    withClientScope(DEFAULT_TENANT_ID, clientIds, run, app.db)
+    withClientScope(DEFAULT_TENANT_ID, clientIds, run, unique.db)
 
   const errorCode = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
-  /** Nombre de lignes de chaque table, lues sans aucun `where`. */
-  const compter = (run: typeof asTenant) =>
-    run(async (tx) => {
-      const counts: Record<string, number> = {}
-      for (const [table, query] of Object.entries(TABLES)) {
-        counts[table] = (await tx.execute(query)).length
-      }
-      return counts
-    })
-
-  /** Tout ce qu'une entreprise possède : accès, contact, contrat, réservation, courrier. */
-  const peupler = async (clientId: string, index: number) => {
-    await asTenant(async (tx) => {
-      const [member] = await tx.execute(sql`
-        insert into client_members (client_id, email, auth_user_id)
-        values (${clientId}, ${`gerant${index}@exemple.fr`}, ${`u-${index}`}) returning id`)
-      await tx.execute(sql`
-        insert into client_contacts (client_id, full_name, is_primary)
-        values (${clientId}, ${`Contact ${index}`}, true)`)
-      await tx.execute(sql`
-        insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-        values (${clientId}, ${`DOM-${index}`}, 'domiciliation', '2026-01-01', 9000)`)
-      await tx.execute(sql`
-        insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-        values (${SALLE}, ${clientId}, 'client',
-                ${`2026-10-0${index}T08:00:00Z`}, ${`2026-10-0${index}T09:00:00Z`}, 'Réunion')`)
-      const [item] = await tx.execute(sql`
-        insert into mail_items (client_id, sender) values (${clientId}, 'URSSAF') returning id`)
-      const [scan] = await tx.execute(sql`
-        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size)
-        values (${item.id as string}, 'envelope', ${`courrier/${clientId}.pdf`}, 'application/pdf', 100)
-        returning id`)
-      await tx.execute(sql`
-        insert into mail_scan_views (mail_scan_id, viewer, client_member_id, auth_user_id)
-        values (${scan.id as string}, 'client', ${member.id as string}, ${`u-${index}`})`)
-    })
-  }
+  const reservation = (resourceId: string, clientId: string | null, jour: string) => sql`
+    insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title)
+    values (${uuidv7()}, ${resourceId}, ${clientId}, 'client',
+            ${`2026-${jour} 08:00:00.000`}, ${`2026-${jour} 09:00:00.000`}, 'Réunion')`
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    const e = process.env
+    unique = createDatabase(
+      databaseOptionsFromEnv(e.TEST_DB_USER || e.DB_USER ? 'DB' : 'DB_ADMIN', {
+        DB_HOST: e.TEST_DB_HOST ?? e.DB_HOST ?? '127.0.0.1',
+        DB_PORT: e.TEST_DB_PORT ?? e.DB_PORT ?? '3306',
+        DB_NAME: e.TEST_DB_NAME,
+        DB_USER: e.TEST_DB_USER ?? e.DB_USER,
+        DB_PASSWORD: e.TEST_DB_PASSWORD ?? e.DB_PASSWORD,
+        DB_ADMIN_USER: e.TEST_DB_ADMIN_USER ?? e.DB_ADMIN_USER ?? 'root',
+        DB_ADMIN_PASSWORD: e.TEST_DB_ADMIN_PASSWORD ?? e.DB_ADMIN_PASSWORD ?? '',
+      } as unknown as NodeJS.ProcessEnv),
+      { connectionLimit: 1 },
+    )
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'resources',
+      'client_contacts',
+      'client_members',
+      'clients',
+    )
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name) values (${DURAND}, 'Atelier Durand'), (${PETIT}, 'Boulangerie Petit')`)
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name) values
           (${SALLE}, 'salle', 'SAL-1', 'Salle'), (${BUREAU}, 'bureau', 'BUR-1', 'Bureau')`)
-      await tx.execute(sql`
-        insert into staff_members (id, email) values (${ACCUEIL}, 'accueil@centre.fr')`)
+      await tx.execute(reservation(SALLE, DURAND, '10-01'))
+      await tx.execute(reservation(SALLE, PETIT, '10-02'))
     })
-    await peupler(DURAND, 1)
-    await peupler(PETIT, 2)
-    // Une ligne sans client : l'entretien de la salle, posé par l'accueil.
-    await asTenant((tx) =>
-      tx.execute(sql`
-        insert into bookings (resource_id, kind, channel, starts_at, ends_at, title)
-        values (${SALLE}, 'unavailability', 'staff', '2026-10-05T08:00:00Z', '2026-10-05T12:00:00Z', 'Entretien')`),
-    )
   })
 
   after(async () => {
-    await Promise.all([owner.client.end(), app.client.end()])
+    await unique.client.end()
+    await bases.fermer()
   })
 
-  it('interroge la base avec un rôle soumis aux politiques', async () => {
-    const [role] = await app.client`
-      select (select rolbypassrls from pg_roles where rolname = current_user) as bypass`
-    assert.equal(role.bypass, false)
+  it('pose la portée pour la durée de la transaction et la retire ensuite', async () => {
+    const dedans = await asClients([DURAND, PETIT], (tx) => scopeClientIds(tx))
+    assert.deepEqual(dedans, [DURAND, PETIT])
+
+    // Même connexion (pool d'une seule) : la portée ne doit pas survivre.
+    const [rows] = (await unique.client.query(
+      'select @app_client_ids as ids, @app_tenant_id as t',
+    )) as unknown as [{ ids: string | null; t: string | null }[]]
+    assert.equal(rows[0].ids, null)
+    assert.equal(rows[0].t, null)
   })
 
-  it('sans portée client, le back-office voit toutes les entreprises', async () => {
-    assert.deepEqual(await compter(asTenant), {
-      clients: 2,
-      client_members: 2,
-      client_contacts: 2,
-      contracts: 2,
-      bookings: 3,
-      mail_items: 2,
-      mail_scans: 2,
-      mail_scan_views: 2,
-    })
-  })
-
-  it('sous portée client, une requête sans where ne voit que son client', async () => {
-    const vu = await asClients([DURAND], async (tx) => {
-      const lignes: Record<string, unknown[]> = {}
-      for (const [table, query] of Object.entries(TABLES)) {
-        lignes[table] = await tx.execute(query)
-      }
-      // Le courrier n'a pas de `client_id` propre : on remonte au pli.
-      const [scan] = await tx.execute(sql`
-        select item.client_id from mail_scans scan join mail_items item on item.id = scan.mail_item_id`)
-      const [vue] = await tx.execute(sql`
-        select item.client_id from mail_scan_views vue
-          join mail_scans scan on scan.id = vue.mail_scan_id
-          join mail_items item on item.id = scan.mail_item_id`)
-      return { lignes, scan, vue }
-    })
-
-    for (const table of ['clients', 'client_members', 'client_contacts', 'contracts', 'bookings', 'mail_items']) {
-      assert.deepEqual(
-        vu.lignes[table].map((row) => (row as { client_id: string }).client_id),
-        [DURAND],
-        table,
-      )
-    }
-    assert.equal(vu.lignes.mail_scans.length, 1)
-    assert.equal(vu.lignes.mail_scan_views.length, 1)
-    assert.equal(vu.scan.client_id, DURAND)
-    assert.equal(vu.vue.client_id, DURAND)
-  })
-
-  it('une portée de plusieurs entreprises les voit toutes', async () => {
-    const counts = await compter((run) => asClients([DURAND, PETIT], run))
-    assert.equal(counts.clients, 2)
-    assert.equal(counts.mail_scans, 2)
-    // L'entretien de la salle n'appartient à aucune entreprise.
-    assert.equal(counts.bookings, 2)
-  })
-
-  it('une portée vide ne voit aucune ligne de client', async () => {
-    const counts = await compter((run) => asClients([], run))
-    assert.deepEqual(Object.values(counts), [0, 0, 0, 0, 0, 0, 0, 0])
-  })
-
-  it('laisse lisibles les tables qui ne relèvent d’aucun client', async () => {
-    const [row] = await asClients([DURAND], (tx) =>
-      tx.execute(sql`select (select count(*) from resources)::int as resources,
-                            (select count(*) from tenants)::int as tenants`),
-    )
-    assert.equal(row.resources, 2)
-    assert.equal(row.tenants, 1)
-  })
-
-  it('ne franchit pas le centre : la portée d’un autre centre ne voit rien', async () => {
-    await owner.client`
-      insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-portee')`
-    const counts = await withClientScope(AUTRE_CENTRE, [DURAND], async (tx) => {
-      const [row] = await tx.execute(sql`select count(*)::int as n from clients`)
-      return row.n
-    }, app.db)
-    assert.equal(counts, 0)
+  it('distingue la portée vide de l’absence de portée', async () => {
+    assert.deepEqual(await asClients([], (tx) => scopeClientIds(tx)), [])
+    assert.equal(await asTenant((tx) => scopeClientIds(tx)), null)
   })
 
   it('refuse d’écrire pour une autre entreprise, ou pour aucune', async () => {
     for (const clientId of [PETIT, null]) {
       const code = await errorCode(() =>
-        asClients([DURAND], (tx) =>
-          tx.execute(sql`
-            insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-            values (${BUREAU}, ${clientId}, 'client', '2026-11-02T08:00:00Z', '2026-11-02T09:00:00Z', 'Intrus')`),
-        ),
+        asClients([DURAND], (tx) => tx.execute(reservation(BUREAU, clientId, '11-02'))),
       )
-      assert.equal(code, PG_RLS_VIOLATION)
+      // Le code exact dépend de la table (CA009, CA010…) ; toujours un code métier.
+      assert.match(code ?? '', /^CA\d{3}$/, String(clientId))
     }
-    // Ni déplacer une de ses lignes chez le voisin.
-    const code = await errorCode(() =>
-      asClients([DURAND], (tx) => tx.execute(sql`update mail_items set client_id = ${PETIT}`)),
-    )
-    assert.equal(code, PG_RLS_VIOLATION)
   })
 
-  it('n’atteint pas les lignes d’une autre entreprise, même sans where', async () => {
-    const touchees = await asClients([DURAND], (tx) =>
-      tx.execute(sql`update mail_items set note = 'vu' returning client_id`),
+  it('refuse de déplacer une de ses lignes chez le voisin', async () => {
+    const code = await errorCode(() =>
+      asClients([DURAND], (tx) =>
+        tx.execute(sql`update bookings set client_id = ${PETIT} where client_id = ${DURAND}`),
+      ),
     )
-    assert.deepEqual(
-      touchees.map((row) => row.client_id),
-      [DURAND],
-    )
-    const [petit] = await asTenant((tx) =>
-      tx.execute(sql`select note from mail_items where client_id = ${PETIT}`),
-    )
-    assert.equal(petit.note, null)
+    assert.match(code ?? '', /^CA\d{3}$/)
   })
 
   it('laisse écrire pour sa propre entreprise', async () => {
-    await asClients([DURAND], async (tx) => {
-      const [member] = await tx.execute(sql`select id from client_members`)
-      // Depuis l'espace, une réservation porte la personne qui la fait (ADR 036).
-      await tx.execute(sql`
-        insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title, booked_by_member_id)
-        values (${BUREAU}, ${DURAND}, 'client', '2026-11-02T08:00:00Z', '2026-11-02T09:00:00Z', 'Rendez-vous',
-                ${member.id as string})`)
-      const [scan] = await tx.execute(sql`select id from mail_scans`)
-      await tx.execute(sql`
-        insert into mail_scan_views (mail_scan_id, viewer, client_member_id, auth_user_id)
-        values (${scan.id as string}, 'client', ${member.id as string}, 'u-1')`)
-    })
-  })
-
-  it('la portée retombe à la fin de la transaction', async () => {
-    await asClients([DURAND], (tx) => tx.execute(sql`select 1`))
-    // Même connexion (pool d'une seule) : le back-office revoit tout.
-    assert.equal((await compter(asTenant)).clients, 2)
-    const [row] = await app.client`select current_client_ids() as ids`
-    assert.equal(row.ids, null)
-  })
-
-  it('donne les créneaux occupés de tous, sans dire par qui', async () => {
-    const creneaux = await asClients([DURAND], (tx) =>
-      tx.execute(sql`
-        select * from booking_busy_ranges('2026-10-01T00:00:00Z', '2026-10-31T00:00:00Z')`),
-    )
-    assert.equal(creneaux.length, 3)
-    assert.deepEqual(Object.keys(creneaux[0]).sort(), ['ends_at', 'resource_id', 'starts_at'])
-
-    const bureau = await asClients([DURAND], (tx) =>
-      tx.execute(sql`
-        select * from booking_busy_ranges('2026-10-01T00:00:00Z', '2026-10-31T00:00:00Z', array[${BUREAU}::uuid])`),
-    )
-    assert.equal(bureau.length, 0)
-  })
-
-  it('ne compte pas les créneaux annulés ni ceux d’un autre centre', async () => {
+    // Depuis l'espace client, une réservation porte la personne de
+    // l'entreprise qui la fait (CA009 sinon).
+    const MEMBRE = uuidv7()
     await asTenant((tx) =>
-      tx.execute(sql`update bookings set status = 'cancelled', cancelled_at = now() where title = 'Entretien'`),
+      tx.execute(sql`
+        insert into client_members (id, client_id, email, auth_user_id)
+        values (${MEMBRE}, ${DURAND}, 'jeanne@durand.test', 'u-jeanne-portee')`),
     )
-    await owner.client`
-      insert into tenants (id, name, slug) values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre-portee')`
-    const ailleurs = await withTenant(AUTRE_CENTRE, (tx) =>
-      tx.execute(sql`select * from booking_busy_ranges('2026-10-01T00:00:00Z', '2026-10-31T00:00:00Z')`),
-    app.db)
-    assert.equal(ailleurs.length, 0)
-    const ici = await asClients([PETIT], (tx) =>
-      tx.execute(sql`select * from booking_busy_ranges('2026-10-01T00:00:00Z', '2026-10-31T00:00:00Z')`),
+    await asClients([DURAND], (tx) =>
+      tx.execute(sql`
+        insert into bookings (id, resource_id, client_id, kind, channel, booked_by_member_id, starts_at, ends_at, title)
+        values (${uuidv7()}, ${BUREAU}, ${DURAND}, 'booking', 'client', ${MEMBRE},
+                '2026-11-02 08:00:00.000', '2026-11-02 09:00:00.000', 'Réunion')`),
     )
-    assert.equal(ici.length, 2)
+    const [rows] = (await bases.owner.client.query(
+      'select count(*) as n from bookings where client_id = ? and resource_id = ?',
+      [DURAND, BUREAU],
+    )) as unknown as [{ n: number }[]]
+    assert.equal(Number(rows[0].n), 1)
+  })
+
+  it('sans portée, le back-office écrit pour n’importe quelle entreprise', async () => {
+    await asTenant((tx) => tx.execute(reservation(BUREAU, PETIT, '11-03')))
+  })
+
+  it('refuse d’écrire pour un autre centre que celui du contexte', async () => {
+    await bases.owner.client.query(
+      `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-portee')`,
+      [AUTRE_CENTRE],
+    )
+    const code = await errorCode(() =>
+      withClientScope(
+        AUTRE_CENTRE,
+        [DURAND],
+        (tx) =>
+          tx.execute(sql`
+            insert into resources (id, tenant_id, resource_type, code, name)
+            values (${uuidv7()}, ${DEFAULT_TENANT_ID}, 'salle', 'INTRUS', 'Intrus')`),
+        bases.app.db,
+      ),
+    )
+    assert.equal(code, DB_TENANT_MISMATCH)
   })
 
   it('refuse une portée mal formée avant d’atteindre la base', async () => {
     await assert.rejects(
-      withClientScope(DEFAULT_TENANT_ID, ['x}', DURAND], async () => undefined, app.db),
+      withClientScope(DEFAULT_TENANT_ID, ['x}', DURAND], async () => undefined, bases.app.db),
+      /Portée client invalide/,
+    )
+    await assert.rejects(
+      withClientScope(DEFAULT_TENANT_ID, ['a,b'], async () => undefined, bases.app.db),
       /Portée client invalide/,
     )
   })

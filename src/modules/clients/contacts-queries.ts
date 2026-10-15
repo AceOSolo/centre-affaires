@@ -1,7 +1,9 @@
-import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, isNull, ne } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import type { ContactInput } from './contacts-regles.ts'
 import { clientContacts, clients, type ClientContact } from './schema.ts'
@@ -75,15 +77,16 @@ export class PrimaryContactConflictError extends Error {
  *
  * Le verrou sérialise les écritures de contacts d'une même entreprise : deux
  * personnes qui désignent chacune un principal passent l'une après l'autre, et
- * la seconde retire bien le rôle à celui de la première. `no key update` ne
- * gêne ni les clés étrangères qui visent la fiche, ni sa lecture.
+ * la seconde retire bien le rôle à celui de la première. MySQL n'a pas de
+ * `FOR NO KEY UPDATE` : c'est un `FOR UPDATE`, qui fait attendre aussi les
+ * écritures qui citent la fiche par clé étrangère, le temps de la transaction.
  */
 async function lockClient(tx: Transaction, clientId: string): Promise<void> {
   const [client] = await tx
     .select({ id: clients.id })
     .from(clients)
     .where(and(eq(clients.id, clientId), isNull(clients.deletedAt)))
-    .for('no key update')
+    .for('update')
   if (!client) throw new ContactClientUnavailableError()
 }
 
@@ -107,7 +110,7 @@ async function releasePrimary(tx: Transaction, clientId: string, exceptId?: stri
 }
 
 function translate(error: unknown): never {
-  if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new PrimaryContactConflictError()
+  if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) throw new PrimaryContactConflictError()
   throw error
 }
 
@@ -119,11 +122,7 @@ export async function createClientContact(
     return await withTenant(currentTenantId(), async (tx) => {
       await lockClient(tx, clientId)
       if (input.isPrimary) await releasePrimary(tx, clientId)
-      const [created] = await tx
-        .insert(clientContacts)
-        .values({ ...input, clientId })
-        .returning()
-      return created
+      return insertReturning(tx, clientContacts, { ...input, clientId })
     })
   } catch (error) {
     translate(error)
@@ -155,7 +154,7 @@ export async function updateClientContact(
         .where(target)
       if (!existing) return undefined
       if (input.isPrimary) await releasePrimary(tx, clientId, id)
-      const [updated] = await tx.update(clientContacts).set(input).where(target).returning()
+      const [updated] = await updateReturning(tx, clientContacts, input, target)
       return updated
     })
   } catch (error) {
@@ -173,17 +172,16 @@ export async function removeClientContact(clientId: string, id: string): Promise
     // Même verrou que l'écriture : un retrait ne croise pas une modification
     // qui vérifie l'existence du contact avant de lui donner le rôle principal.
     await lockClient(tx, clientId)
-    return tx
-      .update(clientContacts)
-      .set({ deletedAt: sql`now()` })
-      .where(
-        and(
-          eq(clientContacts.id, id),
-          eq(clientContacts.clientId, clientId),
-          isNull(clientContacts.deletedAt),
-        ),
-      )
-      .returning({ id: clientContacts.id })
+    return updateReturning(
+      tx,
+      clientContacts,
+      { deletedAt: maintenant() },
+      and(
+        eq(clientContacts.id, id),
+        eq(clientContacts.clientId, clientId),
+        isNull(clientContacts.deletedAt),
+      ),
+    )
   })
   return removed.length > 0
 }

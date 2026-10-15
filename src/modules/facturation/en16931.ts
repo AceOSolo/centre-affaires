@@ -440,7 +440,7 @@ function addressComplete(address: Address): boolean {
  * Une ligne de cette catégorie de TVA porte-t-elle un motif d'exonération
  * (BT-120) ? Oui pour E, AE, K, G et O (BR-E-10, BR-AE-10, BR-IC-10, BR-G-10,
  * BR-O-10) ; non au taux normal (BR-S-10) ni au taux zéro (BR-Z-10), qui n'en
- * portent pas. `issue_invoice()` applique la même règle (migration 0032).
+ * portent pas. `issue_invoice()` applique la même règle (`src/db/regles/50-facturation.sql`).
  */
 export function requiresExemptionReason(category: VatCategory): boolean {
   return category !== 'S' && category !== 'Z'

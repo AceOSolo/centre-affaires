@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
-import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { count, sql } from 'drizzle-orm'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { priceOffer } from './offres-prix.ts'
 import {
@@ -22,6 +22,7 @@ import {
   updateOfferItem,
 } from './offres-queries.ts'
 import type { OfferItemInput } from './offres-regles.ts'
+import { offerItems } from './schema.ts'
 import { seedExpectedServices } from './services-attendus.ts'
 import {
   ArchivedServiceError,
@@ -36,25 +37,65 @@ import {
 import type { ServiceInput } from './services-regles.ts'
 
 /**
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
  * Catalogue de services et offres groupées (R18, R09, ADR 024), par les
  * fonctions que l'écran appelle, sous le rôle applicatif : codes stables,
  * archivage sans suppression, services attendus semés sans prix inventé,
  * lignes d'offre et prix d'une offre au catalogue du jour.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
+describe('catalogue de services et offres groupées', { skip: raisonDeSaut }, () => {
 
-describe('catalogue de services et offres groupées', { skip: raison }, () => {
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const BAL = '01a00000-0000-7000-8000-0000005c0b01'
   const BUREAU = '01a00000-0000-7000-8000-0000005c0b02'
@@ -62,7 +103,7 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
   const DURAND = '01a00000-0000-7000-8000-0000005c0c01'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const service = (values: Partial<ServiceInput> = {}): ServiceInput => ({
     code: null,
@@ -90,11 +131,13 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
   })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
+    await viderTables(bases.owner, ...TABLES_METIER)
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name) values
@@ -111,9 +154,9 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await viderTables(bases.owner, ...TABLES_METIER)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('catalogue de services', () => {
@@ -172,10 +215,7 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
 
   describe('services attendus par l’application', () => {
     const semer = (prices: Record<string, number | null>) =>
-      app.client.begin(async (tx) => {
-        await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
-        return seedExpectedServices(tx, prices)
-      })
+      asTenant((tx) => seedExpectedServices(tx, prices))
 
     // Les actes du courrier sans prix fixé : numérisation seule et réexpédition (ADR 037).
     const autresActes = ['courrier.numerisation', 'courrier.reexpedition']
@@ -240,7 +280,7 @@ describe('catalogue de services et offres groupées', { skip: raison }, () => {
         relue?.items.map((item) => [item.serviceId, item.priceCents, item.discountBp]),
         [[standard.id, 4_000, null]],
       )
-      const [{ total }] = await owner.client`select count(*)::int as total from offer_items`
+      const [{ total }] = await bases.owner.db.select({ total: count() }).from(offerItems)
       assert.equal(total, 2)
     })
 

@@ -2,7 +2,7 @@
  * Catalogue du centre : ressources réelles, horaires d'ouverture et grille
  * tarifaire publique.
  *
- *   node --env-file=.env.local infra/catalogue.mjs
+ *   npm run db:catalogue   # node --env-file=.env.local infra/catalogue.mjs
  *
  * À ne pas confondre avec `seed-demo.mjs`, qui pose un jeu fictif pour le
  * développement local. Ici, ce sont les données de configuration du centre :
@@ -15,12 +15,10 @@
  * ressource ; retirer un bureau du parc se fait à l'écran, avec le statut
  * `retired` qui préserve l'historique des réservations (décision 6).
  *
- * Il se connecte avec le rôle applicatif, donc sous les politiques d'isolation
- * par centre.
+ * Il se connecte avec l'identité applicative (`DB_USER`), donc sous les gardes
+ * d'écriture par centre.
  */
-import postgres from 'postgres'
-
-const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
+import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs'
 
 // ---------------------------------------------------------------------------
 // Ressources
@@ -51,7 +49,7 @@ const SALLES = [
  *
  * `flex: true` ouvre le bureau à la réservation au poste : le script crée alors
  * une ressource par poste (« BUR-03-P1 », « BUR-03-P2 »). Ce n'est pas une
- * coquetterie de modélisation. La contrainte d'exclusion `bookings_no_overlap`
+ * coquetterie de modélisation. Le trigger `bookings_no_overlap_*`
  * interdit deux réservations qui se chevauchent sur un même `resource_id` : un
  * bureau partagé déclaré comme une seule ressource verrait sa deuxième
  * réservation rejetée par la base. Une ressource = une chose réservable seule.
@@ -137,8 +135,7 @@ function catalogue() {
 // ---------------------------------------------------------------------------
 
 /**
- * Ouverture du lundi au samedi, 8h à 22h. Remplace les 9h-18h du lundi au
- * vendredi posés par défaut à la migration 0011.
+ * Ouverture du lundi au samedi, 8h à 22h. Remplace les horaires par défaut.
  *
  * Ce sont les horaires du centre entier (`resource_id` nul). Une ressource qui
  * ouvre autrement se règle à l'écran, ligne par ligne.
@@ -171,73 +168,78 @@ const TARIFS = [
 
 // ---------------------------------------------------------------------------
 
-const url = process.env.APP_DATABASE_URL
-if (!url) {
-  console.error(
-    'APP_DATABASE_URL manquant. Lancer `node infra/provision-role-applicatif.mjs` au préalable.',
-  )
-  process.exit(1)
-}
-
-const sql = postgres(url, { prepare: false })
-
-/** Ouvre une transaction dans le contexte du centre, comme `withTenant()`. */
-const inTenant = (run) =>
-  sql.begin(async (tx) => {
-    await tx`select set_config('app.tenant_id', ${DEFAULT_TENANT_ID}, true)`
-    return run(tx)
-  })
+const { client } = ouvrirBase()
 
 try {
   const ressources = catalogue()
 
-  const compteurs = await inTenant(async (tx) => {
+  const compteurs = await dansLeCentre(client, async (cnx) => {
+    await assurerCentre(cnx)
     let creees = 0
 
     for (const { type, code, nom, description, capacite, attributs } of ressources) {
       // Le code identifie la ressource dans le centre. Relancer le script après
       // un renommage met à jour la ligne existante au lieu d'en créer une
-      // seconde ; les réservations déjà posées la suivent.
-      const [row] = await tx`
-        insert into resources (resource_type, code, name, description, capacity, attributes)
-        values (${type}, ${code}, ${nom}, ${description}, ${capacite}, ${tx.json(attributs)})
-        on conflict (tenant_id, code) where deleted_at is null
-        do update set resource_type = excluded.resource_type,
-                      name = excluded.name,
-                      description = excluded.description,
-                      capacity = excluded.capacity,
-                      attributes = excluded.attributes
-        returning (xmax = 0) as inseree`
-      if (row.inseree) creees += 1
+      // seconde ; les réservations déjà posées la suivent. Lecture puis
+      // écriture : l'unicité du code ne vaut que pour les ressources vivantes.
+      const [[existante]] = await cnx.query(
+        'select id from resources where code = ? and deleted_at is null',
+        [code],
+      )
+      if (existante) {
+        await cnx.query(
+          `update resources set resource_type = ?, name = ?, description = ?, capacity = ?, attributes = ?
+            where id = ?`,
+          [type, nom, description, capacite, JSON.stringify(attributs), existante.id],
+        )
+      } else {
+        await cnx.query(
+          `insert into resources (id, resource_type, code, name, description, capacity, attributes)
+           values (?, ?, ?, ?, ?, ?, ?)`,
+          [uuidv7(), type, code, nom, description, capacite, JSON.stringify(attributs)],
+        )
+        creees += 1
+      }
     }
 
     // Les horaires du centre sont remplacés en bloc : une ligne oubliée du jeu
     // précédent laisserait le samedi fermé sans que rien ne le signale.
-    await tx`delete from opening_hours where resource_id is null`
+    await cnx.query('delete from opening_hours where resource_id is null')
     for (const jour of JOURS_OUVERTS) {
-      await tx`
-        insert into opening_hours (resource_id, weekday, opens_at, closes_at)
-        values (null, ${jour}, ${OUVERTURE}, ${FERMETURE})`
+      await cnx.query(
+        `insert into opening_hours (id, resource_id, weekday, opens_at, closes_at)
+         values (?, null, ?, ?, ?)`,
+        [uuidv7(), jour, OUVERTURE, FERMETURE],
+      )
     }
 
-    const [creee] = await tx`
-      insert into rate_plans (name, is_default)
-      select ${GRILLE}, true
-      where not exists (
-        select 1 from rate_plans where is_default and deleted_at is null
-      )
-      returning id`
-
-    const [grille] = creee
-      ? [creee]
-      : await tx`select id from rate_plans where is_default and deleted_at is null`
+    let [[grille]] = await cnx.query(
+      'select id from rate_plans where is_default and deleted_at is null limit 1',
+    )
+    if (!grille) {
+      grille = { id: uuidv7() }
+      await cnx.query('insert into rate_plans (id, name, is_default) values (?, ?, true)', [
+        grille.id,
+        GRILLE,
+      ])
+    }
 
     for (const { type, unite, centimes } of TARIFS) {
-      await tx`
-        insert into rate_plan_items (rate_plan_id, resource_type, resource_id, unit, amount_cents)
-        values (${grille.id}, ${type}, null, ${unite}, ${centimes})
-        on conflict (rate_plan_id, resource_type, unit) where resource_id is null and deleted_at is null
-        do update set amount_cents = excluded.amount_cents`
+      const [[ligne]] = await cnx.query(
+        `select id from rate_plan_items
+          where rate_plan_id = ? and resource_type = ? and unit = ?
+            and resource_id is null and deleted_at is null`,
+        [grille.id, type, unite],
+      )
+      if (ligne) {
+        await cnx.query('update rate_plan_items set amount_cents = ? where id = ?', [centimes, ligne.id])
+      } else {
+        await cnx.query(
+          `insert into rate_plan_items (id, rate_plan_id, resource_type, resource_id, unit, amount_cents)
+           values (?, ?, ?, null, ?, ?)`,
+          [uuidv7(), grille.id, type, unite, centimes],
+        )
+      }
     }
 
     return { creees, total: ressources.length }
@@ -250,5 +252,5 @@ try {
   console.log(`Ouverture : ${JOURS_OUVERTS.length} jours par semaine, ${OUVERTURE}–${FERMETURE}.`)
   console.log(`Grille « ${GRILLE} » : ${TARIFS.length} lignes.`)
 } finally {
-  await sql.end()
+  await client.end()
 }

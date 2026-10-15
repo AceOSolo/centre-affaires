@@ -2,7 +2,7 @@ import { describeBusyBooking, type BusyBooking } from '../reservations/occupatio
 
 /**
  * Message rendu à l'équipe quand la base refuse l'occupation d'un contrat
- * (`23P01`, ADR 018) : quelle ressource, occupée par quoi, et que faire.
+ * (`CA000`, ADR 018) : quelle ressource, occupée par quoi, et que faire.
  *
  * Jamais l'erreur SQL brute. Pure, pour être éprouvée sans base.
  */

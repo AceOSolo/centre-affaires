@@ -2,12 +2,14 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_INVOICE_LOCKED, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { DB_INVOICE_LOCKED, dbErrorCode } from '../../db/errors.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { toutVider } from '../clients/test-support.ts'
 import { InvoiceRefusedError } from './factures-erreurs.ts'
 import {
   abandonDraft,
@@ -31,7 +33,7 @@ import {
 
 /**
  * Lot de facturation et cycle d'une facture (R13, R14, R15, ADR 026, 028),
- * par le code qu'utilisent les écrans, sous `app_centre` :
+ * par le code qu'utilisent les écrans, sous l'identité applicative :
  *
  * - le lot d'un mois prépare une facture brouillon par client, qui réunit
  *   loyers, forfaits, réservations et actes, chaque ligne avec sa source ;
@@ -41,24 +43,11 @@ import {
  * - un avoir total libère les sources, qu'un lot rejoué refacture ; un avoir
  *   partiel non.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
 /** Année civile du centre : celle que porte le numéro. */
 const ANNEE = todayIsoDate('Europe/Paris').slice(0, 4)
 
-describe('lot de facturation', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('lot de facturation', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000f1d01'
   const DURAND = '01a00000-0000-7000-8000-0000000f1c01'
@@ -71,9 +60,9 @@ describe('lot de facturation', { skip: raison }, () => {
 
   const OCTOBRE = '2026-10'
 
-  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
-  const identiteDuCentre = sql`
+  const identiteDuCentre = `
     update tenants set
       legal_name = 'Centre de démonstration SAS',
       address_line1 = '1 rue de l''Exemple',
@@ -84,29 +73,30 @@ describe('lot de facturation', { skip: raison }, () => {
       bank_iban = 'FR7630006000011234567890189',
       recurring_billing_timing = 'in_advance',
       prorata_rule = 'calendar_days'
-    where id = ${DEFAULT_TENANT_ID}`
+    where id = ?`
 
   /** Réservation confirmée de deux heures à 25 € HT, prix figé (R11). */
   const reservation = async (clientId: string, jour: string, chiffree = true) => {
     await asTenant((tx) =>
       chiffree
         ? tx.execute(sql`
-            insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title,
+            insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title,
                                   quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp,
                                   quote_currency, quoted_at)
-            values (${SALLE}, ${clientId}, 'staff', ${`${jour}T08:00:00Z`}, ${`${jour}T10:00:00Z`},
-                    'Réunion', 'hour', 2, 2500, 2000, 'EUR', now())`)
+            values (${uuidv7()}, ${SALLE}, ${clientId}, 'staff', ${`${jour} 08:00:00.000`}, ${`${jour} 10:00:00.000`},
+                    'Réunion', 'hour', 2, 2500, 2000, 'EUR', current_timestamp(3))`)
         : tx.execute(sql`
-            insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-            values (${SALLE}, ${clientId}, 'staff', ${`${jour}T12:00:00Z`}, ${`${jour}T13:00:00Z`}, 'Sans devis')`),
+            insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title)
+            values (${uuidv7()}, ${SALLE}, ${clientId}, 'staff', ${`${jour} 12:00:00.000`}, ${`${jour} 13:00:00.000`},
+                    'Sans devis')`),
     )
   }
 
   const pliOuvert = async (clientId: string, instant: string) => {
     await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, status, opened_at, opened_by, sender)
-        values (${clientId}, 'opened', ${instant}, ${ACCUEIL}, 'URSSAF')`),
+        insert into mail_items (id, client_id, status, opened_at, opened_by, sender)
+        values (${uuidv7()}, ${clientId}, 'opened', ${instant}, ${ACCUEIL}, 'URSSAF')`),
     )
   }
 
@@ -123,15 +113,17 @@ describe('lot de facturation', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
-    await owner.db.execute(identiteDuCentre)
+    await toutVider(bases.owner)
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
+    // `toutVider` a aussi vidé le plan de comptes, posé par la base à la création du centre.
+    await bases.owner.client.query('select seed_accounting_accounts(?)', [DEFAULT_TENANT_ID])
+    await bases.owner.client.query(identiteDuCentre, [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, role) values (${ACCUEIL}, 'exploitant@centre.fr', 'admin')`)
       await tx.execute(sql`
@@ -152,10 +144,10 @@ describe('lot de facturation', { skip: raison }, () => {
         insert into contracts (id, client_id, reference, contract_type, status, starts_on, amount_cents)
         values (${BUREAU_PETIT}, ${PETIT}, 'CT-PETIT', 'bureau', 'draft', '2026-10-10', 0)`)
       await tx.execute(sql`
-        insert into contract_lines (contract_id, description, quantity, unit, unit_price_cents,
+        insert into contract_lines (id, contract_id, description, quantity, unit, unit_price_cents,
                                     vat_rate_bp, is_recurring, position)
-        values (${BUREAU_PETIT}, 'Bureau 3', 1, 'month', 60000, 2000, true, 0),
-               (${BUREAU_PETIT}, 'Frais de dossier', 1, 'unit', 15000, 2000, false, 1)`)
+        values (${uuidv7()}, ${BUREAU_PETIT}, 'Bureau 3', 1, 'month', 60000, 2000, true, 0),
+               (${uuidv7()}, ${BUREAU_PETIT}, 'Frais de dossier', 1, 'unit', 15000, 2000, false, 1)`)
       await tx.execute(sql`update contracts set status = 'active' where id = ${BUREAU_PETIT}`)
 
       // Catalogue : l'ouverture d'un pli à 3 €, le standard à 50 € par mois.
@@ -165,33 +157,34 @@ describe('lot de facturation', { skip: raison }, () => {
           (${STANDARD}, null, 'Standard téléphonique', 'package', 'month', 5000)`)
       // Durand : deux ouvertures incluses par mois, 2,50 € au-delà ; le standard depuis septembre.
       await tx.execute(sql`
-        insert into subscribed_services (client_id, service_id, quantity, unit, unit_price_cents,
+        insert into subscribed_services (id, client_id, service_id, quantity, unit, unit_price_cents,
                                          vat_rate_bp, included_quantity, starts_on)
-        values (${DURAND}, ${OUVERTURE}, 1, 'unit', 250, 2000, 2, '2026-01-01'),
-               (${DURAND}, ${STANDARD}, 1, 'month', 5000, 2000, null, '2026-09-01')`)
+        values (${uuidv7()}, ${DURAND}, ${OUVERTURE}, 1, 'unit', 250, 2000, 2, '2026-01-01'),
+               (${uuidv7()}, ${DURAND}, ${STANDARD}, 1, 'month', 5000, 2000, null, '2026-09-01')`)
     })
 
     // Consommations de septembre (facturées par le lot d'octobre) et d'octobre (pas encore).
     await reservation(DURAND, '2026-09-10')
     await reservation(DURAND, '2026-10-05')
     await reservation(PETIT, '2026-09-11', false)
-    await pliOuvert(DURAND, '2026-09-03T09:00:00Z')
-    await pliOuvert(DURAND, '2026-09-04T09:00:00Z')
-    await pliOuvert(DURAND, '2026-09-05T09:00:00Z')
-    await pliOuvert(PETIT, '2026-09-20T09:00:00Z')
-    await pliOuvert(PETIT, '2026-10-02T09:00:00Z')
+    await pliOuvert(DURAND, '2026-09-03 09:00:00.000')
+    await pliOuvert(DURAND, '2026-09-04 09:00:00.000')
+    await pliOuvert(DURAND, '2026-09-05 09:00:00.000')
+    await pliOuvert(PETIT, '2026-09-20 09:00:00.000')
+    await pliOuvert(PETIT, '2026-10-02 09:00:00.000')
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
-      update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
-        siren = null, vat_number = null, bank_iban = null,
-        recurring_billing_timing = 'in_advance', prorata_rule = 'calendar_days'
-      where id = ${DEFAULT_TENANT_ID}`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
+         siren = null, vat_number = null, bank_iban = null,
+         recurring_billing_timing = 'in_advance', prorata_rule = 'calendar_days'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('une facture par client et par période (R15)', () => {
@@ -304,13 +297,17 @@ describe('lot de facturation', { skip: raison }, () => {
     })
 
     it('n’accepte qu’un lot à la fois, et libère un lot interrompu', async () => {
-      await owner.client`
-        insert into invoice_runs (tenant_id, period_start, period_end, created_by)
-        values (${DEFAULT_TENANT_ID}, '2026-10-01', '2026-10-31', ${ACCUEIL})`
+      await bases.owner.client.query(
+        `insert into invoice_runs (id, tenant_id, period_start, period_end, created_by)
+         values (?, ?, '2026-10-01', '2026-10-31', ?)`,
+        [uuidv7(), DEFAULT_TENANT_ID, ACCUEIL],
+      )
       await assert.rejects(runInvoicing(OCTOBRE, ACCUEIL), InvoiceRunInProgressError)
 
       // Resté en cours depuis une heure : réputé interrompu, il cède la place.
-      await owner.client`update invoice_runs set started_at = now() - interval '1 hour'`
+      await bases.owner.client.query(
+        'update invoice_runs set started_at = date_sub(current_timestamp(3), interval 1 hour)',
+      )
       const { report } = await runInvoicing(OCTOBRE, ACCUEIL)
       assert.equal(report.invoicesCreated, 2)
       const lots = await listInvoiceRuns()
@@ -323,14 +320,15 @@ describe('lot de facturation', { skip: raison }, () => {
         await tx.execute(sql`
           insert into clients (id, name, status, address_line1, postal_code, city)
           values (${MARTIN}, 'Cabinet Martin', 'active', '4 quai Perrière', '38000', 'Grenoble')`)
-        const [k] = await tx.execute(sql`
-          insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-          values (${MARTIN}, 'CT-MARTIN', 'domiciliation', '2026-10-01', 4500) returning id`)
+        const contratId = uuidv7()
         await tx.execute(sql`
-          insert into contract_lines (contract_id, description, quantity, unit, unit_price_cents,
+          insert into contracts (id, client_id, reference, contract_type, starts_on, amount_cents)
+          values (${contratId}, ${MARTIN}, 'CT-MARTIN', 'domiciliation', '2026-10-01', 4500)`)
+        await tx.execute(sql`
+          insert into contract_lines (id, contract_id, description, quantity, unit, unit_price_cents,
                                       vat_rate_bp, is_recurring, position)
-          values (${k.id as string}, 'Frais de dossier', 1, 'unit', 6000, 2000, false, 0)`)
-        await tx.execute(sql`update contracts set status = 'active' where id = ${k.id as string}`)
+          values (${uuidv7()}, ${contratId}, 'Frais de dossier', 1, 'unit', 6000, 2000, false, 0)`)
+        await tx.execute(sql`update contracts set status = 'active' where id = ${contratId}`)
       })
 
       const { report } = await runInvoicing(OCTOBRE, ACCUEIL)
@@ -349,7 +347,10 @@ describe('lot de facturation', { skip: raison }, () => {
     })
 
     it('facture le récurrent du mois écoulé quand le centre facture à terme échu', async () => {
-      await owner.client`update tenants set recurring_billing_timing = 'in_arrears' where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.client.query(
+        `update tenants set recurring_billing_timing = 'in_arrears' where id = ?`,
+        [DEFAULT_TENANT_ID],
+      )
       await runInvoicing(OCTOBRE, ACCUEIL)
       const durand = await factureDuLot(DURAND)
       const loyer = durand.lines.find((line) => line.kind === 'rent')
@@ -401,9 +402,9 @@ describe('lot de facturation', { skip: raison }, () => {
       try {
         await asTenant((tx) => tx.execute(sql`update invoice_lines set quantity = 2 where invoice_id = ${durand.invoice.id}`))
       } catch (error) {
-        code = pgErrorCode(error)
+        code = dbErrorCode(error)
       }
-      assert.equal(code, PG_INVOICE_LOCKED)
+      assert.equal(code, DB_INVOICE_LOCKED)
 
       // Un lot rejoué ne touche pas une facture émise : il signale ce qui reste.
       await reservation(DURAND, '2026-09-26')
@@ -418,7 +419,7 @@ describe('lot de facturation', { skip: raison }, () => {
       const durand = await factureDuLot(DURAND)
       const petit = await factureDuLot(PETIT)
       // Petit sans adresse : son émission est refusée, celle de Durand passe.
-      await owner.client`update clients set address_line1 = null where id = ${PETIT}`
+      await bases.owner.client.query('update clients set address_line1 = null where id = ?', [PETIT])
       const resultat = await issueInvoices([durand.invoice.id, petit.invoice.id], ACCUEIL)
       assert.deepEqual(resultat.issued, [{ id: durand.invoice.id, number: `FA-${ANNEE}-0001` }])
       assert.equal(resultat.refused.length, 1)

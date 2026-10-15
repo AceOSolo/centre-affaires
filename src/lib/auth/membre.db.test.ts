@@ -2,34 +2,29 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import {
+  ouvrirBasesDeTest,
+  raisonDeSaut,
+  viderTables,
+  type TestDatabases,
+} from '../../db/test-support.ts'
+import { uuidv7 } from '../uuid.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { resolveStaffMember, type AuthenticatedUser } from './membre.ts'
 
 /**
  * Qui entre dans le back-office (ADR 008).
  *
- * Neon Auth dit qui est connecté ; cette résolution dit si cette personne fait
+ * Le compte (Better Auth) dit qui est connecté ; cette résolution dit si cette personne fait
  * partie de l'équipe. Une erreur ici ouvre l'administration à quelqu'un qui ne
  * devrait pas y être — ou la ferme à quelqu'un qui devrait. Elle est donc
- * éprouvée contre une vraie base, avec le rôle applicatif soumis aux
- * politiques d'isolation.
+ * éprouvée contre une vraie base, avec l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('résolution du membre de l’équipe', { skip: raison }, () => {
+describe('résolution du membre de l’équipe', { skip: raisonDeSaut }, () => {
   {
-    const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-    const app = createDatabase(appUrl ?? '')
+    let bases: TestDatabases
 
     const AUTRE_CENTRE = '01999f00-0000-7000-8000-0000000000fd'
 
@@ -48,29 +43,28 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
         DEFAULT_TENANT_ID,
         (tx) =>
           tx.execute(sql`
-            insert into staff_members (email, role, auth_user_id, full_name)
-            values (${email}, ${role}, ${authUserId}, ${fullName})
+            insert into staff_members (id, email, role, auth_user_id, full_name)
+            values (${uuidv7()}, ${email}, ${role}, ${authUserId}, ${fullName})
           `),
-        app.db,
+        bases.app.db,
       )
 
     const resoudre = (user: AuthenticatedUser, options = {}, tenantId = DEFAULT_TENANT_ID) =>
-      withTenant(tenantId, (tx) => resolveStaffMember(tx, user, options), app.db)
+      withTenant(tenantId, (tx) => resolveStaffMember(tx, user, options), bases.app.db)
 
     before(async () => {
-      await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+      bases = await ouvrirBasesDeTest()
     })
 
     beforeEach(async () => {
-      // `cascade` : le courrier référence les membres de l'équipe (qui l'a
-      // enregistré, ouvert, consulté), et Postgres refuse de vider une table
-      // référencée, même quand les tables qui la visent sont vides.
-      await owner.client`truncate table staff_members cascade`
-      await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+      // `viderTables` suspend les clés étrangères : le courrier référence les
+      // membres de l'équipe, et MySQL refuse de vider une table référencée.
+      await viderTables(bases.owner, 'staff_members')
+      await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     })
 
     after(async () => {
-      await Promise.all([owner.client.end(), app.client.end()])
+      await bases.fermer()
     })
 
     describe('compte inconnu', () => {
@@ -82,9 +76,10 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
 
       it('ne rattache personne dans un centre vide', async () => {
         await inscrire('alexis@exemple.fr')
-        await owner.client`
-          insert into tenants (id, name, slug)
-          values (${AUTRE_CENTRE}, 'Autre centre', 'autre-centre')`
+        await bases.owner.client.query(
+          `insert into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre')`,
+          [AUTRE_CENTRE],
+        )
 
         // Le membre existe, mais pas dans ce centre-là.
         assert.equal(
@@ -127,12 +122,12 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
           undefined,
         )
         // Et rien n'a été écrit au passage.
-        const [ligne] = await withTenant(
+        const [lignes] = (await withTenant(
           DEFAULT_TENANT_ID,
           (tx) => tx.execute(sql`select auth_user_id from staff_members`),
-          app.db,
-        )
-        assert.equal(ligne.auth_user_id, null)
+          bases.app.db,
+        )) as unknown as [{ auth_user_id: string | null }[]]
+        assert.equal(lignes[0].auth_user_id, null)
       })
 
       it('rattache quand la vérification n’est pas renseignée', async () => {
@@ -163,8 +158,8 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
         await inscrire('alexis@exemple.fr', { authUserId: 'u1' })
         await withTenant(
           DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`update staff_members set deleted_at = now()`),
-          app.db,
+          (tx) => tx.execute(sql`update staff_members set deleted_at = CURRENT_TIMESTAMP(3)`),
+          bases.app.db,
         )
         assert.equal(await resoudre(compte('u1', 'alexis@exemple.fr')), undefined)
       })
@@ -174,8 +169,8 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
         await inscrire('alexis@exemple.fr')
         await withTenant(
           DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`update staff_members set deleted_at = now()`),
-          app.db,
+          (tx) => tx.execute(sql`update staff_members set deleted_at = CURRENT_TIMESTAMP(3)`),
+          bases.app.db,
         )
         assert.equal(await resoudre(compte('u2', 'alexis@exemple.fr')), undefined)
       })
@@ -184,8 +179,8 @@ describe('résolution du membre de l’équipe', { skip: raison }, () => {
         await inscrire('alexis@exemple.fr', { authUserId: 'u1' })
         await withTenant(
           DEFAULT_TENANT_ID,
-          (tx) => tx.execute(sql`update staff_members set deleted_at = now()`),
-          app.db,
+          (tx) => tx.execute(sql`update staff_members set deleted_at = CURRENT_TIMESTAMP(3)`),
+          bases.app.db,
         )
         await inscrire('alexis@exemple.fr')
 

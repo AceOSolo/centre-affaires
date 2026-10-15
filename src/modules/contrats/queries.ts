@@ -1,7 +1,9 @@
 import { and, asc, desc, eq, gt, isNotNull, isNull, lt, ne, not, sql } from 'drizzle-orm'
 
-import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_EXCLUSION_VIOLATION, DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { tenants } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -145,30 +147,26 @@ export class DuplicateReferenceError extends Error {
 
 /** Insère un brouillon dans la transaction de l'appelant. */
 export async function insertContract(tx: Transaction, input: ContractInput): Promise<Contract> {
-  const [created] = await tx
-    .insert(contracts)
-    .values({
-      ...input,
-      ...termsColumns(input),
-      // `undefined` laisse agir la valeur par défaut de la colonne,
-      // `next_contract_reference()` (ADR 021).
-      reference: input.reference || undefined,
-      currency: input.currency || 'EUR',
-      endsOn: input.endsOn || null,
-      ratePlanId: input.ratePlanId || null,
-      resourceId: input.resourceId || null,
-      noticeDays: input.noticeDays ?? 90,
-      offerId: input.offerId || null,
-    })
-    .returning()
-  return created
+  return insertReturning(tx, contracts, {
+    ...input,
+    ...termsColumns(input),
+    // `undefined` laisse agir la valeur par défaut de la colonne : le trigger
+    // `contracts_before_insert` y met le numéro suivant de la série (ADR 021).
+    reference: input.reference || undefined,
+    currency: input.currency || 'EUR',
+    endsOn: input.endsOn || null,
+    ratePlanId: input.ratePlanId || null,
+    resourceId: input.resourceId || null,
+    noticeDays: input.noticeDays ?? 90,
+    offerId: input.offerId || null,
+  })
 }
 
 /** Une référence saisie à la main, déjà portée : l'erreur du formulaire. */
 export function referenceRefusal(error: unknown, reference: string | undefined): unknown {
-  // Une référence attribuée par la base n'entre pas en collision : la
-  // fonction saute les numéros déjà portés. Seule une saisie manuelle le peut.
-  if (pgErrorCode(error) === PG_UNIQUE_VIOLATION && reference) {
+  // Une référence attribuée par la base n'entre pas en collision : le trigger
+  // saute les numéros déjà portés. Seule une saisie manuelle le peut.
+  if (dbErrorCode(error) === DB_UNIQUE_VIOLATION && reference) {
     return new DuplicateReferenceError(reference)
   }
   return error
@@ -209,9 +207,10 @@ export async function updateDraftContract(
         throw new ContractClientLockedError()
       }
 
-      const updated = await tx
-        .update(contracts)
-        .set({
+      const updated = await updateReturning(
+        tx,
+        contracts,
+        {
           clientId: input.clientId,
           reference: input.reference,
           contractType: input.contractType,
@@ -225,18 +224,16 @@ export async function updateDraftContract(
           noticeDays: input.noticeDays ?? 90,
           notes: input.notes ?? null,
           ...termsColumns(input),
-        })
-        .where(
-          and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
-        )
-        .returning({ id: contracts.id, startsOn: contracts.startsOn, endsOn: contracts.endsOn })
+        },
+        and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
+      )
       if (updated.length === 0) return false
       // Les actes inclus suivent les dates du brouillon.
       await alignDraftSubscriptions(tx, updated[0])
       return true
     })
   } catch (error) {
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) {
       throw new DuplicateReferenceError(input.reference)
     }
     throw error
@@ -254,8 +251,8 @@ export class ContractClientLockedError extends Error {
 }
 
 /**
- * La ressource du contrat est déjà occupée sur sa période : la contrainte
- * d'exclusion a refusé l'occupation (ADR 018). Porte ce qui occupe la place,
+ * La ressource du contrat est déjà occupée sur sa période : le trigger
+ * anti-chevauchement a refusé l'occupation (ADR 018). Porte ce qui occupe la place,
  * pour que l'écran le nomme au lieu d'afficher une erreur SQL.
  */
 export class ContractOccupationConflictError extends Error {
@@ -316,7 +313,7 @@ export async function selectOccupationConflicts(
  *
  * Le trigger `contracts_sync_occupation` recalcule l'occupation dans la même
  * transaction : un chevauchement fait échouer l'écriture du contrat elle-même
- * (`23P01`). On relit alors, dans une nouvelle transaction, ce qui occupe la
+ * (`CA000`). On relit alors, dans une nouvelle transaction, ce qui occupe la
  * ressource visée. `target` porte la ressource ou la date demandée quand elle
  * diffère de celle en base, que le refus a laissée intacte.
  */
@@ -328,7 +325,7 @@ async function writeContract<T>(
   try {
     return await withTenant(currentTenantId(), write)
   } catch (error) {
-    if (pgErrorCode(error) !== PG_EXCLUSION_VIOLATION) throw error
+    if (dbErrorCode(error) !== DB_EXCLUSION_VIOLATION) throw error
     const [contract] = await withTenant(currentTenantId(), (tx) =>
       tx.select().from(contracts).where(eq(contracts.id, id)).limit(1),
     )
@@ -381,13 +378,12 @@ export async function activateContract(
   generatedBy: string | null = null,
 ): Promise<boolean> {
   return writeContract(id, async (tx) => {
-    const activated = await tx
-      .update(contracts)
-      .set({ status: 'active' })
-      .where(
-        and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
-      )
-      .returning({ id: contracts.id })
+    const activated = await updateReturning(
+      tx,
+      contracts,
+      { status: 'active' },
+      and(eq(contracts.id, id), eq(contracts.status, 'draft'), isNull(contracts.deletedAt)),
+    )
     if (activated.length === 0) return false
     await archiveContractDocument(tx, { contractId: id, amendmentId: null, generatedBy })
     return true
@@ -438,19 +434,18 @@ export async function changeContractResource(
     async (tx) => {
       const timeZone = await centreTimeZone(tx)
       if (!timeZone) return false
-      const changed = await tx
-        .update(contracts)
-        .set({ resourceId })
-        .where(
-          and(
-            eq(contracts.id, id),
-            eq(contracts.status, 'active'),
-            isNull(contracts.deletedAt),
-            // Le jour du centre, pas celui du serveur (décision 4).
-            gt(contracts.startsOn, todayIsoDate(timeZone)),
-          ),
-        )
-        .returning({ id: contracts.id })
+      const changed = await updateReturning(
+        tx,
+        contracts,
+        { resourceId },
+        and(
+          eq(contracts.id, id),
+          eq(contracts.status, 'active'),
+          isNull(contracts.deletedAt),
+          // Le jour du centre, pas celui du serveur (décision 4).
+          gt(contracts.startsOn, todayIsoDate(timeZone)),
+        ),
+      )
       if (changed.length > 0) return true
 
       const [current] = await tx
@@ -478,14 +473,16 @@ export async function changeContractResource(
  */
 export async function archiveContract(id: string): Promise<boolean> {
   return withTenant(currentTenantId(), async (tx) => {
-    const archived = await tx
-      .update(contracts)
-      .set({ deletedAt: sql`now()` })
-      .where(and(eq(contracts.id, id), isNull(contracts.deletedAt)))
-      .returning({ id: contracts.id })
+    const archived = await updateReturning(
+      tx,
+      contracts,
+      { deletedAt: maintenant() },
+      and(eq(contracts.id, id), isNull(contracts.deletedAt)),
+    )
     if (archived.length === 0) return false
-    // Les actes inclus du contrat sont archivés au même instant (`now()` est
-    // celui de la transaction) : le désarchivage les retrouve ainsi.
+    // Les actes inclus du contrat sont archivés au même instant : ils
+    // recopient `contracts.deleted_at` (l'instant d'une instruction n'est pas
+    // celui de la transaction en MySQL). Le désarchivage les retrouve ainsi.
     await archiveContractSubscriptions(tx, id)
     return true
   })
@@ -504,15 +501,16 @@ export async function restoreContract(id: string): Promise<boolean> {
       // Avant de lever l'archivage : les souscriptions se reconnaissent à
       // l'instant d'archivage du contrat.
       await restoreContractSubscriptions(tx, id)
-      return tx
-        .update(contracts)
-        .set({ deletedAt: null })
-        .where(and(eq(contracts.id, id), isNotNull(contracts.deletedAt)))
-        .returning({ id: contracts.id })
+      return updateReturning(
+        tx,
+        contracts,
+        { deletedAt: null },
+        and(eq(contracts.id, id), isNotNull(contracts.deletedAt)),
+      )
     })
     return restored.length > 0
   } catch (error) {
-    if (pgErrorCode(error) !== PG_UNIQUE_VIOLATION) throw error
+    if (dbErrorCode(error) !== DB_UNIQUE_VIOLATION) throw error
     const [contract] = await withTenant(currentTenantId(), (tx) =>
       tx.select({ reference: contracts.reference }).from(contracts).where(eq(contracts.id, id)),
     )
@@ -544,17 +542,16 @@ export async function terminateContract(
   const terminated = await writeContract(
     id,
     async (tx) => {
-      const rows = await tx
-        .update(contracts)
-        .set({
+      const rows = await updateReturning(
+        tx,
+        contracts,
+        {
           status: 'terminated',
           terminatedOn,
           terminationReason: reason?.trim() || null,
-        })
-        .where(
-          and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
-        )
-        .returning({ id: contracts.id, endsOn: contracts.endsOn })
+        },
+        and(eq(contracts.id, id), eq(contracts.status, 'active'), isNull(contracts.deletedAt)),
+      )
       // Les actes inclus du contrat prennent fin avec lui (ADR 024), au
       // dernier jour effectif : le plus proche du terme et de la résiliation.
       const [row] = rows

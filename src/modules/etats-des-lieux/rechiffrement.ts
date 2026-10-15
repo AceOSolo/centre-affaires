@@ -22,7 +22,7 @@ import { inspectionPhotos } from './schema.ts'
  *   courante ; la ligne est verrouillée (`for update skip locked`) le temps de
  *   la lecture, du chiffrement et de l'écriture ;
  * - la version de clé de la ligne ne change que par la base
- *   (`rekey_inspection_photo()`, migration 0044) : la garde des photos refuse
+ *   (`rekey_inspection_photo()`, `80-etats-des-lieux.sql`) : la garde des photos refuse
  *   toute autre écriture, et laisse passer celle-là même sur un état des
  *   lieux clos — son contenu, lui, ne change pas ;
  * - une reprise interrompue entre l'écriture du fichier et celle de la base
@@ -97,10 +97,10 @@ async function processPhoto(
     const sealed = sealDocument(plain, row.storageKey, keyring)
     await store.write(row.storageKey, sealed.bytes)
   }
-  const [recorded] = await tx.execute<{ done: boolean }>(
-    sql`select rekey_inspection_photo(${id}::uuid, ${row.encryptionKeyVersion}::integer, ${current}::integer) as done`,
-  )
-  if (!recorded?.done) {
+  const [rows] = (await tx.execute(
+    sql`select rekey_inspection_photo(${id}, ${row.encryptionKeyVersion}, ${current}) as done`,
+  )) as unknown as [{ done: number }[]]
+  if (Number(rows[0]?.done ?? 0) !== 1) {
     throw new Error('La base n’a pas enregistré la nouvelle version de clé : photo à reprendre.')
   }
   return interrupted ? 'recorded' : 'rotated'

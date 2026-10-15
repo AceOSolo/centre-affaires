@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import {
   MailRequestError,
@@ -32,9 +33,10 @@ import type { ForwardAddress } from './demandes-regles.ts'
 import { listMailForAccounts, recordOpening, requestOpening, type StoredScan } from './queries.ts'
 
 /**
- * Demandes de courrier par le code des écrans (R21, R24, ADR 037), sous le
- * rôle applicatif soumis à la RLS : l'espace client sous sa portée, le
- * back-office sous celle du centre.
+ * Demandes de courrier par le code des écrans (R21, R24, ADR 037), sous
+ * l'identité applicative : l'espace client sous sa portée, le back-office sous
+ * celle du centre. MySQL ne filtre pas les lectures : c'est le filtre explicite
+ * de chaque requête qui empêche une entreprise de voir celles d'une autre.
  *
  * - le client dépose une numérisation ou une réexpédition, l'annule tant
  *   qu'elle n'est pas prise en charge, et la trace reste ;
@@ -44,21 +46,8 @@ import { listMailForAccounts, recordOpening, requestOpening, type StoredScan } f
  *   rattachée à sa demande, réexpédition en dernier, frais notés ensuite ;
  * - le prix annoncé suit la règle de la facture.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('demandes de courrier, par les écrans', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('demandes de courrier, par les écrans', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000000e0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000e0c02'
@@ -71,7 +60,28 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
   const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
   const petit: ClientAccount[] = [{ memberId: PAUL, clientId: PETIT, clientName: 'Boulangerie Petit' }]
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
+
+  const toutVider = () =>
+    viderTables(
+      bases.owner,
+      'invoice_lines',
+      'invoices',
+      'subscribed_services',
+      'mail_scan_views',
+      'mail_scans',
+      'mail_requests',
+      'mail_items',
+      'client_members',
+      'clients',
+      'services',
+      'staff_members',
+    )
 
   const ADRESSE: ForwardAddress = {
     recipient: 'Jeanne Durand',
@@ -87,14 +97,16 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
     clientId = DURAND,
     { ouvert = false, kind = 'lettre', recu = '2026-09-01T08:00:00Z' } = {},
   ): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    // MySQL lit `2026-09-01 08:00:00.000`, pas le format ISO avec `T` et `Z`.
+    const recuLe = recu.replace('T', ' ').replace('Z', '')
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, kind, sender, received_at, status, opened_at, opened_by)
-        values (${clientId}, ${kind}, 'URSSAF', ${recu}, ${ouvert ? 'opened' : 'received'},
-                ${ouvert ? sql`now()` : null}, ${ouvert ? CAMILLE : null})
-        returning id`),
+        insert into mail_items (id, client_id, kind, sender, received_at, status, opened_at, opened_by)
+        values (${id}, ${clientId}, ${kind}, 'URSSAF', ${recuLe}, ${ouvert ? 'opened' : 'received'},
+                ${ouvert ? sql`CURRENT_TIMESTAMP(3)` : null}, ${ouvert ? CAMILLE : null})`),
     )
-    return row.id as string
+    return id
   }
 
   const ok = (outcome: RequestOutcome): string => {
@@ -103,7 +115,7 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
   }
 
   const demande = async (id: string) => {
-    const [row] = await asTenant((tx) => tx.execute(sql`select * from mail_requests where id = ${id}`))
+    const [row] = await asTenant((tx) => lire(tx, sql`select * from mail_requests where id = ${id}`))
     return row
   }
 
@@ -128,12 +140,14 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table clients, services cascade`
-    await owner.client`truncate table staff_members cascade`
+    await toutVider()
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -147,10 +161,9 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table clients, services cascade`
-    await owner.client`truncate table staff_members cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider()
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('espace client', () => {
@@ -260,6 +273,29 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
       assert.equal(ouvert.pendingRequests[0].status, 'requested')
     })
 
+    it('ne montre à une entreprise ni les plis, ni les numérisations, ni les demandes d’une autre', async () => {
+      // Portée client sans RLS : chaque requête de l'espace client filtre sur
+      // les entreprises du compte. Petit a un pli, une demande et un contenu ;
+      // Durand ne doit en voir aucun, par aucune des requêtes de l'espace.
+      const pliPetit = await pli(PETIT, { ouvert: true })
+      const demandePetit = ok(await requestScan(pliPetit, petit, null))
+      await recordScanRequestDone(demandePetit, CAMILLE, depose('petit'))
+      const pliPetitFerme = await pli(PETIT)
+      assert.equal(await requestOpening(pliPetitFerme, petit), true)
+
+      const statuses = ['requested', 'in_progress', 'done', 'refused', 'cancelled'] as const
+      assert.deepEqual(await listMailForAccounts(durand), [])
+      const boite = await searchMailForAccounts(durand, {}, { number: 1, size: 50 }, 'Europe/Paris')
+      assert.deepEqual([boite.total, boite.rows], [0, []])
+      assert.deepEqual((await listRequestsForAccounts(durand, { statuses }, { number: 1, size: 50 })).rows, [])
+      assert.equal(await findMailForAccounts(pliPetit, durand), undefined)
+      assert.deepEqual(await previousForwardAddresses(durand, PETIT), [])
+      const annonces = await announceMailActs(durand, 'Europe/Paris')
+      assert.deepEqual([...annonces.keys()], [DURAND])
+      // Et réciproquement : Petit voit les siens.
+      assert.equal((await listMailForAccounts(petit)).length, 2)
+    })
+
     it('montre un pli, ses numérisations et ses demandes ; jamais celui d’une autre entreprise', async () => {
       const ouvert = await pli(DURAND, { ouvert: true })
       const autre = await pli(PETIT)
@@ -333,7 +369,7 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
       const row = await demande(id)
       assert.deepEqual([row.status, row.completed_by_staff_id], ['done', CAMILLE])
       const [scan] = await asTenant((tx) =>
-        tx.execute(sql`select id, side, mail_request_id from mail_scans where mail_item_id = ${ouvert}`),
+        lire(tx, sql`select id, side, mail_request_id from mail_scans where mail_item_id = ${ouvert}`),
       )
       assert.deepEqual([scan.side, scan.mail_request_id], ['content', id])
       // L'espace client montre le contenu le plus récent.
@@ -351,7 +387,7 @@ describe('demandes de courrier, par les écrans', { skip: raison }, () => {
       const row = await demande(mailRequestId)
       assert.deepEqual([row.status, row.completed_by_staff_id], ['done', CAMILLE])
       const [scan] = await asTenant((tx) =>
-        tx.execute(sql`select mail_request_id from mail_scans where mail_item_id = ${demande1}`),
+        lire(tx, sql`select mail_request_id from mail_scans where mail_item_id = ${demande1}`),
       )
       assert.equal(scan.mail_request_id, mailRequestId)
 

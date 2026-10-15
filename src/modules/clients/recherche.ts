@@ -1,5 +1,5 @@
 import { and, asc, eq, isNull, or, sql, type SQL } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias } from 'drizzle-orm/mysql-core'
 
 import { withTenant } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -10,7 +10,7 @@ import { clientContacts, clients, type Client, type ClientStatus } from './schem
  * d'un contact ou ville.
  */
 
-/** Motifs `ilike` tirés de la saisie, ou `null` quand il n'y a rien à chercher. */
+/** Motifs `like` tirés de la saisie, ou `null` quand il n'y a rien à chercher. */
 export type ClientSearchTerms = {
   /** « %acme% », caractères spéciaux de `like` neutralisés. */
   pattern: string
@@ -44,20 +44,21 @@ export function clientSearchTerms(raw: string | null | undefined): ClientSearchT
 }
 
 /**
- * Condition de recherche sur `clients`. Un contact retiré ne fait plus
+ * Condition de recherche sur `clients` (`like` : la collation de la base est
+ * insensible à la casse, il n'y a pas d'`ilike`). Un contact retiré ne fait plus
  * trouver la fiche : il n'y figure plus.
  */
 export function clientSearchCondition(terms: ClientSearchTerms): SQL {
   return or(
-    sql`${clients.name} ilike ${terms.pattern}`,
-    sql`${clients.city} ilike ${terms.pattern}`,
+    sql`${clients.name} like ${terms.pattern}`,
+    sql`${clients.city} like ${terms.pattern}`,
     terms.siretPattern ? sql`${clients.siret} like ${terms.siretPattern}` : undefined,
     sql`exists (
       select 1 from ${clientContacts}
       where ${clientContacts.tenantId} = ${clients.tenantId}
         and ${clientContacts.clientId} = ${clients.id}
         and ${clientContacts.deletedAt} is null
-        and ${clientContacts.fullName} ilike ${terms.pattern})`,
+        and ${clientContacts.fullName} like ${terms.pattern})`,
   ) as SQL
 }
 
@@ -91,12 +92,12 @@ export async function searchClients(
         },
         matchedContactNames: terms
           ? sql<string | null>`(
-              select string_agg(${clientContacts.fullName}, ', ' order by ${clientContacts.fullName})
+              select group_concat(${clientContacts.fullName} order by ${clientContacts.fullName} separator ', ')
               from ${clientContacts}
               where ${clientContacts.tenantId} = ${clients.tenantId}
                 and ${clientContacts.clientId} = ${clients.id}
                 and ${clientContacts.deletedAt} is null
-                and ${clientContacts.fullName} ilike ${terms.pattern})`
+                and ${clientContacts.fullName} like ${terms.pattern})`
           : sql<null>`null`,
       })
       .from(clients)

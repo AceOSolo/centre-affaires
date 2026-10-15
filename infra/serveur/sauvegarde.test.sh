@@ -109,9 +109,8 @@ attendu "sans configuration : échec journalisé" \
 
 configuration() {
   cat >"$tmp/sauvegarde.env" <<EOF
-PGHOST=localhost
-PGDATABASE=neondb
-PGUSER=sauvegarde
+MYSQL_DATABASE=centre_affaires
+MYSQL_USER=sauvegarde
 SAUVEGARDE_SOURCE_STOCKAGE=stockage:uploads
 SAUVEGARDE_DESTINATION=$1
 SAUVEGARDE_DESTINATAIRES=$tmp/destinataires.txt

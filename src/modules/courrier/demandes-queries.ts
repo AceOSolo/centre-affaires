@@ -1,19 +1,20 @@
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, or, sql, type SQL } from 'drizzle-orm'
-import type { AnyPgColumn } from 'drizzle-orm/pg-core'
+import type { AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  PG_MAIL_REQUEST_REFUSED,
-  PG_UNIQUE_VIOLATION,
-  pgConstraintName,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  DB_MAIL_REQUEST_REFUSED,
+  DB_UNIQUE_VIOLATION,
+  dbConstraintName,
+  dbErrorCode,
 } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { tenants } from '../../db/tenants.ts'
 import { dayRangeUtc, monthRangeUtc, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { isUuid } from '../../lib/uuid.ts'
+import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { subscribedServices } from '../facturation/schema-factures.ts'
@@ -49,7 +50,7 @@ import {
  * l'action ou la page.
  *
  * La base tient les transitions, leurs dates et leurs auteurs
- * (`mail_requests_guard`, CA008), et l'unicité d'une demande en cours par pli
+ * (triggers `mail_requests_before_*`, CA008), et l'unicité d'une demande en cours par pli
  * et par nature (`mail_requests_pending_key`). Chaque écriture rejoue l'état
  * attendu dans son `where` : deux clics, deux collègues, une transition.
  */
@@ -60,9 +61,13 @@ import {
 
 /** Le message français d'une garde de la base (CA008), tel qu'elle l'a écrit. */
 function databaseMessage(error: unknown, code: string): string | undefined {
+  // Les gardes lèvent `SIGNAL … MESSAGE_TEXT = 'CA008: <message>'` : le message
+  // du driver (`sqlMessage`) commence par le code, que l'on retire.
   for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
-    const { code: causeCode, message } = cause as { code?: unknown; message?: unknown }
-    if (causeCode === code && typeof message === 'string') return message
+    const { sqlMessage } = cause as { sqlMessage?: unknown }
+    if (typeof sqlMessage === 'string' && sqlMessage.startsWith(`${code}:`)) {
+      return sqlMessage.slice(code.length + 1).trim()
+    }
     cause = (cause as { cause?: unknown }).cause
   }
   return undefined
@@ -84,15 +89,15 @@ const constraintMessages: Record<string, string> = {
  * quel ; les contraintes, par leur nom.
  */
 export function mailRequestRefusal(error: unknown): string | undefined {
-  const code = pgErrorCode(error)
-  const constraint = pgConstraintName(error)
+  const code = dbErrorCode(error)
+  const constraint = dbConstraintName(error)
   if (constraint && constraintMessages[constraint]) return constraintMessages[constraint]
-  if (code === PG_MAIL_REQUEST_REFUSED) {
+  if (code === DB_MAIL_REQUEST_REFUSED) {
     return databaseMessage(error, code) ?? 'Le centre ne peut pas enregistrer cette demande dans l’état actuel du courrier.'
   }
-  if (code === PG_UNIQUE_VIOLATION) return 'Une demande de cette nature est déjà en cours pour ce courrier.'
-  if (code === PG_CHECK_VIOLATION) return 'La demande est incomplète.'
-  if (code === PG_FOREIGN_KEY_VIOLATION) return 'Ce courrier n’est pas adressé à cette entreprise.'
+  if (code === DB_UNIQUE_VIOLATION) return 'Une demande de cette nature est déjà en cours pour ce courrier.'
+  if (code === DB_CHECK_VIOLATION) return 'La demande est incomplète.'
+  if (code === DB_FOREIGN_KEY_VIOLATION) return 'Ce courrier n’est pas adressé à cette entreprise.'
   return undefined
 }
 
@@ -121,11 +126,11 @@ async function refusing<T>(run: () => Promise<T>): Promise<T> {
 const pending = sql.raw(`('requested', 'in_progress')`)
 
 /** Nom affiché d'une personne de l'entreprise. */
-const memberName = (column: AnyPgColumn) =>
+const memberName = (column: AnyMySqlColumn) =>
   sql<string | null>`(select coalesce(m.full_name, m.email) from client_members as m where m.id = ${column})`
 
 /** Nom affiché d'un membre de l'équipe. */
-const staffName = (column: AnyPgColumn) =>
+const staffName = (column: AnyMySqlColumn) =>
   sql<string | null>`(select coalesce(s.full_name, s.email) from staff_members as s where s.id = ${column})`
 
 /** Une réexpédition faite : le pli a quitté le centre. */
@@ -138,7 +143,7 @@ const forwardedAt = () =>
 /** « id:kind:status,… » : les demandes en cours du pli, en une colonne. */
 const pendingRequests = () =>
   sql<string | null>`(
-    select string_agg(r.id::text || ':' || r.kind::text || ':' || r.status::text, ',' order by r.kind)
+    select group_concat(concat(r.id, ':', r.kind, ':', r.status) order by r.kind separator ',')
       from mail_requests as r
      where r.tenant_id = ${mailItems.tenantId} and r.mail_item_id = ${mailItems.id}
        and r.status in ${pending})`
@@ -152,7 +157,7 @@ const latestScan = (side: 'envelope' | 'content', column: 'id' | 'content_type')
 
 const contentScanCount = () =>
   sql<number>`(
-    select count(*)::int from mail_scans as s
+    select count(*) from mail_scans as s
      where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
        and s.side = 'content' and s.deleted_at is null)`
 
@@ -278,7 +283,7 @@ export async function searchMailForAccounts(
   )
   return inClientSpace(accounts, async (tx) => {
     const [counted] = await tx
-      .select({ total: sql<number>`count(*)::int` })
+      .select({ total: sql<number>`count(*)` })
       .from(mailItems)
       .where(where)
     const rows = await tx
@@ -333,10 +338,11 @@ export async function findMailForAccounts(
       .from(mailScans)
       .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt)))
       .orderBy(asc(mailScans.side), asc(mailScans.createdAt))
-    const requests = await selectRequests(tx, and(eq(mailRequests.mailItemId, id)), {
-      order: 'asc',
-      staff: false,
-    })
+    const requests = await selectRequests(
+      tx,
+      and(eq(mailRequests.mailItemId, id), inArray(mailRequests.clientId, clientIds)),
+      { order: 'asc', staff: false },
+    )
     return { ...toCard(row), scans, requests }
   })
 }
@@ -436,7 +442,7 @@ function requestSelection(staff: boolean) {
     mailOpenedAt: mailItems.openedAt,
     mailDeletedAt: mailItems.deletedAt,
     otherPending: sql<number>`(
-      select count(*)::int from mail_requests as o
+      select count(*) from mail_requests as o
        where o.tenant_id = ${mailRequests.tenantId} and o.mail_item_id = ${mailRequests.mailItemId}
          and o.id <> ${mailRequests.id} and o.status in ${pending})`,
     billed: sql<boolean>`exists (
@@ -563,7 +569,7 @@ export async function listRequestsForAccounts(
   )
   return inClientSpace(accounts, async (tx) => {
     const [counted] = await tx
-      .select({ total: sql<number>`count(*)::int` })
+      .select({ total: sql<number>`count(*)` })
       .from(mailRequests)
       .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
       .where(where)
@@ -612,11 +618,11 @@ async function submitRequest(
         .limit(1)
       const account = item && accounts.find((candidate) => candidate.clientId === item.clientId)
       if (!account) return NOT_FOUND
-      const [request] = await tx
+      const requestId = uuidv7()
+      await tx
         .insert(mailRequests)
-        .values({ ...values(account), mailItemId, clientId: account.clientId })
-        .returning({ id: mailRequests.id })
-      return { ok: true as const, requestId: request.id }
+        .values({ ...values(account), id: requestId, mailItemId, clientId: account.clientId })
+      return { ok: true as const, requestId }
     })
   } catch (error) {
     const message = mailRequestRefusal(error)
@@ -689,11 +695,19 @@ export async function cancelMailRequest(
         .limit(1)
       const account = request && accounts.find((candidate) => candidate.clientId === request.clientId)
       if (!account) return { ok: false as const, error: 'Cette demande est introuvable dans votre espace.' }
-      const updated = await tx
-        .update(mailRequests)
-        .set({ status: 'cancelled', cancelledByMemberId: account.memberId })
-        .where(and(eq(mailRequests.id, request.id), eq(mailRequests.status, 'requested')))
-        .returning({ id: mailRequests.id })
+      const updated = await updateReturning(
+        tx,
+        mailRequests,
+        { status: 'cancelled', cancelledByMemberId: account.memberId },
+        and(
+          eq(mailRequests.id, request.id),
+          inArray(
+            mailRequests.clientId,
+            accounts.map((candidate) => candidate.clientId),
+          ),
+          eq(mailRequests.status, 'requested'),
+        ),
+      )
       if (updated.length === 0) {
         return {
           ok: false as const,
@@ -926,7 +940,7 @@ export async function listMailRequests(
   const where = queueWhere(filters)
   return withTenant(currentTenantId(), async (tx) => {
     const [counted] = await tx
-      .select({ total: sql<number>`count(*)::int` })
+      .select({ total: sql<number>`count(*)` })
       .from(mailRequests)
       .where(where)
     const rows = await selectRequests(tx, where, {
@@ -943,7 +957,7 @@ export async function listMailRequests(
 export async function countPendingMailRequests(): Promise<Record<MailRequestKind, number> & { total: number }> {
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({ kind: mailRequests.kind, count: sql<number>`count(*)::int` })
+      .select({ kind: mailRequests.kind, count: sql<number>`count(*)` })
       .from(mailRequests)
       .where(inArray(mailRequests.status, [...pendingRequestStatuses]))
       .groupBy(mailRequests.kind),
@@ -991,38 +1005,39 @@ async function transition(
   })
 }
 
-const returningIds = { id: mailRequests.id, mailItemId: mailRequests.mailItemId }
-
 /** Prise en charge : le client ne peut plus annuler, il voit que le centre s'en occupe. */
 export function startMailRequest(id: string, staffMemberId: string) {
   return transition(id, (tx) =>
-    tx
-      .update(mailRequests)
-      .set({ status: 'in_progress', startedByStaffId: staffMemberId })
-      .where(and(eq(mailRequests.id, id), eq(mailRequests.status, 'requested')))
-      .returning(returningIds),
+    updateReturning(
+      tx,
+      mailRequests,
+      { status: 'in_progress', startedByStaffId: staffMemberId },
+      and(eq(mailRequests.id, id), eq(mailRequests.status, 'requested')),
+    ),
   )
 }
 
 /** Refus, avec son motif, montré au client. Le résumé du pli suit (base). */
 export function refuseMailRequest(id: string, staffMemberId: string, reason: string) {
   return transition(id, (tx) =>
-    tx
-      .update(mailRequests)
-      .set({ status: 'refused', refusedByStaffId: staffMemberId, refusalReason: reason })
-      .where(and(eq(mailRequests.id, id), inArray(mailRequests.status, [...pendingRequestStatuses])))
-      .returning(returningIds),
+    updateReturning(
+      tx,
+      mailRequests,
+      { status: 'refused', refusedByStaffId: staffMemberId, refusalReason: reason },
+      and(eq(mailRequests.id, id), inArray(mailRequests.status, [...pendingRequestStatuses])),
+    ),
   )
 }
 
 /** Annulation par l'accueil, à la demande du client (par téléphone) : tracée à son nom. */
 export function cancelMailRequestForClient(id: string, staffMemberId: string) {
   return transition(id, (tx) =>
-    tx
-      .update(mailRequests)
-      .set({ status: 'cancelled', cancelledByStaffId: staffMemberId })
-      .where(and(eq(mailRequests.id, id), eq(mailRequests.status, 'requested')))
-      .returning(returningIds),
+    updateReturning(
+      tx,
+      mailRequests,
+      { status: 'cancelled', cancelledByStaffId: staffMemberId },
+      and(eq(mailRequests.id, id), eq(mailRequests.status, 'requested')),
+    ),
   )
 }
 
@@ -1049,23 +1064,22 @@ async function tenantCurrency(tx: Transaction): Promise<string> {
 export function completeForwardRequest(id: string, staffMemberId: string, shipping: ForwardShipping) {
   return transition(id, async (tx) => {
     const currency = await tenantCurrency(tx)
-    return tx
-      .update(mailRequests)
-      .set({
+    return updateReturning(
+      tx,
+      mailRequests,
+      {
         status: 'done',
         completedByStaffId: staffMemberId,
         forwardTrackingNumber: shipping.trackingNumber,
         postageCents: shipping.postageCents,
         postageCurrency: shipping.postageCents === null ? null : currency,
-      })
-      .where(
-        and(
-          eq(mailRequests.id, id),
-          eq(mailRequests.kind, 'forward'),
-          inArray(mailRequests.status, [...pendingRequestStatuses]),
-        ),
-      )
-      .returning(returningIds)
+      },
+      and(
+        eq(mailRequests.id, id),
+        eq(mailRequests.kind, 'forward'),
+        inArray(mailRequests.status, [...pendingRequestStatuses]),
+      ),
+    )
   })
 }
 
@@ -1076,15 +1090,16 @@ export function completeForwardRequest(id: string, staffMemberId: string, shippi
 export function updateForwardShipping(id: string, shipping: ForwardShipping) {
   return transition(id, async (tx) => {
     const currency = await tenantCurrency(tx)
-    return tx
-      .update(mailRequests)
-      .set({
+    return updateReturning(
+      tx,
+      mailRequests,
+      {
         forwardTrackingNumber: shipping.trackingNumber,
         postageCents: shipping.postageCents,
         postageCurrency: shipping.postageCents === null ? null : currency,
-      })
-      .where(and(eq(mailRequests.id, id), eq(mailRequests.kind, 'forward'), eq(mailRequests.status, 'done')))
-      .returning(returningIds)
+      },
+      and(eq(mailRequests.id, id), eq(mailRequests.kind, 'forward'), eq(mailRequests.status, 'done')),
+    )
   })
 }
 
@@ -1135,10 +1150,11 @@ export function recordScanRequestDone(id: string, staffMemberId: string, stored:
         })),
       )
     }
-    return tx
-      .update(mailRequests)
-      .set({ status: 'done', completedByStaffId: staffMemberId })
-      .where(eq(mailRequests.id, request.id))
-      .returning(returningIds)
+    return updateReturning(
+      tx,
+      mailRequests,
+      { status: 'done', completedByStaffId: staffMemberId },
+      eq(mailRequests.id, request.id),
+    )
   })
 }

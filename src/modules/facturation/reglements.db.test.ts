@@ -3,11 +3,13 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import {
   EmptyExportError,
   generateAccountingExport,
@@ -47,7 +49,57 @@ import {
 import { invoices, payments, sepaMandates } from './schema-factures.ts'
 
 /**
- * Règlements (R16, ADR 027, ADR 030), contre la base et sous `app_centre`,
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
+ * Règlements (R16, ADR 027, ADR 030), contre la base et sous l’utilisateur applicatif,
  * par les fonctions mêmes que les écrans appellent :
  *
  * - pointage d'un paiement, partiel, total, trop-perçu, remboursement,
@@ -59,26 +111,15 @@ import { invoices, payments, sepaMandates } from './schema-factures.ts'
  * - export comptable : équilibre, journal et empreinte ;
  * - représentation EN 16931 d'une facture réellement émise.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
 
 const PARIS = 'Europe/Paris'
 
-describe('règlements', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('règlements', { skip: raisonDeSaut }, () => {
   // Clé des documents propre au test : les IBAN des mandats sont chiffrés avec elle.
   process.env.DOCUMENTS_ENCRYPTION_KEY = randomBytes(32).toString('base64')
   process.env.DOCUMENTS_ENCRYPTION_KEY_VERSION = '1'
 
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000e0d01'
   const DURAND = '01a00000-0000-7000-8000-0000000e0c01'
@@ -87,7 +128,7 @@ describe('règlements', { skip: raison }, () => {
 
   const today = () => todayIsoDate(PARIS)
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Facture émise d'une ligne HT, à 20 %. */
   const factureEmise = async ({
@@ -101,21 +142,18 @@ describe('règlements', { skip: raison }, () => {
     vatRateBp?: number
     values?: Partial<typeof invoices.$inferInsert>
   } = {}): Promise<{ id: string; number: string }> => {
-    const [draft] = await asTenant((tx) =>
-      tx
-        .insert(invoices)
-        .values({ clientId, periodStart: '2026-09-01', periodEnd: '2026-09-30', ...values })
-        .returning({ id: invoices.id }),
+    const draft = await asTenant((tx) =>
+      insertReturning(tx, invoices, { clientId, periodStart: '2026-09-01', periodEnd: '2026-09-30', ...values }),
     )
     await asTenant((tx) =>
       tx.execute(sql`
         insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
         values (${draft.id}, 'other', 'Domiciliation — septembre 2026', ${netCents}, ${vatRateBp})`),
     )
-    const [row] = await asTenant((tx) =>
-      tx.execute(sql`select issue_invoice(${draft.id}::uuid, ${ACCUEIL}::uuid) as numero`),
-    )
-    return { id: draft.id, number: row.numero as string }
+    const [rows] = (await asTenant((tx) =>
+      tx.execute(sql`select issue_invoice(${draft.id}, ${ACCUEIL}) as numero`),
+    )) as unknown as [{ numero: string }[]]
+    return { id: draft.id, number: rows[0].numero }
   }
 
   const statut = async (id: string) => {
@@ -149,21 +187,22 @@ describe('règlements', { skip: raison }, () => {
     )
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`select seed_accounting_accounts(${DEFAULT_TENANT_ID}::uuid)`
-    await owner.client`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
+    await viderTables(bases.owner, 'document_sequences')
+    await bases.owner.db.execute(sql`select seed_accounting_accounts(${DEFAULT_TENANT_ID})`)
+    await bases.owner.db.execute(sql`
       update tenants set
         legal_name = 'Centre de démonstration SAS', legal_form = 'SAS', share_capital_cents = 1000000,
         address_line1 = '1 rue de l''Exemple', postal_code = '38070', city = 'Saint-Quentin-Fallavier',
         siren = '123456789', siret = '12345678900012', vat_number = 'FR32123456789', rcs_city = 'Vienne',
         bank_iban = 'FR7630006000011234567890189', bank_bic = 'AGRIFRPP', sepa_creditor_id = 'FR12ZZZ123456'
-      where id = ${DEFAULT_TENANT_ID}`
+      where id = ${DEFAULT_TENANT_ID}`)
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Claire Accueil')`)
       await tx.execute(sql`
@@ -174,15 +213,14 @@ describe('règlements', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
+    await bases.owner.db.execute(sql`
       update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
         address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
         vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null, sepa_creditor_id = null
-      where id = ${DEFAULT_TENANT_ID}`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+      where id = ${DEFAULT_TENANT_ID}`)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('pointage des paiements', () => {
@@ -215,20 +253,18 @@ describe('règlements', { skip: raison }, () => {
     })
 
     it('refuse de pointer un brouillon ou un avoir', async () => {
-      const [draft] = await asTenant((tx) =>
-        tx
-          .insert(invoices)
-          .values({ clientId: DURAND, periodStart: '2026-09-01', periodEnd: '2026-09-30' })
-          .returning({ id: invoices.id }),
+      const draft = await asTenant((tx) =>
+        insertReturning(tx, invoices, { clientId: DURAND, periodStart: '2026-09-01', periodEnd: '2026-09-30' }),
       )
       const onDraft = await errorOf(() => pointer(draft.id, 100))
       assert.ok(onDraft instanceof PaymentRefusedError)
       assert.match(onDraft.message, /brouillon/)
 
       const { id } = await factureEmise()
-      const [credit] = await asTenant((tx) => tx.execute(sql`select draft_credit_note(${id}::uuid, 'Erreur') as id`))
-      await asTenant((tx) => tx.execute(sql`select issue_invoice(${credit.id as string}::uuid, ${ACCUEIL}::uuid)`))
-      const onCredit = await errorOf(() => pointer(credit.id as string, 100))
+      const creditId = uuidv7()
+      await asTenant((tx) => tx.execute(sql`call draft_credit_note(${creditId}, ${id}, 'Erreur')`))
+      await asTenant((tx) => tx.execute(sql`select issue_invoice(${creditId}, ${ACCUEIL})`))
+      const onCredit = await errorOf(() => pointer(creditId, 100))
       assert.ok(onCredit instanceof PaymentRefusedError)
       assert.match(onCredit.message, /avoir/)
     })
@@ -303,11 +339,14 @@ describe('règlements', { skip: raison }, () => {
       const { id, reference } = await mandatDurand()
       assert.match(reference, /^RUM-\d{8}-[A-Z2-9]{6}$/)
 
-      const [stored] = await owner.client`select iban_ciphertext, iban_last4 from sepa_mandates where id = ${id}`
-      const bytes = Buffer.from(stored.iban_ciphertext as Uint8Array)
+      const [stored] = await bases.owner.db
+        .select({ ibanCiphertext: sepaMandates.ibanCiphertext, ibanLast4: sepaMandates.ibanLast4 })
+        .from(sepaMandates)
+        .where(eq(sepaMandates.id, id))
+      const bytes = Buffer.from(stored.ibanCiphertext as Uint8Array)
       assert.equal(bytes.includes(Buffer.from(IBAN_DURAND)), false)
       assert.equal(bytes.includes(Buffer.from('2004101005')), false)
-      assert.equal(stored.iban_last4, '2606')
+      assert.equal(stored.ibanLast4, '2606')
       assert.equal(openIban(bytes, 1, { tenantId: DEFAULT_TENANT_ID, reference }), IBAN_DURAND)
 
       const listed = await listClientMandates(DURAND, today())
@@ -320,16 +359,16 @@ describe('règlements', { skip: raison }, () => {
 
     it('donne à une nouvelle facture le prélèvement sur le mandat actif, sinon le mode du centre', async () => {
       const setup = (clientId: string) =>
-        withTenant(DEFAULT_TENANT_ID, (tx) => invoicePaymentSetup(tx, clientId, today()), app.db)
+        withTenant(DEFAULT_TENANT_ID, (tx) => invoicePaymentSetup(tx, clientId, today()), bases.app.db)
       assert.deepEqual(await setup(DURAND), { expectedPaymentMethod: 'transfer', sepaMandateId: null })
       const mandate = await mandatDurand()
       assert.deepEqual(await setup(DURAND), { expectedPaymentMethod: 'direct_debit', sepaMandateId: mandate.id })
       // Un centre « prélèvement par défaut » ne prélève pas un client sans mandat.
-      await owner.client`update tenants set default_payment_method = 'direct_debit' where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.db.execute(sql`update tenants set default_payment_method = 'direct_debit' where id = ${DEFAULT_TENANT_ID}`)
       try {
         assert.deepEqual(await setup(PETIT), { expectedPaymentMethod: 'transfer', sepaMandateId: null })
       } finally {
-        await owner.client`update tenants set default_payment_method = 'transfer' where id = ${DEFAULT_TENANT_ID}`
+        await bases.owner.db.execute(sql`update tenants set default_payment_method = 'transfer' where id = ${DEFAULT_TENANT_ID}`)
       }
       await revokeMandate(DURAND, mandate.id, today())
       assert.deepEqual(await setup(DURAND), { expectedPaymentMethod: 'transfer', sepaMandateId: null })

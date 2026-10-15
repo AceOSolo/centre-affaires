@@ -2,9 +2,10 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { invoiceLines, invoices, subscribedServices } from './schema-factures.ts'
 import {
@@ -22,6 +23,56 @@ import {
 import type { SubscriptionInput, SubscriptionTerms } from './souscriptions-regles.ts'
 
 /**
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
  * Services souscrits (R18, R07, ADR 024), par les fonctions que l'écran
  * appelle, sous le rôle applicatif :
  *
@@ -34,21 +85,9 @@ import type { SubscriptionInput, SubscriptionTerms } from './souscriptions-regle
  *   de suppression ;
  * - les actes inclus se consomment dans l'ordre des plis ouverts du mois.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('services souscrits', { skip: raison }, () => {
-  // Les fonctions du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('services souscrits', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-0000005b0c01'
   const PETIT = '01a00000-0000-7000-8000-0000005b0c02'
@@ -61,7 +100,7 @@ describe('services souscrits', { skip: raison }, () => {
   const PARIS = 'Europe/Paris'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const refusal = async (run: () => Promise<unknown>): Promise<string> => {
     try {
@@ -108,10 +147,11 @@ describe('services souscrits', { skip: raison }, () => {
   /** Facture brouillon qui porte le forfait de septembre de la souscription. */
   const facturerSeptembre = async (subscriptionId: string) =>
     asTenant(async (tx) => {
-      const [invoice] = await tx
-        .insert(invoices)
-        .values({ clientId: DURAND, periodStart: '2026-09-01', periodEnd: '2026-09-30' })
-        .returning({ id: invoices.id })
+      const invoice = await insertReturning(tx, invoices, {
+        clientId: DURAND,
+        periodStart: '2026-09-01',
+        periodEnd: '2026-09-30',
+      })
       await tx.insert(invoiceLines).values({
         invoiceId: invoice.id,
         kind: 'package',
@@ -129,12 +169,13 @@ describe('services souscrits', { skip: raison }, () => {
     })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email) values (${ACCUEIL}, 'accueil@centre.fr')`)
       await tx.execute(sql`
@@ -152,10 +193,9 @@ describe('services souscrits', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await viderTables(bases.owner, ...TABLES_AVEC_EQUIPE)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('souscrire', () => {
@@ -202,7 +242,7 @@ describe('services souscrits', { skip: raison }, () => {
         await refusal(() => subscribe(DURAND, forfait({ contractId: CONTRAT_PETIT }))),
         /pas un contrat de ce client/,
       )
-      await asTenant((tx) => tx.execute(sql`update clients set deleted_at = now() where id = ${PETIT}`))
+      await asTenant((tx) => tx.execute(sql`update clients set deleted_at = CURRENT_TIMESTAMP(3) where id = ${PETIT}`))
       assert.match(await refusal(() => subscribe(PETIT, forfait())), /archivée/)
     })
   })
@@ -325,8 +365,8 @@ describe('services souscrits', { skip: raison }, () => {
       asTenant((tx) =>
         tx.execute(sql`
           insert into mail_items (client_id, status, opened_at, opened_by, sender, deleted_at)
-          values (${DURAND}, ${openedAt ? 'opened' : 'received'}, ${openedAt}, ${openedAt ? ACCUEIL : null},
-                  'URSSAF', ${values.deleted ? sql`now()` : null})`),
+          values (${DURAND}, ${openedAt ? 'opened' : 'received'}, ${openedAt ? new Date(openedAt) : null}, ${openedAt ? ACCUEIL : null},
+                  'URSSAF', ${values.deleted ? sql`CURRENT_TIMESTAMP(3)` : null})`),
       )
 
     it('compte les plis ouverts du mois du centre, les premiers inclus', async () => {

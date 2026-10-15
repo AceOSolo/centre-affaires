@@ -2,39 +2,29 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import { archiveContractDocument } from '../contrats/documents.ts'
 import { cancelOpeningRequest, requestOpening } from '../courrier/queries.ts'
 import { cancelRequestForAccounts } from '../reservations/compte-queries.ts'
 import type { ClientAccount } from './comptes.ts'
 import { buildAccountHistory } from './historique-compte.ts'
 import { findAccountHistoryStart, loadAccountHistory } from './historique-compte-queries.ts'
+import { toutVider } from './test-support.ts'
 
 /**
- * Historique du compte (R24), contre la base et sous le rôle applicatif :
+ * Historique du compte (R24), contre la base et sous l'identité applicative :
  * chaque demande et chaque document des entreprises du compte, et d'elles
- * seules. Une annulation ne retire rien : la demande reste, avec sa date et
- * la personne qui l'a annulée.
+ * seules — la base ne filtre plus les lectures, chaque requête de
+ * `loadAccountHistory` filtre sur les entreprises du compte. Une annulation ne
+ * retire rien : la demande reste, avec sa date et la personne qui l'a annulée.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('historique du compte', { skip: raison }, () => {
-  // Les requêtes des modules ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('historique du compte', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const TZ = 'Europe/Paris'
   const DURAND = '01a00000-0000-7000-8000-0000000f2c01'
@@ -49,7 +39,7 @@ describe('historique du compte', { skip: raison }, () => {
   const year = () => Number(todayIsoDate(TZ).slice(0, 4))
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Identité du centre avant le test, rendue à la fin : d'autres tests la lisent. */
   let identite: Record<string, unknown> | undefined
@@ -57,74 +47,79 @@ describe('historique du compte', { skip: raison }, () => {
   /** Réservation déposée depuis l'espace client, dans `jours` jours. */
   const reserverDepuisLEspace = async (accounts: ClientAccount[], jours: number): Promise<string> => {
     const [account] = accounts
-    const [row] = await withClientScope(
+    const id = uuidv7()
+    await withClientScope(
       DEFAULT_TENANT_ID,
       [account.clientId],
       (tx) =>
         tx.execute(sql`
-          insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at,
+          insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at,
                                 booked_by_member_id)
-          values (${SALLE}, ${account.clientId}, 'booking', 'client', 'pending', 'Réunion d’équipe',
-                  now() + make_interval(days => ${jours}),
-                  now() + make_interval(days => ${jours}, hours => 2), ${account.memberId})
-          returning id`),
-      app.db,
+          values (${id}, ${SALLE}, ${account.clientId}, 'booking', 'client', 'pending', 'Réunion d’équipe',
+                  date_add(now(3), interval ${jours} day),
+                  date_add(date_add(now(3), interval ${jours} day), interval 2 hour), ${account.memberId})`),
+      bases.app.db,
     )
-    return row.id as string
+    return id
   }
 
   const pli = async (clientId: string, { ouvert = false } = {}): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, sender, status, opened_at, opened_by)
-        values (${clientId}, 'URSSAF', ${ouvert ? 'opened' : 'received'},
-                ${ouvert ? sql`now()` : null}, ${ouvert ? CAMILLE : null})
-        returning id`),
+        insert into mail_items (id, client_id, sender, status, opened_at, opened_by)
+        values (${id}, ${clientId}, 'URSSAF', ${ouvert ? 'opened' : 'received'},
+                ${ouvert ? sql`now(3)` : null}, ${ouvert ? CAMILLE : null})`),
     )
-    return row.id as string
+    return id
   }
 
   const facturer = async (clientId: string, emettre: boolean): Promise<string> => {
-    const [row] = await asTenant(async (tx) => {
-      const [invoice] = await tx.execute(sql`
-        insert into invoices (client_id, period_start, period_end)
-        values (${clientId}, '2026-09-01', '2026-09-30') returning id`)
+    const id = uuidv7()
+    await asTenant(async (tx) => {
+      await tx.execute(sql`
+        insert into invoices (id, client_id, period_start, period_end)
+        values (${id}, ${clientId}, '2026-09-01', '2026-09-30')`)
       await tx.execute(sql`
         insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
-        values (${invoice.id as string}, 'other', 'Domiciliation', 10000, 2000)`)
-      if (emettre) await tx.execute(sql`select issue_invoice(${invoice.id as string}::uuid)`)
-      return [invoice]
+        values (${id}, 'other', 'Domiciliation', 10000, 2000)`)
+      if (emettre) await tx.execute(sql`select issue_invoice(${id}, null)`)
     })
-    return row.id as string
+    return id
   }
 
   const contracter = async (clientId: string, reference: string): Promise<string> =>
     asTenant(async (tx) => {
-      const [contrat] = await tx.execute(sql`
-        insert into contracts (client_id, reference, contract_type, starts_on, amount_cents)
-        values (${clientId}, ${reference}, 'domiciliation', '2026-01-01', 3000) returning id`)
-      const id = contrat.id as string
+      const id = uuidv7()
+      await tx.execute(sql`
+        insert into contracts (id, client_id, reference, contract_type, starts_on, amount_cents)
+        values (${id}, ${clientId}, ${reference}, 'domiciliation', '2026-01-01', 3000)`)
       await tx.execute(sql`update contracts set status = 'active' where id = ${id}`)
       await archiveContractDocument(tx, { contractId: id, amendmentId: null, generatedBy: null })
       return id
     })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    const [row] = await owner.client`
-      select legal_name, address_line1, postal_code, city, siren, vat_number, bank_iban
-        from tenants where id = ${DEFAULT_TENANT_ID}`
-    identite = row
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes des modules passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
+    const [rows] = (await bases.owner.client.query(
+      `select legal_name, address_line1, postal_code, city, siren, vat_number, bank_iban
+         from tenants where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )) as unknown as [Record<string, unknown>[]]
+    identite = rows[0]
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`
-      update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
         postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
         vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
-      where id = ${DEFAULT_TENANT_ID}`
+      where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name) values (${SALLE}, 'salle', 'S-HIS', 'Salle Europe')`)
@@ -141,17 +136,26 @@ describe('historique du compte', { skip: raison }, () => {
   })
 
   after(async () => {
+    await toutVider(bases.owner)
     if (identite) {
-      await owner.client`
-        update tenants set legal_name = ${identite.legal_name as string | null},
-          address_line1 = ${identite.address_line1 as string | null},
-          postal_code = ${identite.postal_code as string | null}, city = ${identite.city as string | null},
-          siren = ${identite.siren as string | null}, vat_number = ${identite.vat_number as string | null},
-          bank_iban = ${identite.bank_iban as string | null}
-        where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.client.query(
+        `update tenants set legal_name = ?, address_line1 = ?, postal_code = ?, city = ?,
+                            siren = ?, vat_number = ?, bank_iban = ?
+          where id = ?`,
+        [
+          identite.legal_name,
+          identite.address_line1,
+          identite.postal_code,
+          identite.city,
+          identite.siren,
+          identite.vat_number,
+          identite.bank_iban,
+          DEFAULT_TENANT_ID,
+        ],
+      )
     }
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('garde une demande de réservation annulée par le client, avec son auteur', async () => {
@@ -170,18 +174,18 @@ describe('historique du compte', { skip: raison }, () => {
   })
 
   it('dit qu’une réservation a été annulée par le centre, et pourquoi', async () => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
-        values (${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Formation',
-                now() + interval '3 days', now() + interval '3 days 2 hours')
-        returning id`),
+        insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
+        values (${id}, ${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Formation',
+                date_add(now(3), interval 3 day), date_add(date_add(now(3), interval 3 day), interval 2 hour))`),
     )
     await asTenant((tx) =>
       tx.execute(sql`
-        update bookings set status = 'cancelled', cancelled_at = now(),
+        update bookings set status = 'cancelled', cancelled_at = now(3),
                cancellation_reason = 'Salle en travaux', cancelled_by_staff_id = ${CAMILLE}
-         where id = ${row.id as string}`),
+         where id = ${id}`),
     )
     const { sources } = await loadAccountHistory(durand, { year: year(), timeZone: TZ })
     const [booking] = sources.bookings
@@ -199,20 +203,21 @@ describe('historique du compte', { skip: raison }, () => {
     assert.equal(await requestOpening(ferme, durand), true)
 
     const ouvert = await pli(DURAND, { ouvert: true })
-    const [scan] = await withClientScope(
+    const scan = uuidv7()
+    await withClientScope(
       DEFAULT_TENANT_ID,
       [DURAND],
       (tx) =>
         tx.execute(sql`
-          insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id)
-          values (${ouvert}, ${DURAND}, 'scan', ${JEANNE}) returning id`),
-      app.db,
+          insert into mail_requests (id, mail_item_id, client_id, kind, requested_by_member_id)
+          values (${scan}, ${ouvert}, ${DURAND}, 'scan', ${JEANNE})`),
+      bases.app.db,
     )
     await asTenant((tx) =>
       tx.execute(sql`
         update mail_requests set status = 'refused', refused_by_staff_id = ${CAMILLE},
                refusal_reason = 'Contenu déjà numérisé'
-         where id = ${scan.id as string}`),
+         where id = ${scan}`),
     )
 
     const { sources } = await loadAccountHistory(durand, { year: year(), timeZone: TZ })
@@ -229,7 +234,7 @@ describe('historique du compte', { skip: raison }, () => {
   it('cache l’expéditeur d’un pli retiré, sans retirer la demande', async () => {
     const ferme = await pli(DURAND)
     await requestOpening(ferme, durand)
-    await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = now() where id = ${ferme}`))
+    await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = now(3) where id = ${ferme}`))
     const { sources } = await loadAccountHistory(durand, { year: year(), timeZone: TZ })
     assert.equal(sources.mailRequests.length, 1)
     assert.equal(sources.mailRequests[0].status, 'refused')
@@ -267,48 +272,52 @@ describe('historique du compte', { skip: raison }, () => {
     )
     assert.deepEqual(sources.mailRequests, [])
     assert.deepEqual(sources.contractDocuments, [])
+    assert.deepEqual(sources.offerRequests, [])
     assert.deepEqual(sources.invoices, [])
     assert.deepEqual(sources.inspections, [])
     const entries = buildAccountHistory(sources, { timeZone: TZ, today: todayIsoDate(TZ) })
     assert.ok(entries.every((entry) => entry.clientId === DURAND))
+    // Ni son premier instant : Petit n'a rien à y faire.
+    const premierDurand = await findAccountHistoryStart(durand)
+    const premierPetit = await findAccountHistoryStart(petit)
+    assert.ok(premierDurand && premierPetit && premierDurand.getTime() <= premierPetit.getTime())
   })
 
   it('reprend les états des lieux clos de l’entreprise, validation comprise, jamais un brouillon', async () => {
-    await owner.client`truncate table inspection_templates cascade`
-    const [reservationDurand, reservationPetit] = await asTenant(async (tx) => {
-      const rows = await tx.execute(sql`
-        insert into bookings (resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
-          (${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Atelier', now() - interval '3 days',
-           now() - interval '3 days' + interval '2 hours'),
-          (${SALLE}, ${PETIT}, 'booking', 'staff', 'confirmed', 'Atelier', now() - interval '2 days',
-           now() - interval '2 days' + interval '2 hours')
-        returning id, client_id`)
-      const byClient = new Map(rows.map((row) => [row.client_id as string, row.id as string]))
-      return [byClient.get(DURAND) as string, byClient.get(PETIT) as string]
+    const reservationDurand = uuidv7()
+    const reservationPetit = uuidv7()
+    await asTenant(async (tx) => {
+      await tx.execute(sql`
+        insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
+          (${reservationDurand}, ${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Atelier',
+           date_sub(now(3), interval 72 hour), date_sub(now(3), interval 70 hour)),
+          (${reservationPetit}, ${SALLE}, ${PETIT}, 'booking', 'staff', 'confirmed', 'Atelier',
+           date_sub(now(3), interval 48 hour), date_sub(now(3), interval 46 hour))`)
     })
-    const version = await asTenant(async (tx) => {
-      const [modele] = await tx.execute(sql`
-        insert into inspection_templates (resource_type, name) values ('salle', 'Salle') returning id`)
-      const [row] = await tx.execute(sql`
-        insert into inspection_template_versions (template_id, version, name, fields, created_by)
-        values (${modele.id as string}, 1, 'Salle',
-                '[{"id":"murs","label":"Murs","type":"condition","required":true}]'::jsonb, ${CAMILLE})
-        returning id`)
-      return row.id as string
+    const version = uuidv7()
+    await asTenant(async (tx) => {
+      const modele = uuidv7()
+      await tx.execute(sql`
+        insert into inspection_templates (id, resource_type, name) values (${modele}, 'salle', 'Salle')`)
+      await tx.execute(sql`
+        insert into inspection_template_versions (id, template_id, version, name, fields, created_by)
+        values (${version}, ${modele}, 1, 'Salle',
+                ${'[{"id":"murs","label":"Murs","type":"condition","required":true}]'}, ${CAMILLE})`)
     })
     const etat = async (clientId: string, bookingId: string, clore: boolean): Promise<string> => {
-      const [row] = await asTenant((tx) =>
+      const id = uuidv7()
+      await asTenant((tx) =>
         tx.execute(sql`
-          insert into inspections (kind, resource_id, client_id, booking_id, template_version_id, created_by,
+          insert into inspections (id, kind, resource_id, client_id, booking_id, template_version_id, created_by,
                                    performed_at)
-          values ('entry', ${SALLE}, ${clientId}, ${bookingId}, ${version}, ${CAMILLE}, now() - interval '1 day')
-          returning id`),
+          values (${id}, 'entry', ${SALLE}, ${clientId}, ${bookingId}, ${version}, ${CAMILLE},
+                  date_sub(now(3), interval 1 day))`),
       )
-      const id = row.id as string
       if (clore) {
+        // `values` est un mot réservé de MySQL : la colonne s'écrit entre apostrophes inverses.
         await asTenant((tx) =>
           tx.execute(sql`
-            update inspections set status = 'closed', closed_by = ${CAMILLE}, values = '{"murs":"bon"}'::jsonb
+            update inspections set status = 'closed', closed_by = ${CAMILLE}, \`values\` = ${'{"murs":"bon"}'}
              where id = ${id}`),
         )
       }

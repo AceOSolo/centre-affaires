@@ -1,5 +1,5 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
-import { alias } from 'drizzle-orm/pg-core'
+import { alias } from 'drizzle-orm/mysql-core'
 
 import { withTenant } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'

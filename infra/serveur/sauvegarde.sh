@@ -4,7 +4,7 @@
 # Chaque passage produit un « lot », nommé par son instant UTC
 # (`2026-10-01T023000Z`) :
 #
-#   base.dump.age           pg_dump de la base Neon, format custom
+#   base.sql.gz.age         mysqldump de la base MySQL (compressé, puis chiffré)
 #   stockage.tar.age        copie du bucket `uploads` (courrier numérisé)
 #   configuration.tar.age   fichiers du serveur (le `.env` de l'application…)
 #   SHA256SUMS              empreintes des fichiers chiffrés
@@ -26,13 +26,14 @@
 # Installation et crontab : infra/serveur/README.md, section « Sauvegardes ».
 # Restauration : docs/exploitation/restauration.md.
 #
-# Outils : bash, coreutils, age, rclone, flock (paquets Debian), et Docker
-# pour pg_dump 18 (image postgres:18-alpine). Aucune dépendance npm.
+# Outils : bash, coreutils, gzip, age, rclone, flock (paquets Debian), et Docker
+# pour joindre le conteneur `db` du compose (`mysqldump` y est déjà). Aucune
+# dépendance npm.
 
 LOT_MOTIF='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{6}Z$'
 
 # Le journal s'écrit sur son propre descripteur (3, ouvert par `principal`) :
-# un message émis pendant `pg_dump … >fichier` partirait sinon dans le fichier.
+# un message émis pendant `mysqldump … >fichier` partirait sinon dans le fichier.
 journal() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&"${journal_fd:-1}"; }
 
 octets() { numfmt --to=iec-i --suffix=o "$1" 2>/dev/null || printf '%s o' "$1"; }
@@ -176,18 +177,20 @@ charger_configuration() {
   source "$fichier"
   set +a
 
-  SAUVEGARDE_IMAGE_PG=${SAUVEGARDE_IMAGE_PG-postgres:18-alpine}
+  # Service du compose qui porte la base. Vide : `mysqldump` installé sur le
+  # serveur, qui se connecte par MYSQL_HOST / MYSQL_TCP_PORT.
+  SAUVEGARDE_DB_SERVICE=${SAUVEGARDE_DB_SERVICE-db}
+  SAUVEGARDE_COMPOSE_DIR=${SAUVEGARDE_COMPOSE_DIR:-$HOME/centre-affaires}
   SAUVEGARDE_TRAVAIL=${SAUVEGARDE_TRAVAIL:-/var/tmp}
   SAUVEGARDE_FICHIERS=${SAUVEGARDE_FICHIERS-}
   SAUVEGARDE_GARDER_QUOTIDIENNES=${SAUVEGARDE_GARDER_QUOTIDIENNES:-7}
   SAUVEGARDE_GARDER_HEBDOMADAIRES=${SAUVEGARDE_GARDER_HEBDOMADAIRES:-4}
   SAUVEGARDE_GARDER_MENSUELLES=${SAUVEGARDE_GARDER_MENSUELLES:-12}
-  export PGCONNECT_TIMEOUT=${PGCONNECT_TIMEOUT:-30}
   # rclone ne journalise que ses erreurs ; le script dit lui-même ce qu'il a fait.
   export RCLONE_LOG_LEVEL=${RCLONE_LOG_LEVEL:-ERROR}
 
   local nom
-  for nom in PGHOST PGDATABASE PGUSER SAUVEGARDE_SOURCE_STOCKAGE \
+  for nom in MYSQL_DATABASE MYSQL_USER SAUVEGARDE_SOURCE_STOCKAGE \
     SAUVEGARDE_DESTINATION SAUVEGARDE_DESTINATAIRES; do
     [[ -n ${!nom:-} ]] || fatal "$nom manquant dans $fichier"
   done
@@ -219,8 +222,8 @@ charger_configuration() {
 verifier_outils() {
   etape="outils"
   local outil
-  local -a outils=(age rclone tar sha256sum flock sort numfmt)
-  if [[ -n $SAUVEGARDE_IMAGE_PG ]]; then outils+=(docker); else outils+=(pg_dump pg_restore); fi
+  local -a outils=(age rclone tar gzip sha256sum flock sort numfmt)
+  if [[ -n $SAUVEGARDE_DB_SERVICE ]]; then outils+=(docker); else outils+=(mysqldump); fi
   for outil in "${outils[@]}"; do
     command -v "$outil" >/dev/null 2>&1 || fatal "outil absent : $outil"
   done
@@ -234,16 +237,14 @@ verrouiller() {
   flock -n 9 || fatal "une autre sauvegarde est en cours"
 }
 
-# pg_dump et pg_restore dans l'image de Postgres 18 : Debian n'en fournit pas
-# de version assez récente, et pg_dump refuse un serveur plus récent que lui.
-# Les paramètres de connexion passent par l'environnement, jamais par la
-# ligne de commande, que `ps` montre à tous les comptes du serveur.
-pg_outil() {
-  if [[ -n $SAUVEGARDE_IMAGE_PG ]]; then
-    docker run --rm -i \
-      -e PGHOST -e PGPORT -e PGDATABASE -e PGUSER -e PGPASSWORD \
-      -e PGSSLMODE -e PGSSLROOTCERT -e PGCHANNELBINDING -e PGCONNECT_TIMEOUT \
-      "$SAUVEGARDE_IMAGE_PG" "$@"
+# mysqldump dans le conteneur `db` du compose : la base n'est publiée sur aucun
+# port, et le client y est de la version exacte du serveur. Le mot de passe
+# passe par l'environnement (MYSQL_PWD), jamais par la ligne de commande, que
+# `ps` montre à tous les comptes du serveur.
+mysql_outil() {
+  if [[ -n $SAUVEGARDE_DB_SERVICE ]]; then
+    (cd "$SAUVEGARDE_COMPOSE_DIR" &&
+      docker compose exec -T -e MYSQL_PWD "$SAUVEGARDE_DB_SERVICE" "$@")
   else
     "$@"
   fi
@@ -253,26 +254,35 @@ chiffrer() { age -R "$SAUVEGARDE_DESTINATAIRES" -o "$1"; }
 
 sauvegarder_base() {
   etape="base"
-  local dump=$travail/base.dump
+  local dump=$travail/base.sql.gz
   local -a options=()
-  read -r -a options <<<"${SAUVEGARDE_PG_DUMP_OPTIONS:-}"
+  read -r -a options <<<"${SAUVEGARDE_DUMP_OPTIONS:-}"
 
-  pg_outil pg_dump --format=custom --no-password --lock-wait-timeout=120s "${options[@]}" >"$dump"
-  pg_version=$(pg_outil pg_dump --version)
+  # --single-transaction : image cohérente sans verrouiller les écritures.
+  # --routines --triggers --events : les règles métier vivent dans la base
+  # (src/db/regles/), un dump sans elles ne rétablirait pas l'intégrité.
+  # --set-gtid-purged=OFF : le dump se rejoue sur un serveur neuf.
+  # --no-tablespaces : ne demande pas le droit PROCESS.
+  mysql_outil mysqldump --single-transaction --routines --triggers --events     --set-gtid-purged=OFF --no-tablespaces --hex-blob --default-character-set=utf8mb4     -u "$MYSQL_USER" "${options[@]}" "$MYSQL_DATABASE" | gzip -9 >"$dump"
+  mysql_version=$(mysql_outil mysqldump --version)
 
-  # Relire la table des matières prouve que le fichier est un dump lisible,
-  # et qu'il vient de la bonne base.
-  pg_outil pg_restore --list <"$dump" >"$travail/base.liste"
-  grep -Eq ' TABLE DATA public tenants( |$)' "$travail/base.liste" ||
-    fatal "le dump ne contient pas la table tenants : PGDATABASE désigne-t-il la bonne base ?"
-  grep -Eq ' TABLE DATA drizzle __drizzle_migrations( |$)' "$travail/base.liste" ||
-    fatal "le dump ne contient pas le journal des migrations (schéma drizzle)"
+  # Relire le dump prouve qu'il est lisible, complet, et qu'il vient de la
+  # bonne base : mysqldump termine par une ligne « Dump completed ».
+  gzip -t "$dump"
+  gzip -dc "$dump" >"$travail/base.sql"
+  grep -q '^-- Dump completed' "$travail/base.sql" ||
+    fatal "le dump est tronqué (pas de ligne « Dump completed »)"
+  grep -Eq '^CREATE TABLE (IF NOT EXISTS )?`tenants`' "$travail/base.sql" ||
+    fatal "le dump ne contient pas la table tenants : MYSQL_DATABASE désigne-t-il la bonne base ?"
+  grep -Eq '^CREATE TABLE (IF NOT EXISTS )?`__migrations`' "$travail/base.sql" ||
+    fatal "le dump ne contient pas le journal des migrations (__migrations)"
 
-  base_tables=$(grep -c ' TABLE DATA ' "$travail/base.liste")
-  base_octets=$(stat -c %s "$dump")
-  chiffrer "$travail/lot/base.dump.age" <"$dump"
+  base_tables=$(grep -Ec '^CREATE TABLE ' "$travail/base.sql")
+  base_octets=$(stat -c %s "$travail/base.sql")
+  rm -f -- "$travail/base.sql"
+  chiffrer "$travail/lot/base.sql.gz.age" <"$dump"
   rm -f -- "$dump"
-  journal "Base : $base_tables tables, $(octets "$base_octets") avant chiffrement."
+  journal "Base : $base_tables tables, $(octets "$base_octets") avant compression et chiffrement."
 }
 
 sauvegarder_stockage() {
@@ -321,8 +331,8 @@ ecrire_manifeste() {
   {
     echo "lot=$lot"
     echo "serveur=$(hostname)"
-    echo "pg_dump=$pg_version"
-    echo "pg_dump_options=${SAUVEGARDE_PG_DUMP_OPTIONS:-}"
+    echo "mysqldump=$mysql_version"
+    echo "dump_options=${SAUVEGARDE_DUMP_OPTIONS:-}"
     echo "base_tables=$base_tables"
     echo "base_octets_en_clair=$base_octets"
     echo "stockage_source=$SAUVEGARDE_SOURCE_STOCKAGE"
@@ -379,7 +389,7 @@ principal() {
 
   JOURNAL=${SAUVEGARDE_JOURNAL:-$HOME/centre-affaires/sauvegardes.log}
   mkdir -p -- "$(dirname -- "$JOURNAL")"
-  # Tout ce qui s'écrit, y compris les erreurs de pg_dump et de rclone, va au
+  # Tout ce qui s'écrit, y compris les erreurs de mysqldump et de rclone, va au
   # journal en plus de la sortie standard.
   exec 3> >(tee -a -- "$JOURNAL")
   exec 1>&3 2>&3

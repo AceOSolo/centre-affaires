@@ -12,7 +12,7 @@ import { sessionUser } from './session.ts'
 /**
  * Du compte connecté au membre de l'équipe (ADR 008).
  *
- * Neon Auth répond « qui est-ce ». Cette couche répond « est-ce quelqu'un de
+ * Better Auth répond « qui est-ce ». Cette couche répond « est-ce quelqu'un de
  * chez nous », et c'est elle qui protège le back-office : le relais
  * `/api/auth` expose l'inscription, donc l'existence d'un compte ne prouve
  * rien.

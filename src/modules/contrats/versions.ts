@@ -11,9 +11,9 @@ import { contractLines, contracts, type ContractLine } from './schema.ts'
 
 /**
  * Lecture d'un contrat versionné (R12, ADR 025) : lignes de chaque version,
- * versions de prix, segments de ressource. L'autorité est en base
- * (`contract_price_versions`, `contract_segments`, migration 0031) : ce module
- * ne fait que la lire, pour l'échéancier, la fiche et les documents.
+ * versions de prix, segments de ressource. L'autorité est en base (vues
+ * `contract_price_versions` et `contract_segments`, `src/db/regles/40-contrats.sql`) :
+ * ce module ne fait que la lire, pour l'échéancier, la fiche et les documents.
  */
 
 /** Une ligne de contrat et le libellé de ce qu'elle vise. */
@@ -87,16 +87,20 @@ export async function selectPriceVersions(
   tx: Transaction,
   contractId: string,
 ): Promise<PriceVersion[]> {
-  const rows = (await tx.execute(sql`
-    select amendment_id, amendment_number, starts_on::text as starts_on,
-           ends_on::text as ends_on, amount_cents
-      from contract_price_versions(${contractId}::uuid)`)) as unknown as {
-    amendment_id: string | null
-    amendment_number: number | null
-    starts_on: string
-    ends_on: string | null
-    amount_cents: number
-  }[]
+  const [rows] = (await tx.execute(sql`
+    select amendment_id, amendment_number, cast(starts_on as char) as starts_on,
+           cast(ends_on as char) as ends_on, amount_cents
+      from contract_price_versions
+     where contract_id = ${contractId}
+     order by starts_on`)) as unknown as [
+    {
+      amendment_id: string | null
+      amendment_number: number | null
+      starts_on: string
+      ends_on: string | null
+      amount_cents: number
+    }[],
+  ]
   const lines = await selectContractLines(tx, contractId)
   return rows.map((row) => ({
     amendmentId: row.amendment_id,
@@ -138,23 +142,24 @@ export type ContractSegment = {
  * `resource` nul : aucune ressource sur le segment.
  */
 export async function selectSegments(tx: Transaction, contractId: string): Promise<ContractSegment[]> {
-  const rows = (await tx.execute(sql`
-    select s.amendment_id, s.amendment_number, s.starts_on::text as starts_on,
-           s.ends_on::text as ends_on, r.id as resource_id, r.code, r.name, r.resource_type
-      from contracts as k
-     cross join lateral contract_segments(k) as s
+  const [rows] = (await tx.execute(sql`
+    select s.amendment_id, s.amendment_number, cast(s.starts_on as char) as starts_on,
+           cast(s.ends_on as char) as ends_on, r.id as resource_id, r.code, r.name, r.resource_type
+      from contract_segments as s
       left join resources as r on r.id = s.resource_id
-     where k.id = ${contractId}::uuid
-     order by s.starts_on`)) as unknown as {
-    amendment_id: string | null
-    amendment_number: number | null
-    starts_on: string
-    ends_on: string | null
-    resource_id: string | null
-    code: string | null
-    name: string | null
-    resource_type: ResourceType | null
-  }[]
+     where s.contract_id = ${contractId}
+     order by s.starts_on`)) as unknown as [
+    {
+      amendment_id: string | null
+      amendment_number: number | null
+      starts_on: string
+      ends_on: string | null
+      resource_id: string | null
+      code: string | null
+      name: string | null
+      resource_type: ResourceType | null
+    }[],
+  ]
   return rows.map((row) => ({
     amendmentId: row.amendment_id,
     amendmentNumber: row.amendment_number,
@@ -200,10 +205,10 @@ export type ContractTerms = {
  * prix prend effet au plus tôt le lendemain (ADR 032). Nul : rien de facturé.
  */
 export async function selectBilledThrough(tx: Transaction, contractId: string): Promise<string | null> {
-  const [row] = await tx.execute<{ billed_through: string | null }>(
-    sql`select contract_billed_through(${contractId}::uuid)::text as billed_through`,
-  )
-  return row?.billed_through ?? null
+  const [rows] = (await tx.execute(
+    sql`select date_format(contract_billed_through(${contractId}), '%Y-%m-%d') as billed_through`,
+  )) as unknown as [{ billed_through: string | null }[]]
+  return rows[0]?.billed_through ?? null
 }
 
 export async function findContractBilledThrough(contractId: string): Promise<string | null> {
@@ -239,24 +244,29 @@ export async function listCurrentTerms(
   if (contractIds.length === 0) return new Map()
   const rows = await withTenant(currentTenantId(), async (tx) => {
     const ids = sql.join(
-      contractIds.map((id) => sql`${id}::uuid`),
+      contractIds.map((id) => sql`${id}`),
       sql`, `,
     )
-    return (await tx.execute(sql`
+    const [result] = (await tx.execute(sql`
       select k.id,
-             (select v.amount_cents from contract_price_versions(k.id) as v
-               where v.starts_on <= greatest(${day}::date, k.starts_on)
+             (select v.amount_cents from contract_price_versions as v
+               where v.contract_id = k.id
+                 and v.starts_on <= greatest(cast(${day} as date), k.starts_on)
                order by v.starts_on desc limit 1) as amount_cents,
-             (select r.code from contract_segments(k) as s
+             (select r.code from contract_segments as s
                 join resources as r on r.id = s.resource_id
-               where s.starts_on <= greatest(${day}::date, k.starts_on)
+               where s.contract_id = k.id
+                 and s.starts_on <= greatest(cast(${day} as date), k.starts_on)
                order by s.starts_on desc limit 1) as resource_code
         from contracts as k
-       where k.id in (${ids})`)) as unknown as {
-      id: string
-      amount_cents: number | null
-      resource_code: string | null
-    }[]
+       where k.id in (${ids})`)) as unknown as [
+      {
+        id: string
+        amount_cents: number | null
+        resource_code: string | null
+      }[],
+    ]
+    return result
   })
   return new Map(
     rows

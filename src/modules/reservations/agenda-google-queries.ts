@@ -1,6 +1,8 @@
 import { and, asc, eq, gt, inArray, isNull, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant } from '../../db/index.ts'
+import { deleteReturning } from '../../db/returning.ts'
 import { openSecret, sealSecret } from '../../lib/chiffrement.ts'
 import { formatDateTime } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
@@ -37,7 +39,11 @@ import {
 
 async function findConnection(): Promise<GoogleCalendarConnection | undefined> {
   const [connection] = await withTenant(currentTenantId(), (tx) =>
-    tx.select().from(googleCalendarConnections).limit(1),
+    tx
+      .select()
+      .from(googleCalendarConnections)
+      .where(eq(googleCalendarConnections.tenantId, currentTenantId()))
+      .limit(1),
   )
   return connection
 }
@@ -54,6 +60,7 @@ export async function googleCalendarStatus() {
         lastError: googleCalendarConnections.lastError,
       })
       .from(googleCalendarConnections)
+      .where(eq(googleCalendarConnections.tenantId, currentTenantId()))
       .limit(1),
   )
   return status
@@ -108,9 +115,11 @@ export async function completeGoogleCalendarConnection(
 
     await withTenant(currentTenantId(), async (tx) => {
       // Une connexion par centre : la nouvelle remplace l'ancienne, et emporte
-      // les agendas des ressources, écrits dans l'ancien compte. La RLS borne
-      // la suppression au centre courant.
-      await tx.delete(googleCalendarConnections)
+      // les agendas des ressources, écrits dans l'ancien compte. Pas de RLS :
+      // la suppression est bornée au centre courant par le filtre.
+      await tx
+        .delete(googleCalendarConnections)
+        .where(eq(googleCalendarConnections.tenantId, currentTenantId()))
       await tx.insert(googleCalendarConnections).values({
         googleEmail,
         refreshTokenSealed,
@@ -161,7 +170,7 @@ export async function listResourceCalendarLinks() {
       })
       .from(resources)
       .leftJoin(resourceGoogleCalendars, eq(resourceGoogleCalendars.resourceId, resources.id))
-      .where(isNull(resources.deletedAt))
+      .where(and(eq(resources.tenantId, currentTenantId()), isNull(resources.deletedAt)))
       .orderBy(asc(resources.name)),
   )
 }
@@ -189,6 +198,7 @@ export async function createResourceCalendars(
       .leftJoin(resourceGoogleCalendars, eq(resourceGoogleCalendars.resourceId, resources.id))
       .where(
         and(
+          eq(resources.tenantId, currentTenantId()),
           inArray(resources.id, resourceIds),
           isNull(resources.deletedAt),
           isNull(resourceGoogleCalendars.id),
@@ -220,7 +230,9 @@ export async function createResourceCalendars(
         tx
           .insert(resourceGoogleCalendars)
           .values({ resourceId: resource.id, connectionId: connection.id, calendarId })
-          .onConflictDoNothing(),
+          // Une liaison par ressource : déjà posée, rien à faire (les autres
+          // erreurs remontent, contrairement à INSERT IGNORE).
+          .onDuplicateKeyUpdate({ set: { id: sql`id` } }),
       )
       created.push(resource.id)
     } catch (error) {
@@ -240,10 +252,11 @@ export async function createResourceCalendars(
 export async function removeResourceCalendars(resourceIds: string[]): Promise<number> {
   if (!resourceIds.length) return 0
   const removed = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .delete(resourceGoogleCalendars)
-      .where(inArray(resourceGoogleCalendars.resourceId, resourceIds))
-      .returning({ id: resourceGoogleCalendars.id }),
+    deleteReturning(
+      tx,
+      resourceGoogleCalendars,
+      inArray(resourceGoogleCalendars.resourceId, resourceIds),
+    ),
   )
   return removed.length
 }
@@ -299,7 +312,7 @@ export function backfillResourceCalendars(resourceIds: string[]) {
             inArray(bookings.resourceId, resourceIds),
             eq(bookings.status, 'confirmed'),
             eq(bookings.kind, 'booking'),
-            gt(bookings.endsAt, sql`now()`),
+            gt(bookings.endsAt, maintenant()),
           ),
         )
         .orderBy(asc(bookings.startsAt)),
@@ -338,7 +351,8 @@ async function sync(load: () => Promise<SyncItem[]>): Promise<void> {
           resourceId: resourceGoogleCalendars.resourceId,
           calendarId: resourceGoogleCalendars.calendarId,
         })
-        .from(resourceGoogleCalendars),
+        .from(resourceGoogleCalendars)
+        .where(eq(resourceGoogleCalendars.tenantId, currentTenantId())),
     )
     if (!links.length) return
     const calendars = new Map(links.map((link) => [link.resourceId, link.calendarId]))
@@ -445,8 +459,8 @@ function recordOutcome(connectionId: string, succeeded: number, failures: string
     tx
       .update(googleCalendarConnections)
       .set({
-        ...(succeeded ? { lastSyncedAt: sql`now()` } : {}),
-        ...(lastError ? { lastErrorAt: sql`now()`, lastError } : {}),
+        ...(succeeded ? { lastSyncedAt: maintenant() } : {}),
+        ...(lastError ? { lastErrorAt: maintenant(), lastError } : {}),
       })
       .where(eq(googleCalendarConnections.id, connectionId)),
   )

@@ -371,7 +371,7 @@ export function noticeEndsOn(requestedOn: string, noticeDays: number): string {
 }
 
 /**
- * Ajoute des mois à une date de calendrier comme Postgres (`date + interval`) :
+ * Ajoute des mois à une date de calendrier comme MySQL (`date_add(… interval n month)`) :
  * le jour est ramené au dernier du mois quand il n'y existe pas. Le 31 janvier
  * plus un mois donne le 28 février (le 29 en année bissextile).
  */

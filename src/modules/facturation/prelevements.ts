@@ -256,7 +256,7 @@ export async function prepareDirectDebitRemittance({
       .from(invoices)
       .where(inArray(invoices.id, ids))
       .orderBy(asc(invoices.id))
-      .for('no key update')
+      .for('update')
     const rows = await candidatesQuery(tx, collectionDate, ids).orderBy(asc(invoices.number))
 
     const problems: string[] = []
@@ -336,7 +336,7 @@ export async function prepareDirectDebitRemittance({
     )
     await tx
       .update(sepaMandates)
-      .set({ lastCollectedOn: sql`greatest(coalesce(${sepaMandates.lastCollectedOn}, ${collectionDate}::date), ${collectionDate}::date)` })
+      .set({ lastCollectedOn: sql`greatest(coalesce(${sepaMandates.lastCollectedOn}, cast(${collectionDate} as date)), cast(${collectionDate} as date))` })
       .where(inArray(sepaMandates.id, mandateIds))
 
     return {
@@ -364,10 +364,12 @@ export async function listRemittances(limit = 24): Promise<RemittanceSummary[]> 
       .select({
         remittanceId: payments.reference,
         collectionDate: sql<string>`min(${payments.paidOn})`,
-        createdAt: sql<Date>`min(${payments.createdAt})`,
-        activeCount: sql<number>`(count(*) filter (where ${payments.cancelledAt} is null))::integer`,
-        cancelledCount: sql<number>`(count(*) filter (where ${payments.cancelledAt} is not null))::integer`,
-        activeTotalCents: sql<number>`coalesce(sum(${payments.amountCents}) filter (where ${payments.cancelledAt} is null), 0)::integer`,
+        // `mapWith` : la date lue en texte UTC devient un `Date`, les sommes
+        // (rendues en chaîne par MySQL) deviennent des nombres.
+        createdAt: sql<Date>`min(${payments.createdAt})`.mapWith(payments.createdAt),
+        activeCount: sql<number>`coalesce(sum(case when ${payments.cancelledAt} is null then 1 else 0 end), 0)`.mapWith(Number),
+        cancelledCount: sql<number>`coalesce(sum(case when ${payments.cancelledAt} is not null then 1 else 0 end), 0)`.mapWith(Number),
+        activeTotalCents: sql<number>`coalesce(sum(case when ${payments.cancelledAt} is null then ${payments.amountCents} else 0 end), 0)`.mapWith(Number),
       })
       .from(payments)
       .where(and(eq(payments.method, 'direct_debit'), sql`${payments.reference} like 'PRLV-%'`))
@@ -415,7 +417,7 @@ export async function buildRemittanceFile(
              and q.method = 'direct_debit'
              and q.cancelled_at is null
              and q.created_at < ${payments.createdAt}
-             and q.reference is distinct from ${payments.reference}
+             and not (q.reference <=> ${payments.reference})
         )`,
       })
       .from(payments)

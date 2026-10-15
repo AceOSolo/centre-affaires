@@ -11,7 +11,8 @@
  *   node --env-file=<fichier> infra/chiffrer-documents.ts              # essai à blanc
  *   node --env-file=<fichier> infra/chiffrer-documents.ts --appliquer  # chiffre
  *
- * Variables lues : APP_DATABASE_URL (rôle applicatif, jamais le propriétaire),
+ * Variables lues : DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD (identité
+ * applicative, jamais DB_ADMIN_*),
  * AWS_* (stockage, région de l'Union contrôlée), DOCUMENTS_ENCRYPTION_KEY,
  * DOCUMENTS_ENCRYPTION_KEY_VERSION et, pendant une rotation,
  * DOCUMENTS_ENCRYPTION_KEY_<N>. Aucun fichier `.env` n'est chargé d'office :
@@ -24,7 +25,7 @@
  */
 import { parseArgs } from 'node:util'
 
-import { createDatabase } from '../src/db/index.ts'
+import { createDatabase, databaseOptionsFromEnv } from '../src/db/index.ts'
 import { DEFAULT_TENANT_ID } from '../src/db/tenants.ts'
 import { documentKeyringFromEnv } from '../src/lib/chiffrement-documents.ts'
 import { putObject, readObjectBytes } from '../src/lib/stockage.ts'
@@ -38,12 +39,6 @@ const { values } = parseArgs({
     centre: { type: 'string', default: DEFAULT_TENANT_ID },
   },
 })
-
-const url = process.env.APP_DATABASE_URL
-if (!url) {
-  console.error('APP_DATABASE_URL manquant : le rôle applicatif de l’environnement visé (voir .env.example).')
-  process.exit(1)
-}
 
 // Avant toute connexion : une clé absente ou mal recopiée arrête tout.
 const keyring = documentKeyringFromEnv()
@@ -61,7 +56,14 @@ const store: ObjectStore = {
   write: (key, bytes) => putObject(key, bytes, 'application/octet-stream'),
 }
 
-const { client, db } = createDatabase(url, { onnotice: () => {} })
+let options
+try {
+  options = databaseOptionsFromEnv()
+} catch (error) {
+  console.error(`${(error as Error).message} : l’identité applicative de l’environnement visé.`)
+  process.exit(1)
+}
+const { client, db } = createDatabase(options)
 
 try {
   const report = await encryptStoredScans({

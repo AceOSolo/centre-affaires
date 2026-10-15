@@ -67,8 +67,9 @@ export async function listClientBookingHistory(
     // une `Date` glissée telle quelle dans `sql` n'atteindrait pas la base.
     const [totals] = await tx
       .select({
-        upcoming: sql<number>`count(*) filter (where ${gt(bookings.endsAt, now)})::int`,
-        past: sql<number>`count(*) filter (where ${lte(bookings.endsAt, now)})::int`,
+        // `filter (where …)` n'existe pas en MySQL : une somme de 0 et de 1.
+        upcoming: sql<number>`cast(coalesce(sum(${gt(bookings.endsAt, now)}), 0) as signed)`.mapWith(Number),
+        past: sql<number>`cast(coalesce(sum(${lte(bookings.endsAt, now)}), 0) as signed)`.mapWith(Number),
       })
       .from(bookings)
       .where(ofClient)

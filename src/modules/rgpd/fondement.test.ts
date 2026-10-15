@@ -52,7 +52,7 @@ describe('fondement d’une anonymisation à la demande', () => {
       anonymizationTraceLabel({ basis: 'retention', erasureRequestedOn: null, byName: null }),
       'au terme de la durée de conservation',
     )
-    // Anonymisée avant que le fondement ne soit tracé (migration 0044).
+    // Anonymisée avant que le fondement ne soit tracé.
     assert.equal(anonymizationTraceLabel({ basis: null, erasureRequestedOn: null, byName: null }), null)
   })
 })

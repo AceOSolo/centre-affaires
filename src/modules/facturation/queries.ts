@@ -1,7 +1,9 @@
 import { and, asc, eq, isNull, sql } from 'drizzle-orm'
 
-import { PG_EXCLUSION_VIOLATION, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { DB_EXCLUSION_VIOLATION, DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { maintenant } from '../../db/columns.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import type { ResourceType } from '../ressources/schema.ts'
@@ -43,15 +45,15 @@ export async function findRatePlan(id: string): Promise<RatePlanWithItems | unde
 /**
  * Grilles par défaut en vigueur le jour `day` (jour du centre, R08) : une au
  * plus, la base refusant deux grilles par défaut sur les mêmes jours
- * (`rate_plans_default_no_overlap`, ADR 035). Plusieurs se suivent dans le
+ * (`rate_plans_default_no_overlap`, trigger, ADR 035). Plusieurs se suivent dans le
  * temps : celle de l'an prochain se prépare d'avance.
  */
 export function defaultRatePlanOn(day: string) {
   return and(
     eq(ratePlans.isDefault, true),
     isNull(ratePlans.deletedAt),
-    sql`(${ratePlans.validFrom} is null or ${ratePlans.validFrom} <= ${day}::date)`,
-    sql`(${ratePlans.validTo} is null or ${ratePlans.validTo} >= ${day}::date)`,
+    sql`(${ratePlans.validFrom} is null or ${ratePlans.validFrom} <= cast(${day} as date))`,
+    sql`(${ratePlans.validTo} is null or ${ratePlans.validTo} >= cast(${day} as date))`,
   )
 }
 
@@ -89,27 +91,23 @@ export class DefaultRatePlanConflictError extends Error {
 
 /** Refus de la base pour deux grilles par défaut sur les mêmes jours (ADR 035). */
 const isDefaultConflict = (error: unknown) => {
-  const code = pgErrorCode(error)
-  return code === PG_EXCLUSION_VIOLATION || code === PG_UNIQUE_VIOLATION
+  const code = dbErrorCode(error)
+  return code === DB_EXCLUSION_VIOLATION || code === DB_UNIQUE_VIOLATION
 }
 
 export async function createRatePlan(input: RatePlanInput): Promise<RatePlan> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx
-        .insert(ratePlans)
-        .values({
-          name: input.name,
-          currency: input.currency || 'EUR',
-          isDefault: input.isDefault ?? false,
-          validFrom: input.validFrom || null,
-          validTo: input.validTo || null,
-        })
-        .returning(),
+    return await withTenant(currentTenantId(), (tx) =>
+      insertReturning(tx, ratePlans, {
+        name: input.name,
+        currency: input.currency || 'EUR',
+        isDefault: input.isDefault ?? false,
+        validFrom: input.validFrom || null,
+        validTo: input.validTo || null,
+      }),
     )
-    return created
   } catch (error) {
-    // La contrainte d'exclusion garantit une seule grille par défaut par jour.
+    // Le trigger de la base garantit une seule grille par défaut par jour.
     if (isDefaultConflict(error)) throw new DefaultRatePlanConflictError()
     throw error
   }
@@ -126,16 +124,17 @@ export async function updateRatePlan(id: string, input: RatePlanInput): Promise<
   if (!isUuid(id)) return false
   try {
     const updated = await withTenant(currentTenantId(), (tx) =>
-      tx
-        .update(ratePlans)
-        .set({
+      updateReturning(
+        tx,
+        ratePlans,
+        {
           name: input.name,
           isDefault: input.isDefault ?? false,
           validFrom: input.validFrom || null,
           validTo: input.validTo || null,
-        })
-        .where(and(eq(ratePlans.id, id), isNull(ratePlans.deletedAt)))
-        .returning({ id: ratePlans.id }),
+        },
+        and(eq(ratePlans.id, id), isNull(ratePlans.deletedAt)),
+      ),
     )
     return updated.length > 0
   } catch (error) {
@@ -183,16 +182,12 @@ async function assertRatePlanActive(tx: Transaction, ratePlanId: string): Promis
 
 export async function addRatePlanItem(input: RatePlanItemInput): Promise<RatePlanItem> {
   try {
-    const [created] = await withTenant(currentTenantId(), async (tx) => {
+    return await withTenant(currentTenantId(), async (tx) => {
       await assertRatePlanActive(tx, input.ratePlanId)
-      return tx
-        .insert(ratePlanItems)
-        .values({ ...input, resourceId: input.resourceId || null })
-        .returning()
+      return insertReturning(tx, ratePlanItems, { ...input, resourceId: input.resourceId || null })
     })
-    return created
   } catch (error) {
-    if (pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new DuplicateRateError()
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) throw new DuplicateRateError()
     throw error
   }
 }
@@ -215,11 +210,12 @@ export async function removeRatePlanItem(id: string): Promise<boolean> {
       .limit(1)
     if (!item) return false
     await assertRatePlanActive(tx, item.ratePlanId)
-    const removed = await tx
-      .update(ratePlanItems)
-      .set({ deletedAt: sql`now()` })
-      .where(and(eq(ratePlanItems.id, id), isNull(ratePlanItems.deletedAt)))
-      .returning({ id: ratePlanItems.id })
+    const removed = await updateReturning(
+      tx,
+      ratePlanItems,
+      { deletedAt: maintenant() },
+      and(eq(ratePlanItems.id, id), isNull(ratePlanItems.deletedAt)),
+    )
     return removed.length > 0
   })
 }
@@ -232,7 +228,7 @@ export async function archiveRatePlan(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(ratePlans)
-      .set({ deletedAt: sql`now()`, isDefault: false })
+      .set({ deletedAt: maintenant(), isDefault: false })
       .where(and(eq(ratePlans.id, id), isNull(ratePlans.deletedAt))),
   )
 }

@@ -2,42 +2,43 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  PG_INSPECTION_INVALID,
-  PG_INSPECTION_LOCKED,
-  PG_INSUFFICIENT_PRIVILEGE,
-  PG_UNIQUE_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  DB_INSPECTION_INVALID,
+  DB_INSPECTION_LOCKED,
+  DB_INSUFFICIENT_PRIVILEGE,
+  DB_UNIQUE_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import type { ClientAccount } from '../clients/comptes.ts'
+import { expiredInspectionPhotos } from './conservation.ts'
+import {
+  findInspectionForAccounts,
+  findPhotoForAccounts,
+  listInspectionsForAccounts,
+} from './queries.ts'
 import { inspectionConditionLevels, type InspectionField } from './schema.ts'
 
 /**
- * États des lieux (R06, R33, ADR 039), éprouvés contre la base sous le rôle
- * applicatif : modèles par type de ressource, versionnés ; valeurs conformes
- * au modèle ; état clos figé, validé une fois par le client ; photos sous
- * portée client, conservées jusqu'au terme fixé par le centre.
+ * États des lieux (R06, R33, ADR 039), éprouvés contre la base sous
+ * l'identité applicative : modèles par type de ressource, versionnés ; valeurs
+ * conformes au modèle ; état clos figé, validé une fois par le client ; photos
+ * sous portée client, conservées jusqu'au terme fixé par le centre. MySQL ne
+ * filtre pas les lectures : la portée client tient aux filtres explicites des
+ * requêtes de l'espace client (`queries.ts`), éprouvés ici.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
+describe('états des lieux', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
+  const owner = { get client() { return bases.owner.client } }
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-/** Ligne refusée par une politique RLS. */
-const PG_RLS_VIOLATION = '42501'
-
-describe('états des lieux', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  /** Refus de portée client : écriture hors de la vue de l'entreprise. */
+  const DB_SCOPE_VIOLATION = DB_INSUFFICIENT_PRIVILEGE
 
   const DURAND = '01a00000-0000-7000-8000-0000000a0c01'
   const PETIT = '01a00000-0000-7000-8000-0000000a0c02'
@@ -50,15 +51,21 @@ describe('états des lieux', { skip: raison }, () => {
   const CONTRAT_PETIT = '01a00000-0000-7000-8000-0000000a0f02'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
   const asClients = <T>(clientIds: string[], run: (tx: Transaction) => Promise<T>) =>
-    withClientScope(DEFAULT_TENANT_ID, clientIds, run, app.db)
+    withClientScope(DEFAULT_TENANT_ID, clientIds, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
+
+  const durand: ClientAccount[] = [{ memberId: JEANNE, clientId: DURAND, clientName: 'Atelier Durand' }]
 
   const codeErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
@@ -74,16 +81,17 @@ describe('états des lieux', { skip: raison }, () => {
 
   /** Modèle d'un type, version 1 : rend l'identifiant de la version. */
   const modele = async (type = 'bureau', fields: unknown = CHAMPS): Promise<string> => {
-    const [row] = await asTenant(async (tx) => {
-      const [template] = await tx.execute(sql`
-        insert into inspection_templates (resource_type, name) values (${type}, ${`État des lieux ${type}`})
-        returning id`)
-      return tx.execute(sql`
-        insert into inspection_template_versions (template_id, version, name, fields, created_by)
-        values (${template.id as string}, 1, ${`État des lieux ${type}`}, ${JSON.stringify(fields)}::jsonb, ${CAMILLE})
-        returning id`)
+    const templateId = uuidv7()
+    const versionId = uuidv7()
+    await asTenant(async (tx) => {
+      await tx.execute(sql`
+        insert into inspection_templates (id, resource_type, name)
+        values (${templateId}, ${type}, ${`État des lieux ${type}`})`)
+      await tx.execute(sql`
+        insert into inspection_template_versions (id, template_id, version, name, fields, created_by)
+        values (${versionId}, ${templateId}, 1, ${`État des lieux ${type}`}, ${JSON.stringify(fields)}, ${CAMILLE})`)
     })
-    return row.id as string
+    return versionId
   }
 
   /** État des lieux en brouillon, au titre du contrat du client. */
@@ -97,49 +105,69 @@ describe('états des lieux', { skip: raison }, () => {
       values = {} as Record<string, unknown>,
     } = {},
   ): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into inspections (kind, resource_id, client_id, contract_id, entry_inspection_id,
-                                 template_version_id, values, created_by)
-        values (${kind}, ${resource}, ${client}, ${client === DURAND ? CONTRAT_DURAND : CONTRAT_PETIT},
-                ${entry}, ${versionId}, ${JSON.stringify(values)}::jsonb, ${CAMILLE})
-        returning id`),
+        insert into inspections (id, kind, resource_id, client_id, contract_id, entry_inspection_id,
+                                 template_version_id, \`values\`, created_by)
+        values (${id}, ${kind}, ${resource}, ${client}, ${client === DURAND ? CONTRAT_DURAND : CONTRAT_PETIT},
+                ${entry}, ${versionId}, ${JSON.stringify(values)}, ${CAMILLE})`),
     )
-    return row.id as string
+    return id
   }
 
   const clore = (id: string) =>
     asTenant((tx) =>
       tx.execute(sql`
         update inspections set status = 'closed', closed_by = ${CAMILLE},
-               values = ${JSON.stringify(COMPLET)}::jsonb
+               \`values\` = ${JSON.stringify(COMPLET)}
          where id = ${id}`),
     )
 
   let photos = 0
   const photo = async (inspectionId: string, values: { fieldId?: string; contentType?: string; byteSize?: number } = {}) => {
     photos += 1
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into inspection_photos (inspection_id, storage_key, encryption_key_version, content_type,
+        insert into inspection_photos (id, inspection_id, storage_key, encryption_key_version, content_type,
                                        byte_size, width, height, field_id, uploaded_by)
-        values (${inspectionId}, ${`etats-des-lieux/test/${photos}.jpg`}, 1,
+        values (${id}, ${inspectionId}, ${`etats-des-lieux/test/${photos}.jpg`}, 1,
                 ${values.contentType ?? 'image/jpeg'}, ${values.byteSize ?? 180_000}, 1600, 1200,
-                ${values.fieldId ?? null}, ${CAMILLE})
-        returning id`),
+                ${values.fieldId ?? null}, ${CAMILLE})`),
     )
-    return row.id as string
+    return id
   }
 
+  const toutVider = () =>
+    viderTables(
+      bases.owner,
+      'inspection_photo_views',
+      'inspection_photos',
+      'inspections',
+      'inspection_template_versions',
+      'inspection_templates',
+      'bookings',
+      'contracts',
+      'client_members',
+      'clients',
+      'resources',
+      'staff_members',
+    )
+
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table inspection_templates cascade`
-    await owner.client`update tenants set inspection_photo_retention_months = 36, inspection_access_log_retention_months = 12 where id = ${DEFAULT_TENANT_ID}`
+    await toutVider()
+    await bases.owner.client.query(
+      'update tenants set inspection_photo_retention_months = 36, inspection_access_log_retention_months = 12 where id = ?',
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email) values (${CAMILLE}, 'camille@centre.fr')`)
       await tx.execute(sql`
@@ -160,8 +188,9 @@ describe('états des lieux', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table inspection_templates cascade`
-    await Promise.all([owner.client.end(), app.client.end()])
+    await toutVider()
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('modèles', () => {
@@ -183,25 +212,38 @@ describe('états des lieux', { skip: raison }, () => {
         ],
       ]
       for (const fields of invalides) {
-        assert.equal(await codeErreur(() => modele('bureau', fields)), PG_CHECK_VIOLATION, JSON.stringify(fields))
+        // Un trigger (CA011) : MySQL n'accepte pas une routine dans un `check`.
+        assert.equal(await codeErreur(() => modele('bureau', fields)), DB_INSPECTION_INVALID, JSON.stringify(fields))
       }
       const [message] = await asTenant((tx) =>
-        tx.execute(sql`
-          select inspection_fields_error('[{"id":"etat","label":"État","type":"choice","required":true,"options":["Seule"]}]'::jsonb) as erreur`),
+        lire(tx, sql`
+          select inspection_fields_error('[{"id":"etat","label":"État","type":"choice","required":true,"options":["Seule"]}]') as erreur`),
       )
       assert.match(message.erreur as string, /2 à 50 options/)
       await modele()
     })
 
     it('connaît l’échelle de la note d’état du code', async () => {
-      const [row] = await asTenant((tx) => tx.execute(sql`select inspection_condition_levels() as niveaux`))
-      assert.deepEqual(row.niveaux, [...inspectionConditionLevels])
+      // La fonction SQL porte l'échelle en dur : chaque niveau du code doit
+      // être accepté, et un niveau inconnu refusé.
+      const champs = JSON.stringify([{ id: 'murs', label: 'Murs', type: 'condition', required: true }])
+      const erreur = async (niveau: string) => {
+        const [row] = await asTenant((tx) =>
+          lire(
+            tx,
+            sql`select inspection_values_error(${champs}, ${JSON.stringify({ murs: niveau })}, 0) as erreur`,
+          ),
+        )
+        return row.erreur
+      }
+      for (const niveau of inspectionConditionLevels) assert.equal(await erreur(niveau), null, niveau)
+      assert.match(String(await erreur('excellent')), /note d’état|note d'état/)
     })
 
     it('un modèle vivant par type, lisible depuis l’espace client mais écrit par le back-office', async () => {
       await modele('bureau')
-      assert.equal(await codeErreur(() => modele('bureau')), PG_UNIQUE_VIOLATION)
-      const vus = await asClients([DURAND], (tx) => tx.execute(sql`select fields from inspection_template_versions`))
+      assert.equal(await codeErreur(() => modele('bureau')), DB_UNIQUE_VIOLATION)
+      const vus = await asClients([DURAND], (tx) => lire(tx, sql`select fields from inspection_template_versions`))
       assert.equal(vus.length, 1)
       assert.equal(
         await codeErreur(() =>
@@ -209,7 +251,7 @@ describe('états des lieux', { skip: raison }, () => {
             tx.execute(sql`insert into inspection_templates (resource_type, name) values ('salle', 'Intrus')`),
           ),
         ),
-        PG_RLS_VIOLATION,
+        DB_SCOPE_VIOLATION,
       )
     })
 
@@ -217,24 +259,26 @@ describe('états des lieux', { skip: raison }, () => {
       const v1 = await modele()
       const id = await etat(v1)
       const [{ template_id: templateId }] = await asTenant((tx) =>
-        tx.execute(sql`select template_id from inspection_template_versions where id = ${v1}`),
+        lire(tx, sql`select template_id from inspection_template_versions where id = ${v1}`),
       )
       await asTenant((tx) =>
         tx.execute(sql`
           insert into inspection_template_versions (template_id, version, name, fields)
           values (${templateId as string}, 2, 'État des lieux bureau',
-                  '[{"id":"sol","label":"Sol","type":"condition","required":true}]'::jsonb)`),
+                  '[{"id":"sol","label":"Sol","type":"condition","required":true}]')`),
       )
       const [row] = await asTenant((tx) =>
-        tx.execute(sql`select template_version_id from inspections where id = ${id}`),
+        lire(tx, sql`select template_version_id from inspections where id = ${id}`),
       )
       assert.equal(row.template_version_id, v1)
       // Les valeurs suivent sa version, pas la nouvelle.
       assert.equal(
         await codeErreur(() =>
-          asTenant((tx) => tx.execute(sql`update inspections set values = '{"sol":"bon"}' where id = ${id}`)),
+          asTenant((tx) =>
+            tx.execute(sql`update inspections set \`values\` = '{"sol":"bon"}' where id = ${id}`),
+          ),
         ),
-        PG_INSPECTION_INVALID,
+        DB_INSPECTION_INVALID,
       )
       // Ni la version d'un état des lieux, ni le contenu d'une version ne changent.
       assert.equal(
@@ -245,7 +289,7 @@ describe('états des lieux', { skip: raison }, () => {
                 select id from inspection_template_versions where version = 2) where id = ${id}`),
           ),
         ),
-        PG_INSPECTION_LOCKED,
+        DB_INSPECTION_LOCKED,
       )
       assert.equal(
         await codeErreur(() =>
@@ -253,13 +297,13 @@ describe('états des lieux', { skip: raison }, () => {
             tx.execute(sql`update inspection_template_versions set fields = '[]' where id = ${v1}`),
           ),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
       assert.equal(
         await codeErreur(() =>
           asTenant((tx) => tx.execute(sql`delete from inspection_template_versions where id = ${v1}`)),
         ),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSUFFICIENT_PRIVILEGE,
       )
     })
   })
@@ -267,7 +311,7 @@ describe('états des lieux', { skip: raison }, () => {
   describe('saisie et clôture', () => {
     it('refuse le modèle d’un autre type de ressource', async () => {
       const v1 = await modele('bureau')
-      assert.equal(await codeErreur(() => etat(v1, { resource: SALLE })), PG_INSPECTION_INVALID)
+      assert.equal(await codeErreur(() => etat(v1, { resource: SALLE })), DB_INSPECTION_INVALID)
     })
 
     it('vérifie chaque valeur contre le modèle', async () => {
@@ -280,7 +324,7 @@ describe('états des lieux', { skip: raison }, () => {
         { badge: 'oui' },
       ]
       for (const values of invalides) {
-        assert.equal(await codeErreur(() => etat(v1, { values })), PG_INSPECTION_INVALID, JSON.stringify(values))
+        assert.equal(await codeErreur(() => etat(v1, { values })), DB_INSPECTION_INVALID, JSON.stringify(values))
       }
       // En brouillon, un champ obligatoire peut attendre.
       await etat(v1, { values: { murs: 'usage', remarques: null } })
@@ -295,10 +339,10 @@ describe('états des lieux', { skip: raison }, () => {
             tx.execute(sql`update inspections set status = 'closed', closed_by = ${CAMILLE} where id = ${id}`),
           ),
         ),
-        PG_INSPECTION_INVALID,
+        DB_INSPECTION_INVALID,
       )
       await clore(id)
-      const [row] = await asTenant((tx) => tx.execute(sql`select status, closed_at from inspections where id = ${id}`))
+      const [row] = await asTenant((tx) => lire(tx, sql`select status, closed_at from inspections where id = ${id}`))
       assert.equal(row.status, 'closed')
       assert.ok(row.closed_at)
     })
@@ -311,10 +355,10 @@ describe('états des lieux', { skip: raison }, () => {
             tx.execute(sql`
               insert into inspections (kind, status, resource_id, client_id, contract_id, template_version_id,
                                        created_by, closed_at, closed_by)
-              values ('entry', 'closed', ${BUREAU}, ${DURAND}, ${CONTRAT_DURAND}, ${v1}, ${CAMILLE}, now(), ${CAMILLE})`),
+              values ('entry', 'closed', ${BUREAU}, ${DURAND}, ${CONTRAT_DURAND}, ${v1}, ${CAMILLE}, CURRENT_TIMESTAMP(3), ${CAMILLE})`),
           ),
         ),
-        PG_INSPECTION_INVALID,
+        DB_INSPECTION_INVALID,
       )
     })
 
@@ -328,7 +372,7 @@ describe('états des lieux', { skip: raison }, () => {
               values ('entry', ${BUREAU}, ${DURAND}, ${CONTRAT_PETIT}, ${v1}, ${CAMILLE})`),
           ),
         ),
-        PG_FOREIGN_KEY_VIOLATION,
+        DB_FOREIGN_KEY_VIOLATION,
       )
       assert.equal(
         await codeErreur(() =>
@@ -338,21 +382,21 @@ describe('états des lieux', { skip: raison }, () => {
               values ('entry', ${BUREAU}, ${DURAND}, ${v1}, ${CAMILLE})`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
     })
 
     it('rattache une sortie à l’entrée close du même client, une seule fois', async () => {
       const v1 = await modele()
       const entree = await etat(v1)
-      assert.equal(await codeErreur(() => etat(v1, { kind: 'exit', entry: entree })), PG_INSPECTION_INVALID)
+      assert.equal(await codeErreur(() => etat(v1, { kind: 'exit', entry: entree })), DB_INSPECTION_INVALID)
       await clore(entree)
       assert.equal(
         await codeErreur(() => etat(v1, { kind: 'exit', entry: entree, client: PETIT })),
-        PG_FOREIGN_KEY_VIOLATION,
+        DB_FOREIGN_KEY_VIOLATION,
       )
       await etat(v1, { kind: 'exit', entry: entree })
-      assert.equal(await codeErreur(() => etat(v1, { kind: 'exit', entry: entree })), PG_UNIQUE_VIOLATION)
+      assert.equal(await codeErreur(() => etat(v1, { kind: 'exit', entry: entree })), DB_UNIQUE_VIOLATION)
     })
   })
 
@@ -361,15 +405,15 @@ describe('états des lieux', { skip: raison }, () => {
       const id = await etat(await modele())
       await clore(id)
       for (const changement of [
-        sql`values = '{"murs":"mauvais","cles":2,"proprete":"Propre"}'`,
+        sql`\`values\` = '{"murs":"mauvais","cles":2,"proprete":"Propre"}'`,
         sql`observations = 'Ajout après coup'`,
-        sql`performed_at = now() - interval '1 day'`,
+        sql`performed_at = date_sub(CURRENT_TIMESTAMP(3), interval 1 day)`,
       ]) {
         assert.equal(
           await codeErreur(() =>
             asTenant((tx) => tx.execute(sql`update inspections set ${changement} where id = ${id}`)),
           ),
-          PG_INSPECTION_LOCKED,
+          DB_INSPECTION_LOCKED,
         )
       }
     })
@@ -386,7 +430,7 @@ describe('états des lieux', { skip: raison }, () => {
                where id = ${id}`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       await asClients([DURAND], (tx) =>
         tx.execute(sql`
@@ -395,19 +439,20 @@ describe('états des lieux', { skip: raison }, () => {
            where id = ${id}`),
       )
       const [row] = await asTenant((tx) =>
-        tx.execute(sql`
-          select signed_by_member_id, client_remarks, signed_at > now() - interval '1 minute' as date_du_jour
+        lire(tx, sql`
+          select signed_by_member_id, client_remarks,
+                 signed_at > date_sub(CURRENT_TIMESTAMP(3), interval 1 minute) as date_du_jour
             from inspections where id = ${id}`),
       )
       assert.equal(row.signed_by_member_id, JEANNE)
-      assert.equal(row.date_du_jour, true)
+      assert.equal(Number(row.date_du_jour), 1)
       assert.equal(
         await codeErreur(() =>
           asClients([DURAND], (tx) =>
             tx.execute(sql`update inspections set client_remarks = 'Autre chose' where id = ${id}`),
           ),
         ),
-        PG_INSPECTION_LOCKED,
+        DB_INSPECTION_LOCKED,
       )
     })
 
@@ -415,7 +460,7 @@ describe('états des lieux', { skip: raison }, () => {
       const id = await etat(await modele())
       assert.equal(
         await codeErreur(() => asTenant((tx) => tx.execute(sql`delete from inspections where id = ${id}`))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSPECTION_LOCKED,
       )
     })
   })
@@ -428,26 +473,26 @@ describe('états des lieux', { skip: raison }, () => {
         tx.execute(sql`update inspection_photos set caption = 'Mur nord' where id = ${premiere}`),
       )
       await clore(id)
-      assert.equal(await codeErreur(() => photo(id)), PG_INSPECTION_LOCKED)
-      for (const changement of [sql`caption = 'Autre'`, sql`deleted_at = now()`]) {
+      assert.equal(await codeErreur(() => photo(id)), DB_INSPECTION_LOCKED)
+      for (const changement of [sql`caption = 'Autre'`, sql`deleted_at = CURRENT_TIMESTAMP(3)`]) {
         assert.equal(
           await codeErreur(() =>
             asTenant((tx) => tx.execute(sql`update inspection_photos set ${changement} where id = ${premiere}`)),
           ),
-          PG_INSPECTION_LOCKED,
+          DB_INSPECTION_LOCKED,
         )
       }
     })
 
     it('illustrent un champ du modèle', async () => {
       const id = await etat(await modele())
-      assert.equal(await codeErreur(() => photo(id, { fieldId: 'plafond' })), PG_INSPECTION_INVALID)
+      assert.equal(await codeErreur(() => photo(id, { fieldId: 'plafond' })), DB_INSPECTION_INVALID)
     })
 
     it('n’acceptent qu’une image compressée, chiffrée, d’un type accepté', async () => {
       const id = await etat(await modele())
       for (const values of [{ contentType: 'text/html' }, { byteSize: 0 }, { byteSize: 10 * 1024 * 1024 + 1 }]) {
-        assert.equal(await codeErreur(() => photo(id, values)), PG_CHECK_VIOLATION, JSON.stringify(values))
+        assert.equal(await codeErreur(() => photo(id, values)), DB_CHECK_VIOLATION, JSON.stringify(values))
       }
       assert.equal(
         await codeErreur(() =>
@@ -458,7 +503,7 @@ describe('états des lieux', { skip: raison }, () => {
               values (${id}, 'etats-des-lieux/clair.jpg', 0, 'image/jpeg', 100, 10, 10, ${CAMILLE})`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
     })
 
@@ -466,33 +511,45 @@ describe('états des lieux', { skip: raison }, () => {
       const id = await photo(await etat(await modele()))
       assert.equal(
         await codeErreur(() => asTenant((tx) => tx.execute(sql`delete from inspection_photos where id = ${id}`))),
-        PG_INSUFFICIENT_PRIVILEGE,
+        DB_INSPECTION_LOCKED,
       )
     })
   })
 
   describe('portée client', () => {
     it('une entreprise ne voit que ses états des lieux clos, et leurs photos', async () => {
+      // Sans RLS, la portée est celle des requêtes de l'espace client : elles
+      // filtrent sur `client_id`, `status = 'closed'` et `deleted_at is null`.
       const v1 = await modele()
       const clos = await etat(v1)
-      await photo(clos)
+      const photoClos = await photo(clos)
       await clore(clos)
-      await photo(await etat(v1, { kind: 'exit', entry: clos }))
+      const sortie = await etat(v1, { kind: 'exit', entry: clos })
+      const photoBrouillon = await photo(sortie)
       const autre = await etat(v1, { client: PETIT })
-      await photo(autre)
+      const photoAutre = await photo(autre)
       await clore(autre)
 
-      const vu = await asClients([DURAND], async (tx) => ({
-        etats: await tx.execute(sql`select id from inspections`),
-        photos: await tx.execute(sql`select inspection_id from inspection_photos`),
-      }))
+      const liste = await listInspectionsForAccounts(durand)
       assert.deepEqual(
-        vu.etats.map((row) => row.id),
+        liste.map((row) => row.id),
         [clos],
       )
+      assert.ok(await findPhotoForAccounts(photoClos, durand))
+      // La photo d'un brouillon, et celle d'une autre entreprise : introuvables.
+      assert.equal(await findPhotoForAccounts(photoBrouillon, durand), undefined)
+      assert.equal(await findPhotoForAccounts(photoAutre, durand), undefined)
+      // Ni le brouillon de sortie, ni l'état d'une autre entreprise, ni leur lien.
+      assert.equal(await findInspectionForAccounts(sortie, durand), undefined)
+      assert.equal(await findInspectionForAccounts(autre, durand), undefined)
+      const detail = await findInspectionForAccounts(clos, durand)
+      assert.ok(detail)
+      assert.equal(detail.exit, null)
+      // Réciproquement : l'autre entreprise ne voit que le sien.
+      const petit: ClientAccount[] = [{ memberId: PAUL, clientId: PETIT, clientName: 'Boulangerie Petit' }]
       assert.deepEqual(
-        vu.photos.map((row) => row.inspection_id),
-        [clos],
+        (await listInspectionsForAccounts(petit)).map((row) => row.id),
+        [autre],
       )
     })
 
@@ -506,7 +563,7 @@ describe('états des lieux', { skip: raison }, () => {
               values ('entry', ${BUREAU}, ${DURAND}, ${CONTRAT_DURAND}, ${v1}, ${CAMILLE})`),
           ),
         ),
-        PG_INSPECTION_LOCKED,
+        DB_INSPECTION_LOCKED,
       )
       const id = await etat(v1)
       await clore(id)
@@ -519,7 +576,7 @@ describe('états des lieux', { skip: raison }, () => {
               values (${id}, 'etats-des-lieux/client.jpg', 1, 'image/jpeg', 100, 10, 10, ${CAMILLE})`),
           ),
         ),
-        PG_INSPECTION_LOCKED,
+        DB_INSPECTION_LOCKED,
       )
     })
 
@@ -545,24 +602,32 @@ describe('états des lieux', { skip: raison }, () => {
               values (${photoPetit}, 'client', ${JEANNE}, 'u-jeanne')`),
           ),
         ),
-        PG_RLS_VIOLATION,
+        DB_SCOPE_VIOLATION,
       )
       for (const ecriture of [
         sql`update inspection_photo_views set auth_user_id = 'autre'`,
         sql`delete from inspection_photo_views`,
       ]) {
-        assert.equal(await codeErreur(() => asTenant((tx) => tx.execute(ecriture))), PG_INSUFFICIENT_PRIVILEGE)
+        assert.equal(await codeErreur(() => asTenant((tx) => tx.execute(ecriture))), DB_INSUFFICIENT_PRIVILEGE)
       }
     })
   })
 
   describe('conservation des photos', () => {
     /** Recule la clôture d'un état des lieux, sous le propriétaire (hors de l'application). */
-    const reculerCloture = (id: string, mois: number) =>
-      owner.client.begin(async (tx) => {
-        await tx`select set_config('app.anonymization', 'on', true)`
-        await tx`update inspections set closed_at = now() - make_interval(months => ${mois}) where id = ${id}`
-      })
+    const reculerCloture = async (id: string, mois: number) => {
+      const connection = await bases.owner.client.getConnection()
+      try {
+        await connection.query("set @app_anonymization = 'on'")
+        await connection.query(
+          'update inspections set closed_at = TIMESTAMPADD(MONTH, ?, CURRENT_TIMESTAMP(3)) where id = ?',
+          [-mois, id],
+        )
+      } finally {
+        await connection.query('set @app_anonymization = null').catch(() => {})
+        connection.release()
+      }
+    }
 
     it('court depuis la clôture de la sortie : l’entrée reste la preuve tant que dure l’occupation', async () => {
       const v1 = await modele()
@@ -578,8 +643,7 @@ describe('états des lieux', { skip: raison }, () => {
       // Une entrée sans sortie, close il y a dix ans : toujours gardée.
       await reculerCloture(seule, 120)
 
-      const echues = () =>
-        asTenant((tx) => tx.execute(sql`select id from expired_inspection_photos(200)`))
+      const echues = () => asTenant((tx) => expiredInspectionPhotos(tx, 200))
       assert.deepEqual(
         (await echues()).map((row) => row.id),
         [],
@@ -593,15 +657,15 @@ describe('états des lieux', { skip: raison }, () => {
 
       // Le fichier effacé par le code, la ligne marquée par la base.
       const [marquee] = await asTenant((tx) =>
-        tx.execute(sql`select mark_inspection_photo_purged(${photoSortie}) as purgee`),
+        lire(tx, sql`select mark_inspection_photo_purged(${photoSortie}) as purgee`),
       )
-      assert.equal(marquee.purgee, true)
+      assert.equal(Number(marquee.purgee), 1)
       const [refusee] = await asTenant((tx) =>
-        tx.execute(sql`select mark_inspection_photo_purged(${photoSeule}) as purgee`),
+        lire(tx, sql`select mark_inspection_photo_purged(${photoSeule}) as purgee`),
       )
-      assert.equal(refusee.purgee, false)
+      assert.equal(Number(refusee.purgee), 0)
       const [row] = await asTenant((tx) =>
-        tx.execute(sql`select deleted_at from inspection_photos where id = ${photoSortie}`),
+        lire(tx, sql`select deleted_at from inspection_photos where id = ${photoSortie}`),
       )
       assert.ok(row.deleted_at)
     })
@@ -613,13 +677,13 @@ describe('états des lieux', { skip: raison }, () => {
       await asTenant(async (tx) => {
         await tx.execute(sql`
           insert into inspection_photo_views (photo_id, viewer, staff_member_id, auth_user_id, viewed_at)
-          values (${photoId}, 'staff', ${CAMILLE}, 'u-camille', now() - interval '13 months'),
-                 (${photoId}, 'staff', ${CAMILLE}, 'u-camille', now())`)
+          values (${photoId}, 'staff', ${CAMILLE}, 'u-camille', TIMESTAMPADD(MONTH, -13, CURRENT_TIMESTAMP(3))),
+                 (${photoId}, 'staff', ${CAMILLE}, 'u-camille', CURRENT_TIMESTAMP(3))`)
       })
       const [purge] = await asTenant((tx) =>
-        tx.execute(sql`select purge_expired_inspection_photo_views() as purged`),
+        lire(tx, sql`select purge_expired_inspection_photo_views() as purged`),
       )
-      assert.equal(purge.purged, 1)
+      assert.equal(Number(purge.purged), 1)
     })
   })
 })

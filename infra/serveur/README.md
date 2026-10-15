@@ -4,7 +4,9 @@ Le choix et ses raisons : [ADR 013](../../docs/decisions/013-hebergement-vps-de-
 
 L'application tourne dans un conteneur Docker sur le VPS de production (Debian),
 à côté des sites qu'il héberge déjà. Elle n'écoute que sur `127.0.0.1` ; c'est
-l'Apache en place qui sert le domaine et HTTPS. La base reste chez Neon.
+l'Apache en place qui sert le domaine et HTTPS. La base MySQL 8.4 tourne sur
+le même serveur, dans un conteneur du même compose, sans port publié : seuls
+l'application et l'outil de migration l'atteignent (ADR 042).
 
 Chaque push sur `main` dont la CI est verte déclenche le job `deploy` : l'image
 est construite par GitHub, puis lancée sur le serveur. Ce document décrit
@@ -54,37 +56,7 @@ n'écoute pas sur 22), et la comparer à celle qu'affiche
 ssh-keyscan -t ed25519 <adresse du serveur>
 ```
 
-## 3. Base de production
-
-Une seule fois (ADR 003, « Reste à faire »). À faire **depuis un clone propre,
-sans `.env.local`** : le fichier de dev l'emporterait sur certaines variables,
-et le script de provision y écrirait l'URL de production.
-
-```bash
-git clone https://github.com/AceOSolo/centre-affaires.git prod && cd prod && npm ci
-
-# URL du rôle propriétaire de la branche `production` (console Neon → Connect).
-export DATABASE_URL='<URL avec pooler>'
-export DATABASE_URL_UNPOOLED='<URL directe>'
-npx drizzle-kit migrate
-node infra/provision-role-applicatif.mjs   # affiche APP_DATABASE_URL : la noter
-
-export APP_DATABASE_URL='<valeur affichée>'
-node infra/configurer-centre.mjs
-node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
-```
-
-Ce premier exploitant inscrit ensuite le reste de l'équipe depuis l'écran
-Équipe du back-office (`/equipe`).
-
-Par la suite, toute migration se joue de la même façon **avant** de fusionner
-sur `main` le code qui en dépend.
-
-Dans la console Neon, Neon Auth de la branche `production` : ajouter
-`https://www.handfield.fr` aux domaines de confiance, sinon la connexion est
-refusée.
-
-## 4. Secrets du serveur
+## 3. Secrets du serveur
 
 ```bash
 sudo -u deploy nano /home/deploy/centre-affaires/.env
@@ -92,12 +64,22 @@ sudo -u deploy chmod 600 /home/deploy/centre-affaires/.env
 ```
 
 Contenu : voir [`.env.example`](.env.example). Ce fichier ne quitte jamais le
-serveur. Si `sudo ss -ltnp | grep ':3000 '` montre que le port 3000 est déjà
-pris, y ajouter `PORT_LOCAL=<autre port>`. La clé de chiffrement des documents
-se crée et se sauvegarde hors du serveur comme indiqué à « Chiffrement des
-documents », plus bas.
+serveur, et c'est lui qui configure aussi la base : il y a un seul fichier.
 
-## 5. Réglages du dépôt GitHub
+- `DB_ADMIN_PASSWORD` : mot de passe de `root` MySQL, fixé **au premier
+  démarrage du volume** `db-data`. `DB_PASSWORD` : celui de l'utilisateur
+  applicatif `DB_USER`. Deux mots de passe aléatoires distincts
+  (`openssl rand -base64 24`). `DB_HOST` vaut `db` (le compose le force pour
+  `app` et `migrer`).
+- `AUTH_SECRET` : `openssl rand -base64 32`. `AUTH_SKIP_EMAIL_VERIFICATION`
+  reste à `false` ; l'application refuse de démarrer en production avec
+  `true`.
+- Si `sudo ss -ltnp | grep ':3000 '` montre que le port 3000 est déjà pris,
+  y ajouter `PORT_LOCAL=<autre port>`.
+- La clé de chiffrement des documents se crée et se sauvegarde hors du
+  serveur comme indiqué à « Chiffrement des documents », plus bas.
+
+## 4. Réglages du dépôt GitHub
 
 Settings → Secrets and variables → Actions :
 
@@ -111,9 +93,44 @@ Settings → Secrets and variables → Actions :
 
 Settings → Pages : désactiver GitHub Pages.
 
-Puis Actions → ci → Run workflow sur `main` : premier déploiement. Sur le
-serveur, dans `/home/deploy/centre-affaires`, `docker compose ps` doit montrer
-`app` en `healthy`, et `curl -I http://127.0.0.1:3000/` répondre 200.
+Puis Actions → ci → Run workflow sur `main` : premier déploiement. Il copie le
+compose, tire l'image et démarre `db` puis `app`. Sur le serveur, dans
+`/home/deploy/centre-affaires`, `docker compose ps` doit montrer `db` et
+`app` en `healthy`, et `curl -I http://127.0.0.1:3000/` répondre.
+L'application n'a pas encore de structure : l'étape suivante la crée.
+
+## 5. Base de production
+
+Sur le serveur, dans `/home/deploy/centre-affaires`, une fois l'image tirée par
+le premier déploiement (le service `migrer` utilise la même image que `app`,
+qui contient `infra/` et `src/db/`) :
+
+```bash
+cd /home/deploy/centre-affaires
+docker compose run --rm migrer     # crée la base et DB_USER, applique structure et règles, donne les droits
+docker compose run --rm migrer node infra/configurer-centre.mjs
+docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
+docker compose restart app
+```
+
+- Le migrateur se connecte avec `DB_ADMIN_USER` (root), qui seul peut définir
+  la structure, et donne à `DB_USER` les droits de lecture et d'écriture, sans
+  jamais `CREATE`, `ALTER` ni `DROP`. Il se rejoue sans risque : les règles
+  métier (triggers, routines) sont rejouées, la structure ne l'est qu'une fois.
+- Le service `migrer` est du profil `outils` : `docker compose up` ne le
+  démarre pas, `docker compose run --rm migrer` si.
+- Le serveur MySQL n'écoute sur aucun port de l'hôte. Pour inspecter la base :
+  `docker compose exec db mysql -uroot -p` (le mot de passe est
+  `DB_ADMIN_PASSWORD`).
+
+Ce premier exploitant inscrit ensuite le reste de l'équipe depuis l'écran
+Équipe du back-office (`/equipe`).
+
+Par la suite, chaque version qui change la base se migre **sur le serveur,
+après le déploiement** de l'image qui la porte : `docker compose run --rm
+migrer`. Les migrations ne sont jamais jouées par la CI. Avant une migration
+risquée, une sauvegarde à la main (`bash sauvegarde.sh`, section 9) tient lieu
+de point de retour.
 
 ## 6. DNS chez OVH
 
@@ -206,8 +223,9 @@ Le choix et ses raisons : [ADR 022](../../docs/decisions/022-sauvegardes-et-plan
 Restauration : [`docs/exploitation/restauration.md`](../../docs/exploitation/restauration.md).
 Plan de reprise : [`docs/exploitation/plan-de-reprise.md`](../../docs/exploitation/plan-de-reprise.md).
 
-Chaque nuit, `sauvegarde.sh` produit un lot : le dump de la base, la copie du
-bucket `uploads` et les fichiers de configuration du serveur. Le lot est
+Chaque nuit, `sauvegarde.sh` produit un lot : le dump de la base
+(`mysqldump --single-transaction --routines --triggers --events`, compressé),
+la copie du bucket `uploads` et les fichiers de configuration du serveur. Le lot est
 chiffré sur le serveur pour des clés publiques, envoyé hors du serveur, puis
 relu. Sont gardés le dernier lot de chacun des 7 derniers jours, des 4
 dernières semaines et des 12 derniers mois. Le script est déposé par chaque
@@ -219,8 +237,8 @@ déploiement, comme `compose.yml`.
 apt install age rclone
 ```
 
-Docker, déjà présent, fournit `pg_dump` 18 (image `postgres:18-alpine`) :
-celui de Debian est trop ancien pour Neon.
+`mysqldump` est celui du conteneur `db` (`docker compose exec`) : rien à
+installer pour lui, et sa version est celle du serveur.
 
 **2. Clés de chiffrement, sur un poste et non sur le serveur.** Chaque détenteur
 (deux au moins, plan de reprise) crée sa paire de clés :
@@ -237,20 +255,25 @@ seules clés publiques, une par ligne :
 sudo -u deploy nano /home/deploy/centre-affaires/sauvegarde-destinataires.txt
 ```
 
-**3. Rôle de lecture sur la base `production`.** Avec le propriétaire, depuis un
-poste (console Neon → SQL Editor, ou `psql`) :
+**3. Utilisateur de lecture sur la base.** Sur le serveur, avec `root` :
 
-```sql
-CREATE ROLE sauvegarde LOGIN BYPASSRLS PASSWORD '<openssl rand -base64 24>';
-GRANT pg_read_all_data TO sauvegarde;
+```bash
+cd /home/deploy/centre-affaires
+docker compose exec db mysql -uroot -p
 ```
 
-`pg_read_all_data` donne la lecture de toutes les tables, sans aucune écriture.
-`BYPASSRLS` est nécessaire : sans lui, `pg_dump` refuse de lire des tables
-sous RLS plutôt que de produire un dump partiel. Ce couple a été éprouvé en
-local (restauration, « Exercice du 01/10/2026 ») ; reste à vérifier que Neon
-l'accepte. Si `pg_dump` ne peut pas lire le schéma `neon_auth`, géré par Neon,
-voir `SAUVEGARDE_PG_DUMP_OPTIONS` dans le modèle.
+```sql
+CREATE USER 'sauvegarde'@'%' IDENTIFIED BY '<openssl rand -base64 24>';
+GRANT SELECT, SHOW VIEW, TRIGGER, EVENT ON centre_affaires.* TO 'sauvegarde'@'%';
+GRANT SHOW_ROUTINE ON *.* TO 'sauvegarde'@'%';
+```
+
+Le mot de passe va dans `MYSQL_PWD` de `sauvegarde.env`. Ces droits donnent la
+lecture de toutes les tables, des triggers, des routines et des événements,
+sans aucune écriture. Le dump (`--single-transaction`) ne verrouille pas les
+tables : l'application continue d'écrire pendant la sauvegarde. À éprouver au
+premier exercice (restauration, « Exercices ») : si `mysqldump` réclame un
+droit de plus, le noter ici.
 
 **4. Destination hors du serveur.** Un bucket S3 privé, en UE, dans une autre
 région que le VPS (par exemple OVHcloud Object Storage), avec un utilisateur
@@ -287,6 +310,10 @@ sort avec un code non nul, écrit la cause au journal et dans syslog
 `SAUVEGARDE_SIGNAL_URL` suivi de `/fail` s'il est réglé. Un lot à moitié
 envoyé est effacé, ou l'est au passage suivant.
 
+La base et ses sauvegardes sont sur le même serveur : **le lot hors serveur
+est la seule protection contre la perte du VPS**. La surveiller comme telle.
+Le volume Docker `db-data` n'est pas une sauvegarde.
+
 **Surveillance.** Lire la fin du journal chaque semaine. Faire un exercice de
 restauration chaque trimestre et le consigner dans `restauration.md`. Sans
 service de surveillance (`SAUVEGARDE_SIGNAL_URL`), une crontab effacée ou un
@@ -299,6 +326,7 @@ Sur le serveur, dans `/home/deploy/centre-affaires` :
 ```bash
 docker compose ps             # état de l'application
 docker compose logs -f app    # journaux de l'application
+docker compose logs -f db     # journaux de MySQL
 tail sauvegardes.log          # dernières sauvegardes (section 9)
 ```
 
@@ -394,7 +422,8 @@ Les scans de courrier, les photos d'enveloppe et les photos d'états des lieux
 sont chiffrés par l'application avant d'être déposés dans le stockage
 (AES-256-GCM, R22, R33,
 [ADR 020](../../docs/decisions/020-chiffrement-et-conservation-des-documents.md)).
-Le stockage, et toute branche Neon qui le copie, ne contiennent que du chiffré.
+Le stockage, et toute copie de la base ou du stockage, ne contiennent que
+du chiffré.
 Sans clé, l'application refuse de déposer un document plutôt que de le
 stocker en clair.
 
@@ -418,7 +447,7 @@ Puis `docker compose up -d` pour que l'application la lise.
 ### Sauvegarder la clé hors du serveur
 
 **Perdre cette clé, c'est perdre tous les documents chiffrés avec elle**, sans
-aucun recours : ni Neon ni personne ne peut les déchiffrer. La copie du
+aucun recours : personne ne peut les déchiffrer. La copie du
 stockage (R30) ne sert à rien sans elle.
 
 - La recopier, avec son numéro de version, dans le coffre-fort de mots de
@@ -429,31 +458,26 @@ stockage (R30) ne sert à rien sans elle.
 - Jamais dans le dépôt, ni dans les secrets GitHub, ni à côté des sauvegardes
   du stockage : qui obtient les deux lit tout.
 - Une clé par environnement. La clé de production ne sert jamais en
-  développement ; c'est ce qui rend illisibles les documents copiés dans une
-  branche.
+  développement ; c'est ce qui rend illisibles les documents d'une copie de la
+  production restaurée en développement.
 
 ### Chiffrer les documents déposés avant le chiffrement
 
 Les documents déposés avant cette mise en place restent lisibles en clair
 (`mail_scans.encryption_key_version` nul). Le script
 `infra/chiffrer-documents.ts` les chiffre, à leur place dans le stockage. Il
-se lance **sur le serveur**, pour que la clé n'en sorte pas, dans un conteneur
-Node jetable qui lit le `.env` de production :
+se lance **sur le serveur**, pour que la clé n'en sorte pas, dans le conteneur
+d'outillage, qui lit le `.env` de production :
 
 ```bash
-sudo -u deploy -i
-git clone --depth 1 https://github.com/AceOSolo/centre-affaires.git ~/reprise-chiffrement
-cd ~/reprise-chiffrement
-docker run --rm -v "$PWD":/app -w /app --env-file /home/deploy/centre-affaires/.env \
-  node:24-alpine sh -c "npm ci --omit=dev --ignore-scripts --no-audit --no-fund && node infra/chiffrer-documents.ts"
+cd /home/deploy/centre-affaires
+docker compose run --rm migrer node infra/chiffrer-documents.ts
 ```
 
 Ce premier passage est un essai à blanc : il compte les documents à chiffrer
 et vérifie la clé, sans rien modifier. Pour chiffrer, relancer la même
-commande en remplaçant `node infra/chiffrer-documents.ts` par
-`node infra/chiffrer-documents.ts --appliquer`. Puis relancer l'essai à blanc :
-il doit répondre « Aucune numérisation à chiffrer ». Enfin `rm -rf
-~/reprise-chiffrement`.
+commande avec `--appliquer` à la fin. Puis relancer l'essai à blanc : il doit
+répondre « Aucune numérisation à chiffrer ».
 
 Le script se rejoue sans risque : un document déjà chiffré n'est plus repris,
 une interruption se termine au passage suivant. Un document absent du
@@ -465,8 +489,9 @@ Ensuite :
 
 - si le stockage conserve les versions précédentes des objets (versionnement
   du bucket), les supprimer : les versions en clair y resteraient ;
-- supprimer les branches Neon créées depuis `production` avant la reprise :
-  elles contiennent les documents en clair (B3). Les recréer après.
+- détruire les sauvegardes du stockage antérieures à la reprise : elles
+  contiennent les documents en clair (B3). La sauvegarde nocturne suivante en
+  produit de chiffrées.
 
 ### Changer de clé (rotation)
 
@@ -500,4 +525,5 @@ ou à intervalle fixé par le centre :
    fuite, ces sauvegardes sont à détruire.
 
 Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
-version précédente.
+version précédente. Si une migration de base a été jouée entre-temps, la
+restaurer d'abord depuis le lot de la veille (`docs/exploitation/restauration.md`).

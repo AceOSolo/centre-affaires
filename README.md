@@ -22,9 +22,9 @@ Les règles du projet, à lire avant toute contribution, sont dans
 | Brique | Choix | Décision |
 |---|---|---|
 | Application | Next.js 16 (App Router), TypeScript, Tailwind CSS 4, primitives shadcn/Radix | ADR 001, 004 |
-| Base | PostgreSQL 18 chez Neon (`aws-eu-central-1`), Drizzle ORM, RLS par centre et par client | ADR 002, 003, 019 |
-| Authentification | Neon Auth (Better Auth managé) | ADR 008 |
-| Fichiers | Neon Object Storage (S3), bucket privé `uploads` | ADR 015 |
+| Base | MySQL 8.4 sur le VPS (Docker, même compose que l'application), Drizzle ORM, règles en triggers, isolation par centre et par client dans le code | ADR 042 |
+| Authentification | Better Auth auto-hébergé, sur la même base | ADR 042 |
+| Fichiers | S3 en région UE (MinIO sur le VPS ou hébergeur), bucket privé `uploads` | ADR 015, 042 |
 | Courriels | SMTP de Brevo | ADR 015 |
 | Hébergement | Image Docker sur le VPS de production, derrière Apache | ADR 013 |
 | Sauvegardes | Lot nocturne chiffré, hors du serveur | ADR 022 |
@@ -49,7 +49,7 @@ Le code est rangé par domaine métier, pas par couche technique.
 
 ## Installation
 
-Prérequis : Node.js 24, npm, Docker pour la base locale.
+Prérequis : Node.js 24, npm, Docker pour la base locale (MySQL 8.4).
 
 ```bash
 git clone https://github.com/AceOSolo/centre-affaires.git
@@ -58,48 +58,36 @@ npm ci
 cp .env.example .env.local
 ```
 
-### Avec la branche Neon `dev` (travail courant)
+Toute la configuration est dans `.env.local` (modèle : `.env.example`,
+commenté variable par variable). Laisser `SMTP_*` vide : sans configuration,
+aucun courriel ne part. Poser `AUTH_SKIP_EMAIL_VERIFICATION=true` en
+développement : sans courriel, la connexion ne demande pas la vérification
+d'adresse (l'application le refuse en production).
 
-`.env.local` désigne la branche `dev`, **jamais `production`** : pas de
-données réelles en développement (ADR 003).
-
-1. Remplir l'environnement : `neon env pull` sur la branche `dev`. Il écrit
-   `DATABASE_URL`, `NEON_AUTH_*` et `AWS_*`.
-2. Ajouter le rôle applicatif : `node infra/provision-role-applicatif.mjs`
-   écrit `APP_DATABASE_URL`.
-
-Laisser `SMTP_*` vide : sans configuration, aucun courriel ne part.
-
-### Avec la base locale (hors ligne)
+### Base locale
 
 ```bash
-docker compose up -d                       # PostgreSQL 18 sur localhost:5432
-npx drizzle-kit migrate                    # avec DATABASE_URL vers cette base
-node infra/provision-role-applicatif.mjs   # APP_DATABASE_URL
+docker compose up -d db          # MySQL 8.4 sur 127.0.0.1:3306
+# .env.local : DB_HOST=127.0.0.1, DB_NAME=centre_affaires, DB_USER=centre_affaires,
+#   DB_PASSWORD=<au choix>, DB_ADMIN_USER=root, DB_ADMIN_PASSWORD=root
+npm run db:migrer                # crée la base et DB_USER, structure, règles, droits
 node --env-file=.env.local infra/seed-demo.mjs   # données fictives
+npm run dev
 ```
 
-Neon Auth n'existe pas en local : la connexion n'y fonctionne pas.
+`npm run db:migrer` se rejoue sans risque. Repartir de zéro :
+`docker compose down -v` (efface le volume `db-data`).
 
-**Volume de la base locale.** L'image `postgres:18` range ses données sous
-`/var/lib/postgresql` et refuse de démarrer si un volume est encore monté sur
-l'ancien emplacement, `/var/lib/postgresql/data`. Le `docker-compose.yml` monte
-donc un volume neuf, `db-data-18`. L'ancien, `centre-affaires_db-data`, n'est
-plus lu : la base locale repart vide et se remplit par les commandes
-ci-dessus. Pour garder le contenu de l'ancien volume, le lire avec l'image qui
-l'a écrit, en lui imposant l'ancien emplacement :
+### Stockage local (facultatif)
 
 ```bash
-docker run -d --name ancien-volume -e POSTGRES_PASSWORD=postgres \
-  -e PGDATA=/var/lib/postgresql/data \
-  -v centre-affaires_db-data:/var/lib/postgresql/data postgres:18-alpine
-docker exec ancien-volume pg_dump -U postgres -Fc centre_affaires > ancien.dump
-docker rm -f ancien-volume
-docker volume rm centre-affaires_db-data   # quand il n'est plus utile
+docker compose --profile stockage up -d    # MinIO : API 9000, console 9001
 ```
 
-Pour un volume écrit par PostgreSQL 17, remplacer l'image par
-`postgres:17-alpine`.
+Créer le bucket `uploads` dans la console (`http://127.0.0.1:9001`, utilisateur
+`minio`, mot de passe `minio-secret`), puis renseigner `S3_*` dans
+`.env.local` (`S3_ENDPOINT=http://127.0.0.1:9000`, `S3_FORCE_PATH_STYLE=true`).
+Sans stockage configuré, tout fonctionne sauf le dépôt de documents.
 
 ## Commandes
 
@@ -111,48 +99,44 @@ Pour un volume écrit par PostgreSQL 17, remplacer l'image par
 | `npx tsc --noEmit` | vérification des types (après `npx next typegen`) |
 | `npm test` | tests unitaires et tests de base (`*.db.test.ts`) |
 | `bash infra/serveur/sauvegarde.test.sh` | tests du script de sauvegarde |
-| `npx drizzle-kit generate` | générer une migration depuis les schémas |
-| `npx drizzle-kit migrate` | appliquer les migrations (propriétaire de la base) |
+| `npm run db:migrer` | créer la base et l'utilisateur applicatif, appliquer structure et règles, accorder les droits |
+| `npx drizzle-kit generate` | régénérer la structure SQL depuis les schémas (`src/db/migrations/`) |
 
-Une migration générée ne se modifie plus une fois appliquée.
+La structure est générée par drizzle-kit à partir des schémas ; les règles
+métier (triggers, routines) s'écrivent à la main dans `src/db/regles/*.sql`
+et se rejouent à chaque `npm run db:migrer`. Une migration appliquée ne se
+modifie plus.
 
 ## Base de test locale
 
 Les tests de base mettent à l'épreuve ce que seul un vrai moteur vérifie :
-- la contrainte anti-double-réservation ;
-- les politiques RLS ;
+- la contrainte anti-double-réservation (trigger) ;
+- les gardes d'écriture par centre et par portée client ;
 - les triggers et la numérotation.
 
-Ils appliquent eux-mêmes les migrations, puis vident les tables entre deux
-suites. Ils ont besoin de deux URL vers une base **jetable** :
-
-| Variable | Rôle | Usage |
-|---|---|---|
-| `TEST_OWNER_DATABASE_URL` | propriétaire (`postgres`) | migrations, `TRUNCATE` |
-| `TEST_DATABASE_URL` | `app_centre`, sans `BYPASSRLS` | assertions, sous les politiques |
-
-Avec la base de `docker compose` :
+Ils appliquent eux-mêmes la structure et les règles sur une base **jetable**,
+puis vident les tables entre deux suites. Avec le MySQL de `docker compose` :
 
 ```bash
-docker exec centre-affaires-db psql -U postgres -c "create database centre_affaires_test"
-docker exec centre-affaires-db psql -U postgres \
-  -c "do \$\$ begin if not exists (select from pg_roles where rolname = 'app_centre') then create role app_centre login nobypassrls; end if; end \$\$" \
-  -c "alter role app_centre password 'test'"
-export TEST_OWNER_DATABASE_URL=postgres://postgres:postgres@localhost:5432/centre_affaires_test
-export TEST_DATABASE_URL=postgres://app_centre:test@localhost:5432/centre_affaires_test
+docker compose up -d db
+export TEST_DB_NAME=centre_affaires_test
+export TEST_DB_ADMIN_USER=root TEST_DB_ADMIN_PASSWORD=root
 npm test
 ```
 
-Sans ces variables, les tests de base sont ignorés. Ils ne doivent jamais
-viser une base Neon. La CI fait la même chose sur un PostgreSQL 18 jetable
+(PowerShell : `$env:TEST_DB_NAME = 'centre_affaires_test'`, etc.) Variables
+optionnelles : `TEST_DB_HOST`, `TEST_DB_PORT`, `TEST_DB_USER` et
+`TEST_DB_PASSWORD` (identité applicative). Sans `TEST_DB_NAME`, les tests de
+base sont ignorés. La CI fait la même chose sur un MySQL 8.4 jetable
 (`.github/workflows/ci.yml`).
 
 ## Déploiement
 
 Chaque push sur `main` dont la CI est verte est déployé sur le VPS de
 production : l'image est construite par GitHub, puis lancée sur le serveur.
-Les migrations se jouent à la main sur la branche `production`, avant la
-fusion du code qui en dépend.
+La base MySQL est un service du même compose, sur le même serveur. Les
+migrations se jouent à la main, sur le serveur, après le déploiement :
+`docker compose run --rm migrer`.
 
 - Choix et raisons : [ADR 013](docs/decisions/013-hebergement-vps-de-production.md).
 - Installation et exploitation du serveur, sauvegardes comprises :

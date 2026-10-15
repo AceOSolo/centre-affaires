@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import {
   ContactClientUnavailableError,
@@ -15,34 +15,22 @@ import {
   updateClientContact,
 } from './contacts-queries.ts'
 import type { ContactInput } from './contacts-regles.ts'
+import { toutVider } from './test-support.ts'
 
 /**
  * Carnet de contacts d'une fiche client (R07), contre la base et sous
- * `app_centre` : un seul contact principal à la fois, transmis plutôt que
- * refusé, et des retraits logiques.
+ * l'identité applicative : un seul contact principal à la fois, transmis
+ * plutôt que refusé, et des retraits logiques.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('carnet de contacts d’une fiche client', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('carnet de contacts d’une fiche client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACME = '01a00000-0000-7000-8000-0000000c7a01'
   const BETA = '01a00000-0000-7000-8000-0000000c7a02'
   const ARCHIVE = '01a00000-0000-7000-8000-0000000c7a03'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const contact = (fullName: string, roles: Partial<ContactInput> = {}): ContactInput => ({
     fullName,
@@ -57,30 +45,34 @@ describe('carnet de contacts d’une fiche client', { skip: raison }, () => {
 
   /** Contacts actifs désignés principaux, toutes fiches confondues, lus en base. */
   const primaries = async () => {
-    const rows = await owner.client`
-      select client_id, full_name from client_contacts
-      where is_primary and deleted_at is null order by full_name`
+    const [rows] = (await bases.owner.client.query(
+      `select client_id, full_name from client_contacts
+        where is_primary and deleted_at is null order by full_name`,
+    )) as unknown as [{ client_id: string; full_name: string }[]]
     return rows.map((row) => `${row.client_id === ACME ? 'Acme' : 'Beta'}:${row.full_name}`)
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await toutVider(bases.owner)
     await asTenant((tx) =>
       tx.execute(sql`
         insert into clients (id, name, status, deleted_at) values
           (${ACME}, 'Acme SAS', 'active', null),
           (${BETA}, 'Beta SARL', 'active', null),
-          (${ARCHIVE}, 'Ancienne SARL', 'inactive', now())`),
+          (${ARCHIVE}, 'Ancienne SARL', 'inactive', now(3))`),
     )
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('liste les contacts actifs, le principal d’abord puis par nom', async () => {
@@ -123,8 +115,8 @@ describe('carnet de contacts d’une fiche client', { skip: raison }, () => {
   })
 
   it('garde un seul principal quand deux sont désignés en même temps', async () => {
-    // Le verrou sur la fiche fait passer les deux écritures l'une après
-    // l'autre : la seconde décharge la première au lieu d'échouer.
+    // Le verrou sur la fiche fait passer les écritures l'une après l'autre :
+    // la suivante décharge la précédente au lieu d'échouer.
     await Promise.all([
       createClientContact(ACME, contact('Alice Martin', { isPrimary: true })),
       createClientContact(ACME, contact('Bruno Leroy', { isPrimary: true })),
@@ -150,7 +142,10 @@ describe('carnet de contacts d’une fiche client', { skip: raison }, () => {
 
     assert.deepEqual(await listClientContacts(ACME), [])
     assert.equal(await findClientContact(ACME, alice.id), undefined)
-    const [ligne] = await owner.client`select deleted_at from client_contacts where id = ${alice.id}`
+    const [[ligne]] = (await bases.owner.client.query(
+      'select deleted_at from client_contacts where id = ?',
+      [alice.id],
+    )) as unknown as [{ deleted_at: Date | null }[]]
     assert.notEqual(ligne.deleted_at, null, 'la ligne est conservée, datée de son retrait (décision 6)')
 
     await createClientContact(ACME, contact('Bruno Leroy', { isPrimary: true }))

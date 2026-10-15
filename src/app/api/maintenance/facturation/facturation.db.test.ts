@@ -2,9 +2,14 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../../../db/index.ts'
+import { withTenant } from '../../../../db/index.ts'
+import {
+  ouvrirBasesDeTest,
+  raisonDeSaut,
+  viderTables,
+  type TestDatabases,
+} from '../../../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../../../db/tenants.ts'
 import { todayIsoDate } from '../../../../lib/dates.ts'
 import { listInvoiceRuns } from '../../../../modules/facturation/lot-queries.ts'
@@ -15,25 +20,19 @@ import { POST } from './route.ts'
  * appelle le 1er du mois prépare les brouillons du mois du centre, sans
  * membre de l'équipe, et ne refacture rien quand on la rejoue.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('lot de facturation planifié', { skip: raison }, () => {
-  // La route ouvre sa propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('lot de facturation planifié', { skip: raisonDeSaut }, () => {
   const TOKEN = 'jeton-de-maintenance-de-test'
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
   const CLIENT = '01a00000-0000-7000-8000-0000000f3c01'
+  const CONTRAT = '01a00000-0000-7000-8000-0000000f3c02'
 
-  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  let bases: TestDatabases
+  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  const lire = async (requete: string, params: unknown[] = []) => {
+    const [rows] = await bases.owner.client.query(requete, params)
+    return rows as Record<string, unknown>[]
+  }
 
   const appeler = (authorization?: string, mois?: string) =>
     POST(
@@ -43,19 +42,44 @@ describe('lot de facturation planifié', { skip: raison }, () => {
       }),
     )
 
+  /** Toutes les tables métier : les clés étrangères entre elles rendent un vidage partiel inutilisable. */
+  const toutVider = async () => {
+    const tables = await lire(
+      `select table_name as name from information_schema.tables
+        where table_schema = database() and table_type = 'BASE TABLE'
+          and table_name not in ('tenants', '__migrations') and table_name not like 'auth\\_%'`,
+    )
+    await viderTables(
+      bases.owner,
+      ...tables.map((table) => String(table.name)),
+    )
+  }
+
   const saved = process.env.MAINTENANCE_TOKEN
   let ceMois = ''
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // La route ouvre sa propre connexion, par `DB_*` : on la pointe sur la
+    // base de test, sous l'identité applicative.
+    const e = process.env
+    e.DB_HOST = e.TEST_DB_HOST ?? e.DB_HOST ?? '127.0.0.1'
+    e.DB_PORT = e.TEST_DB_PORT ?? e.DB_PORT ?? '3306'
+    e.DB_NAME = e.TEST_DB_NAME
+    e.DB_USER = e.TEST_DB_USER ?? e.TEST_DB_ADMIN_USER ?? e.DB_ADMIN_USER ?? 'root'
+    e.DB_PASSWORD = e.TEST_DB_USER
+      ? (e.TEST_DB_PASSWORD ?? '')
+      : (e.TEST_DB_ADMIN_PASSWORD ?? e.DB_ADMIN_PASSWORD ?? '')
   })
 
   beforeEach(async () => {
     process.env.MAINTENANCE_TOKEN = TOKEN
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table invoice_runs cascade`
-    await owner.client`update tenants set recurring_billing_timing = 'in_advance' where id = ${DEFAULT_TENANT_ID}`
-    const [tenant] = await owner.client`select timezone from tenants where id = ${DEFAULT_TENANT_ID}`
+    await toutVider()
+    await bases.owner.client.query(
+      `update tenants set recurring_billing_timing = 'in_advance' where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    const [tenant] = await lire('select timezone from tenants where id = ?', [DEFAULT_TENANT_ID])
     // Le mois du centre, dans son fuseau (décision 4).
     ceMois = todayIsoDate(tenant.timezone as string).slice(0, 7)
     await asTenant(async (tx) => {
@@ -64,19 +88,18 @@ describe('lot de facturation planifié', { skip: raison }, () => {
         values (${CLIENT}, 'Atelier Durand', 'active', '2 place du Marché', '38000', 'Grenoble')`)
       // Domiciliation à 30 € HT par mois, depuis le début de l'an dernier.
       await tx.execute(sql`
-        insert into contracts (client_id, reference, contract_type, status, starts_on, amount_cents)
-        values (${CLIENT}, 'DOM-PLANIFIE', 'domiciliation', 'active',
-                (date_trunc('year', now()) - interval '1 year')::date, 3000)`)
+        insert into contracts (id, client_id, reference, contract_type, status, starts_on, amount_cents)
+        values (${CONTRAT}, ${CLIENT}, 'DOM-PLANIFIE', 'domiciliation', 'active',
+                makedate(year(current_date()) - 1, 1), 3000)`)
     })
   })
 
   after(async () => {
     if (saved === undefined) delete process.env.MAINTENANCE_TOKEN
     else process.env.MAINTENANCE_TOKEN = saved
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table invoice_runs cascade`
+    await toutVider()
     const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await Promise.all([bases.fermer(), global.database?.client.end()])
   })
 
   it('prépare les brouillons du mois du centre, sans membre de l’équipe', async () => {
@@ -86,12 +109,16 @@ describe('lot de facturation planifié', { skip: raison }, () => {
     assert.equal(bilan.month, ceMois)
     assert.equal(bilan.invoicesCreated, 1)
 
-    const [run] = await owner.client`select created_by, status, period_start::text from invoice_runs`
+    const [run] = await lire(
+      'select created_by, status, cast(period_start as char) as period_start from invoice_runs',
+    )
     assert.equal(run.created_by, null)
     assert.equal(run.status, 'completed')
     assert.equal(run.period_start, `${ceMois}-01`)
-    const [facture] = await owner.client`
-      select status, number from invoices where client_id = ${CLIENT} and kind = 'invoice'`
+    const [facture] = await lire(
+      `select status, number from invoices where client_id = ? and kind = 'invoice'`,
+      [CLIENT],
+    )
     // Le lot n'émet rien : l'équipe relit, puis émet.
     assert.equal(facture.status, 'draft')
     assert.equal(facture.number, null)
@@ -113,7 +140,11 @@ describe('lot de facturation planifié', { skip: raison }, () => {
   })
 
   it('attend le lot en cours plutôt que de le doubler', async () => {
-    await owner.client`insert into invoice_runs (period_start, period_end) values ('2026-01-01', '2026-01-31')`
+    await bases.owner.client.query(
+      `insert into invoice_runs (id, tenant_id, period_start, period_end)
+       values ('01a00000-0000-7000-8000-0000000f3c03', ?, '2026-01-01', '2026-01-31')`,
+      [DEFAULT_TENANT_ID],
+    )
     const response = await appeler(`Bearer ${TOKEN}`)
     assert.equal(response.status, 409)
     assert.match((await response.json()).error, /déjà en cours/)
@@ -123,7 +154,7 @@ describe('lot de facturation planifié', { skip: raison }, () => {
     for (const authorization of [undefined, 'Bearer mauvais', `Bearer ${TOKEN}x`]) {
       assert.equal((await appeler(authorization)).status, 404, String(authorization))
     }
-    const [{ n }] = await owner.client`select count(*)::int as n from invoice_runs`
-    assert.equal(n, 0)
+    const [{ n }] = await lire('select count(*) as n from invoice_runs')
+    assert.equal(Number(n), 0)
   })
 })

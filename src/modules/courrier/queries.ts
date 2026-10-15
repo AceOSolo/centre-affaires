@@ -1,15 +1,17 @@
 import { randomUUID } from 'node:crypto'
 
 import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
-import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { alias, type AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
-import { PG_MAIL_REQUEST_REFUSED, PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_MAIL_REQUEST_REFUSED, DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { isUuid } from '../../lib/uuid.ts'
+import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
@@ -31,7 +33,7 @@ const opener = alias(staffMembers, 'opener')
 const registrar = alias(staffMembers, 'registrar')
 
 /** Nom affiché d'une personne : son nom s'il est connu, son adresse sinon. */
-const displayName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
+const displayName = (table: { fullName: AnyMySqlColumn; email: AnyMySqlColumn }) =>
   sql<string | null>`coalesce(${table.fullName}, ${table.email})`
 
 /* -------------------------------------------------------------------------- */
@@ -58,7 +60,7 @@ export async function store(
     const scan = scans[side]
     if (!scan) continue
     // Clé sans rien de lisible : ni client ni expéditeur n'apparaissent dans
-    // le stockage, seulement dans la base, derrière la RLS.
+    // le stockage, seulement dans la base, dans la base.
     const key = `courrier/${tenantId}/${randomUUID()}.${scanExtensions[scan.contentType]}`
     const sealed = sealDocument(scan.bytes, key)
     // Le type réel est en base ; l'objet, lui, n'est que du chiffré.
@@ -133,11 +135,11 @@ export async function listMail(
 export async function countOpeningRequests(): Promise<number> {
   const [row] = await withTenant(currentTenantId(), (tx) =>
     tx
-      .select({ count: sql<number>`count(*)::int` })
+      .select({ count: sql<number>`count(*)` })
       .from(mailItems)
       .where(and(eq(mailItems.status, 'opening_requested'), isNull(mailItems.deletedAt))),
   )
-  return row?.count ?? 0
+  return Number(row?.count ?? 0)
 }
 
 export type MailDetail = MailItem & {
@@ -234,18 +236,18 @@ export async function registerMail(
   try {
     return await withTenant(tenantId, async (tx) => {
       const opened = Boolean(scans.content)
-      const [item] = await tx
-        .insert(mailItems)
-        .values({
-          ...input,
-          registeredBy: staffMemberId,
-          status: opened ? 'opened' : 'received',
-          openedAt: opened ? sql`now()` : null,
-          openedBy: opened ? staffMemberId : null,
-        })
-        .returning({ id: mailItems.id })
-      if (stored.length > 0) await tx.insert(mailScans).values(scanRows(item.id, stored, staffMemberId))
-      return item.id
+      // Identifiant posé avant l'insertion : MySQL n'a pas de `RETURNING`.
+      const id = uuidv7()
+      await tx.insert(mailItems).values({
+        ...input,
+        id,
+        registeredBy: staffMemberId,
+        status: opened ? 'opened' : 'received',
+        openedAt: opened ? maintenant() : null,
+        openedBy: opened ? staffMemberId : null,
+      })
+      if (stored.length > 0) await tx.insert(mailScans).values(scanRows(id, stored, staffMemberId))
+      return id
     })
   } catch (error) {
     await discard(stored)
@@ -285,7 +287,7 @@ export async function openMail(id: string, staffMemberId: string, content: ScanF
  *
  * La demande d'ouverture en cours (ADR 037) est verrouillée d'abord : le
  * client ne l'annule pas pendant qu'on ouvre. L'ouverture du pli la clôt
- * (trigger `mail_items_follow_requests`), et le contenu lui est rattaché
+ * (trigger `mail_items_after_update`), et le contenu lui est rattaché
  * (`mail_scans.mail_request_id`) ; sans demande, c'est une ouverture d'office,
  * contenu sans demande.
  */
@@ -307,13 +309,12 @@ export async function recordOpening(
       )
       .limit(1)
       .for('update')
-    const [item] = await tx
-      .update(mailItems)
-      .set({ status: 'opened', openedAt: sql`now()`, openedBy: staffMemberId })
-      .where(
-        and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
-      )
-      .returning({ id: mailItems.id })
+    const [item] = await updateReturning(
+      tx,
+      mailItems,
+      { status: 'opened', openedAt: maintenant(), openedBy: staffMemberId },
+      and(eq(mailItems.id, id), ne(mailItems.status, 'opened'), isNull(mailItems.deletedAt)),
+    )
     if (!item) throw new MailStateError('Ce courrier a déjà été ouvert, ou il a été retiré.')
     const mailRequestId = request?.id ?? null
     if (stored.length > 0) {
@@ -340,7 +341,7 @@ export async function withdrawMail(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx
       .update(mailItems)
-      .set({ deletedAt: sql`now()` })
+      .set({ deletedAt: maintenant() })
       .where(and(eq(mailItems.id, id), isNull(mailItems.deletedAt))),
   )
 }
@@ -485,8 +486,8 @@ export async function requestOpening(id: string, accounts: ClientAccount[]): Pro
   } catch (error) {
     // Deux demandes simultanées : l'index des demandes en cours n'en garde
     // qu'une ; un pli ouvert ou retiré entre-temps : la garde refuse (CA008).
-    const code = pgErrorCode(error)
-    if (code === PG_UNIQUE_VIOLATION || code === PG_MAIL_REQUEST_REFUSED) return false
+    const code = dbErrorCode(error)
+    if (code === DB_UNIQUE_VIOLATION || code === DB_MAIL_REQUEST_REFUSED) return false
     throw error
   }
 }
@@ -520,11 +521,12 @@ export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]
     if (!account) return false
 
     // La date d'annulation est posée par la base.
-    const updated = await tx
-      .update(mailRequests)
-      .set({ status: 'cancelled', cancelledByMemberId: account.memberId })
-      .where(and(eq(mailRequests.id, request.id), eq(mailRequests.status, 'requested')))
-      .returning({ id: mailRequests.id })
+    const updated = await updateReturning(
+      tx,
+      mailRequests,
+      { status: 'cancelled', cancelledByMemberId: account.memberId },
+      and(eq(mailRequests.id, request.id), eq(mailRequests.status, 'requested')),
+    )
     return updated.length > 0
   })
 }

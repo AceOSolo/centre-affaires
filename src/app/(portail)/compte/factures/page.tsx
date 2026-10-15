@@ -39,7 +39,7 @@ const toneIcons: Record<ClientInvoiceTone, typeof CheckIcon> = {
  * Factures et avoirs émis des entreprises du compte (R17) : montant,
  * échéance, ce qui reste à régler, et la vue imprimable — la même que celle
  * du back-office. Jamais un brouillon, jamais la facture d'une autre
- * entreprise : la portée client en RLS l'interdit, les filtres aussi.
+ * entreprise : la requête filtre sur les entreprises du compte (portée client).
  *
  * Mobile d'abord (R25) : une carte par document, l'action en pleine largeur
  * et à 44 px de haut. Les coordonnées de virement sont en tête, avec la

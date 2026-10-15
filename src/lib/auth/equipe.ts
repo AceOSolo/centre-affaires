@@ -1,9 +1,12 @@
 import { and, asc, eq, isNull, or, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { staffMembers, type StaffMember, type StaffRole } from '../../db/staff.ts'
+import { inCurrentTenant } from './membre.ts'
 import { currentTenantId } from '../tenant.ts'
-import { isUuid } from '../uuid.ts'
+import { isUuid, uuidv7 } from '../uuid.ts'
 
 /**
  * L'équipe du centre, gérée depuis le back-office par l'exploitant (R27,
@@ -54,14 +57,19 @@ export async function listTeam(tx: Transaction): Promise<StaffMember[]> {
   return tx
     .select()
     .from(staffMembers)
-    .where(isNull(staffMembers.deletedAt))
+    .where(and(inCurrentTenant(), isNull(staffMembers.deletedAt)))
     .orderBy(asc(staffMembers.role), asc(staffMembers.email))
 }
 
 /**
  * Inscription par adresse. Rend `undefined` quand l'adresse est déjà celle
- * d'un membre actif : l'index unique partiel en décide, sans lecture préalable
- * qui laisserait passer deux inscriptions simultanées.
+ * d'un membre actif : l'index unique (adresse, `live`) en décide, sans lecture
+ * préalable qui laisserait passer deux inscriptions simultanées.
+ *
+ * L'identifiant est posé avant l'insertion : si une autre ligne l'a emporté,
+ * il n'existe pas en base et la relecture ne rend rien.
+ * `ON DUPLICATE KEY UPDATE` no-op plutôt que `INSERT IGNORE`, qui avalerait
+ * aussi les erreurs de clé étrangère et de contrôle.
  *
  * Le compte est rattaché à la première connexion (`resolveStaffMember`).
  */
@@ -69,15 +77,17 @@ export async function addTeamMember(
   tx: Transaction,
   input: { email: string; fullName: string | null; role: StaffRole },
 ): Promise<StaffMember | undefined> {
-  const [created] = await tx
+  const id = uuidv7()
+  await tx
     .insert(staffMembers)
     .values({
+      id,
       email: input.email.trim().toLowerCase(),
       fullName: input.fullName,
       role: input.role,
     })
-    .onConflictDoNothing()
-    .returning()
+    .onDuplicateKeyUpdate({ set: { id: sql`id` } })
+  const [created] = await tx.select().from(staffMembers).where(eq(staffMembers.id, id)).limit(1)
   return created
 }
 
@@ -105,6 +115,7 @@ export async function changeTeamMember(
     .from(staffMembers)
     .where(
       and(
+        inCurrentTenant(),
         isNull(staffMembers.deletedAt),
         or(eq(staffMembers.role, 'admin'), eq(staffMembers.id, targetId)),
       ),
@@ -123,16 +134,15 @@ export async function changeTeamMember(
   })
   if (refusal) return { ok: false, refusal }
 
-  const [updated] = await tx
-    .update(staffMembers)
-    .set(
-      change.kind === 'retrait'
-        ? // Retrait logique : l'accès cesse, la trace reste (décision 6).
-          { deletedAt: sql`now()` }
-        : { role: change.role },
-    )
-    .where(and(eq(staffMembers.id, targetId), isNull(staffMembers.deletedAt)))
-    .returning()
+  const [updated] = await updateReturning(
+    tx,
+    staffMembers,
+    change.kind === 'retrait'
+      ? // Retrait logique : l'accès cesse, la trace reste (décision 6).
+        { deletedAt: maintenant() }
+      : { role: change.role },
+    and(inCurrentTenant(), eq(staffMembers.id, targetId), isNull(staffMembers.deletedAt)),
+  )
   return updated ? { ok: true, member: updated } : { ok: false, refusal: 'introuvable' }
 }
 
@@ -148,7 +158,11 @@ export function listTeamMembers(): Promise<StaffMember[]> {
 export async function findTeamMember(id: string): Promise<StaffMember | undefined> {
   if (!isUuid(id)) return undefined
   const [member] = await withTenant(currentTenantId(), (tx) =>
-    tx.select().from(staffMembers).where(eq(staffMembers.id, id)).limit(1),
+    tx
+      .select()
+      .from(staffMembers)
+      .where(and(inCurrentTenant(), eq(staffMembers.id, id)))
+      .limit(1),
   )
   return member
 }

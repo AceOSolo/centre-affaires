@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
+import { updateReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { isUuid } from '../../lib/uuid.ts'
+import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { contracts, offerRequests, type OfferRequestStatus } from '../contrats/schema.ts'
@@ -118,6 +119,12 @@ export async function openOfferRequest(
       .from(offerRequests)
       .where(
         and(
+          // La base ne filtre plus les lectures : le client doit être
+          // l'une des entreprises du compte (conventions §6).
+          inArray(
+            offerRequests.clientId,
+            accounts.map((account) => account.clientId),
+          ),
           eq(offerRequests.clientId, clientId),
           eq(offerRequests.offerId, offerId),
           eq(offerRequests.status, 'requested'),
@@ -148,15 +155,29 @@ export async function requestOffer(
   options: NotifyOptions = {},
 ): Promise<OfferRequestOutcome> {
   const { account, offer } = input
-  const [created] = await inClientSpace(
+  // Identifiant posé avant l'insertion : si une demande à traiter existe déjà
+  // (`offer_requests_open_key`), l'insertion ne fait rien et l'identifiant
+  // reste introuvable à la relecture.
+  const requestId = uuidv7()
+  const created = await inClientSpace(
     [account],
-    (tx) =>
-      tx
+    async (tx) => {
+      await tx
         .insert(offerRequests)
-        .values({ clientId: account.clientId, offerId: offer.id, requestedByMemberId: account.memberId })
-        // Une demande à traiter existe déjà (`offer_requests_open_key`) : rien de plus.
-        .onConflictDoNothing()
-        .returning({ requestedAt: offerRequests.requestedAt }),
+        .values({
+          id: requestId,
+          clientId: account.clientId,
+          offerId: offer.id,
+          requestedByMemberId: account.memberId,
+        })
+        .onDuplicateKeyUpdate({ set: { id: sql`id` } })
+      const [row] = await tx
+        .select({ requestedAt: offerRequests.requestedAt })
+        .from(offerRequests)
+        .where(and(eq(offerRequests.id, requestId), eq(offerRequests.clientId, account.clientId)))
+        .limit(1)
+      return row
+    },
     options.database,
   )
   if (!created) {
@@ -243,7 +264,7 @@ export async function listOfferRequests(): Promise<OfferRequestRow[]> {
       .where(or(eq(offerRequests.status, 'requested'), gte(offerRequests.closedAt, since)))
       .orderBy(
         sql`case when ${offerRequests.status} = 'requested' then 0 else 1 end`,
-        sql`case when ${offerRequests.status} = 'requested' then ${offerRequests.requestedAt} end asc`,
+        sql`case when ${offerRequests.status} = 'requested' then ${offerRequests.requestedAt} end`,
         desc(offerRequests.closedAt),
       )
       .limit(200),
@@ -266,11 +287,12 @@ export async function dismissOfferRequest(
 ): Promise<boolean> {
   if (!isUuid(id)) return false
   const updated = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(offerRequests)
-      .set({ status: 'dismissed', closedByStaffId: staffMemberId, dismissalReason: reason?.trim() || null })
-      .where(and(eq(offerRequests.id, id), eq(offerRequests.status, 'requested')))
-      .returning({ id: offerRequests.id }),
+    updateReturning(
+      tx,
+      offerRequests,
+      { status: 'dismissed', closedByStaffId: staffMemberId, dismissalReason: reason?.trim() || null },
+      and(eq(offerRequests.id, id), eq(offerRequests.status, 'requested')),
+    ),
   )
   return updated.length > 0
 }

@@ -1,27 +1,25 @@
-import type { NeonAuth } from '@neondatabase/auth/next/server'
-import type { NextRequest } from 'next/server'
-
-import { getAuth } from './src/lib/auth/server.ts'
-
-// Construit à la première requête : importer ce fichier au build ne doit pas
-// exiger les secrets de Neon Auth (voir `getAuth`).
-let middleware: ReturnType<NeonAuth['middleware']> | undefined
+import { getSessionCookie } from 'better-auth/cookies'
+import { NextResponse, type NextRequest } from 'next/server'
 
 /**
  * Filtre d'accès au back-office (ADR 008).
  *
  * Next 16 nomme ce fichier `proxy.ts`. Il redirige vers la connexion les
- * visiteurs sans session, avant même le rendu de la page.
+ * visiteurs sans cookie de session, avant même le rendu de la page.
  *
- * Ce filtre est une commodité, pas la protection : une action serveur s'invoque
- * par son identifiant depuis n'importe quel chemin, y compris la page publique
- * que `matcher` laisse volontairement passer. Le contrôle qui compte est
+ * Ce filtre est une commodité, pas la protection : il ne regarde que la
+ * présence du cookie, pas sa validité, et une action serveur s'invoque par son
+ * identifiant depuis n'importe quel chemin, y compris la page publique que
+ * `matcher` laisse volontairement passer. Le contrôle qui compte est
  * `requirePermission()`, appelé dans les pages et dans chaque action serveur
  * (ADR 019).
  */
 export default function proxy(request: NextRequest) {
-  middleware ??= getAuth().middleware({ loginUrl: '/auth/connexion' })
-  return middleware(request)
+  if (getSessionCookie(request)) return NextResponse.next()
+
+  const login = new URL('/auth/connexion', request.url)
+  login.searchParams.set('redirect', request.nextUrl.pathname + request.nextUrl.search)
+  return NextResponse.redirect(login)
 }
 
 export const config = {

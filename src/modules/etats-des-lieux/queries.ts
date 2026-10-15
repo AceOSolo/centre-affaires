@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto'
 
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, notExists, sql, type SQL } from 'drizzle-orm'
-import { alias, type AnyPgColumn } from 'drizzle-orm/pg-core'
+import { alias, type AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { isUuid } from '../../lib/uuid.ts'
+import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { contracts } from '../contrats/schema.ts'
@@ -34,10 +36,13 @@ import {
 /**
  * Accès aux états des lieux (R06, R33, ADR 039).
  *
- * Les règles vivent en base (garde `inspections_guard`, `CA010` / `CA011`) ;
+ * Les règles vivent en base (triggers `inspections_before_*`, `CA010` / `CA011`) ;
  * ce module lit, écrit, et traduit ses refus. Le back-office passe par
  * `withTenant()`, l'espace client par `inClientSpace()` (ADR 019) : un client
- * n'y voit que ses états des lieux clos, et n'y écrit que sa validation.
+ * n'y voit que ses états des lieux clos, et n'y écrit que sa validation. La
+ * base ne filtre pas les lectures (MySQL n'a pas de RLS) : chaque requête de
+ * l'espace client porte son propre filtre sur `client_id`, `status = 'closed'`
+ * et `deleted_at is null`.
  */
 
 const author = alias(staffMembers, 'inspection_author')
@@ -45,7 +50,7 @@ const closer = alias(staffMembers, 'inspection_closer')
 const publisher = alias(staffMembers, 'template_publisher')
 
 /** Nom affiché d'un membre de l'équipe : son nom, à défaut son adresse. */
-const staffName = (table: { fullName: AnyPgColumn; email: AnyPgColumn }) =>
+const staffName = (table: { fullName: AnyMySqlColumn; email: AnyMySqlColumn }) =>
   sql<string | null>`coalesce(${table.fullName}, ${table.email})`
 
 /** Reformule un refus de la base en `InspectionRefusal` ; laisse remonter les pannes. */
@@ -181,10 +186,10 @@ export async function publishInTransaction(
         .where(eq(inspectionTemplates.id, template.id))
     }
   } else {
-    const [created] = await tx
-      .insert(inspectionTemplates)
-      .values({ resourceType: input.resourceType, name: input.name })
-      .returning({ id: inspectionTemplates.id })
+    const created = await insertReturning(tx, inspectionTemplates, {
+      resourceType: input.resourceType,
+      name: input.name,
+    })
     templateId = created.id
   }
 
@@ -524,6 +529,16 @@ async function loadDetail(tx: Transaction, id: string, clientIds?: readonly stri
       photo.deletedAt.getTime() >= inspection.closedAt.getTime(),
   ).length
 
+  // Sous portée client, l'entrée et la sortie liées ne se lisent que si elles
+  // sont closes et de l'entreprise : un brouillon de sortie reste invisible.
+  const visible: SQL[] = clientIds
+    ? [
+        inArray(inspections.clientId, [...clientIds]),
+        eq(inspections.status, 'closed'),
+        isNull(inspections.deletedAt),
+      ]
+    : []
+
   let entry: InspectionSide | null = null
   if (inspection.entryInspectionId) {
     const [found] = await tx
@@ -543,7 +558,7 @@ async function loadDetail(tx: Transaction, id: string, clientIds?: readonly stri
           eq(inspectionTemplateVersions.id, inspections.templateVersionId),
         ),
       )
-      .where(eq(inspections.id, inspection.entryInspectionId))
+      .where(and(eq(inspections.id, inspection.entryInspectionId), ...visible))
       .limit(1)
     entry = found ?? null
   }
@@ -558,7 +573,7 @@ async function loadDetail(tx: Transaction, id: string, clientIds?: readonly stri
         deletedAt: inspections.deletedAt,
       })
       .from(inspections)
-      .where(and(eq(inspections.entryInspectionId, id), isNull(inspections.deletedAt)))
+      .where(and(eq(inspections.entryInspectionId, id), isNull(inspections.deletedAt), ...visible))
       .limit(1)
     if (found) exit = { id: found.id, stage: inspectionStage(found) }
   }
@@ -888,21 +903,20 @@ export async function createInspection(
       }
 
       const version = await currentVersionFor(tx, candidate.resource.resourceType, staffMemberId)
-      const [created] = await tx
-        .insert(inspections)
-        .values({
-          kind: input.kind,
-          resourceId: candidate.resource.id,
-          clientId: candidate.client.id,
-          bookingId: candidate.bookingId,
-          contractId: candidate.contractId,
-          entryInspectionId,
-          templateVersionId: version.id,
-          performedAt: input.performedAt,
-          createdBy: staffMemberId,
-        })
-        .returning({ id: inspections.id })
-      return created.id
+      const id = uuidv7()
+      await tx.insert(inspections).values({
+        id,
+        kind: input.kind,
+        resourceId: candidate.resource.id,
+        clientId: candidate.client.id,
+        bookingId: candidate.bookingId,
+        contractId: candidate.contractId,
+        entryInspectionId,
+        templateVersionId: version.id,
+        performedAt: input.performedAt,
+        createdBy: staffMemberId,
+      })
+      return id
     }),
   )
 }
@@ -930,18 +944,17 @@ export async function saveInspection(
 ): Promise<void> {
   await translating(() =>
     withTenant(currentTenantId(), async (tx) => {
-      const [saved] = await tx
-        .update(inspections)
-        .set({
+      const [saved] = await updateReturning(
+        tx,
+        inspections,
+        {
           values: input.values,
           observations: input.observations,
           performedAt: input.performedAt,
           ...(closedBy ? { status: 'closed' as const, closedBy } : {}),
-        })
-        .where(
-          and(eq(inspections.id, id), eq(inspections.status, 'draft'), isNull(inspections.deletedAt)),
-        )
-        .returning({ id: inspections.id })
+        },
+        and(eq(inspections.id, id), eq(inspections.status, 'draft'), isNull(inspections.deletedAt)),
+      )
       if (!saved) {
         throw new InspectionRefusal('Cet état des lieux est clos ou retiré : il ne se modifie plus.')
       }
@@ -957,18 +970,18 @@ export async function saveInspection(
 export async function withdrawInspection(id: string): Promise<void> {
   const keys = await translating(() =>
     withTenant(currentTenantId(), async (tx) => {
-      const photos = await tx
-        .update(inspectionPhotos)
-        .set({ deletedAt: sql`now()` })
-        .where(and(eq(inspectionPhotos.inspectionId, id), isNull(inspectionPhotos.deletedAt)))
-        .returning({ storageKey: inspectionPhotos.storageKey })
-      const [withdrawn] = await tx
-        .update(inspections)
-        .set({ deletedAt: sql`now()` })
-        .where(
-          and(eq(inspections.id, id), eq(inspections.status, 'draft'), isNull(inspections.deletedAt)),
-        )
-        .returning({ id: inspections.id })
+      const photos = await updateReturning(
+        tx,
+        inspectionPhotos,
+        { deletedAt: maintenant() },
+        and(eq(inspectionPhotos.inspectionId, id), isNull(inspectionPhotos.deletedAt)),
+      )
+      const [withdrawn] = await updateReturning(
+        tx,
+        inspections,
+        { deletedAt: maintenant() },
+        and(eq(inspections.id, id), eq(inspections.status, 'draft'), isNull(inspections.deletedAt)),
+      )
       if (!withdrawn) {
         throw new InspectionRefusal('Seul un brouillon se retire : un état des lieux clos reste.')
       }
@@ -1009,7 +1022,7 @@ export async function addInspectionPhoto(
     return await translating(() =>
       withTenant(tenantId, async (tx) => {
         const [{ next }] = await tx
-          .select({ next: sql<number>`coalesce(max(${inspectionPhotos.position}) + 1, 0)::int` })
+          .select({ next: sql<number>`coalesce(max(${inspectionPhotos.position}) + 1, 0)` })
           .from(inspectionPhotos)
           .where(
             and(
@@ -1019,23 +1032,22 @@ export async function addInspectionPhoto(
                 : eq(inspectionPhotos.fieldId, input.fieldId),
             ),
           )
-        const [photo] = await tx
-          .insert(inspectionPhotos)
-          .values({
-            inspectionId,
-            storageKey: key,
-            encryptionKeyVersion: sealed.keyVersion,
-            contentType: input.photo.contentType,
-            byteSize: input.photo.bytes.byteLength,
-            width: input.photo.width,
-            height: input.photo.height,
-            caption: input.caption,
-            fieldId: input.fieldId,
-            position: Math.min(next, 32767),
-            uploadedBy: staffMemberId,
-          })
-          .returning({ id: inspectionPhotos.id })
-        return photo.id
+        const id = uuidv7()
+        await tx.insert(inspectionPhotos).values({
+          id,
+          inspectionId,
+          storageKey: key,
+          encryptionKeyVersion: sealed.keyVersion,
+          contentType: input.photo.contentType,
+          byteSize: input.photo.bytes.byteLength,
+          width: input.photo.width,
+          height: input.photo.height,
+          caption: input.caption,
+          fieldId: input.fieldId,
+          position: Math.min(Number(next), 32767),
+          uploadedBy: staffMemberId,
+        })
+        return id
       }),
     )
   } catch (error) {
@@ -1047,11 +1059,12 @@ export async function addInspectionPhoto(
 export async function captionInspectionPhoto(photoId: string, caption: string | null): Promise<void> {
   await translating(() =>
     withTenant(currentTenantId(), async (tx) => {
-      const [photo] = await tx
-        .update(inspectionPhotos)
-        .set({ caption })
-        .where(and(eq(inspectionPhotos.id, photoId), isNull(inspectionPhotos.deletedAt)))
-        .returning({ id: inspectionPhotos.id })
+      const [photo] = await updateReturning(
+        tx,
+        inspectionPhotos,
+        { caption },
+        and(eq(inspectionPhotos.id, photoId), isNull(inspectionPhotos.deletedAt)),
+      )
       if (!photo) throw new InspectionRefusal('Cette photo a été retirée.')
     }),
   )
@@ -1061,11 +1074,12 @@ export async function captionInspectionPhoto(photoId: string, caption: string | 
 export async function removeInspectionPhoto(photoId: string): Promise<void> {
   const key = await translating(() =>
     withTenant(currentTenantId(), async (tx) => {
-      const [photo] = await tx
-        .update(inspectionPhotos)
-        .set({ deletedAt: sql`now()` })
-        .where(and(eq(inspectionPhotos.id, photoId), isNull(inspectionPhotos.deletedAt)))
-        .returning({ storageKey: inspectionPhotos.storageKey })
+      const [photo] = await updateReturning(
+        tx,
+        inspectionPhotos,
+        { deletedAt: maintenant() },
+        and(eq(inspectionPhotos.id, photoId), isNull(inspectionPhotos.deletedAt)),
+      )
       if (!photo) throw new InspectionRefusal('Cette photo a déjà été retirée.')
       return photo.storageKey
     }),
@@ -1242,18 +1256,18 @@ export async function signInspection(
 
   const signed = await translating(() =>
     inClientSpace([account], (tx) =>
-      tx
-        .update(inspections)
-        .set({ signedByMemberId: account.memberId, clientRemarks: remarks })
-        .where(
-          and(
-            eq(inspections.id, id),
-            eq(inspections.clientId, account.clientId),
-            eq(inspections.status, 'closed'),
-            isNull(inspections.signedAt),
-          ),
-        )
-        .returning({ id: inspections.id }),
+      updateReturning(
+        tx,
+        inspections,
+        { signedByMemberId: account.memberId, clientRemarks: remarks },
+        and(
+          eq(inspections.id, id),
+          eq(inspections.clientId, account.clientId),
+          eq(inspections.status, 'closed'),
+          isNull(inspections.deletedAt),
+          isNull(inspections.signedAt),
+        ),
+      ),
     ),
   )
   return signed.length > 0 ? 'signed' : 'already_signed'

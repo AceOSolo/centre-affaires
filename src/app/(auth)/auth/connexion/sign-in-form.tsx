@@ -14,7 +14,7 @@ type Mode = 'connexion' | 'creation'
 
 /**
  * Connexion de l'équipe du centre et des clients : un seul écran, un seul
- * compte Neon Auth, et `/auth/suite` oriente chacun vers son espace.
+ * compte Better Auth, et `/auth/suite` oriente chacun vers son espace.
  *
  * Créer un compte ne donne aucun droit : l'accès dépend de `staff_members`
  * (ADR 008) ou de `client_members` (ADR 015). Un compte inconnu est renvoyé
@@ -26,6 +26,9 @@ export function SignInForm() {
   const searchParams = useSearchParams()
   const [mode, setMode] = useState<Mode>('connexion')
   const [error, setError] = useState<string | null>(null)
+  // Inscription sur un serveur qui exige la vérification de l'adresse : aucune
+  // session n'est ouverte, l'écran dit où est le message au lieu de rediriger.
+  const [confirmation, setConfirmation] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
@@ -35,6 +38,7 @@ export function SignInForm() {
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     setError(null)
+    setConfirmation(null)
 
     const form = new FormData(event.currentTarget)
     const email = String(form.get('email') ?? '').trim()
@@ -47,18 +51,35 @@ export function SignInForm() {
         : 'Adresse ou mot de passe incorrect.'
 
     // Le client d'authentification signale ses refus de deux façons selon le
-    // cas : un `error` dans la réponse, ou une exception (`AuthApiError`) —
-    // « User already exists », par exemple. Les deux doivent finir dans le
-    // `role="alert"` du formulaire, jamais dans l'overlay d'erreur.
+    // cas : un `error` dans la réponse, ou une exception réseau. Les deux
+    // doivent finir dans le `role="alert"` du formulaire, jamais dans
+    // l'overlay d'erreur.
     try {
-      const { error: authError } =
-        mode === 'creation'
-          ? await authClient.signUp.email({ email, password, name })
-          : await authClient.signIn.email({ email, password })
-
-      if (authError) {
-        setError(authError.message ?? repli)
-        return
+      if (mode === 'creation') {
+        const { data, error: authError } = await authClient.signUp.email({ email, password, name })
+        if (authError) {
+          setError(authError.message ?? repli)
+          return
+        }
+        // Sans session (adresse à confirmer), le jeton est nul : on ne
+        // redirige pas vers une page qui renverrait à la connexion.
+        if (!data?.token) {
+          setConfirmation(
+            `Un message de confirmation a été envoyé à ${email}. Confirmez-la puis connectez-vous.`,
+          )
+          setMode('connexion')
+          return
+        }
+      } else {
+        const { error: authError } = await authClient.signIn.email({ email, password })
+        if (authError) {
+          setError(
+            authError.code === 'EMAIL_NOT_VERIFIED'
+              ? 'Adresse non confirmée : ouvrez le message de confirmation reçu, puis réessayez.'
+              : (authError.message ?? repli),
+          )
+          return
+        }
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : repli)
@@ -87,6 +108,15 @@ export function SignInForm() {
       </div>
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+        {confirmation && (
+          <p
+            role="status"
+            className="rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-foreground"
+          >
+            {confirmation}
+          </p>
+        )}
+
         {error && (
           <p
             role="alert"
@@ -134,12 +164,12 @@ export function SignInForm() {
             name="password"
             type="password"
             required
-            minLength={8}
+            minLength={10}
             autoComplete={mode === 'creation' ? 'new-password' : 'current-password'}
             className={`${fieldClass} mt-1.5`}
           />
           {mode === 'creation' && (
-            <p className="mt-1 text-xs text-muted-foreground">8 caractères au minimum.</p>
+            <p className="mt-1 text-xs text-muted-foreground">10 caractères au minimum.</p>
           )}
         </div>
 
@@ -163,6 +193,7 @@ export function SignInForm() {
           onClick={() => {
             setMode(mode === 'creation' ? 'connexion' : 'creation')
             setError(null)
+            setConfirmation(null)
           }}
           className="font-medium text-primary underline-offset-2 hover:underline"
         >

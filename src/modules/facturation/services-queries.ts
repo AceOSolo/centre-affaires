@@ -1,7 +1,9 @@
 import { and, asc, count, eq, isNotNull, isNull, sql } from 'drizzle-orm'
 
-import { PG_UNIQUE_VIOLATION, pgErrorCode } from '../../db/errors.ts'
+import { maintenant } from '../../db/columns.ts'
+import { DB_UNIQUE_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
+import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { subscribedServices } from './schema-factures.ts'
@@ -10,7 +12,7 @@ import type { ServiceInput } from './services-regles.ts'
 
 /**
  * Catalogue de services (R18, ADR 024) : lecture, création, modification,
- * archivage. Toujours sous `withTenant()` : l'isolation par centre est en RLS.
+ * archivage. Toujours sous `withTenant()` : les écritures sont gardées par la base, les lectures filtrent sur le centre (ADR 042).
  */
 
 /**
@@ -63,7 +65,7 @@ export async function findServiceUsage(id: string, today: string): Promise<Servi
         ),
       )
     const [offersUsing] = await tx
-      .select({ total: sql<number>`count(distinct ${offers.id})::int` })
+      .select({ total: sql<number>`count(distinct ${offers.id})`.mapWith(Number) })
       .from(offerItems)
       .innerJoin(offers, eq(offers.id, offerItems.offerId))
       .where(
@@ -93,16 +95,13 @@ export class ArchivedServiceError extends Error {
 }
 
 function translateUnique(error: unknown, code: string | null): never {
-  if (code && pgErrorCode(error) === PG_UNIQUE_VIOLATION) throw new DuplicateServiceCodeError(code)
+  if (code && dbErrorCode(error) === DB_UNIQUE_VIOLATION) throw new DuplicateServiceCodeError(code)
   throw error
 }
 
 export async function createService(input: ServiceInput): Promise<Service> {
   try {
-    const [created] = await withTenant(currentTenantId(), (tx) =>
-      tx.insert(services).values(input).returning(),
-    )
-    return created
+    return await withTenant(currentTenantId(), (tx) => insertReturning(tx, services, input))
   } catch (error) {
     translateUnique(error, input.code)
   }
@@ -149,11 +148,12 @@ export async function updateService(id: string, input: ServiceInput): Promise<vo
 export async function archiveService(id: string): Promise<boolean> {
   if (!isUuid(id)) return false
   const archived = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .update(services)
-      .set({ deletedAt: sql`now()`, isActive: false })
-      .where(and(eq(services.id, id), isNull(services.deletedAt)))
-      .returning({ id: services.id }),
+    updateReturning(
+      tx,
+      services,
+      { deletedAt: maintenant(), isActive: false },
+      and(eq(services.id, id), isNull(services.deletedAt)),
+    ),
   )
   return archived.length > 0
 }

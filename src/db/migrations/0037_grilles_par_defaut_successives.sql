@@ -1,1 +1,0 @@
-DROP INDEX "rate_plans_tenant_default_key";

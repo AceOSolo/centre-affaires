@@ -1,33 +1,29 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { cancelFutureSeries, insertBookingSeries, type BulkBookingInput } from './bulk-queries.ts'
 import { bookings } from './schema.ts'
 
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-describe('création et annulation atomiques des séries', { skip: !ownerUrl || !appUrl ? 'Base de test jetable non configurée' : false }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('création et annulation atomiques des séries', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
   const resourceId = '01999f00-0000-7000-8000-0000000000b1'
   const otherResourceId = '01999f00-0000-7000-8000-0000000000b2'
-  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
   const input = (overrides: Partial<BulkBookingInput> = {}): BulkBookingInput => ({
     resourceIds: [resourceId], kind: 'booking', title: 'Série test', startsOn: '2090-01-02', endsOn: '2090-01-15',
     slots: [{ weekdays: [1], startTime: '09:00', endTime: '10:00' }], ...overrides,
   })
 
-  before(async () => { await migrate(owner.db, { migrationsFolder: './src/db/migrations' }) })
+  before(async () => { bases = await ouvrirBasesDeTest() })
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await viderTables(bases.owner, 'bookings', 'contracts', 'rate_plan_items', 'rate_plans', 'clients', 'resources')
     await asTenant((tx) => tx.execute(sql`insert into resources (id, resource_type, code, name) values
       (${resourceId}, 'salle', 'S-BULK-1', 'Salle 1'), (${otherResourceId}, 'salle', 'S-BULK-2', 'Salle 2')`))
   })
-  after(async () => { await Promise.all([owner.client.end(), app.client.end()]) })
+  after(async () => { await bases.fermer() })
 
   it('crée toutes les occurrences sur plusieurs ressources et les lie à une seule série', async () => {
     const result = await asTenant((tx) => insertBookingSeries(tx, input({ resourceIds: [resourceId, otherResourceId] }), 'Europe/Paris'))

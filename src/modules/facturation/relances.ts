@@ -1,6 +1,7 @@
 import { asc, desc, eq, inArray, sql } from 'drizzle-orm'
 
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
@@ -34,11 +35,7 @@ export type ReminderInput = {
  * qui ne part pas n'est pas inscrit.
  */
 export async function recordReminder(tx: Transaction, input: ReminderInput): Promise<InvoiceReminder> {
-  const [row] = await tx
-    .insert(invoiceReminders)
-    .values({ ...input, recipients: [...input.recipients] })
-    .returning()
-  return row
+  return insertReturning(tx, invoiceReminders, { ...input, recipients: [...input.recipients] })
 }
 
 export type ReminderEntry = InvoiceReminder & { sentByName: string }
@@ -68,7 +65,7 @@ export async function lastRemindersFor(invoiceIds: readonly string[]): Promise<M
   if (ids.length === 0) return new Map()
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
-      .selectDistinctOn([invoiceReminders.invoiceId], {
+      .select({
         invoiceId: invoiceReminders.invoiceId,
         level: invoiceReminders.level,
         channel: invoiceReminders.channel,
@@ -78,5 +75,11 @@ export async function lastRemindersFor(invoiceIds: readonly string[]): Promise<M
       .where(inArray(invoiceReminders.invoiceId, ids))
       .orderBy(invoiceReminders.invoiceId, desc(invoiceReminders.sentAt), desc(invoiceReminders.id)),
   )
-  return new Map(rows.map(({ invoiceId, ...last }) => [invoiceId, last]))
+  // `DISTINCT ON` n'existe pas en MySQL : le tri met la plus récente en
+  // premier pour chaque facture, on garde la première rencontrée.
+  const last = new Map<string, LastReminder>()
+  for (const { invoiceId, ...reminder } of rows) {
+    if (!last.has(invoiceId)) last.set(invoiceId, reminder)
+  }
+  return last
 }

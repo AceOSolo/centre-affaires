@@ -67,16 +67,17 @@ de motif personnel ; on écrit « Réunion Alpha », pas « Entretien M. Dupont 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
 |---|---|---|---|---|---|
 | Membres de l'équipe (`staff_members`) | tant que la personne est dans l'équipe ; la ligne retirée reste, car elle signe des plis, des numérisations, des factures, des consultations. Puis **12 mois** (proposition) | retrait | nom et adresse anonymisés (« Membre anonymisé »), compte détaché | M7, réglage M3 (`removed_member_retention_months`) ; à la demande sur l'écran Équipe | à valider |
-| Comptes d'authentification (`neon_auth` : adresse, nom, mot de passe haché) | tant que le compte existe | création | proposition : supprimer un compte jamais rattaché ou sans connexion depuis 12 mois. L'inscription est ouverte, des comptes inutiles s'accumulent (ADR 008). | aucun : à construire | à fixer (B4) |
-| Sessions (`neon_auth` : adresse IP, navigateur) | jusqu'à expiration de la session | connexion | réglage de Neon Auth | Neon Auth | à vérifier |
+| Comptes d'authentification (tables `auth_*` : adresse, nom, mot de passe haché) | tant que le compte existe | création | proposition : supprimer un compte jamais rattaché ou sans connexion depuis 12 mois. L'inscription est ouverte, des comptes inutiles s'accumulent (ADR 008). | aucun : à construire | à fixer (B4) |
+| Sessions (`auth_*` : adresse IP, navigateur) | jusqu'à expiration de la session | connexion | réglage de Better Auth (durée de session) | Better Auth | à vérifier |
 
-### Technique (ADR 013, ADR 022)
+### Technique (ADR 013, ADR 022, ADR 042)
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
 |---|---|---|---|---|---|
 | Journaux Apache (adresse IP, URL, navigateur) | 14 jours avec la rotation par défaut de Debian | écriture | fichier effacé | M6 | à vérifier sur le serveur, puis à valider. La CNIL recommande 6 mois à 1 an pour les journaux de sécurité. |
 | Journaux de l'application (erreurs ; une adresse électronique peut y figurer) | jusqu'au déploiement suivant, 50 Mo au plus | écriture | effacés | M5 | fixé par l'ADR 022 |
 | Journaux d'envoi de Brevo (destinataire, objet, statut) | durée fixée par Brevo | envoi | — | Brevo | à vérifier dans le compte Brevo |
+| Journal binaire de MySQL (`binlog`, volume `db-data` du VPS : contient les écritures, donc des données personnelles) | 30 jours (réglage par défaut de MySQL 8.4) | écriture | fichier effacé par le serveur | `binlog_expire_logs_seconds` | à valider : une donnée effacée de la base reste lisible dans ces fichiers jusqu'à 30 jours, par qui a accès au volume du serveur ; réduire la durée si le centre le juge nécessaire |
 | Sauvegardes (tout ce qui précède) | 7 lots quotidiens, 4 hebdomadaires, 12 mensuels | lot | lot effacé de la destination | M4 | fixé par l'ADR 022, à valider |
 | Journal des sauvegardes (`sauvegardes.log`) | sans limite | — | — | — | sans donnée personnelle |
 
@@ -203,7 +204,7 @@ déploiement recrée le conteneur.
 1. **Faire valider** par le centre les durées « à valider », à l'écran
    Configuration du centre. Les reporter ensuite au contrat et dans
    l'information des personnes.
-2. **Fixer** la durée des comptes `neon_auth` (B4) : les accès et les
+2. **Fixer** la durée des comptes d'authentification `auth_*` (B4) : les accès et les
    membres retirés ont la leur (M7), pas les comptes d'authentification.
 3. ~~Construire l'anonymisation des fiches clients, contacts, contrats et
    plis~~ : fait (M7, ADR 040). Reste l'IBAN chiffré des mandats révoqués

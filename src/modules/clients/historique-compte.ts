@@ -132,7 +132,7 @@ export function bookingHistoryEntry(row: HistoryBookingRow, timeZone: string): H
   const notes: string[] = []
   // Une demande (site ou espace client) a une étape de confirmation ; une
   // réservation saisie par le centre est ferme dès son enregistrement. Sans
-  // date pour une confirmation antérieure à la migration 0044.
+  // date possible pour une confirmation qui précède sa datation par la base.
   const confirmation: HistoryStep = {
     label: row.confirmedByStaff
       ? 'Confirmée par le centre'

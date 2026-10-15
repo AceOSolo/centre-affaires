@@ -15,9 +15,11 @@ import {
 
 /**
  * Contrats vus depuis l'espace client (R17, ADR 015, ADR 019) : ceux des
- * entreprises du compte, et d'elles seules. Deux verrous, comme pour les
- * réservations : le filtre sur `client_id`, et la portée client de la
- * transaction (`inClientSpace`), qui tiendrait sans lui.
+ * entreprises du compte, et d'elles seules. MySQL n'a pas de Row Level
+ * Security : la base ne filtre pas les lectures, **chaque requête** de ce
+ * fichier filtre donc elle-même sur les `clientIds` du compte (conventions §6),
+ * y compris celles qui lisent les avenants et les documents. La portée client
+ * de la transaction (`inClientSpace`) garde, elle, les écritures.
  *
  * Jamais de brouillon : un contrat en négociation n'engage rien et n'a pas de
  * document (ADR 025). Jamais un contrat archivé (`deleted_at`) : l'archivage
@@ -83,29 +85,34 @@ export async function listContractsForAccounts(
   if (accounts.length === 0) return []
   const clientIds = accounts.map((account) => account.clientId)
   const ids = sql.join(
-    clientIds.map((id) => sql`${id}::uuid`),
+    clientIds.map((id) => sql`${id}`),
     sql`, `,
   )
 
   return inClientSpace(accounts, async (tx) => {
-    const heads = (await tx.execute(sql`
+    // Les vues `contract_price_versions` et `contract_segments` (40-contrats.sql)
+    // se joignent par `contract_id` ; `greatest` ne reçoit jamais de NULL ici.
+    const [heads] = (await tx.execute(sql`
       select k.id, k.client_id, c.name as client_name, k.reference, k.contract_type, k.status,
-             k.starts_on::text as starts_on, k.ends_on::text as ends_on,
-             k.terminated_on::text as terminated_on, k.billing_period, k.currency,
-             k.commitment_months, k.commitment_ends_on::text as commitment_ends_on,
+             cast(k.starts_on as char) as starts_on, cast(k.ends_on as char) as ends_on,
+             cast(k.terminated_on as char) as terminated_on, k.billing_period, k.currency,
+             k.commitment_months, cast(k.commitment_ends_on as char) as commitment_ends_on,
              k.notice_days, k.tacit_renewal, k.renewal_months, o.name as offer_name,
              coalesce(
-               (select v.amount_cents from contract_price_versions(k.id) as v
-                 where v.starts_on <= greatest(${today}::date, k.starts_on)
+               (select v.amount_cents from contract_price_versions as v
+                 where v.contract_id = k.id
+                   and v.starts_on <= greatest(cast(${today} as date), k.starts_on)
                  order by v.starts_on desc limit 1),
                k.amount_cents) as current_amount_cents,
-             (select r.name from contract_segments(k) as s
+             (select r.name from contract_segments as s
                 join resources as r on r.id = s.resource_id
-               where s.starts_on <= greatest(${today}::date, k.starts_on)
+               where s.contract_id = k.id
+                 and s.starts_on <= greatest(cast(${today} as date), k.starts_on)
                order by s.starts_on desc limit 1) as resource_name,
-             (select r.resource_type::text from contract_segments(k) as s
+             (select r.resource_type from contract_segments as s
                 join resources as r on r.id = s.resource_id
-               where s.starts_on <= greatest(${today}::date, k.starts_on)
+               where s.contract_id = k.id
+                 and s.starts_on <= greatest(cast(${today} as date), k.starts_on)
                order by s.starts_on desc limit 1) as resource_type
         from contracts as k
         join clients as c on c.id = k.client_id
@@ -113,28 +120,30 @@ export async function listContractsForAccounts(
        where k.client_id in (${ids})
          and k.status <> 'draft'
          and k.deleted_at is null
-       order by (k.status = 'active') desc, k.starts_on desc, k.reference`)) as unknown as {
-      id: string
-      client_id: string
-      client_name: string
-      reference: string
-      contract_type: ContractType
-      status: Exclude<ContractStatus, 'draft'>
-      starts_on: string
-      ends_on: string | null
-      terminated_on: string | null
-      billing_period: BillingPeriod
-      currency: string
-      commitment_months: number | null
-      commitment_ends_on: string | null
-      notice_days: number
-      tacit_renewal: boolean
-      renewal_months: number | null
-      offer_name: string | null
-      current_amount_cents: number
-      resource_name: string | null
-      resource_type: ResourceType | null
-    }[]
+       order by (k.status = 'active') desc, k.starts_on desc, k.reference`)) as unknown as [
+      {
+        id: string
+        client_id: string
+        client_name: string
+        reference: string
+        contract_type: ContractType
+        status: Exclude<ContractStatus, 'draft'>
+        starts_on: string
+        ends_on: string | null
+        terminated_on: string | null
+        billing_period: BillingPeriod
+        currency: string
+        commitment_months: number | null
+        commitment_ends_on: string | null
+        notice_days: number
+        tacit_renewal: number | boolean
+        renewal_months: number | null
+        offer_name: string | null
+        current_amount_cents: number
+        resource_name: string | null
+        resource_type: ResourceType | null
+      }[],
+    ]
     if (heads.length === 0) return []
     const contractIds = heads.map((head) => head.id)
 
@@ -150,8 +159,10 @@ export async function listContractsForAccounts(
           where r.tenant_id = ${contractAmendments.tenantId} and r.id = ${contractAmendments.resourceId})`,
       })
       .from(contractAmendments)
+      .innerJoin(contracts, eq(contracts.id, contractAmendments.contractId))
       .where(
         and(
+          inArray(contracts.clientId, clientIds),
           inArray(contractAmendments.contractId, contractIds),
           eq(contractAmendments.status, 'signed'),
           isNull(contractAmendments.deletedAt),
@@ -167,8 +178,14 @@ export async function listContractsForAccounts(
         createdAt: contractDocuments.createdAt,
       })
       .from(contractDocuments)
+      .innerJoin(contracts, eq(contracts.id, contractDocuments.contractId))
       .leftJoin(contractAmendments, eq(contractAmendments.id, contractDocuments.amendmentId))
-      .where(inArray(contractDocuments.contractId, contractIds))
+      .where(
+        and(
+          inArray(contracts.clientId, clientIds),
+          inArray(contractDocuments.contractId, contractIds),
+        ),
+      )
       .orderBy(desc(contractDocuments.version))
 
     return heads.map((head) => ({
@@ -186,7 +203,7 @@ export async function listContractsForAccounts(
       commitmentMonths: head.commitment_months,
       commitmentEndsOn: head.commitment_ends_on,
       noticeDays: head.notice_days,
-      tacitRenewal: head.tacit_renewal,
+      tacitRenewal: Boolean(head.tacit_renewal),
       renewalMonths: head.renewal_months,
       offerName: head.offer_name,
       currentAmountCents: head.current_amount_cents,
@@ -253,7 +270,7 @@ export async function findContractDocumentForAccounts(
         sha256: contractDocuments.sha256,
         createdAt: contractDocuments.createdAt,
         snapshot: contractDocuments.snapshot,
-        intact: sql<boolean>`encode(sha256(convert_to(${contractDocuments.snapshot}::text, 'UTF8')), 'hex') = ${contractDocuments.sha256}`,
+        intact: sql<boolean>`sha2(cast(${contractDocuments.snapshot} as char character set utf8mb4), 256) = ${contractDocuments.sha256}`.mapWith(Boolean),
       })
       .from(contractDocuments)
       .innerJoin(contracts, eq(contracts.id, contractDocuments.contractId))

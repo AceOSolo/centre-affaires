@@ -2,32 +2,22 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { listClients } from './queries.ts'
 import { searchClients } from './recherche.ts'
+import { toutVider } from './test-support.ts'
 
 /**
  * Recherche dans la liste des clients (R07) : raison sociale, SIRET, nom d'un
- * contact, combinée au filtre par statut. Contre la base, sous `app_centre`.
+ * contact, combinée au filtre par statut. Contre la base, sous l'identité
+ * applicative. La collation de la base (`utf8mb4_0900_as_ci`) est insensible à
+ * la casse et sensible aux accents : `like` fait ce que faisait `ilike`.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('recherche de clients', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('recherche de clients', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACME = '01a00000-0000-7000-8000-0000000e5a01'
   const BETA = '01a00000-0000-7000-8000-0000000e5a02'
@@ -35,36 +25,39 @@ describe('recherche de clients', { skip: raison }, () => {
   const ARCHIVE = '01a00000-0000-7000-8000-0000000e5a04'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const names = (rows: { name: string }[]) => rows.map((row) => row.name)
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await toutVider(bases.owner)
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, siret, city, status, deleted_at) values
           (${ACME}, 'Acme SAS', '12345678900012', 'Lyon', 'active', null),
           (${BETA}, 'Beta 100% Conseil', '98765432100034', 'Paris', 'prospect', null),
           (${GAMMA}, 'Gamma Immobilier', null, 'Lyon', 'inactive', null),
-          (${ARCHIVE}, 'Acme Ancienne', '11122233300045', 'Lyon', 'inactive', now())`)
+          (${ARCHIVE}, 'Acme Ancienne', '11122233300045', 'Lyon', 'inactive', now(3))`)
       await tx.execute(sql`
         insert into client_contacts (client_id, full_name, job_title, email, is_primary, deleted_at) values
           (${ACME}, 'Alice Martin', 'Gérante', 'alice@acme.fr', true, null),
           (${ACME}, 'Bruno Leroy', 'Comptable', null, false, null),
           (${BETA}, 'Chloé Martinez', null, null, false, null),
-          (${GAMMA}, 'Denis Martel', null, null, false, now()),
+          (${GAMMA}, 'Denis Martel', null, null, false, now(3)),
           (${ARCHIVE}, 'Alice Martin', null, null, true, null)`)
     })
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('liste toutes les fiches vivantes sans recherche, par raison sociale', async () => {

@@ -4,15 +4,16 @@ import {
   boolean,
   char,
   check,
-  integer,
-  jsonb,
-  pgEnum,
-  pgTable,
+  int,
+  json,
+  mysqlEnum,
+  mysqlTable,
   text,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
 import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
+import { tenantContext } from './contexte.ts'
 
 /*
  * Énumérations des paramètres du centre (ADR 023, 026, 027). Déclarées ici et
@@ -30,7 +31,7 @@ import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
  */
 export const prorataRules = ['calendar_days', 'thirty_day_month', 'none'] as const
 export type ProrataRule = (typeof prorataRules)[number]
-export const prorataRuleEnum = pgEnum('prorata_rule', prorataRules)
+export const prorataRuleEnum = (name: string) => mysqlEnum(name, prorataRules)
 
 /**
  * Moment où le récurrent (loyers, forfaits) est facturé (ADR 026) : à échoir,
@@ -39,10 +40,7 @@ export const prorataRuleEnum = pgEnum('prorata_rule', prorataRules)
  */
 export const recurringBillingTimings = ['in_advance', 'in_arrears'] as const
 export type RecurringBillingTiming = (typeof recurringBillingTimings)[number]
-export const recurringBillingTimingEnum = pgEnum(
-  'recurring_billing_timing',
-  recurringBillingTimings,
-)
+export const recurringBillingTimingEnum = (name: string) => mysqlEnum(name, recurringBillingTimings)
 
 /**
  * Mode de paiement (ADR 016, ADR 027) : suivi à la main, sans prestataire.
@@ -50,7 +48,7 @@ export const recurringBillingTimingEnum = pgEnum(
  */
 export const paymentMethods = ['transfer', 'direct_debit', 'other'] as const
 export type PaymentMethod = (typeof paymentMethods)[number]
-export const paymentMethodEnum = pgEnum('payment_method', paymentMethods)
+export const paymentMethodEnum = (name: string) => mysqlEnum(name, paymentMethods)
 
 /** Mention de pénalités de retard par défaut (art. L. 441-10 du Code de commerce). */
 export const DEFAULT_LATE_PAYMENT_PENALTY_TEXT =
@@ -65,16 +63,16 @@ export const DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT = 'Pas d’escompte pour paieme
  */
 export const DEFAULT_TENANT_ID = '01999f00-0000-7000-8000-000000000001'
 
-export const tenants = pgTable('tenants', {
+export const tenants = mysqlTable('tenants', {
   id: primaryKeyId(),
   name: text('name').notNull(),
-  slug: text('slug').notNull().unique(),
+  slug: varchar('slug', { length: 100 }).notNull().unique(),
   /** Fuseau d'affichage du centre (IANA), la base reste en UTC. */
-  timezone: text('timezone').notNull().default('Europe/Paris'),
+  timezone: varchar('timezone', { length: 64 }).notNull().default('Europe/Paris'),
   /** ISO 4217, accompagne les montants stockés en centimes. */
   currency: char('currency', { length: 3 }).notNull().default('EUR'),
-  bookingLeadHours: integer('booking_lead_hours').notNull().default(0),
-  bookingHorizonDays: integer('booking_horizon_days').notNull().default(90),
+  bookingLeadHours: int('booking_lead_hours').notNull().default(0),
+  bookingHorizonDays: int('booking_horizon_days').notNull().default(90),
 
   /*
    * Identité publique du centre.
@@ -117,10 +115,10 @@ export const tenants = pgTable('tenants', {
    * En JSONB plutôt qu'une colonne par réseau — ils vont et viennent, et leur
    * liste n'est jamais interrogée, seulement affichée.
    */
-  socialLinks: jsonb('social_links')
+  socialLinks: json('social_links')
     .$type<{ label: string; url: string }[]>()
     .notNull()
-    .default([]),
+    .default(sql`(JSON_ARRAY())`),
 
   /*
    * Durées de conservation du courrier (RGPD, ADR 015), en mois. Par centre :
@@ -128,16 +126,16 @@ export const tenants = pgTable('tenants', {
    * pas forcément le même. Douze mois par défaut, à confirmer par le centre.
    */
   /** Numérisations, comptées depuis leur dépôt. Le fichier est effacé, la ligne reste. */
-  mailScanRetentionMonths: integer('mail_scan_retention_months').notNull().default(12),
+  mailScanRetentionMonths: int('mail_scan_retention_months').notNull().default(12),
   /** Journal des consultations. */
-  mailAccessLogRetentionMonths: integer('mail_access_log_retention_months').notNull().default(12),
+  mailAccessLogRetentionMonths: int('mail_access_log_retention_months').notNull().default(12),
   /**
    * Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
    * comptés depuis la fin du créneau demandé — ou son annulation, si elle est
    * antérieure. Au terme, `anonymize_expired_public_requests()` les efface ; la
    * réservation reste.
    */
-  publicRequestRetentionMonths: integer('public_request_retention_months').notNull().default(12),
+  publicRequestRetentionMonths: int('public_request_retention_months').notNull().default(12),
 
   /*
    * Anonymisation (R29, ADR 040), en mois. Propositions du registre
@@ -147,20 +145,20 @@ export const tenants = pgTable('tenants', {
    * sont jamais touchés (10 ans, art. L.123-22 du Code de commerce).
    */
   /** Prospect sans contact, compté depuis sa dernière activité (`client_last_activity_on`). */
-  prospectRetentionMonths: integer('prospect_retention_months').notNull().default(36),
+  prospectRetentionMonths: int('prospect_retention_months').notNull().default(36),
   /** Client, compté depuis la fin de la relation (`client_last_activity_on`). */
-  clientRetentionMonths: integer('client_retention_months').notNull().default(60),
+  clientRetentionMonths: int('client_retention_months').notNull().default(60),
   /** Trace d'un membre retiré (équipe ou espace client), comptée depuis son retrait. */
-  removedMemberRetentionMonths: integer('removed_member_retention_months').notNull().default(12),
+  removedMemberRetentionMonths: int('removed_member_retention_months').notNull().default(12),
   /** Journal des envois de notifications (ADR 038), compté depuis l'envoi. */
-  notificationLogRetentionMonths: integer('notification_log_retention_months').notNull().default(12),
+  notificationLogRetentionMonths: int('notification_log_retention_months').notNull().default(12),
   /**
    * Photos d'états des lieux (ADR 039), comptées depuis la clôture de l'état
    * des lieux de sortie. Le fichier part, la ligne reste.
    */
-  inspectionPhotoRetentionMonths: integer('inspection_photo_retention_months').notNull().default(36),
+  inspectionPhotoRetentionMonths: int('inspection_photo_retention_months').notNull().default(36),
   /** Journal des consultations des photos d'états des lieux. */
-  inspectionAccessLogRetentionMonths: integer('inspection_access_log_retention_months')
+  inspectionAccessLogRetentionMonths: int('inspection_access_log_retention_months')
     .notNull()
     .default(12),
 
@@ -204,15 +202,15 @@ export const tenants = pgTable('tenants', {
    * Tolérance avant qu'une unité entamée ne soit due, en minutes. 0 : toute
    * unité entamée est due (ADR 006) ; 10 : une réunion de 1 h 10 compte 1 h.
    */
-  startedUnitToleranceMinutes: integer('started_unit_tolerance_minutes').notNull().default(0),
+  startedUnitToleranceMinutes: int('started_unit_tolerance_minutes').notNull().default(0),
   /** Durée d'une demi-journée vendue, en minutes (240 : ADR 009). */
-  halfDayMinutes: integer('half_day_minutes').notNull().default(240),
+  halfDayMinutes: int('half_day_minutes').notNull().default(240),
   /** Taux de TVA par défaut, en points de base : 2000 = 20 %. */
-  defaultVatRateBp: integer('default_vat_rate_bp').notNull().default(2000),
+  defaultVatRateBp: int('default_vat_rate_bp').notNull().default(2000),
 
   /* Facturation (ADR 026). */
   /** Échéance par défaut d'une facture, en jours après son émission. */
-  invoicePaymentTermsDays: integer('invoice_payment_terms_days').notNull().default(30),
+  invoicePaymentTermsDays: int('invoice_payment_terms_days').notNull().default(30),
   recurringBillingTiming: recurringBillingTimingEnum('recurring_billing_timing')
     .notNull()
     .default('in_advance'),
@@ -222,20 +220,20 @@ export const tenants = pgTable('tenants', {
    * à l'encaissement, régime par défaut des services.
    */
   vatOnDebits: boolean('vat_on_debits').notNull().default(false),
-  latePaymentPenaltyText: text('late_payment_penalty_text')
+  latePaymentPenaltyText: varchar('late_payment_penalty_text', { length: 1000 })
     .notNull()
     .default(DEFAULT_LATE_PAYMENT_PENALTY_TEXT),
   /** Indemnité forfaitaire pour frais de recouvrement, en centimes (40 € : art. D. 441-5). */
-  recoveryIndemnityCents: integer('recovery_indemnity_cents').notNull().default(4000),
-  earlyPaymentDiscountText: text('early_payment_discount_text')
+  recoveryIndemnityCents: int('recovery_indemnity_cents').notNull().default(4000),
+  earlyPaymentDiscountText: varchar('early_payment_discount_text', { length: 500 })
     .notNull()
     .default(DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT),
   /** Mentions complémentaires imprimées au pied des factures. */
   invoiceFooterText: text('invoice_footer_text'),
 
   /* Export comptable (ADR 027) : codes des journaux. Les comptes sont dans `accounting_accounts`. */
-  accountingSalesJournal: text('accounting_sales_journal').notNull().default('VE'),
-  accountingBankJournal: text('accounting_bank_journal').notNull().default('BQ'),
+  accountingSalesJournal: varchar('accounting_sales_journal', { length: 8 }).notNull().default('VE'),
+  accountingBankJournal: varchar('accounting_bank_journal', { length: 8 }).notNull().default('BQ'),
 
   ...timestamps(),
   deletedAt: deletedAt(),
@@ -261,14 +259,14 @@ export const tenants = pgTable('tenants', {
     'tenants_inspection_retention_valid',
     sql`${table.inspectionPhotoRetentionMonths} between 1 and 120 and ${table.inspectionAccessLogRetentionMonths} between 1 and 120`,
   ),
-  check('tenants_siren_format', sql`${table.siren} is null or ${table.siren} ~ '^[0-9]{9}$'`),
+  check('tenants_siren_format', sql`${table.siren} is null or REGEXP_LIKE(${table.siren}, '^[0-9]{9}$', 'c')`),
   check(
     'tenants_siret_format',
-    sql`${table.siret} is null or (${table.siret} ~ '^[0-9]{14}$' and (${table.siren} is null or left(${table.siret}, 9) = ${table.siren}))`,
+    sql`${table.siret} is null or (REGEXP_LIKE(${table.siret}, '^[0-9]{14}$', 'c') and (${table.siren} is null or left(${table.siret}, 9) = ${table.siren}))`,
   ),
   check(
     'tenants_vat_number_format',
-    sql`${table.vatNumber} is null or ${table.vatNumber} ~ '^[A-Z]{2}[0-9A-Z]{2,13}$'`,
+    sql`${table.vatNumber} is null or REGEXP_LIKE(${table.vatNumber}, '^[A-Z]{2}[0-9A-Z]{2,13}$', 'c')`,
   ),
   check(
     'tenants_share_capital_positive',
@@ -276,15 +274,15 @@ export const tenants = pgTable('tenants', {
   ),
   check(
     'tenants_bank_iban_format',
-    sql`${table.bankIban} is null or ${table.bankIban} ~ '^[A-Z]{2}[0-9]{2}[0-9A-Z]{11,30}$'`,
+    sql`${table.bankIban} is null or REGEXP_LIKE(${table.bankIban}, '^[A-Z]{2}[0-9]{2}[0-9A-Z]{11,30}$', 'c')`,
   ),
   check(
     'tenants_bank_bic_format',
-    sql`${table.bankBic} is null or ${table.bankBic} ~ '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$'`,
+    sql`${table.bankBic} is null or REGEXP_LIKE(${table.bankBic}, '^[A-Z]{6}[A-Z0-9]{2}([A-Z0-9]{3})?$', 'c')`,
   ),
   check(
     'tenants_sepa_creditor_id_format',
-    sql`${table.sepaCreditorId} is null or ${table.sepaCreditorId} ~ '^[A-Z]{2}[0-9]{2}[0-9A-Z]{1,31}$'`,
+    sql`${table.sepaCreditorId} is null or REGEXP_LIKE(${table.sepaCreditorId}, '^[A-Z]{2}[0-9]{2}[0-9A-Z]{1,31}$', 'c')`,
   ),
   check(
     'tenants_pricing_rules_valid',
@@ -293,25 +291,28 @@ export const tenants = pgTable('tenants', {
   // 60 jours au plus après l'émission : plafond légal (art. L. 441-10).
   check(
     'tenants_invoicing_rules_valid',
-    sql`${table.invoicePaymentTermsDays} between 0 and 60 and ${table.recoveryIndemnityCents} >= 0 and btrim(${table.latePaymentPenaltyText}) <> '' and btrim(${table.earlyPaymentDiscountText}) <> ''`,
+    sql`${table.invoicePaymentTermsDays} between 0 and 60 and ${table.recoveryIndemnityCents} >= 0 and trim(${table.latePaymentPenaltyText}) <> '' and trim(${table.earlyPaymentDiscountText}) <> ''`,
   ),
   check(
     'tenants_accounting_journals_valid',
-    sql`${table.accountingSalesJournal} ~ '^[0-9A-Z]{1,8}$' and ${table.accountingBankJournal} ~ '^[0-9A-Z]{1,8}$'`,
+    sql`REGEXP_LIKE(${table.accountingSalesJournal}, '^[0-9A-Z]{1,8}$', 'c') and REGEXP_LIKE(${table.accountingBankJournal}, '^[0-9A-Z]{1,8}$', 'c')`,
   ),
 ])
 
 /**
  * Colonne `tenant_id` de toutes les tables métier.
  *
- * Valeur par défaut : le tenant du contexte de session, ou le centre unique.
- * L'isolation réelle est assurée par les politiques RLS (migration 0003), qui
- * exigent un `app.tenant_id` explicite et ne renvoient rien sans lui.
+ * Valeur par défaut : le centre du contexte de `withTenant()` (calculé côté
+ * application, `tenantContext`), ou le centre unique. MySQL n'a pas de Row
+ * Level Security : l'isolation se fait dans le code (voir `withTenant()` dans
+ * `src/db/index.ts` et ADR 042). La valeur par défaut posée en base sert aux
+ * insertions en SQL direct.
  */
 export const tenantId = () =>
-  uuid('tenant_id')
+  char('tenant_id', { length: 36 })
     .notNull()
-    .default(sql`tenant_id_default()`)
+    .default(DEFAULT_TENANT_ID)
+    .$defaultFn(() => tenantContext.getStore() ?? DEFAULT_TENANT_ID)
     .references(() => tenants.id, { onDelete: 'restrict' })
 
 export type Tenant = typeof tenants.$inferSelect

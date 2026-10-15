@@ -6,16 +6,16 @@ import {
   date,
   foreignKey,
   index,
-  pgEnum,
-  pgTable,
+  mysqlEnum,
+  mysqlTable,
   text,
-  timestamp,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { anonymizationBasisEnum, anonymizationTraceCheck, staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 
@@ -25,19 +25,20 @@ import { tenantId } from '../../db/tenants.ts'
  */
 export const clientStatuses = ['prospect', 'active', 'inactive'] as const
 export type ClientStatus = (typeof clientStatuses)[number]
-export const clientStatusEnum = pgEnum('client_status', clientStatuses)
+export const clientStatusEnum = (name: string) => mysqlEnum(name, clientStatuses)
 
-export const clients = pgTable(
+export const clients = mysqlTable(
   'clients',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     /** Raison sociale. */
-    name: text('name').notNull(),
+    name: varchar('name', { length: 255 }).notNull(),
     /** SAS, SARL, association… saisie libre, les formes varient par pays. */
     legalForm: text('legal_form'),
     /** Facultatif : un client étranger n'en a pas. */
-    siret: text('siret'),
+    /** 14 chiffres, sans espace (`normaliseSiret`). */
+    siret: varchar('siret', { length: 14 }),
     vatNumber: text('vat_number'),
     email: text('email'),
     phone: text('phone'),
@@ -54,7 +55,7 @@ export const clients = pgTable(
      * compte collectif 411 : « DURAND ». Nul : l'export le dérive ou le
      * demande.
      */
-    accountingCode: text('accounting_code'),
+    accountingCode: varchar('accounting_code', { length: 17 }),
     /**
      * Dernier échange noté par l'équipe avec l'entreprise (appel, rendez-vous,
      * visite), jour civil du centre. Une des dates dont
@@ -72,13 +73,22 @@ export const clients = pgTable(
      * factures émises gardent leur instantané de l'acheteur (obligation de
      * conservation de 10 ans).
      */
-    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    anonymizedAt: instant('anonymized_at'),
     /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
-    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    anonymizedBy: char('anonymized_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     /** Au terme, à la demande d'effacement, ou à la fin de la relation (`anonymizationBases`). */
     anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
     /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
     erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
+    /**
+     * Colonne générée : `1` tant que la fiche n'est pas archivée, `NULL` ensuite.
+     * MySQL n'a pas d'index unique partiel : un index unique ignore les `NULL`,
+     * donc l'unicité « parmi les fiches vivantes » se fait en l'incluant
+     * (conventions §3.1). Jamais écrite.
+     */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     // Cible des clés étrangères composites : un contrat ne peut pas viser le
@@ -92,18 +102,19 @@ export const clients = pgTable(
     check('clients_anonymization_traced', anonymizationTraceCheck(table)),
     // Deux clients vivants ne partagent pas un compte auxiliaire : leurs
     // écritures se mêleraient chez l'expert-comptable.
-    uniqueIndex('clients_tenant_accounting_code_key')
-      .on(table.tenantId, table.accountingCode)
-      .where(sql`deleted_at is null and accounting_code is not null`),
+    // (`accounting_code` nul : plusieurs `NULL` sont admis par l'index unique.)
+    uniqueIndex('clients_tenant_accounting_code_key').on(
+      table.tenantId,
+      table.accountingCode,
+      table.live,
+    ),
     check(
       'clients_accounting_code_format',
-      sql`${table.accountingCode} is null or ${table.accountingCode} ~ '^[0-9A-Z]{1,17}$'`,
+      sql`${table.accountingCode} is null or REGEXP_LIKE(${table.accountingCode}, '^[0-9A-Z]{1,17}$', 'c')`,
     ),
     // Le SIRET identifie l'entreprise : deux fiches pour le même seraient deux
     // historiques de facturation à réconcilier.
-    uniqueIndex('clients_tenant_siret_key')
-      .on(table.tenantId, table.siret)
-      .where(sql`deleted_at is null and siret is not null`),
+    uniqueIndex('clients_tenant_siret_key').on(table.tenantId, table.siret, table.live),
     index('clients_tenant_name_idx').on(table.tenantId, table.name),
   ],
 )
@@ -114,7 +125,7 @@ export type NewClient = typeof clients.$inferInsert
 /**
  * Personnes qui accèdent à l'espace client d'une entreprise (ADR 015).
  *
- * Même modèle que `staff_members` (ADR 008) : Neon Auth dit qui est connecté,
+ * Même modèle que `staff_members` (ADR 008) : l'authentification dit qui est connecté,
  * cette table dit à quelle entreprise cette personne a accès. Le centre inscrit
  * une adresse depuis la fiche client, le compte est rattaché à la première
  * connexion. Avoir un compte ne donne accès à rien.
@@ -126,19 +137,20 @@ export type NewClient = typeof clients.$inferInsert
  * Dans le module `clients` et non dans `src/db/` comme `staff_members` : l'accès
  * est donné à une entreprise cliente, il n'a pas de sens sans elle.
  */
-export const clientMembers = pgTable(
+export const clientMembers = mysqlTable(
   'client_members',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     /**
-     * Identifiant du compte Neon Auth, nul jusqu'à la première connexion. Pas de
-     * clé étrangère vers `neon_auth`, pour la même raison que `staff_members`.
+     * Identifiant du compte (Better Auth, `auth_user`), nul jusqu'à la première
+     * connexion. Pas de clé étrangère vers `auth_*`, pour la même raison que
+     * `staff_members`.
      */
-    authUserId: text('auth_user_id'),
+    authUserId: varchar('auth_user_id', { length: 255 }),
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
-    email: text('email').notNull(),
+    email: varchar('email', { length: 255 }).notNull(),
     fullName: text('full_name'),
     ...timestamps(),
     /** Retrait de l'accès : il cesse, l'historique des demandes reste (décision 6). */
@@ -149,12 +161,16 @@ export const clientMembers = pgTable(
      * compte détaché. La ligne reste : elle signe des demandes, des
      * consultations, des validations d'états des lieux.
      */
-    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    anonymizedAt: instant('anonymized_at'),
     /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
-    anonymizedBy: uuid('anonymized_by').references(() => staffMembers.id, { onDelete: 'restrict' }),
+    anonymizedBy: char('anonymized_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
     /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
     erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
+    /** `1` tant que l'accès n'est pas retiré, `NULL` ensuite : voir `clients.live`. */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     foreignKey({
@@ -176,13 +192,19 @@ export const clientMembers = pgTable(
     check('client_members_anonymization_traced', anonymizationTraceCheck(table)),
     // Une adresse ne vaut qu'une fois par entreprise, et redevient libre après
     // un retrait.
-    uniqueIndex('client_members_client_email_key')
-      .on(table.tenantId, table.clientId, table.email)
-      .where(sql`deleted_at is null`),
+    uniqueIndex('client_members_client_email_key').on(
+      table.tenantId,
+      table.clientId,
+      table.email,
+      table.live,
+    ),
     // Un compte n'est rattaché qu'une fois à une même entreprise.
-    uniqueIndex('client_members_client_auth_user_key')
-      .on(table.clientId, table.authUserId)
-      .where(sql`auth_user_id is not null and deleted_at is null`),
+    // (`auth_user_id` nul : plusieurs `NULL` sont admis par l'index unique.)
+    uniqueIndex('client_members_client_auth_user_key').on(
+      table.clientId,
+      table.authUserId,
+      table.live,
+    ),
     index('client_members_tenant_email_idx').on(table.tenantId, table.email),
     index('client_members_auth_user_idx').on(table.authUserId),
   ],
@@ -203,12 +225,12 @@ export type NewClientMember = typeof clientMembers.$inferInsert
  * Données personnelles de tiers : elles suivent la fiche client, et partent
  * avec elle au terme de sa conservation (registre RGPD, ADR 020).
  */
-export const clientContacts = pgTable(
+export const clientContacts = mysqlTable(
   'client_contacts',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    clientId: uuid('client_id').notNull(),
+    clientId: char('client_id', { length: 36 }).notNull(),
     fullName: text('full_name').notNull(),
     /** Fonction dans l'entreprise : « gérante », « expert-comptable ». */
     jobTitle: text('job_title'),
@@ -222,7 +244,15 @@ export const clientContacts = pgTable(
     ...timestamps(),
     deletedAt: deletedAt(),
     /** Anonymisation avec la fiche de l'entreprise (R29, ADR 040). */
-    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    anonymizedAt: instant('anonymized_at'),
+    /**
+     * `1` pour le contact principal actif, `NULL` sinon : l'index unique
+     * n'admet alors qu'un principal vivant par entreprise (conventions §3.1).
+     */
+    primaryLive: tinyint('primary_live').generatedAlwaysAs(
+      sql`if(is_primary and deleted_at is null, 1, null)`,
+      { mode: 'virtual' },
+    ),
   },
   (table) => [
     foreignKey({
@@ -235,11 +265,13 @@ export const clientContacts = pgTable(
     // Au plus un contact principal actif par entreprise : deux rendraient
     // « qui appeler » dépendant de l'ordre de lecture. Archivé, il libère la
     // place.
-    uniqueIndex('client_contacts_primary_key')
-      .on(table.tenantId, table.clientId)
-      .where(sql`is_primary and deleted_at is null`),
+    uniqueIndex('client_contacts_primary_key').on(
+      table.tenantId,
+      table.clientId,
+      table.primaryLive,
+    ),
     index('client_contacts_client_idx').on(table.tenantId, table.clientId),
-    check('client_contacts_name_not_blank', sql`btrim(${table.fullName}) <> ''`),
+    check('client_contacts_name_not_blank', sql`trim(${table.fullName}) <> ''`),
     check(
       'client_contacts_anonymized_archived',
       sql`${table.anonymizedAt} is null or ${table.deletedAt} is not null`,

@@ -4,17 +4,16 @@ import {
   check,
   foreignKey,
   index,
-  integer,
-  pgEnum,
-  pgTable,
+  int,
+  mysqlEnum,
+  mysqlTable,
   text,
-  timestamp,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
-import { primaryKeyId, timestamps } from '../../db/columns.ts'
+import { instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
@@ -28,13 +27,13 @@ import { resources } from '../ressources/schema.ts'
  * `cancelled` : libère le créneau, la ligne est conservée.
  *
  * Une réservation n'a pas de `deleted_at` : l'annulation est sa suppression
- * logique. La contrainte d'exclusion (migration 0002) porte sur
- * `status <> 'cancelled'` ; un second marqueur d'effacement laisserait des
+ * logique. Le trigger anti-chevauchement
+ * (`src/db/regles/20-reservations.sql`) porte sur `status <> 'cancelled'` ; un second marqueur d'effacement laisserait des
  * créneaux bloqués par des lignes invisibles.
  */
 export const bookingStatuses = ['pending', 'confirmed', 'cancelled'] as const
 export type BookingStatus = (typeof bookingStatuses)[number]
-export const bookingStatusEnum = pgEnum('booking_status', bookingStatuses)
+export const bookingStatusEnum = (name: string) => mysqlEnum(name, bookingStatuses)
 
 /**
  * Nature de la ligne.
@@ -43,9 +42,9 @@ export const bookingStatusEnum = pgEnum('booking_status', bookingStatuses)
  * - `unavailability` : un blocage posé par l'équipe (entretien, travaux).
  * - `contract` : la période d'un contrat qui loue la ressource (ADR 018). Tenue
  *   par le trigger `contracts_sync_occupation` à partir du contrat : l'écrire
- *   directement est refusé par la base (SQLSTATE `CA001`).
+ *   directement est refusé par la base (code `CA001`).
  *
- * Les trois occupent la ressource sous la même contrainte d'exclusion : un
+ * Les trois occupent la ressource sous le même garde anti-chevauchement : un
  * bureau loué au mois ne peut pas être réservé à l'heure.
  */
 export const bookingKinds = ['booking', 'unavailability', 'contract'] as const
@@ -63,15 +62,14 @@ export type BookingKind = (typeof bookingKinds)[number]
  */
 export const bookingChannels = ['staff', 'client', 'public'] as const
 export type BookingChannel = (typeof bookingChannels)[number]
-export const bookingChannelEnum = pgEnum('booking_channel', bookingChannels)
+export const bookingChannelEnum = (name: string) => mysqlEnum(name, bookingChannels)
 
 /**
  * Fin d'une occupation sans terme : un contrat à durée indéterminée (ADR 018).
  *
- * Un instant très lointain plutôt que `infinity` : le pilote lit les
- * `timestamptz` en `Date`, et `infinity` y deviendrait une `Invalid Date` qui
- * casserait silencieusement tous les calculs de planning. La même valeur est
- * rendue par la fonction SQL `booking_open_end()`.
+ * Un instant très lointain : MySQL n'a pas d'infini, et une `Date`
+ * invalide casserait silencieusement tous les calculs de planning. C'est la
+ * valeur que les routines de synchronisation d'occupation écrivent aussi.
  */
 export const OPEN_ENDED_BOOKING_END = new Date('9999-12-31T00:00:00.000Z')
 
@@ -80,20 +78,20 @@ export function isOpenEndedBooking(booking: { endsAt: Date }): boolean {
   return booking.endsAt.getTime() >= OPEN_ENDED_BOOKING_END.getTime()
 }
 
-export const bookings = pgTable(
+export const bookings = mysqlTable(
   'bookings',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    resourceId: uuid('resource_id').notNull(),
+    resourceId: char('resource_id', { length: 36 }).notNull(),
     /** Occurrences créées ensemble ; chacune reste déplaçable et annulable. */
-    seriesId: uuid('series_id'),
-    kind: text('kind').$type<BookingKind>().notNull().default('booking'),
+    seriesId: char('series_id', { length: 36 }),
+    kind: varchar('kind', { length: 20 }).$type<BookingKind>().notNull().default('booking'),
     channel: bookingChannelEnum('channel').notNull(),
     /** Bornes `[)` : une réservation qui finit à 10h00 n'entre pas en conflit
      * avec une qui commence à 10h00. */
-    startsAt: timestamp('starts_at', { withTimezone: true }).notNull(),
-    endsAt: timestamp('ends_at', { withTimezone: true }).notNull(),
+    startsAt: instant('starts_at').notNull(),
+    endsAt: instant('ends_at').notNull(),
     status: bookingStatusEnum('status').notNull().default('confirmed'),
     /** Objet de la réservation, affiché dans le calendrier. */
     title: text('title').notNull(),
@@ -109,21 +107,21 @@ export const bookings = pgTable(
     requesterPhone: text('requester_phone'),
     /**
      * Date à laquelle les coordonnées du demandeur ont été effacées, au terme
-     * de la durée de conservation du centre (ADR 020). Posée par la fonction
+     * de la durée de conservation du centre (ADR 020). Posée par la routine
      * `anonymize_expired_public_requests()`, jamais par le code.
      */
-    requesterAnonymizedAt: timestamp('requester_anonymized_at', { withTimezone: true }),
+    requesterAnonymizedAt: instant('requester_anonymized_at'),
     /**
      * Entreprise cliente pour laquelle la salle est réservée (ADR 015). Nulle
      * pour une indisponibilité, ou pour un visiteur qui n'est pas client. C'est
      * ce qui fait apparaître la réservation dans l'espace du client.
      */
-    clientId: uuid('client_id'),
+    clientId: char('client_id', { length: 36 }),
     /**
      * Contrat au titre duquel la ressource est occupée (R05). Toujours posé sur
      * une occupation de contrat (`kind = 'contract'`) ; facultatif sinon.
      */
-    contractId: uuid('contract_id'),
+    contractId: char('contract_id', { length: 36 }),
     /**
      * Segment d'occupation d'un contrat (ADR 025) : l'avenant qui l'a ouvert,
      * nul pour le segment initial. Un avenant qui change la ressource en cours
@@ -131,7 +129,7 @@ export const bookings = pgTable(
      * et occupe la nouvelle ensuite : deux lignes, une par segment. Posé par
      * `apply_contract_occupation`, seulement sur `kind = 'contract'`.
      */
-    contractAmendmentId: uuid('contract_amendment_id'),
+    contractAmendmentId: char('contract_amendment_id', { length: 36 }),
 
     /*
      * Devis retenu (R11, ADR 023) : le prix figé au moment de la réservation,
@@ -143,26 +141,27 @@ export const bookings = pgTable(
     /** Unité facturée : heure, demi-journée, journée, semaine. */
     quoteUnit: rateUnitEnum('quote_unit'),
     /** Nombre d'unités dues, unité entamée comprise (règle du centre). */
-    quoteQuantity: integer('quote_quantity'),
+    quoteQuantity: int('quote_quantity'),
     /** Prix unitaire HT retenu, en centimes. */
-    quoteUnitPriceCents: integer('quote_unit_price_cents'),
-    quoteDiscountBp: integer('quote_discount_bp'),
-    quoteDiscountAmountCents: integer('quote_discount_amount_cents'),
+    quoteUnitPriceCents: int('quote_unit_price_cents'),
+    quoteDiscountBp: int('quote_discount_bp'),
+    quoteDiscountAmountCents: int('quote_discount_amount_cents'),
     /** Montant HT du devis, calculé par la base par la règle d'arrondi commune. */
-    quoteAmountCents: integer('quote_amount_cents').generatedAlwaysAs(
+    quoteAmountCents: int('quote_amount_cents').generatedAlwaysAs(
       lineNetAmountSql({
         quantity: 'quote_quantity',
         unitPrice: 'quote_unit_price_cents',
         discountBp: 'quote_discount_bp',
         discountCents: 'quote_discount_amount_cents',
       }),
+      { mode: 'stored' },
     ),
-    quoteVatRateBp: integer('quote_vat_rate_bp'),
+    quoteVatRateBp: int('quote_vat_rate_bp'),
     quoteCurrency: char('quote_currency', { length: 3 }),
     /** Ligne de grille appliquée ; nulle pour un prix saisi à la main. */
-    quoteRatePlanItemId: uuid('quote_rate_plan_item_id'),
+    quoteRatePlanItemId: char('quote_rate_plan_item_id', { length: 36 }),
     /** Date du devis : l'instant où le prix a été figé. */
-    quotedAt: timestamp('quoted_at', { withTimezone: true }),
+    quotedAt: instant('quoted_at'),
 
     /**
      * Personne qui a réservé depuis son espace client (R23, ADR 036) : une
@@ -170,24 +169,24 @@ export const bookings = pgTable(
      * réglage de sa ressource (`resources.client_booking_mode`) : la base en
      * pose le statut — confirmée d'emblée (`instant`, devis figé), en attente
      * de l'accueil sinon — et refuse une ressource fermée au portail
-     * (SQLSTATE `CA009`). Nulle pour l'équipe, la page publique et les
+     * (code `CA009`). Nulle pour l'équipe, la page publique et les
      * occupations de contrat.
      */
-    bookedByMemberId: uuid('booked_by_member_id'),
+    bookedByMemberId: char('booked_by_member_id', { length: 36 }),
 
     /**
      * Confirmation (R24, ADR 041) : instant posé par la base quand la
      * réservation devient confirmée — à sa création, ou quand l'accueil
      * accepte la demande. Nulle pour une réservation confirmée avant la
-     * migration 0044 : l'étape reste connue, pas sa date.
+     * introduction de cette colonne : l'étape reste connue, pas sa date.
      */
-    confirmedAt: timestamp('confirmed_at', { withTimezone: true }),
+    confirmedAt: instant('confirmed_at'),
     /** Membre de l'équipe qui a accepté la demande ; nul à la création ou en confirmation immédiate. */
-    confirmedByStaffId: uuid('confirmed_by_staff_id').references(() => staffMembers.id, {
+    confirmedByStaffId: char('confirmed_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
 
-    cancelledAt: timestamp('cancelled_at', { withTimezone: true }),
+    cancelledAt: instant('cancelled_at'),
     cancellationReason: text('cancellation_reason'),
     /**
      * Auteur de l'annulation (R24, ADR 036) : la personne de l'entreprise qui
@@ -196,10 +195,19 @@ export const bookings = pgTable(
      * membre de l'équipe. Nuls pour une annulation antérieure à la vague 3,
      * ou posée par la base (occupation de contrat).
      */
-    cancelledByMemberId: uuid('cancelled_by_member_id'),
-    cancelledByStaffId: uuid('cancelled_by_staff_id').references(() => staffMembers.id, {
+    cancelledByMemberId: char('cancelled_by_member_id', { length: 36 }),
+    cancelledByStaffId: char('cancelled_by_staff_id', { length: 36 }).references(() => staffMembers.id, {
       onDelete: 'restrict',
     }),
+    /**
+     * Segment d'occupation de contrat (colonne générée) : l'avenant, ou l'UUID
+     * nul pour le segment initial ; NULL pour toute autre ligne. Sert l'unicité
+     * d'une occupation par contrat et par segment.
+     */
+    contractOccupationSegment: char('contract_occupation_segment', { length: 36 }).generatedAlwaysAs(
+      sql`if(kind = 'contract', coalesce(contract_amendment_id, '00000000-0000-0000-0000-000000000000'), null)`,
+      { mode: 'virtual' },
+    ),
     ...timestamps(),
   },
   (table) => [
@@ -259,27 +267,24 @@ export const bookings = pgTable(
     ),
     check(
       'bookings_cancelled_by_consistent',
-      sql`num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 0 or (${table.status} = 'cancelled' and num_nonnulls(${table.cancelledByMemberId}, ${table.cancelledByStaffId}) = 1 and (${table.cancelledByMemberId} is null or ${table.clientId} is not null))`,
+      sql`(${table.cancelledByMemberId} is not null) + (${table.cancelledByStaffId} is not null) = 0 or (${table.status} = 'cancelled' and (${table.cancelledByMemberId} is not null) + (${table.cancelledByStaffId} is not null) = 1 and (${table.cancelledByMemberId} is null or ${table.clientId} is not null))`,
     ),
     // « Mes réservations » : celles d'un client, par date.
-    index('bookings_client_starts_at_idx')
-      .on(table.tenantId, table.clientId, table.startsAt)
-      .where(sql`client_id is not null`),
+    index('bookings_client_starts_at_idx').on(table.tenantId, table.clientId, table.startsAt),
     // Réservations rattachées à un contrat, depuis sa fiche.
-    index('bookings_contract_idx')
-      .on(table.tenantId, table.contractId)
-      .where(sql`contract_id is not null`),
+    index('bookings_contract_idx').on(table.tenantId, table.contractId),
     // Une occupation par contrat et par segment : le trigger la déplace, la
     // prolonge ou l'annule, il n'en crée jamais une seconde pour le même
     // segment (ADR 018, segments de l'ADR 025). Sans avenant de changement de
     // ressource, un contrat n'a qu'un segment, donc qu'une occupation.
-    uniqueIndex('bookings_contract_occupation_key')
-      .on(
-        table.tenantId,
-        table.contractId,
-        sql`coalesce(contract_amendment_id, '00000000-0000-0000-0000-000000000000'::uuid)`,
-      )
-      .where(sql`kind = 'contract'`),
+    // Index unique partiel (`kind = 'contract'`) : la colonne générée
+    // `contract_occupation_segment` est nulle hors occupation de contrat, et un
+    // index unique ignore les NULL.
+    uniqueIndex('bookings_contract_occupation_key').on(
+      table.tenantId,
+      table.contractId,
+      table.contractOccupationSegment,
+    ),
     check('bookings_range_not_empty', sql`${table.endsAt} > ${table.startsAt}`),
     check(
       'bookings_kind_valid',
@@ -296,7 +301,7 @@ export const bookings = pgTable(
     // Le devis est complet ou absent, et réservé aux réservations.
     check(
       'bookings_quote_complete',
-      sql`num_nulls(${table.quoteUnit}, ${table.quoteQuantity}, ${table.quoteUnitPriceCents}, ${table.quoteVatRateBp}, ${table.quoteCurrency}, ${table.quotedAt}) in (0, 6)`,
+      sql`(${table.quoteUnit} is null) + (${table.quoteQuantity} is null) + (${table.quoteUnitPriceCents} is null) + (${table.quoteVatRateBp} is null) + (${table.quoteCurrency} is null) + (${table.quotedAt} is null) in (0, 6)`,
     ),
     check(
       'bookings_quote_kind_consistent',
@@ -304,11 +309,11 @@ export const bookings = pgTable(
     ),
     check(
       'bookings_quote_values_valid',
-      sql`${table.quotedAt} is null or (${table.quoteQuantity} > 0 and ${table.quoteUnitPriceCents} >= 0 and ${table.quoteVatRateBp} between 0 and 10000 and ${table.quoteAmountCents} >= 0 and num_nonnulls(${table.quoteDiscountBp}, ${table.quoteDiscountAmountCents}) <= 1 and (${table.quoteDiscountBp} is null or ${table.quoteDiscountBp} between 0 and 10000) and (${table.quoteDiscountAmountCents} is null or ${table.quoteDiscountAmountCents} >= 0))`,
+      sql`${table.quotedAt} is null or (${table.quoteQuantity} > 0 and ${table.quoteUnitPriceCents} >= 0 and ${table.quoteVatRateBp} between 0 and 10000 and ${table.quoteAmountCents} >= 0 and (${table.quoteDiscountBp} is not null) + (${table.quoteDiscountAmountCents} is not null) <= 1 and (${table.quoteDiscountBp} is null or ${table.quoteDiscountBp} between 0 and 10000) and (${table.quoteDiscountAmountCents} is null or ${table.quoteDiscountAmountCents} >= 0))`,
     ),
     check(
       'bookings_quote_extras_need_quote',
-      sql`${table.quotedAt} is not null or num_nonnulls(${table.quoteDiscountBp}, ${table.quoteDiscountAmountCents}, ${table.quoteRatePlanItemId}) = 0`,
+      sql`${table.quotedAt} is not null or (${table.quoteDiscountBp} is not null) + (${table.quoteDiscountAmountCents} is not null) + (${table.quoteRatePlanItemId} is not null) = 0`,
     ),
     index('bookings_series_idx').on(table.tenantId, table.seriesId),
     check(
@@ -318,11 +323,9 @@ export const bookings = pgTable(
     // Chargement du calendrier : les réservations d'une ressource sur une période.
     index('bookings_resource_starts_at_idx').on(table.resourceId, table.startsAt),
     index('bookings_tenant_starts_at_idx').on(table.tenantId, table.startsAt),
-    // File d'attente de validation (ADR 005) : peu de lignes en `pending` parmi
-    // beaucoup, un index partiel les trouve sans parcourir la table.
-    index('bookings_pending_idx')
-      .on(table.tenantId, table.startsAt)
-      .where(sql`status = 'pending'`),
+    // File d'attente de validation (ADR 005). MySQL n'a pas d'index partiel :
+    // l'index ordinaire sert aussi les autres statuts.
+    index('bookings_pending_idx').on(table.tenantId, table.status, table.startsAt),
   ],
 )
 
@@ -341,15 +344,15 @@ export type NewBooking = typeof bookings.$inferInsert
  * c'est un réglage, pas une entité métier, et garder le jeton — même révoqué —
  * garderait un secret sans usage.
  */
-export const googleCalendarConnections = pgTable(
+export const googleCalendarConnections = mysqlTable(
   'google_calendar_connections',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     /** Compte Google qui a donné l'accès, affiché pour que l'équipe sache où regarder. */
-    googleEmail: text('google_email').notNull(),
+    googleEmail: varchar('google_email', { length: 255 }).notNull(),
     refreshTokenSealed: text('refresh_token_sealed').notNull(),
-    connectedBy: uuid('connected_by')
+    connectedBy: char('connected_by', { length: 36 })
       .notNull()
       .references(() => staffMembers.id, { onDelete: 'restrict' }),
     /**
@@ -357,8 +360,8 @@ export const googleCalendarConnections = pgTable(
      * réponse à l'équipe (ADR 014) : c'est ici, et non dans le formulaire de
      * validation, qu'un échec se voit.
      */
-    lastSyncedAt: timestamp('last_synced_at', { withTimezone: true }),
-    lastErrorAt: timestamp('last_error_at', { withTimezone: true }),
+    lastSyncedAt: instant('last_synced_at'),
+    lastErrorAt: instant('last_error_at'),
     lastError: text('last_error'),
     ...timestamps(),
   },
@@ -375,19 +378,19 @@ export type GoogleCalendarConnection = typeof googleCalendarConnections.$inferSe
  * les agendas qu'elle a créés. Supprimé avec la connexion : ces agendas
  * appartiennent à ce compte, un autre compte ne pourrait pas y écrire.
  */
-export const resourceGoogleCalendars = pgTable(
+export const resourceGoogleCalendars = mysqlTable(
   'resource_google_calendars',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    resourceId: uuid('resource_id').notNull(),
-    connectionId: uuid('connection_id').notNull(),
-    calendarId: text('calendar_id').notNull(),
+    resourceId: char('resource_id', { length: 36 }).notNull(),
+    connectionId: char('connection_id', { length: 36 }).notNull(),
+    calendarId: varchar('calendar_id', { length: 255 }).notNull(),
     ...timestamps(),
   },
   (table) => [
-    // Nommée : le nom généré dépasserait les 63 caractères de Postgres, qui le
-    // tronquerait, et Drizzle verrait une différence à chaque génération.
+    // Nommée : le nom généré dépasserait les 64 caractères d'un identifiant
+    // MySQL.
     foreignKey({
       name: 'resource_google_calendars_connection_fk',
       columns: [table.connectionId],

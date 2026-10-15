@@ -1,25 +1,25 @@
 import { sql } from 'drizzle-orm'
 import {
+  char,
   check,
   date,
   index,
-  pgEnum,
-  pgTable,
-  text,
-  timestamp,
+  mysqlEnum,
+  mysqlTable,
+  tinyint,
   uniqueIndex,
-  uuid,
-  type AnyPgColumn,
-} from 'drizzle-orm/pg-core'
+  varchar,
+  type AnyMySqlColumn,
+} from 'drizzle-orm/mysql-core'
 
-import { deletedAt, primaryKeyId, timestamps } from './columns.ts'
+import { deletedAt, instant, primaryKeyId, timestamps } from './columns.ts'
 import { tenantId } from './tenants.ts'
 
 /**
  * Membres de l'équipe d'un centre, c'est-à-dire qui a le droit d'entrer dans le
  * back-office (ADR 008).
  *
- * Neon Auth dit **qui** est connecté ; cette table dit **ce à quoi** cette
+ * Le compte (Better Auth) dit **qui** est connecté ; cette table dit **ce à quoi** cette
  * personne a droit. La séparation n'est pas théorique : le relais `/api/auth`
  * expose l'inscription, donc n'importe qui peut se créer un compte. Sans une
  * liste tenue de notre côté, ouvrir l'authentification reviendrait à ouvrir le
@@ -31,7 +31,7 @@ import { tenantId } from './tenants.ts'
  */
 export const staffRoles = ['admin', 'staff'] as const
 export type StaffRole = (typeof staffRoles)[number]
-export const staffRoleEnum = pgEnum('staff_role', staffRoles)
+export const staffRoleEnum = (name: string) => mysqlEnum(name, staffRoles)
 
 /**
  * Les rôles du cahier des charges (R27), sous les valeurs techniques gardées
@@ -60,27 +60,27 @@ export const staffRoleLabels: Record<StaffRole, string> = {
  */
 export const anonymizationBases = ['retention', 'erasure_request', 'relationship_ended'] as const
 export type AnonymizationBasis = (typeof anonymizationBases)[number]
-export const anonymizationBasisEnum = pgEnum('anonymization_basis', anonymizationBases)
+export const anonymizationBasisEnum = (name: string) => mysqlEnum(name, anonymizationBases)
 
-export const staffMembers = pgTable(
+export const staffMembers = mysqlTable(
   'staff_members',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     /**
-     * Identifiant du compte Neon Auth (`neon_auth.user.id`), en texte : le
-     * schéma managé n'utilise pas d'UUID.
+     * Identifiant du compte Better Auth (`auth_user.id`), en texte : ce n'est
+     * pas un UUID.
      *
      * Nul tant que la personne ne s'est pas connectée une première fois : un
      * membre est inscrit par son adresse, et le compte lui est rattaché au
-     * premier accès. Pas de clé étrangère vers `neon_auth` — ce schéma est géré
-     * par Neon, et le lier en dur ferait échouer nos écritures sur ses
-     * évolutions.
+     * premier accès. Pas de clé étrangère vers les tables `auth_*` : elles
+     * sont gérées par Better Auth, et le lier en dur ferait échouer nos
+     * écritures sur ses évolutions.
      */
-    authUserId: text('auth_user_id'),
+    authUserId: varchar('auth_user_id', { length: 255 }),
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
-    email: text('email').notNull(),
-    fullName: text('full_name'),
+    email: varchar('email', { length: 255 }).notNull(),
+    fullName: varchar('full_name', { length: 255 }),
     /** `admin` : exploitant, gère l'équipe ; `staff` : accueil (ADR 019). */
     role: staffRoleEnum('role').notNull().default('staff'),
     ...timestamps(),
@@ -93,26 +93,31 @@ export const staffMembers = pgTable(
      * `anonymize_staff_member()`, jamais par le code ; une ligne anonymisée ne
      * change plus (SQLSTATE `CA012`).
      */
-    anonymizedAt: timestamp('anonymized_at', { withTimezone: true }),
+    anonymizedAt: instant('anonymized_at'),
     /** Membre de l'équipe qui l'a décidée ; nul pour la tâche de nuit (ADR 041). */
-    anonymizedBy: uuid('anonymized_by').references((): AnyPgColumn => staffMembers.id, {
+    anonymizedBy: char('anonymized_by', { length: 36 }).references((): AnyMySqlColumn => staffMembers.id, {
       onDelete: 'restrict',
     }),
     anonymizationBasis: anonymizationBasisEnum('anonymization_basis'),
     /** Jour où la demande d'effacement a été reçue, pour `erasure_request`. */
     erasureRequestedOn: date('erasure_requested_on', { mode: 'string' }),
+    /**
+     * Colonne générée : 1 tant que le membre est actif, `NULL` après son
+     * retrait. Les index uniques ignorent les `NULL` : c'est ce qui remplace
+     * les index partiels `where deleted_at is null` de PostgreSQL.
+     */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
   },
   (table) => [
     // Une adresse ne vaut qu'une fois par centre, et redevient libre après un
     // retrait — quelqu'un qui revient dans l'équipe est réinscrit.
-    uniqueIndex('staff_members_tenant_email_key')
-      .on(table.tenantId, table.email)
-      .where(sql`deleted_at is null`),
+    uniqueIndex('staff_members_tenant_email_key').on(table.tenantId, table.email, table.live),
     // Un compte ne peut pas être rattaché à deux membres actifs : sans cela, un
     // même identifiant donnerait deux jeux de droits.
-    uniqueIndex('staff_members_auth_user_key')
-      .on(table.authUserId)
-      .where(sql`auth_user_id is not null and deleted_at is null`),
+    // `auth_user_id` nul (pas encore connecté) : plusieurs `NULL` coexistent.
+    uniqueIndex('staff_members_auth_user_key').on(table.authUserId, table.live),
     index('staff_members_tenant_idx').on(table.tenantId),
     // Seul un membre retiré s'anonymise : un membre actif a encore besoin de
     // son adresse pour se connecter.
@@ -134,13 +139,15 @@ export const staffMembers = pgTable(
  * fondement nul : anonymisée avant qu'il ne soit tracé (migration 0044).
  */
 export function anonymizationTraceCheck(table: {
-  anonymizedAt: AnyPgColumn
-  anonymizedBy: AnyPgColumn
-  anonymizationBasis: AnyPgColumn
-  erasureRequestedOn: AnyPgColumn
+  anonymizedAt: AnyMySqlColumn
+  anonymizedBy: AnyMySqlColumn
+  anonymizationBasis: AnyMySqlColumn
+  erasureRequestedOn: AnyMySqlColumn
 }) {
-  return sql`(${table.anonymizedAt} is not null or num_nonnulls(${table.anonymizedBy}, ${table.anonymizationBasis}, ${table.erasureRequestedOn}) = 0)
-    and (${table.erasureRequestedOn} is null) = (${table.anonymizationBasis} is distinct from 'erasure_request')
+  // `num_nonnulls(...) = 0` et `is distinct from` de PostgreSQL, écrits sans
+  // ces opérateurs : « fondement différent de erasure_request, nul compris ».
+  return sql`(${table.anonymizedAt} is not null or (${table.anonymizedBy} is null and ${table.anonymizationBasis} is null and ${table.erasureRequestedOn} is null))
+    and (${table.erasureRequestedOn} is null) = (${table.anonymizationBasis} is null or ${table.anonymizationBasis} <> 'erasure_request')
     and (${table.anonymizationBasis} is null or (${table.anonymizedBy} is null) = (${table.anonymizationBasis} = 'retention'))`
 }
 

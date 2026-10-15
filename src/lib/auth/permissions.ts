@@ -5,7 +5,7 @@ import { staffRoleLabels, type StaffRole } from '../../db/staff.ts'
  *
  * Elle vit dans le code, pas en base : c'est une frontière de sécurité, relue
  * comme le reste du code, pas une configuration que l'on modifie à l'écran.
- * La RLS ne distingue pas l'exploitant de l'accueil ; c'est la garde
+ * La base ne distingue pas l'exploitant de l'accueil ; c'est la garde
  * `requirePermission()` (`staff.ts`), appelée dans chaque page et chaque action
  * serveur du back-office, qui refuse ce que le rôle ne permet pas.
  *

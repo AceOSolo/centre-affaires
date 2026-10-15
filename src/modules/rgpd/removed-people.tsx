@@ -37,7 +37,7 @@ export function RemovedPeopleTable({
   idField: string
   /** « cette personne », « ce membre » : pour la nommer dans le dialogue. */
   personLabel: string
-  /** Nom que la base donne à la ligne anonymisée (migration 0043). */
+  /** Nom que la base donne à la ligne anonymisée (`anonymize_member_rows`, 90-rgpd.sql). */
   anonymizedName: string
 }) {
   if (people.length === 0) return null

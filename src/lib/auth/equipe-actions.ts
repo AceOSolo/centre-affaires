@@ -25,7 +25,7 @@ export type TeamFormState = {
   values?: { email: string; fullName: string; role: string }
 } | null
 
-/** Contrôle volontairement sommaire : c'est Neon Auth qui vérifiera l'adresse. */
+/** Contrôle volontairement sommaire : c'est Better Auth qui vérifiera l'adresse (courriel de vérification). */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const isRole = (value: string): value is StaffRole =>

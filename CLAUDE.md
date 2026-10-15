@@ -19,11 +19,13 @@ ressources, réservations, clients, contrats, facturation, courrier,
 
 - Next.js 16 (App Router) + TypeScript
 - Tailwind CSS
-- PostgreSQL 18 + Drizzle ORM
-- better-auth
+- MySQL 8.4 + Drizzle ORM (`mysql-core`, driver `mysql2`), configuré par le `.env` (ADR 042)
+- better-auth, auto-hébergé, tables `auth_*` de la même base (ADR 042)
 - Hébergement : VPS de production (Debian, Apache), image Docker déployée
-  depuis GitHub (app, ADR 013) + Neon (base), **région EU obligatoire**
-- Stockage fichiers : S3 européen (scans de courrier, photos d'états des lieux)
+  depuis GitHub (app, ADR 013) ; MySQL tourne dans le même `compose.yml`,
+  **région EU obligatoire**
+- Stockage fichiers : S3 européen — ou MinIO sur le VPS — (scans de courrier,
+  photos d'états des lieux), configuré par `S3_*`
 
 ## Structure
 
@@ -59,7 +61,10 @@ Ne pas remettre en question sans écrire un nouvel ADR.
 ### 1. `tenant_id` sur toutes les tables métier
 
 Même en mono-centre. Colonne `tenant_id` non nulle, valeur par défaut pointant
-sur le tenant unique. Row Level Security Postgres activé.
+sur le tenant unique. MySQL n'a pas de Row Level Security (ADR 042) : les
+**écritures** pour un autre centre sont refusées par des triggers générés sur
+toute table portant `tenant_id` (`CA014`), et les **lectures portent leur
+filtre `tenant_id`** dans le code — obligatoire avant d'ouvrir un second centre.
 
 Raison : le passage en multi-centres est prévu. Ajouter la colonne aujourd'hui
 coûte une heure, l'ajouter après deux ans de données coûte une migration à
@@ -77,27 +82,21 @@ par type multiplie le code par cinq pour rien.
 
 ### 3. Anti-double-réservation au niveau base
 
-```sql
-CREATE EXTENSION IF NOT EXISTS btree_gist;
+Triggers `BEFORE INSERT` et `BEFORE UPDATE` sur `bookings` (`src/db/regles/`) :
+verrou de la ressource (`SELECT … FOR UPDATE`), puis refus de tout
+chevauchement avec une réservation non annulée de la même ressource
+(`CA000`).
 
-ALTER TABLE bookings
-ADD CONSTRAINT bookings_no_overlap
-EXCLUDE USING gist (
-  resource_id WITH =,
-  tstzrange(starts_at, ends_at, '[)') WITH &&
-) WHERE (status <> 'cancelled');
-```
-
-La contrainte d'exclusion rend le chevauchement impossible quelles que soient
-les erreurs applicatives ou la concurrence. Ne jamais la remplacer par une
-vérification en code.
+Le trigger rend le chevauchement impossible quelles que soient les erreurs
+applicatives ou la concurrence (le verrou de la ressource sérialise les
+écritures). Ne jamais le remplacer par une vérification en code.
 
 Bornes `[)` : une réservation qui finit à 10h00 et une qui commence à 10h00 ne
 se chevauchent pas.
 
 ### 4. Tout en UTC en base, fuseau à l'affichage
 
-Colonnes `timestamptz`. Les centres d'affaires peuvent être dans des fuseaux
+Colonnes `datetime(3)` en UTC (connexion en `+00:00`). Les centres d'affaires peuvent être dans des fuseaux
 différents et les horaires de réservation traversent les changements d'heure.
 
 ### 5. Montants en centimes, entiers
@@ -240,7 +239,9 @@ landing page et ne convient pas à ce produit — ne pas l'utiliser.
 - Nommage base de données : `snake_case`, tables au pluriel
 - Nommage TypeScript : `camelCase`, composants en `PascalCase`
 - Identifiants : UUID v7 (ordonnés temporellement, meilleurs index que v4)
-- Migrations : générées par Drizzle, jamais éditées après application
+- Migrations : la structure est générée par drizzle-kit (`src/db/migrations/`,
+  jamais éditée après application) ; les règles métier (triggers, routines)
+  vivent dans `src/db/regles/`, idempotentes, rejouées par `npm run db:migrer`
 - Une seule branche : `main`. On committe et on pousse sur `main` (décision du
   02/10/2026). Une branche temporaire, pour des agents en parallèle par exemple,
   est fusionnée puis supprimée avant de rendre la main
@@ -250,9 +251,9 @@ landing page et ne convient pas à ce produit — ne pas l'utiliser.
 
 ```bash
 npm run dev              # serveur de développement
-docker compose up -d     # base Postgres locale
-npx drizzle-kit generate # générer une migration
-npx drizzle-kit migrate  # appliquer les migrations
+docker compose up -d     # base MySQL locale
+npx drizzle-kit generate # générer la migration de structure
+npm run db:migrer        # appliquer structure + règles métier
 npx tsc --noEmit         # vérification des types
 npm run lint
 ```

@@ -1,14 +1,15 @@
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm'
+import { and, eq, inArray, isNull } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import {
-  PG_CHECK_VIOLATION,
-  PG_COMMITMENT_LOCKED,
-  PG_FOREIGN_KEY_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_COMMITMENT_LOCKED,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { pgRefusalMessage } from './erreurs.ts'
+import { dbRefusalMessage } from './erreurs.ts'
 import { sameLine, targetColumns, targetOf, type LineDraft } from './lignes.ts'
 import { contractLines, contracts } from './schema.ts'
 
@@ -61,7 +62,7 @@ export async function writeDraftLines(
   if (removed.length > 0) {
     await tx
       .update(contractLines)
-      .set({ deletedAt: sql`now()` })
+      .set({ deletedAt: maintenant() })
       .where(inArray(contractLines.id, removed))
   }
 
@@ -106,14 +107,14 @@ export async function writeDraftLines(
 
 /** Traduit un refus de la base sur des lignes ; rend l'erreur intacte sinon. */
 export function linesRefusal(error: unknown): unknown {
-  const locked = pgRefusalMessage(error, [PG_COMMITMENT_LOCKED])
+  const locked = dbRefusalMessage(error, [DB_COMMITMENT_LOCKED])
   if (locked) return new ContractLinesRefusedError(locked)
-  if (pgErrorCode(error) === PG_FOREIGN_KEY_VIOLATION) {
+  if (dbErrorCode(error) === DB_FOREIGN_KEY_VIOLATION) {
     return new ContractLinesRefusedError(
       'Une ligne vise une ressource, un service ou une offre introuvable : choisissez son objet à nouveau.',
     )
   }
-  if (pgErrorCode(error) === PG_CHECK_VIOLATION) {
+  if (dbErrorCode(error) === DB_CHECK_VIOLATION) {
     return new ContractLinesRefusedError(
       'Une ligne est incohérente : une remise ne peut pas dépasser le montant de la ligne.',
     )
@@ -144,7 +145,7 @@ export async function saveDraftContractLines(
             isNull(contracts.deletedAt),
           ),
         )
-        .for('no key update')
+        .for('update')
       if (!draft) return false
       await writeDraftLines(tx, { contractId, amendmentId: null }, lines)
       return true

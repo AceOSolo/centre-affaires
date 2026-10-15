@@ -1,7 +1,7 @@
 # ADR 003 — Plateforme Neon et rôle applicatif sans BYPASSRLS
 
 **Date** : 2026-09-18
-**Statut** : accepté
+**Statut** : accepté — **remplacé par l'ADR 042** (MySQL sur le VPS : plus de Neon, plus de RLS, plus de rôle `app_centre`)
 
 ## Contexte
 

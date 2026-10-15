@@ -2,11 +2,13 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { addMonthsToIsoMonth, todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { toutVider } from '../clients/test-support.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import {
   MailRequestError,
@@ -23,7 +25,7 @@ import { runInvoicing } from './lot-queries.ts'
 
 /**
  * Facturation des demandes de courrier par le lot (R14, R21, ADR 037), sous
- * `app_centre`, par le code des écrans :
+ * l'identité applicative, par le code des écrans :
  *
  * - une numérisation seule et une réexpédition faites deviennent des lignes
  *   d'actes de la facture du client, au service de leur nature, les inclus de
@@ -39,20 +41,8 @@ import { runInvoicing } from './lot-queries.ts'
  * Les demandes sont faites maintenant : le lot du mois prochain, qui facture
  * les consommations du mois en cours (à échoir), les reprend.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('lot de facturation : demandes de courrier', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACCUEIL = '01a00000-0000-7000-8000-0000000f2d01'
   const DURAND = '01a00000-0000-7000-8000-0000000f2c01'
@@ -73,17 +63,17 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
   // Le mois prochain facture les consommations de ce mois (terme à échoir).
   const MOIS = addMonthsToIsoMonth(todayIsoDate('Europe/Paris').slice(0, 7), 1)
 
-  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) => withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const pli = async (ouvert: boolean): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_items (client_id, sender, status, opened_at, opened_by)
-        values (${DURAND}, 'URSSAF', ${ouvert ? 'opened' : 'received'}, ${ouvert ? sql`now()` : null},
-                ${ouvert ? ACCUEIL : null})
-        returning id`),
+        insert into mail_items (id, client_id, sender, status, opened_at, opened_by)
+        values (${id}, ${DURAND}, 'URSSAF', ${ouvert ? 'opened' : 'received'},
+                ${ouvert ? sql`current_timestamp(3)` : null}, ${ouvert ? ACCUEIL : null})`),
     )
-    return row.id as string
+    return id
   }
 
   const depose = (nom: string): StoredScan[] => [
@@ -120,16 +110,20 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`
-      update tenants set recurring_billing_timing = 'in_advance', prorata_rule = 'calendar_days'
-      where id = ${DEFAULT_TENANT_ID}`
+    await toutVider(bases.owner)
+    // `toutVider` a aussi vidé le plan de comptes, posé par la base à la création du centre.
+    await bases.owner.client.query('select seed_accounting_accounts(?)', [DEFAULT_TENANT_ID])
+    await bases.owner.client.query(
+      `update tenants set recurring_billing_timing = 'in_advance', prorata_rule = 'calendar_days'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, role) values (${ACCUEIL}, 'accueil@centre.fr', 'admin')`)
       await tx.execute(sql`insert into clients (id, name, status) values (${DURAND}, 'Atelier Durand', 'active')`)
@@ -143,17 +137,16 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
           (${REEXPEDITION}, 'courrier.reexpedition', 'Réexpédition d’un pli', 'act', 'unit', 500)`)
       // Durand : une numérisation incluse par mois, 1,50 € au-delà.
       await tx.execute(sql`
-        insert into subscribed_services (client_id, service_id, quantity, unit, unit_price_cents,
+        insert into subscribed_services (id, client_id, service_id, quantity, unit, unit_price_cents,
                                          vat_rate_bp, included_quantity, starts_on)
-        values (${DURAND}, ${NUMERISATION}, 1, 'unit', 150, 2000, 1, '2026-01-01')`)
+        values (${uuidv7()}, ${DURAND}, ${NUMERISATION}, 1, 'unit', 150, 2000, 1, '2026-01-01')`)
     })
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await toutVider(bases.owner)
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('facture numérisations et réexpédition faites, inclus d’abord, et les frais relevés à côté', async () => {
@@ -237,11 +230,13 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
 
   it('rattrape au lot suivant ce qu’une facture déjà émise a laissé, au rang des inclus de son mois', async () => {
     // Émettre exige l'identité du centre et l'adresse du client.
-    await owner.client`
-      update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
-        postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
-        vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
-      where id = ${DEFAULT_TENANT_ID}`
+    await bases.owner.client.query(
+      `update tenants set legal_name = 'Centre de démonstration SAS', address_line1 = '1 rue de l''Exemple',
+         postal_code = '38070', city = 'Saint-Quentin-Fallavier', siren = '123456789',
+         vat_number = 'FR32123456789', bank_iban = 'FR7630006000011234567890189'
+       where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant((tx) =>
       tx.execute(sql`
         update clients set address_line1 = '2 place du Marché', postal_code = '38000', city = 'Grenoble'
@@ -288,10 +283,12 @@ describe('lot de facturation : demandes de courrier', { skip: raison }, () => {
       assert.equal((await runInvoicing(MOIS_SUIVANT, ACCUEIL)).report.linesCreated, 0)
       assert.equal((await runInvoicing(addMonthsToIsoMonth(MOIS, 2), ACCUEIL)).report.linesCreated, 0)
     } finally {
-      await owner.client`
-        update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
-          siren = null, vat_number = null, bank_iban = null
-        where id = ${DEFAULT_TENANT_ID}`
+      await bases.owner.client.query(
+        `update tenants set legal_name = null, address_line1 = null, postal_code = null, city = null,
+           siren = null, vat_number = null, bank_iban = null
+         where id = ?`,
+        [DEFAULT_TENANT_ID],
+      )
     }
   })
 })

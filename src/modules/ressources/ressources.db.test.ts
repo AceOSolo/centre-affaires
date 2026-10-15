@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_UNIQUE_VIOLATION, pgConstraintName, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { DB_UNIQUE_VIOLATION, dbConstraintName, dbErrorCode } from '../../db/errors.ts'
+import { withTenant } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import {
   DuplicateLockerNumberError,
@@ -17,33 +17,21 @@ import {
 import { resources } from './schema.ts'
 
 /**
- * Modification d'une ressource (R01), contre la base et sous `app_centre`,
- * comme l'application l'écrit : attributs fusionnés, capacité tenue à nul pour
- * les types qui n'en ont pas, unicité du code et du numéro de casier — tenue
- * par des index (migration 0028 pour le numéro), pas par une lecture.
+ * Modification d'une ressource (R01), contre la base et sous l'identité
+ * applicative, comme l'application l'écrit : attributs fusionnés, capacité
+ * tenue à nul pour les types qui n'en ont pas, unicité du code et du numéro de
+ * casier — tenue par des index uniques sur colonnes générées, pas par une
+ * lecture.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('modification des ressources', { skip: raison }, () => {
-  // Les requêtes ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('modification des ressources', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const BUREAU = '01a00000-0000-7000-8000-00000000f0b1'
   const CASIER = '01a00000-0000-7000-8000-00000000f0c1'
   const AUTRE_CASIER = '01a00000-0000-7000-8000-00000000f0c2'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const lire = async (id: string) => {
     const [row] = await asTenant((tx) => tx.select().from(resources).where(eq(resources.id, id)))
@@ -61,11 +49,14 @@ describe('modification des ressources', { skip: raison }, () => {
   })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await viderTables(bases.owner, 'bookings', 'contracts', 'rate_plan_items', 'rate_plans', 'clients', 'resources')
     await asTenant((tx) =>
       tx.execute(sql`
         insert into resources (id, resource_type, code, name, capacity, attributes) values
@@ -76,8 +67,8 @@ describe('modification des ressources', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   it('modifie les champs saisis et garde les attributs que l’écran ne connaît pas', async () => {
@@ -170,8 +161,8 @@ describe('modification des ressources', { skip: raison }, () => {
     } catch (error) {
       refus = error
     }
-    assert.equal(pgErrorCode(refus), PG_UNIQUE_VIOLATION)
-    assert.equal(pgConstraintName(refus), 'resources_tenant_locker_numero_key')
+    assert.equal(dbErrorCode(refus), DB_UNIQUE_VIOLATION)
+    assert.equal(dbConstraintName(refus), 'resources_tenant_locker_numero_key')
   })
 
   it('ne laisse passer qu’une de deux déclarations simultanées du même numéro', async () => {
@@ -188,7 +179,7 @@ describe('modification des ressources', { skip: raison }, () => {
   it('ne contraint pas un numéro posé sur une ressource qui n’est pas un casier', async () => {
     await asTenant((tx) =>
       tx.execute(sql`
-        update resources set attributes = attributes || '{"numero": "A12"}' where id = ${BUREAU}`),
+        update resources set attributes = json_set(attributes, '$.numero', 'A12') where id = ${BUREAU}`),
     )
     assert.equal(((await lire(BUREAU)).attributes as { numero?: string }).numero, 'A12')
   })

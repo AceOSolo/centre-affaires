@@ -2,33 +2,26 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { PG_ANONYMIZATION_REFUSED, pgErrorCode } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { DB_ANONYMIZATION_REFUSED, dbErrorCode } from '../../db/errors.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { jsonEnTableau, lire, toutVider } from './test-support.ts'
 
 /**
- * Anonymisation RGPD (R29, ADR 040), éprouvée contre la base sous le rôle
- * applicatif.
+ * Anonymisation RGPD (R29, ADR 040), éprouvée contre la base sous
+ * l'identité applicative.
  *
  * Deux choses ne doivent jamais arriver : qu'une entreprise dont la relation
  * vit encore — une facture non soldée, un contrat en cours — soit
  * anonymisée, et qu'une facture émise perde ce qu'elle doit garder dix ans.
  * Rien n'est supprimé : les champs personnels partent, les lignes restent.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('anonymisation RGPD', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('anonymisation RGPD', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-000000a90c01'
   const PROSPECT_SANS_FACTURE = '01a00000-0000-7000-8000-000000a90c06'
@@ -40,24 +33,26 @@ describe('anonymisation RGPD', { skip: raison }, () => {
   const SALLE = '01a00000-0000-7000-8000-000000a90b01'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const codeErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
+  /** Le message du refus tel que la base le signale (`SIGNAL`, 128 caractères au plus). */
   const messageErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
       for (let cause: unknown = error; cause; cause = (cause as { cause?: unknown }).cause) {
-        if ((cause as { code?: string }).code === PG_ANONYMIZATION_REFUSED) {
-          return (cause as Error).message
+        const { sqlMessage } = cause as { sqlMessage?: unknown }
+        if (typeof sqlMessage === 'string' && dbErrorCode(error) === DB_ANONYMIZATION_REFUSED) {
+          return sqlMessage
         }
       }
       throw error
@@ -68,43 +63,53 @@ describe('anonymisation RGPD', { skip: raison }, () => {
   /** À la demande : fin de la relation constatée par l'accueil (ADR 041). */
   const anonymiser = (clientId: string) =>
     asTenant((tx) =>
-      tx.execute(sql`select anonymize_client(${clientId}::uuid, ${ACCUEIL}::uuid, 'relationship_ended', null)`),
+      tx.execute(sql`select anonymize_client(${clientId}, ${ACCUEIL}, 'relationship_ended', null)`),
     )
 
   const bloquants = async (clientId: string): Promise<string[]> => {
     const [row] = await asTenant((tx) =>
-      tx.execute(sql`select client_anonymization_blockers(${clientId}::uuid) as raisons`),
+      lire(tx, sql`select client_anonymization_blockers(${clientId}) as raisons`),
     )
-    return row.raisons as string[]
+    return jsonEnTableau<string>(row.raisons)
   }
 
   /** Facture émise de 100 € HT à 20 %, pour le client. */
   const factureEmise = async (clientId = DURAND) => {
-    const [row] = await asTenant(async (tx) => {
-      const [invoice] = await tx.execute(sql`
-        insert into invoices (client_id, period_start, period_end)
-        values (${clientId}, '2026-09-01', '2026-09-30') returning id`)
+    const id = uuidv7()
+    const numero = await asTenant(async (tx) => {
+      await tx.execute(sql`
+        insert into invoices (id, client_id, period_start, period_end)
+        values (${id}, ${clientId}, '2026-09-01', '2026-09-30')`)
       await tx.execute(sql`
         insert into invoice_lines (invoice_id, kind, description, unit_price_cents, vat_rate_bp)
-        values (${invoice.id as string}, 'other', 'Prestation', 10000, 2000)`)
-      return tx.execute(sql`
-        select ${invoice.id as string}::uuid as id, issue_invoice(${invoice.id as string}::uuid, ${ACCUEIL}::uuid) as numero`)
+        values (${id}, 'other', 'Prestation', 10000, 2000)`)
+      const [row] = await lire(tx, sql`select issue_invoice(${id}, ${ACCUEIL}) as numero`)
+      return row.numero as string
     })
-    return { id: row.id as string, numero: row.numero as string }
+    return { id, numero }
   }
 
+  /**
+   * Règle la facture d'un seul paiement. Le total est lu avant : MySQL refuse
+   * un `insert … select` sur `invoices` quand un trigger de `payments` écrit
+   * dans `invoices` (erreur 1442).
+   */
   const solder = (invoiceId: string) =>
-    asTenant((tx) =>
-      tx.execute(sql`
+    asTenant(async (tx) => {
+      const [facture] = await lire(
+        tx,
+        sql`select total_incl_tax_cents as total from invoices where id = ${invoiceId}`,
+      )
+      await tx.execute(sql`
         insert into payments (invoice_id, amount_cents, paid_on, method, recorded_by)
-        select id, total_incl_tax_cents, '2026-10-01', 'transfer', ${ACCUEIL} from invoices where id = ${invoiceId}`),
-    )
+        values (${invoiceId}, ${Number(facture.total)}, '2026-10-01', 'transfer', ${ACCUEIL})`)
+    })
 
+  /** La facture telle qu'en base, hors `updated_at`. */
   const facture = async (invoiceId: string) => {
-    const [row] = await asTenant((tx) =>
-      tx.execute(sql`select to_jsonb(i) - 'updated_at' as facture from invoices as i where id = ${invoiceId}`),
-    )
-    return row.facture as Record<string, unknown>
+    const [row] = await asTenant((tx) => lire(tx, sql`select * from invoices where id = ${invoiceId}`))
+    const { updated_at: _ignore, ...reste } = row
+    return reste
   }
 
   const identiteDuCentre = sql`
@@ -116,18 +121,18 @@ describe('anonymisation RGPD', { skip: raison }, () => {
     where id = ${DEFAULT_TENANT_ID}`
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences, notification_deliveries`
-    await owner.db.execute(identiteDuCentre)
-    await owner.client`
-      update tenants set prospect_retention_months = 36, client_retention_months = 60,
-                         removed_member_retention_months = 12
-       where id = ${DEFAULT_TENANT_ID}`
+    await toutVider(bases.owner)
+    await bases.owner.db.execute(identiteDuCentre)
+    await bases.owner.client.query(
+      `update tenants set prospect_retention_months = 36, client_retention_months = 60,
+                          removed_member_retention_months = 12
+        where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into staff_members (id, email, full_name) values (${ACCUEIL}, 'accueil@centre.fr', 'Camille Accueil')`)
       await tx.execute(sql`
@@ -148,15 +153,15 @@ describe('anonymisation RGPD', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, clients, resources, services cascade`
-    await owner.client`truncate table staff_members cascade`
-    await owner.client`truncate table document_sequences, notification_deliveries`
-    await owner.client`
-      update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
+    await toutVider(bases.owner)
+    await bases.owner.client.query(
+      `update tenants set legal_name = null, legal_form = null, share_capital_cents = null,
         address_line1 = null, postal_code = null, city = null, siren = null, siret = null,
         vat_number = null, rcs_city = null, bank_iban = null, bank_bic = null
-      where id = ${DEFAULT_TENANT_ID}`
-    await Promise.all([owner.client.end(), app.client.end()])
+      where id = ?`,
+      [DEFAULT_TENANT_ID],
+    )
+    await bases.fermer()
   })
 
   describe('exclusions', () => {
@@ -174,18 +179,21 @@ describe('anonymisation RGPD', { skip: raison }, () => {
           values (${DURAND}, 'DOM-1', 'domiciliation', 'active', '2026-01-01', 9000)`)
         await tx.execute(sql`
           insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-          values (${SALLE}, ${DURAND}, 'staff', now() + interval '2 days', now() + interval '2 days 1 hour', 'Réunion')`)
+          values (${SALLE}, ${DURAND}, 'staff', date_add(now(3), interval 2 day),
+                  date_add(now(3), interval 49 hour), 'Réunion')`)
         await tx.execute(sql`
           insert into invoices (client_id, period_start, period_end) values (${DURAND}, '2026-09-01', '2026-09-30')`)
       })
-      assert.equal(await codeErreur(() => anonymiser(DURAND)), PG_ANONYMIZATION_REFUSED)
+      assert.equal(await codeErreur(() => anonymiser(DURAND)), DB_ANONYMIZATION_REFUSED)
       assert.deepEqual(await bloquants(DURAND), [
         "Brouillon de facture ou d'avoir à émettre ou à abandonner.",
         'Contrat vivant : DOM-1.',
         'Réservation à venir ou en cours.',
       ])
       // Rien n'a bougé.
-      const [row] = await asTenant((tx) => tx.execute(sql`select name, anonymized_at from clients where id = ${DURAND}`))
+      const [row] = await asTenant((tx) =>
+        lire(tx, sql`select name, anonymized_at from clients where id = ${DURAND}`),
+      )
       assert.equal(row.name, 'Atelier Durand')
       assert.equal(row.anonymized_at, null)
     })
@@ -196,12 +204,29 @@ describe('anonymisation RGPD', { skip: raison }, () => {
           withClientScope(
             DEFAULT_TENANT_ID,
             [DURAND],
-            (tx) => tx.execute(sql`select anonymize_client(${DURAND}::uuid, ${ACCUEIL}::uuid, 'relationship_ended', null)`),
-            app.db,
+            (tx) => tx.execute(sql`select anonymize_client(${DURAND}, ${ACCUEIL}, 'relationship_ended', null)`),
+            bases.app.db,
           ),
         ),
-        PG_ANONYMIZATION_REFUSED,
+        DB_ANONYMIZATION_REFUSED,
       )
+    })
+
+    it('exige un fondement, un auteur vivant et, pour un effacement, le jour de la demande', async () => {
+      const refus = (basis: string | null, jour: string | null, par = ACCUEIL) =>
+        codeErreur(() =>
+          asTenant((tx) => tx.execute(sql`select anonymize_client(${DURAND}, ${par}, ${basis}, ${jour})`)),
+        )
+      const aujourdhui = todayIsoDate('Europe/Paris')
+      assert.equal(await refus(null, null), DB_ANONYMIZATION_REFUSED)
+      assert.equal(await refus('retention', null), DB_ANONYMIZATION_REFUSED)
+      assert.equal(await refus('erasure_request', null), DB_ANONYMIZATION_REFUSED)
+      assert.equal(await refus('relationship_ended', aujourdhui), DB_ANONYMIZATION_REFUSED)
+      assert.equal(
+        await refus('erasure_request', addDaysToIsoDate(aujourdhui, 3)),
+        DB_ANONYMIZATION_REFUSED,
+      )
+      assert.equal(await refus('relationship_ended', null, uuidv7()), DB_ANONYMIZATION_REFUSED)
     })
   })
 
@@ -211,9 +236,10 @@ describe('anonymisation RGPD', { skip: raison }, () => {
       await solder(factureId)
       const avant = await facture(factureId)
       const [{ n: lignesAvant }] = await asTenant((tx) =>
-        tx.execute(sql`select count(*)::int as n from invoice_lines where invoice_id = ${factureId}`),
+        lire(tx, sql`select count(*) as n from invoice_lines where invoice_id = ${factureId}`),
       )
 
+      const pliId = uuidv7()
       await asTenant(async (tx) => {
         await tx.execute(sql`
           insert into contracts (client_id, reference, contract_type, status, starts_on, terminated_on,
@@ -223,27 +249,28 @@ describe('anonymisation RGPD', { skip: raison }, () => {
         await tx.execute(sql`
           insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title, notes,
                                 requester_name, requester_email, requester_phone)
-          values (${SALLE}, ${DURAND}, 'public', '2026-03-10T08:00:00Z', '2026-03-10T09:00:00Z', 'Réunion',
+          values (${SALLE}, ${DURAND}, 'public', '2026-03-10 08:00:00', '2026-03-10 09:00:00', 'Réunion',
                   'Rappeler Jean au 06…', 'Jean Durand', 'jean@durand.fr', '0611111111')`)
-        const [pli] = await tx.execute(sql`
-          insert into mail_items (client_id, sender, note, status, opened_at, opened_by)
-          values (${DURAND}, 'Dr Martin', 'Pli personnel', 'opened', now() - interval '1 day', ${ACCUEIL})
-          returning id`)
+        await tx.execute(sql`
+          insert into mail_items (id, client_id, sender, note, status, opened_at, opened_by)
+          values (${pliId}, ${DURAND}, 'Dr Martin', 'Pli personnel', 'opened',
+                  date_sub(now(3), interval 1 day), ${ACCUEIL})`)
         await tx.execute(sql`
           insert into mail_requests (mail_item_id, client_id, kind, requested_by_member_id,
             forward_recipient, forward_address_line1, forward_postal_code, forward_city, forward_country)
-          values (${pli.id as string}, ${DURAND}, 'forward', ${JEANNE}, 'Jeanne Durand', '12 rue des Lilas',
+          values (${pliId}, ${DURAND}, 'forward', ${JEANNE}, 'Jeanne Durand', '12 rue des Lilas',
                   '38000', 'Grenoble', 'FR')`)
         await tx.execute(sql`
           update mail_requests set status = 'refused', refused_by_staff_id = ${ACCUEIL}, refusal_reason = 'Adresse incomplète'`)
         await tx.execute(sql`
           insert into notification_deliveries (event, audience, client_id, recipients, subject, status)
-          values ('mail_received', 'client', ${DURAND}, '{jeanne@durand.fr}', 'Nouveau courrier pour Atelier Durand', 'sent')`)
+          values ('mail_received', 'client', ${DURAND}, ${JSON.stringify(['jeanne@durand.fr'])},
+                  'Nouveau courrier pour Atelier Durand', 'sent')`)
       })
 
       await anonymiser(DURAND)
 
-      const [client] = await asTenant((tx) => tx.execute(sql`select * from clients where id = ${DURAND}`))
+      const [client] = await asTenant((tx) => lire(tx, sql`select * from clients where id = ${DURAND}`))
       assert.match(client.name as string, /^Client anonymisé /)
       for (const champ of ['siret', 'email', 'phone', 'address_line1', 'postal_code', 'city', 'notes']) {
         assert.equal(client[champ], null, champ)
@@ -254,52 +281,60 @@ describe('anonymisation RGPD', { skip: raison }, () => {
       // Les écritures comptables passées citent ce compte.
       assert.equal(client.accounting_code, 'DURAND')
 
-      const [contact] = await asTenant((tx) => tx.execute(sql`select * from client_contacts where client_id = ${DURAND}`))
+      const [contact] = await asTenant((tx) =>
+        lire(tx, sql`select * from client_contacts where client_id = ${DURAND}`),
+      )
       assert.equal(contact.full_name, 'Contact anonymisé')
       assert.equal(contact.email, null)
       assert.ok(contact.anonymized_at)
 
-      const [acces] = await asTenant((tx) => tx.execute(sql`select * from client_members where id = ${JEANNE}`))
+      const [acces] = await asTenant((tx) => lire(tx, sql`select * from client_members where id = ${JEANNE}`))
       assert.match(acces.email as string, /@anonymise\.invalid$/)
       assert.equal(acces.auth_user_id, null)
       assert.ok(acces.anonymized_at)
 
-      const [pli] = await asTenant((tx) => tx.execute(sql`select * from mail_items where client_id = ${DURAND}`))
+      const [pli] = await asTenant((tx) => lire(tx, sql`select * from mail_items where client_id = ${DURAND}`))
       assert.equal(pli.sender, null)
       assert.equal(pli.note, null)
       assert.ok(pli.sender_anonymized_at)
 
-      const [demande] = await asTenant((tx) => tx.execute(sql`select * from mail_requests where client_id = ${DURAND}`))
+      const [demande] = await asTenant((tx) =>
+        lire(tx, sql`select * from mail_requests where client_id = ${DURAND}`),
+      )
       assert.equal(demande.forward_recipient, 'Destinataire anonymisé')
       assert.equal(demande.status, 'refused')
 
       const [reservation] = await asTenant((tx) =>
-        tx.execute(sql`select * from bookings where client_id = ${DURAND} and kind = 'booking'`),
+        lire(tx, sql`select * from bookings where client_id = ${DURAND} and kind = 'booking'`),
       )
       assert.equal(reservation.requester_name, null)
       assert.equal(reservation.notes, null)
       assert.ok(reservation.requester_anonymized_at)
       assert.equal(reservation.title, 'Réunion')
 
-      const [contrat] = await asTenant((tx) => tx.execute(sql`select * from contracts where client_id = ${DURAND}`))
+      const [contrat] = await asTenant((tx) =>
+        lire(tx, sql`select * from contracts where client_id = ${DURAND}`),
+      )
       assert.equal(contrat.notes, null)
       assert.equal(contrat.termination_reason, null)
       assert.equal(contrat.reference, 'DOM-0')
 
       const [message] = await asTenant((tx) =>
-        tx.execute(sql`select recipients, subject from notification_deliveries where client_id = ${DURAND}`),
+        lire(tx, sql`select recipients, subject from notification_deliveries where client_id = ${DURAND}`),
       )
-      assert.deepEqual(message.recipients, ['destinataire@anonymise.invalid'])
+      assert.deepEqual(jsonEnTableau(message.recipients), ['destinataire@anonymise.invalid'])
 
       // La facture, ses lignes et son instantané d'acheteur : intacts.
       const apres = await facture(factureId)
       assert.deepEqual(apres, avant)
       assert.equal(apres.number, numero)
-      assert.equal((apres.buyer_snapshot as { name: string }).name, 'Atelier Durand')
+      const instantane = apres.buyer_snapshot
+      const acheteur = (typeof instantane === 'string' ? JSON.parse(instantane) : instantane) as { name: string }
+      assert.equal(acheteur.name, 'Atelier Durand')
       const [{ n: lignesApres }] = await asTenant((tx) =>
-        tx.execute(sql`select count(*)::int as n from invoice_lines where invoice_id = ${factureId}`),
+        lire(tx, sql`select count(*) as n from invoice_lines where invoice_id = ${factureId}`),
       )
-      assert.equal(lignesApres, lignesAvant)
+      assert.equal(Number(lignesApres), Number(lignesAvant))
     })
 
     it('fige le compte auxiliaire d’un client facturé, dérivé de sa raison sociale (ADR 041)', async () => {
@@ -314,7 +349,7 @@ describe('anonymisation RGPD', { skip: raison }, () => {
       await anonymiser(SOCIETE)
       await anonymiser(PROSPECT_SANS_FACTURE)
       const rows = await asTenant((tx) =>
-        tx.execute(sql`select id, accounting_code from clients where id in (${SOCIETE}, ${PROSPECT_SANS_FACTURE})`),
+        lire(tx, sql`select id, accounting_code from clients where id in (${SOCIETE}, ${PROSPECT_SANS_FACTURE})`),
       )
       const codes = new Map(rows.map((row) => [row.id, row.accounting_code]))
       // Celui que l'export lui donnait (`deriveAccountingCode`) : les exports passés ne bougent pas.
@@ -323,7 +358,9 @@ describe('anonymisation RGPD', { skip: raison }, () => {
       assert.equal(codes.get(PROSPECT_SANS_FACTURE), null)
       // Le compte saisi sur une fiche reste le sien.
       await anonymiser(DURAND)
-      const [durand] = await asTenant((tx) => tx.execute(sql`select accounting_code from clients where id = ${DURAND}`))
+      const [durand] = await asTenant((tx) =>
+        lire(tx, sql`select accounting_code from clients where id = ${DURAND}`),
+      )
       assert.equal(durand.accounting_code, 'DURAND')
     })
 
@@ -333,25 +370,43 @@ describe('anonymisation RGPD', { skip: raison }, () => {
         await codeErreur(() =>
           asTenant((tx) => tx.execute(sql`update clients set name = 'Atelier Durand' where id = ${DURAND}`)),
         ),
-        PG_ANONYMIZATION_REFUSED,
+        DB_ANONYMIZATION_REFUSED,
       )
       assert.equal(
         await codeErreur(() =>
           asTenant((tx) => tx.execute(sql`update clients set anonymized_at = null where id = ${DURAND}`)),
         ),
-        PG_ANONYMIZATION_REFUSED,
+        DB_ANONYMIZATION_REFUSED,
       )
       assert.equal(
         await codeErreur(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              insert into clients (name, anonymized_at, deleted_at) values ('Faux', now(), now())`),
+              insert into clients (name, anonymized_at, deleted_at) values ('Faux', now(3), now(3))`),
           ),
         ),
-        PG_ANONYMIZATION_REFUSED,
+        DB_ANONYMIZATION_REFUSED,
       )
       // Une seconde fois : refusée, la fiche l'est déjà.
-      assert.equal(await codeErreur(() => anonymiser(DURAND)), PG_ANONYMIZATION_REFUSED)
+      assert.equal(await codeErreur(() => anonymiser(DURAND)), DB_ANONYMIZATION_REFUSED)
+    })
+
+    it('refuse de modifier chaque colonne d’une fiche, d’un contact, d’un accès ou d’un membre anonymisés', async () => {
+      await anonymiser(DURAND)
+      const ecritures: ReturnType<typeof sql>[] = [
+        sql`update clients set city = 'Lyon' where id = ${DURAND}`,
+        sql`update clients set last_contact_on = '2026-01-01' where id = ${DURAND}`,
+        sql`update client_contacts set notes = 'x' where client_id = ${DURAND}`,
+        sql`update client_contacts set is_primary = true where client_id = ${DURAND}`,
+        sql`update client_members set full_name = 'x' where id = ${JEANNE}`,
+        sql`update client_members set auth_user_id = 'u-x' where id = ${JEANNE}`,
+      ]
+      for (const ecriture of ecritures) {
+        assert.equal(
+          await codeErreur(() => asTenant((tx) => tx.execute(ecriture))),
+          DB_ANONYMIZATION_REFUSED,
+        )
+      }
     })
   })
 
@@ -362,12 +417,12 @@ describe('anonymisation RGPD', { skip: raison }, () => {
           insert into clients (id, name, status, created_at) values (${ANCIEN}, 'Ancien client', 'inactive', '2019-01-01')`)
         await tx.execute(sql`
           insert into bookings (resource_id, client_id, channel, starts_at, ends_at, title)
-          values (${SALLE}, ${ANCIEN}, 'staff', '2024-03-10T08:00:00Z', '2024-03-10T09:00:00Z', 'Réunion')`)
+          values (${SALLE}, ${ANCIEN}, 'staff', '2024-03-10 08:00:00', '2024-03-10 09:00:00', 'Réunion')`)
         await tx.execute(sql`
-          insert into mail_items (client_id, received_at) values (${ANCIEN}, '2025-02-01T09:00:00Z')`)
+          insert into mail_items (client_id, received_at) values (${ANCIEN}, '2025-02-01 09:00:00')`)
       })
       const [row] = await asTenant((tx) =>
-        tx.execute(sql`select client_last_activity_on(${ANCIEN}::uuid)::text as jour`),
+        lire(tx, sql`select cast(client_last_activity_on(${ANCIEN}) as char) as jour`),
       )
       assert.equal(row.jour, '2025-02-01')
     })
@@ -382,91 +437,125 @@ describe('anonymisation RGPD', { skip: raison }, () => {
         // Un prospect rappelé le mois dernier : gardé.
         await tx.execute(sql`
           insert into clients (name, status, created_at, last_contact_on)
-          values ('Prospect suivi', 'prospect', '2020-01-01', current_date - 30)`)
+          values ('Prospect suivi', 'prospect', '2020-01-01', date_sub(curdate(), interval 30 day))`)
         await tx.execute(sql`
           insert into contracts (client_id, reference, contract_type, status, starts_on, terminated_on, amount_cents)
           values (${ANCIEN}, 'BUR-0', 'bureau', 'terminated', '2018-01-01', '2020-06-30', 90000)`)
         await tx.execute(sql`
           insert into sepa_mandates (client_id, reference, debtor_name, iban_ciphertext, iban_key_version,
                                      iban_last4, signed_on)
-          values (${MANDATE}, 'RUM-OUBLI', 'Titulaire', decode('43414431' || repeat('00', 45), 'hex'), 1,
+          values (${MANDATE}, 'RUM-OUBLI', 'Titulaire', unhex(concat('43414431', repeat('00', 45))), 1,
                   '0189', '2015-01-01')`)
       })
-      const [row] = await asTenant((tx) => tx.execute(sql`select anonymize_expired_clients() as n`))
-      assert.equal(row.n, 2)
+      const [row] = await asTenant((tx) => lire(tx, sql`select anonymize_expired_clients() as n`))
+      assert.equal(Number(row.n), 2)
       const anonymises = await asTenant((tx) =>
-        tx.execute(sql`select id from clients where anonymized_at is not null order by id`),
+        lire(tx, sql`select id from clients where anonymized_at is not null order by id`),
       )
       assert.deepEqual(
         anonymises.map((client) => client.id),
         [PROSPECT, ANCIEN].sort(),
       )
       // L'atelier Durand, créé aujourd'hui : rien ne court encore.
-      const [durand] = await asTenant((tx) => tx.execute(sql`select anonymized_at from clients where id = ${DURAND}`))
+      const [durand] = await asTenant((tx) =>
+        lire(tx, sql`select anonymized_at from clients where id = ${DURAND}`),
+      )
       assert.equal(durand.anonymized_at, null)
     })
   })
 
   describe('membres retirés', () => {
     it('anonymise la trace d’un membre retiré au terme de la durée, jamais un membre actif', async () => {
-      const [retireAncien, retireRecent, parti] = await asTenant(async (tx) => {
-        const lignes = await tx.execute(sql`
-          insert into client_members (client_id, email, full_name, deleted_at) values
-            (${DURAND}, 'ancien@durand.fr', 'Ancien gérant', now() - interval '13 months'),
-            (${DURAND}, 'recent@durand.fr', 'Stagiaire', now() - interval '1 month')
-          returning id`)
-        const [staff] = await tx.execute(sql`
-          insert into staff_members (email, full_name, deleted_at)
-          values ('parti@centre.fr', 'Ancienne accueil', now() - interval '2 years') returning id`)
-        return [lignes[0].id as string, lignes[1].id as string, staff.id as string]
+      const retireAncien = uuidv7()
+      const retireRecent = uuidv7()
+      const parti = uuidv7()
+      await asTenant(async (tx) => {
+        await tx.execute(sql`
+          insert into client_members (id, client_id, email, full_name, deleted_at) values
+            (${retireAncien}, ${DURAND}, 'ancien@durand.fr', 'Ancien gérant', date_sub(now(3), interval 13 month)),
+            (${retireRecent}, ${DURAND}, 'recent@durand.fr', 'Stagiaire', date_sub(now(3), interval 1 month))`)
+        await tx.execute(sql`
+          insert into staff_members (id, email, full_name, deleted_at)
+          values (${parti}, 'parti@centre.fr', 'Ancienne accueil', date_sub(now(3), interval 24 month))`)
       })
 
-      const [row] = await asTenant((tx) => tx.execute(sql`select anonymize_removed_members() as n`))
-      assert.equal(row.n, 2)
+      const [row] = await asTenant((tx) => lire(tx, sql`select anonymize_removed_members() as n`))
+      assert.equal(Number(row.n), 2)
       const membres = await asTenant((tx) =>
-        tx.execute(sql`
-          select id, anonymized_at is not null as anonyme, email from client_members
-           where id in (${retireAncien}, ${retireRecent}, ${JEANNE})`),
+        lire(
+          tx,
+          sql`select id, anonymized_at is not null as anonyme, email from client_members
+               where id in (${retireAncien}, ${retireRecent}, ${JEANNE})`,
+        ),
       )
       const parId = new Map(membres.map((membre) => [membre.id, membre]))
-      assert.equal(parId.get(retireAncien)?.anonyme, true)
-      assert.equal(parId.get(retireRecent)?.anonyme, false)
-      assert.equal(parId.get(JEANNE)?.anonyme, false)
+      assert.equal(Boolean(parId.get(retireAncien)?.anonyme), true)
+      assert.equal(Boolean(parId.get(retireRecent)?.anonyme), false)
+      assert.equal(Boolean(parId.get(JEANNE)?.anonyme), false)
       const [equipe] = await asTenant((tx) =>
-        tx.execute(sql`select full_name, anonymized_at from staff_members where id = ${parti}`),
+        lire(tx, sql`select full_name, anonymized_at from staff_members where id = ${parti}`),
       )
       assert.equal(equipe.full_name, 'Membre anonymisé')
 
       // À la demande, sans attendre : seulement un membre retiré.
-      const aLaDemande = sql`${ACCUEIL}::uuid, 'erasure_request', current_date - 2`
-      await asTenant((tx) => tx.execute(sql`select anonymize_client_member(${retireRecent}::uuid, ${aLaDemande})`))
-      assert.equal(
-        await codeErreur(() =>
-          asTenant((tx) => tx.execute(sql`select anonymize_client_member(${JEANNE}::uuid, ${aLaDemande})`)),
-        ),
-        PG_ANONYMIZATION_REFUSED,
+      const il_y_a_deux_jours = addDaysToIsoDate(todayIsoDate('Europe/Paris'), -2)
+      await asTenant((tx) =>
+        tx.execute(sql`select anonymize_client_member(${retireRecent}, ${ACCUEIL}, 'erasure_request', ${il_y_a_deux_jours})`),
       )
       assert.equal(
         await codeErreur(() =>
-          asTenant((tx) => tx.execute(sql`select anonymize_staff_member(${ACCUEIL}::uuid, ${aLaDemande})`)),
+          asTenant((tx) =>
+            tx.execute(sql`select anonymize_client_member(${JEANNE}, ${ACCUEIL}, 'erasure_request', ${il_y_a_deux_jours})`),
+          ),
         ),
-        PG_ANONYMIZATION_REFUSED,
+        DB_ANONYMIZATION_REFUSED,
+      )
+      assert.equal(
+        await codeErreur(() =>
+          asTenant((tx) =>
+            tx.execute(sql`select anonymize_staff_member(${ACCUEIL}, ${ACCUEIL}, 'erasure_request', ${il_y_a_deux_jours})`),
+          ),
+        ),
+        DB_ANONYMIZATION_REFUSED,
       )
       // La nuit trace « au terme », sans auteur ; la demande, son auteur et sa date.
       const traces = await asTenant((tx) =>
-        tx.execute(sql`
-          select id, anonymization_basis, anonymized_by, erasure_requested_on is not null as datee
-            from client_members where id in (${retireAncien}, ${retireRecent})`),
+        lire(
+          tx,
+          sql`select id, anonymization_basis, anonymized_by, erasure_requested_on is not null as datee
+                from client_members where id in (${retireAncien}, ${retireRecent})`,
+        ),
       )
-      const trace = new Map(traces.map((row) => [row.id, row]))
+      const trace = new Map(traces.map((ligne) => [ligne.id, ligne]))
       assert.deepEqual(
-        { ...trace.get(retireAncien) },
+        { ...trace.get(retireAncien), datee: Boolean(trace.get(retireAncien)?.datee) },
         { id: retireAncien, anonymization_basis: 'retention', anonymized_by: null, datee: false },
       )
       assert.deepEqual(
-        { ...trace.get(retireRecent) },
+        { ...trace.get(retireRecent), datee: Boolean(trace.get(retireRecent)?.datee) },
         { id: retireRecent, anonymization_basis: 'erasure_request', anonymized_by: ACCUEIL, datee: true },
       )
+    })
+  })
+
+  describe('l’indicateur de session', () => {
+    it('est remis à NULL après une anonymisation réussie comme après un refus', async () => {
+      const lireIndicateur = (tx: Transaction) => lire(tx, sql`select @app_anonymization as drapeau`)
+      await asTenant(async (tx) => {
+        await tx.execute(sql`select anonymize_client(${PROSPECT_SANS_FACTURE}, ${ACCUEIL}, 'relationship_ended', null)`)
+        assert.equal((await lireIndicateur(tx))[0].drapeau, null)
+      })
+      await factureEmise()
+      await asTenant(async (tx) => {
+        await assert.rejects(() =>
+          tx.execute(sql`select anonymize_client(${DURAND}, ${ACCUEIL}, 'relationship_ended', null)`),
+        )
+        assert.equal((await lireIndicateur(tx))[0].drapeau, null)
+      })
+      // La connexion revient au pool : la transaction annulée n'a pas laissé le drapeau.
+      await asTenant(async (tx) => {
+        assert.equal((await lireIndicateur(tx))[0].drapeau, null)
+      })
     })
   })
 })

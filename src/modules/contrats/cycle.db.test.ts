@@ -2,10 +2,10 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import {
   ContractAlreadyStartedError,
@@ -30,16 +30,8 @@ import {
  * changement de ressource qui nomment le conflit d'occupation, archivage et
  * désarchivage.
  *
- * Éprouvé sous `app_centre`, par le code qu'utilisent les écrans.
+ * Éprouvé sous l'identité applicative, par le code qu'utilisent les écrans.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
 
 /** Jour du centre (Paris), décalé de `days` : les règles datées s'y mesurent. */
 const jour = (days: number) => addDaysToIsoDate(todayIsoDate('Europe/Paris'), days)
@@ -49,12 +41,8 @@ const ANNEE = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Paris', year:
   new Date(),
 )
 
-describe('cycle de vie d’un contrat', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('cycle de vie d’un contrat', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACME = '01a00000-0000-7000-8000-0000000f0c01'
   const BETA = '01a00000-0000-7000-8000-0000000f0c02'
@@ -62,7 +50,7 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   const AUTRE_BUREAU = '01a00000-0000-7000-8000-0000000f0b02'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const saisie = (overrides: Partial<ContractInput> = {}): ContractInput => ({
     clientId: ACME,
@@ -92,10 +80,11 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
 
   /** Occupations de contrat en base, toutes, annulées comprises. */
   const occupationsDeContrat = async (contractId: string): Promise<number> => {
-    const [row] = await owner.client`
-      select count(*)::int as n from bookings
-       where contract_id = ${contractId} and kind = 'contract'`
-    return row.n
+    const [rows] = (await bases.owner.client.query(
+      `select count(*) as n from bookings where contract_id = ? and kind = 'contract'`,
+      [contractId],
+    )) as unknown as [{ n: number | string }[]]
+    return Number(rows[0].n)
   }
 
   const rejects = async <E>(run: () => Promise<unknown>, type: new (...args: never[]) => E) => {
@@ -109,13 +98,29 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
-    await owner.client`truncate table document_sequences`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'bookings',
+      'contract_documents',
+      'contract_amendments',
+      'contract_lines',
+      'contract_renewals',
+      'contracts',
+      'subscribed_services',
+      'rate_plan_items',
+      'rate_plans',
+      'clients',
+      'resources',
+      'document_sequences',
+    )
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name) values (${ACME}, 'Acme SAS'), (${BETA}, 'Beta SARL')`)
@@ -127,8 +132,8 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('numérotation automatique', () => {
@@ -231,7 +236,7 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into bookings (resource_id, channel, starts_at, ends_at, title)
-          values (${BUREAU}, 'staff', '2026-04-10T07:00:00Z', '2026-04-10T08:00:00Z', 'Rendez-vous')`),
+          values (${BUREAU}, 'staff', '2026-04-10 07:00:00', '2026-04-10 08:00:00', 'Rendez-vous')`),
       )
       const { id } = await createContract(saisie())
       const error = await rejects(() => activateContract(id), ContractOccupationConflictError)
@@ -287,8 +292,8 @@ describe('cycle de vie d’un contrat', { skip: raison }, () => {
       await asTenant((tx) =>
         tx.execute(sql`
           insert into bookings (resource_id, channel, starts_at, ends_at, title)
-          values (${AUTRE_BUREAU}, 'staff', ${`${passe}T07:00:00Z`}::timestamptz,
-                  ${`${passe}T08:00:00Z`}::timestamptz, 'Rendez-vous passé')`),
+          values (${AUTRE_BUREAU}, 'staff', ${`${passe} 07:00:00`},
+                  ${`${passe} 08:00:00`}, 'Rendez-vous passé')`),
       )
       const id = await contratActif('BUR-A', BUREAU, { startsOn: jour(-200), endsOn: null })
       const avant = await findContractOccupation(id)

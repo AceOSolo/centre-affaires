@@ -1,35 +1,64 @@
+# Environnement de développement local : MySQL 8.4, et MinIO si l'on veut un
+# stockage de fichiers (profil `stockage`).
+#
+#   docker compose up -d db                        # la base
+#   docker compose --profile stockage up -d        # la base et MinIO
+#   npm run db:migrer                              # structure + règles
+#
+# Les valeurs de .env.example conviennent telles quelles, avec DB_ADMIN_USER=root
+# et DB_ADMIN_PASSWORD=root (mot de passe ci-dessous). Jamais en production :
+# voir infra/serveur/compose.yml.
 services:
   db:
-    # Aligne sur Neon (18.x) : la migration 0000 et les tests doivent
-    # rencontrer le meme moteur en local, en CI et en production.
-    image: postgres:18-alpine
+    # Même moteur en local, en CI et en production : les triggers et le
+    # chiffrement de la collation y sont éprouvés.
+    image: mysql:8.4
     container_name: centre-affaires-db
     restart: unless-stopped
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: centre_affaires
+    command:
+      - mysqld
+      # Création de triggers et de fonctions sans le droit SUPER, le journal
+      # binaire étant actif.
+      - --log-bin-trust-function-creators=1
+      - --character-set-server=utf8mb4
+      # Insensible à la casse, sensible aux accents (conventions de migration).
+      - --collation-server=utf8mb4_0900_as_ci
       # Base en UTC : le fuseau est appliqué à l'affichage (décision 4).
-      TZ: UTC
-      PGTZ: UTC
+      - --default-time-zone=+00:00
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: centre_affaires
     ports:
-      - "5432:5432"
+      # Boucle locale seulement : la base de dev n'est pas ouverte au réseau.
+      - "127.0.0.1:3306:3306"
     volumes:
-      # L'image 18 range les données sous /var/lib/postgresql/18/docker et
-      # attend le volume sur /var/lib/postgresql. Elle refuse de démarrer si un
-      # volume est encore monté sur l'ancien emplacement, /var/lib/postgresql/data.
-      #
-      # D'où un volume neuf : l'ancien, `db-data` (en pratique
-      # `centre-affaires_db-data`), n'est plus lu. Il ne contenait qu'une base de
-      # travail jetable (ADR 003). Pour en garder le contenu, le sauvegarder
-      # avec l'image qui l'a écrit avant de le supprimer :
-      # `docker volume rm centre-affaires_db-data`. Voir README.md.
-      - db-data-18:/var/lib/postgresql
+      - db-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d centre_affaires"]
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 20s
+
+  # Stockage local compatible S3. Console : http://127.0.0.1:9001
+  # Créer le bucket `uploads` (console, ou `mc mb local/uploads`), puis dans
+  # .env.local : S3_ENDPOINT=http://127.0.0.1:9000, S3_ACCESS_KEY_ID=minio,
+  # S3_SECRET_ACCESS_KEY=minio-secret, S3_FORCE_PATH_STYLE=true.
+  minio:
+    profiles: ["stockage"]
+    image: minio/minio:latest
+    container_name: centre-affaires-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio-secret
+    ports:
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - minio-data:/data
 
 volumes:
-  db-data-18:
+  db-data:
+  minio-data:

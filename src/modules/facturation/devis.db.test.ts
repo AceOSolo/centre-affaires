@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { after, afterEach, before, beforeEach, describe, it } from 'node:test'
 
-import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { and, count, eq, sql } from 'drizzle-orm'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID, tenants } from '../../db/tenants.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { contractSchedule } from '../contrats/echeancier.ts'
@@ -18,6 +19,7 @@ import {
 } from '../reservations/queries.ts'
 import { bookings } from '../reservations/schema.ts'
 import { quote } from './devis-queries.ts'
+import { ratePlanItems } from './schema.ts'
 import { parseBankDetails, parsePricingRules, parseSellerIdentity } from './parametres.ts'
 import { invoiceLines, invoices } from './schema-factures.ts'
 import {
@@ -32,6 +34,56 @@ import {
 } from './queries.ts'
 
 /**
+ * Tout ce qui dépend des clients, contrats, ressources, services et offres :
+ * l'équivalent du `truncate … cascade` de PostgreSQL, que MySQL n'a pas.
+ */
+const TABLES_METIER = [
+  'invoice_lines',
+  'invoice_reminders',
+  'payments',
+  'invoices',
+  'invoice_runs',
+  'sepa_mandates',
+  'subscribed_services',
+  'offer_requests',
+  'offer_items',
+  'offers',
+  'contract_renewals',
+  'contract_documents',
+  'contract_lines',
+  'contract_amendments',
+  'mail_requests',
+  'mail_scan_views',
+  'mail_scans',
+  'mail_items',
+  'notification_deliveries',
+  'inspection_photo_views',
+  'inspection_photos',
+  'inspections',
+  'bookings',
+  'contracts',
+  'rate_plan_items',
+  'rate_plans',
+  'client_contacts',
+  'client_members',
+  'clients',
+  'resource_google_calendars',
+  'opening_hours',
+  'closures',
+  'listings',
+  'resources',
+  'services',
+]
+/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
+const TABLES_AVEC_EQUIPE = [
+  ...TABLES_METIER,
+  'accounting_exports',
+  'google_calendar_connections',
+  'notification_preferences',
+  'staff_members',
+]
+
+/**
  * Moteur de devis contre la base (R08, R10, R11, ADR 023) : la grille par
  * défaut ou celle du contrat du client, ses dates de validité, les règles du
  * centre, et le devis figé sur la réservation à l'écriture — dont le montant
@@ -40,21 +92,10 @@ import {
  * Fonctions appelées telles que l'application les appelle, sous le rôle
  * applicatif.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
 
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
+describe('devis des réservations', { skip: raisonDeSaut }, () => {
 
-describe('devis des réservations', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const SALLE = '01a00000-0000-7000-8000-000000d0b001'
   const BUREAU = '01a00000-0000-7000-8000-000000d0b002'
@@ -65,7 +106,7 @@ describe('devis des réservations', { skip: raison }, () => {
   const RESIDENTS = '01a00000-0000-7000-8000-000000d0a002'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Créneau en heure murale de Paris, le fuseau du centre. */
   const creneau = (debut: string, fin: string) => ({
@@ -86,25 +127,22 @@ describe('devis des réservations', { skip: raison }, () => {
 
   /** Contrat actif du client qui désigne la grille des résidents. */
   const contratResident = async (clientId = CLIENT) => {
-    const [row] = await asTenant((tx) =>
-      tx
-        .insert(contracts)
-        .values({
-          clientId,
-          reference: `RES-${clientId.slice(-3)}`,
-          contractType: 'domiciliation',
-          startsOn: '2026-09-01',
-          amountCents: 3_000,
-          ratePlanId: RESIDENTS,
-        })
-        .returning({ id: contracts.id }),
+    const row = await asTenant((tx) =>
+      insertReturning(tx, contracts, {
+        clientId,
+        reference: `RES-${clientId.slice(-3)}`,
+        contractType: 'domiciliation',
+        startsOn: '2026-09-01',
+        amountCents: 3_000,
+        ratePlanId: RESIDENTS,
+      }),
     )
     await asTenant((tx) => tx.update(contracts).set({ status: 'active' }).where(eq(contracts.id, row.id)))
     return row.id
   }
 
   const reinitialiserCentre = () =>
-    owner.client`
+    bases.owner.db.execute(sql`
       update tenants set
         prorata_rule = 'calendar_days', started_unit_tolerance_minutes = 0, half_day_minutes = 240,
         default_vat_rate_bp = 2000, default_payment_method = 'transfer',
@@ -112,14 +150,16 @@ describe('devis des réservations', { skip: raison }, () => {
         address_line1 = null, address_line2 = null, postal_code = null, city = null, country = 'FR',
         siren = null, siret = null, vat_number = null, rcs_city = null,
         bank_iban = null, bank_bic = null, sepa_creditor_id = null
-      where id = ${DEFAULT_TENANT_ID}`
+      where id = ${DEFAULT_TENANT_ID}`)
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
+    await viderTables(bases.owner, ...TABLES_METIER)
     await reinitialiserCentre()
     await asTenant(async (tx) => {
       await tx.execute(sql`
@@ -146,10 +186,10 @@ describe('devis des réservations', { skip: raison }, () => {
   })
 
   after(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, services, offers cascade`
+    await viderTables(bases.owner, ...TABLES_METIER)
     await reinitialiserCentre()
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('quote()', () => {
@@ -172,10 +212,10 @@ describe('devis des réservations', { skip: raison }, () => {
     })
 
     it('lit les règles du centre : demi-journée, tolérance, TVA (R10)', async () => {
-      await owner.client`
+      await bases.owner.db.execute(sql`
         update tenants set half_day_minutes = 300, started_unit_tolerance_minutes = 10,
           default_vat_rate_bp = 1000
-        where id = ${DEFAULT_TENANT_ID}`
+        where id = ${DEFAULT_TENANT_ID}`)
       const result = await quote({ resourceId: SALLE, ...creneau('2026-10-06T09:00', '2026-10-06T14:10') })
       assert.equal(result.ok, true)
       if (!result.ok) return
@@ -270,9 +310,18 @@ describe('devis des réservations', { skip: raison }, () => {
     it('garde le prix figé quand la grille change ensuite', async () => {
       const created = await createBooking({ resourceId: SALLE, ...MATIN, title: 'Comité' })
       const [ancien] = await asTenant((tx) =>
-        tx.execute(sql`select id from rate_plan_items where rate_plan_id = ${PUBLIQUE} and unit = 'half_day' and resource_type = 'salle'`),
+        tx
+          .select({ id: ratePlanItems.id })
+          .from(ratePlanItems)
+          .where(
+            and(
+              eq(ratePlanItems.ratePlanId, PUBLIQUE),
+              eq(ratePlanItems.unit, 'half_day'),
+              eq(ratePlanItems.resourceType, 'salle'),
+            ),
+          ),
       )
-      await removeRatePlanItem(ancien.id as string)
+      await removeRatePlanItem(ancien.id)
       await prixDe(PUBLIQUE, 'salle', 'half_day', 10_000)
 
       assert.equal((await lireReservation(created.id)).quoteAmountCents, 9_000)
@@ -307,7 +356,7 @@ describe('devis des réservations', { skip: raison }, () => {
         }),
         QuoteDiscountError,
       )
-      const [{ n }] = await asTenant((tx) => tx.execute(sql`select count(*)::int as n from bookings`))
+      const [{ n }] = await asTenant((tx) => tx.select({ n: count() }).from(bookings))
       assert.equal(n, 0)
     })
 
@@ -349,10 +398,11 @@ describe('devis des réservations', { skip: raison }, () => {
     it('ne refait pas le devis d’une réservation déjà portée sur une facture', async () => {
       const created = await createBooking({ resourceId: SALLE, ...MATIN, title: 'Comité', clientId: CLIENT })
       await asTenant(async (tx) => {
-        const [facture] = await tx
-          .insert(invoices)
-          .values({ clientId: CLIENT, periodStart: '2026-10-01', periodEnd: '2026-10-31' })
-          .returning({ id: invoices.id })
+        const facture = await insertReturning(tx, invoices, {
+          clientId: CLIENT,
+          periodStart: '2026-10-01',
+          periodEnd: '2026-10-31',
+        })
         await tx.insert(invoiceLines).values({
           invoiceId: facture.id,
           kind: 'booking',
@@ -472,18 +522,15 @@ describe('devis des réservations', { skip: raison }, () => {
 
   describe('échéancier lu en base (R10, ADR 025)', () => {
     it('lit la règle de prorata du centre et les lignes de la version, remises comprises', async () => {
-      await owner.client`update tenants set prorata_rule = 'thirty_day_month' where id = ${DEFAULT_TENANT_ID}`
-      const [contrat] = await asTenant((tx) =>
-        tx
-          .insert(contracts)
-          .values({
-            clientId: CLIENT,
-            reference: 'BUR-2026-100',
-            contractType: 'bureau',
-            startsOn: '2026-03-10',
-            amountCents: 0,
-          })
-          .returning({ id: contracts.id }),
+      await bases.owner.db.execute(sql`update tenants set prorata_rule = 'thirty_day_month' where id = ${DEFAULT_TENANT_ID}`)
+      const contrat = await asTenant((tx) =>
+        insertReturning(tx, contracts, {
+          clientId: CLIENT,
+          reference: 'BUR-2026-100',
+          contractType: 'bureau',
+          startsOn: '2026-03-10',
+          amountCents: 0,
+        }),
       )
       await asTenant((tx) =>
         tx.insert(contractLines).values([

@@ -5,8 +5,8 @@ import type { InspectionField, InspectionFieldType, InspectionValues } from './s
  * Règles des modèles d'état des lieux et de leurs valeurs (R06, ADR 039).
  *
  * La base en est la gardienne : `inspection_fields_error()` sur les versions,
- * `inspection_values_error()` dans la garde des états des lieux (migration
- * 0039). Ce module en est le miroir, pour que l'écran dise **toutes** les
+ * `inspection_values_error()` dans la garde des états des lieux
+ * (`src/db/regles/80-etats-des-lieux.sql`). Ce module en est le miroir, pour que l'écran dise **toutes** les
  * erreurs, chacune à côté de son champ, avant d'écrire — la base, elle,
  * s'arrête à la première. Les messages sont les siens, mot pour mot :
  * `etats-des-lieux-ecrans.db.test.ts` éprouve l'accord des deux.
@@ -21,9 +21,9 @@ const FIELD_KEYS = new Set(['id', 'label', 'type', 'required', 'unit', 'options'
 const FIELD_TYPES = new Set<string>(['text', 'number', 'choice', 'checkbox', 'condition'])
 export const MAX_TEXT_VALUE = 5000
 
-/** Longueur au sens de Postgres : en caractères, pas en unités UTF-16. */
+/** Longueur au sens de MySQL (`CHAR_LENGTH`) : en caractères, pas en unités UTF-16. */
 const length = (value: string) => [...value].length
-/** `btrim(text)` de Postgres : les espaces seulement. */
+/** `TRIM()` de MySQL : les espaces seulement. */
 const blank = (value: string) => value.replace(/^ +| +$/g, '') === ''
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)

@@ -25,7 +25,7 @@ export const inspectionKindTitles: Record<InspectionKind, string> = {
 
 /**
  * Échelle de la note d'état, du meilleur au pire : l'ordre des clés est celui
- * de `inspection_condition_levels()` (migration 0039), vérifié par
+ * de la fonction SQL `inspection_values_error()` (`80-etats-des-lieux.sql`), vérifié par
  * `labels.test.ts`. La comparaison sortie / entrée s'en sert pour dire
  * « dégradé » ou « amélioré ».
  */

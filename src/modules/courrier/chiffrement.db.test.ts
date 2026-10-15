@@ -3,10 +3,11 @@ import { randomBytes } from 'node:crypto'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import {
   isSealedDocument,
   openDocument,
@@ -22,23 +23,10 @@ import { serveScan } from './servir.ts'
  * Chiffrement au repos des numérisations (R22, ADR 020), éprouvé contre la
  * base : la reprise des objets déposés en clair, et la lecture qui déchiffre
  * avant d'envoyer. Le stockage est une table en mémoire ; la base est la
- * vraie, sous le rôle applicatif soumis à la RLS.
+ * vraie, sous l'identité applicative.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('chiffrement des numérisations', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('chiffrement des numérisations', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const DURAND = '01a00000-0000-7000-8000-00000000e1a1'
   const CAMILLE = '01a00000-0000-7000-8000-00000000e1d1'
@@ -49,8 +37,12 @@ describe('chiffrement des numérisations', { skip: raison }, () => {
   /** Après rotation : la clé 2 chiffre, la clé 1 relit encore. */
   const v2: DocumentKeyring = { currentVersion: 2, keys: new Map([[2, cle2], [1, cle1]]) }
 
-  const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+  const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
+
+  /** Les lignes d'une requête : `execute` rend `[lignes, champs]` sous mysql2. */
+  const lire = async (tx: Transaction, requete: ReturnType<typeof sql>) =>
+    ((await tx.execute(requete)) as unknown as [Record<string, unknown>[]])[0]
 
   /** Le stockage : une table en mémoire, observable. */
   let objets: Map<string, Uint8Array>
@@ -79,38 +71,50 @@ describe('chiffrement des numérisations', { skip: raison }, () => {
     } = {},
   ) => {
     const key = `courrier/${DEFAULT_TENANT_ID}/${randomBytes(8).toString('hex')}.pdf`
-    const [item] = await asTenant((tx) =>
-      tx.execute(sql`insert into mail_items (client_id) values (${DURAND}) returning id`),
+    const itemId = uuidv7()
+    const scanId = uuidv7()
+    await asTenant((tx) =>
+      tx.execute(sql`insert into mail_items (id, client_id) values (${itemId}, ${DURAND})`),
     )
-    const [scan] = await asTenant((tx) =>
+    await asTenant((tx) =>
       tx.execute(sql`
-        insert into mail_scans (mail_item_id, side, storage_key, content_type, byte_size, encryption_key_version, deleted_at)
-        values (${item.id}, 'envelope', ${key}, 'application/pdf', ${byteSize}, ${version},
-                ${deleted ? sql`now()` : null})
-        returning id`),
+        insert into mail_scans (id, mail_item_id, side, storage_key, content_type, byte_size, encryption_key_version, deleted_at)
+        values (${scanId}, ${itemId}, 'envelope', ${key}, 'application/pdf', ${byteSize}, ${version},
+                ${deleted ? sql`CURRENT_TIMESTAMP(3)` : null})`),
     )
     objets.set(key, version === null ? Uint8Array.from(contenu) : sealDocument(contenu, key, keyring).bytes)
-    return { id: scan.id as string, key, contenu }
+    return { id: scanId, key, contenu }
   }
 
   const version = async (id: string) => {
     const [row] = await asTenant((tx) =>
-      tx.execute(sql`select encryption_key_version as v from mail_scans where id = ${id}`),
+      lire(tx, sql`select encryption_key_version as v from mail_scans where id = ${id}`),
     )
     return row.v as number | null
   }
 
   const reprendre = (keyring: DocumentKeyring, apply = true) =>
-    encryptStoredScans({ database: app.db, tenantId: DEFAULT_TENANT_ID, store, keyring, apply })
+    encryptStoredScans({ database: bases.app.db, tenantId: DEFAULT_TENANT_ID, store, keyring, apply })
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base globale : l'identité
+    // applicative de la base de test.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
     objets = new Map()
-    await owner.client`truncate table clients, staff_members cascade`
-    await owner.client`delete from tenants where id <> ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'mail_scan_views',
+      'mail_scans',
+      'mail_requests',
+      'mail_items',
+      'clients',
+      'staff_members',
+    )
+    await bases.owner.client.query('delete from tenants where id <> ?', [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`insert into clients (id, name, status) values (${DURAND}, 'Atelier Durand', 'active')`)
       await tx.execute(sql`
@@ -119,8 +123,8 @@ describe('chiffrement des numérisations', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('reprise des objets existants', () => {
@@ -234,8 +238,8 @@ describe('chiffrement des numérisations', { skip: raison }, () => {
     const camille = { viewer: 'staff' as const, staffMemberId: CAMILLE, authUserId: 'u-camille' }
 
     const consultations = async () => {
-      const [row] = await asTenant((tx) => tx.execute(sql`select count(*)::int as n from mail_scan_views`))
-      return row.n as number
+      const [row] = await asTenant((tx) => lire(tx, sql`select count(*) as n from mail_scan_views`))
+      return Number(row.n)
     }
 
     const servir = async (id: string) => {

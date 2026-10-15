@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant } from '../../db/index.ts'
+import { withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import {
   ContractOccupationLockedError,
   assignBookingClient,
@@ -26,21 +27,8 @@ import { BookingContractError } from './rattachement.ts'
  *
  * Éprouvé sous `app_centre`, par le code qu'utilisent les écrans.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('canal et contrat des réservations', { skip: raison }, () => {
-  // Les requêtes du module ouvrent leur propre connexion, par APP_DATABASE_URL.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
-
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('canal et contrat des réservations', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const ACME = '01a00000-0000-7000-8000-0000000e0c01'
   const BETA = '01a00000-0000-7000-8000-0000000e0c02'
@@ -49,20 +37,20 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
   const INCONNU = '01a00000-0000-7000-8000-0000000e0fff'
 
   const asTenant = <T>(run: Parameters<typeof withTenant<T>>[1]) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   /** Contrat d'Acme, du 1er mars au 30 juin 2026, dans l'état demandé. */
   const contrat = async (
     { status = 'active', clientId = ACME, resourceId = null as string | null } = {},
   ): Promise<string> => {
-    const [row] = await asTenant((tx) =>
+    const id = uuidv7()
+    await asTenant((tx) =>
       tx.execute(sql`
         insert into contracts
-          (client_id, contract_type, status, starts_on, ends_on, amount_cents, resource_id)
-        values (${clientId}, 'bureau', ${status}, '2026-03-01', '2026-06-30', 90000, ${resourceId})
-        returning id`),
+          (id, client_id, contract_type, status, starts_on, ends_on, amount_cents, resource_id)
+        values (${id}, ${clientId}, 'bureau', ${status}, '2026-03-01', '2026-06-30', 90000, ${resourceId})`),
     )
-    return row.id as string
+    return id
   }
 
   /** Réservation de salle, en heure de Paris (UTC+2 en avril). */
@@ -87,11 +75,14 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources cascade`
+    await viderTables(bases.owner, 'bookings', 'contracts', 'rate_plan_items', 'rate_plans', 'client_members', 'clients', 'resources')
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name) values (${ACME}, 'Acme SAS'), (${BETA}, 'Beta SARL')`)
@@ -103,8 +94,8 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
   })
 
   after(async () => {
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('canal de chaque chemin de création', () => {
@@ -171,7 +162,7 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
     it('refuse un contrat archivé', async () => {
       const contractId = await contrat()
       await asTenant((tx) =>
-        tx.execute(sql`update contracts set deleted_at = now() where id = ${contractId}`),
+        tx.execute(sql`update contracts set deleted_at = current_timestamp(3) where id = ${contractId}`),
       )
       assert.equal(await refus(() => reservation(contractId)), 'pas-actif')
     })
@@ -188,10 +179,10 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
     it('n’écrit rien quand le rattachement est refusé', async () => {
       const contractId = await contrat({ clientId: BETA })
       await refus(() => reservation(contractId))
-      const [row] = await asTenant((tx) =>
-        tx.execute(sql`select count(*)::int as n from bookings`),
-      )
-      assert.equal(row.n, 0)
+      const [rows] = (await asTenant((tx) =>
+        tx.execute(sql`select count(*) as n from bookings`),
+      )) as unknown as [{ n: number | string }[]]
+      assert.equal(Number(rows[0].n), 0)
     })
 
     it('refuse de déplacer la réservation hors de la période, et la laisse en place', async () => {
@@ -237,17 +228,17 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
     })
 
     it('refuse, avec sa raison, de changer le client d’une réservation faite depuis l’espace client', async () => {
-      const [row] = await asTenant(async (tx) => {
+      const id = uuidv7()
+      const membre = uuidv7()
+      await asTenant(async (tx) => {
         await tx.execute(sql`update resources set client_booking_mode = 'approval' where id = ${SALLE}`)
-        const [membre] = await tx.execute(sql`
-          insert into client_members (client_id, email, full_name, auth_user_id)
-          values (${ACME}, 'jeanne@acme.test', 'Jeanne Martin', 'u-jeanne') returning id`)
-        return tx.execute(sql`
-          insert into bookings (resource_id, client_id, channel, booked_by_member_id, starts_at, ends_at, title)
-          values (${SALLE}, ${ACME}, 'client', ${membre.id as string}, '2026-04-10T07:00:00Z', '2026-04-10T08:00:00Z', 'Atelier')
-          returning id`)
+        await tx.execute(sql`
+          insert into client_members (id, client_id, email, full_name, auth_user_id)
+          values (${membre}, ${ACME}, 'jeanne@acme.test', 'Jeanne Martin', 'u-jeanne')`)
+        await tx.execute(sql`
+          insert into bookings (id, resource_id, client_id, channel, booked_by_member_id, starts_at, ends_at, title)
+          values (${id}, ${SALLE}, ${ACME}, 'client', ${membre}, '2026-04-10 07:00:00', '2026-04-10 08:00:00', 'Atelier')`)
       })
-      const id = row.id as string
       for (const autre of [BETA, null]) {
         const outcome = await assignBookingClient(id, autre)
         assert.equal(outcome.ok, false)
@@ -263,10 +254,10 @@ describe('canal et contrat des réservations', { skip: raison }, () => {
   describe('occupation de contrat', () => {
     const occupation = async () => {
       const contractId = await contrat({ resourceId: BUREAU })
-      const [row] = await asTenant((tx) =>
+      const [rows] = (await asTenant((tx) =>
         tx.execute(sql`select id from bookings where contract_id = ${contractId} and kind = 'contract'`),
-      )
-      return { contractId, id: row.id as string }
+      )) as unknown as [{ id: string }[]]
+      return { contractId, id: rows[0].id }
     }
 
     it('renvoie au contrat sur sa fiche', async () => {

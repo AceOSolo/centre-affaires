@@ -1,17 +1,18 @@
 import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
-import { sql, type SQL } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
+import { sql } from 'drizzle-orm'
 
 import {
-  PG_CHECK_VIOLATION,
-  PG_CLIENT_BOOKING_REFUSED,
-  PG_FOREIGN_KEY_VIOLATION,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_CLIENT_BOOKING_REFUSED,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
-import { createDatabase, withClientScope, withTenant, type Transaction } from '../../db/index.ts'
+import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 
 /**
  * Réservation par un client connecté à son espace (R23, ADR 016 décision D4,
@@ -23,18 +24,8 @@ import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
  * l'accueil doit valider. L'annulation par le client est tracée, et ne vaut
  * que pour une demande en attente, à venir (`canClientCancel`).
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('réservation depuis l’espace client', { skip: raison }, () => {
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => {
+  let bases: TestDatabases
 
   const SALLE = '01a00000-0000-7000-8000-0000000b0a01'
   const VEHICULE = '01a00000-0000-7000-8000-0000000b0a02'
@@ -46,26 +37,29 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
   const ACCUEIL = '01a00000-0000-7000-8000-0000000b0e01'
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
   const asClients = <T>(clientIds: string[], run: (tx: Transaction) => Promise<T>) =>
-    withClientScope(DEFAULT_TENANT_ID, clientIds, run, app.db)
+    withClientScope(DEFAULT_TENANT_ID, clientIds, run, bases.app.db)
 
   const codeErreur = async (run: () => Promise<unknown>) => {
     try {
       await run()
     } catch (error) {
-      return pgErrorCode(error)
+      return dbErrorCode(error)
     }
     return undefined
   }
 
   /** Créneau d'une heure dans `jours` jours, à `heure` heures UTC. */
-  const creneau = (jours: number, heure = 8): SQL =>
-    sql`date_trunc('day', now()) + make_interval(days => ${jours}, hours => ${heure}),
-        date_trunc('day', now()) + make_interval(days => ${jours}, hours => ${heure + 1})`
+  const creneau = (jours: number, heure = 8) => {
+    const debut = new Date()
+    debut.setUTCHours(heure, 0, 0, 0)
+    debut.setUTCDate(debut.getUTCDate() + jours)
+    return { debut, fin: new Date(debut.getTime() + 3_600_000) }
+  }
 
   /** Réservation déposée par Jeanne pour l'atelier Durand, depuis son espace. */
-  const reserver = (
+  const reserver = async (
     tx: Transaction,
     {
       resource = SALLE,
@@ -76,33 +70,40 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
       devis = false,
       status = 'confirmed',
     } = {},
-  ) =>
-    tx.execute(sql`
+  ) => {
+    // Pas de RETURNING en MySQL : l'identifiant est posé ici, la ligne relue
+    // ensuite — c'est le statut posé par la base qu'on veut lire.
+    const id = uuidv7()
+    const { debut, fin } = creneau(jours, heure)
+    await tx.execute(sql`
       insert into bookings (
-        resource_id, client_id, channel, status, title, starts_at, ends_at, booked_by_member_id,
+        id, resource_id, client_id, channel, status, title, starts_at, ends_at, booked_by_member_id,
         quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp, quote_currency, quoted_at
       ) values (
-        ${resource}, ${client}, 'client', ${status}, 'Réunion', ${creneau(jours, heure)}, ${member},
-        ${devis ? sql`'hour', 1, 2500, 2000, 'EUR', now()` : sql`null, null, null, null, null, null`}
-      )
-      returning id, status`)
+        ${id}, ${resource}, ${client}, 'client', ${status}, 'Réunion', ${debut}, ${fin}, ${member},
+        ${devis ? sql`'hour', 1, 2500, 2000, 'EUR', current_timestamp(3)` : sql`null, null, null, null, null, null`}
+      )`)
+    const [rows] = (await tx.execute(sql`select id, status from bookings where id = ${id}`)) as unknown as [
+      { id: string; status: string }[],
+    ]
+    return rows
+  }
 
   const ligne = async (id: string) => {
-    const [row] = await asTenant((tx) =>
+    const [rows] = (await asTenant((tx) =>
       tx.execute(sql`
         select status, cancelled_at, cancelled_by_member_id, cancelled_by_staff_id, booked_by_member_id
           from bookings where id = ${id}`),
-    )
-    return row
+    )) as unknown as [Record<string, unknown>[]]
+    return rows[0]
   }
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
+    bases = await ouvrirBasesDeTest()
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, clients, resources cascade`
-    await owner.client`truncate table staff_members cascade`
+    await viderTables(bases.owner, 'bookings', 'client_members', 'clients', 'resources', 'staff_members')
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name, client_booking_mode) values
@@ -121,17 +122,18 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
   })
 
   after(async () => {
-    await Promise.all([owner.client.end(), app.client.end()])
+    await bases.fermer()
   })
 
   describe('réglage par ressource', () => {
     it('ouvre une nouvelle ressource sur accord de l’accueil : la valeur prudente', async () => {
-      const [row] = await asTenant((tx) =>
-        tx.execute(sql`
-          insert into resources (resource_type, code, name) values ('salle', 'S-NEUVE', 'Salle neuve')
-          returning client_booking_mode`),
-      )
-      assert.equal(row.client_booking_mode, 'approval')
+      const id = uuidv7()
+      const [rows] = (await asTenant(async (tx) => {
+        await tx.execute(sql`
+          insert into resources (id, resource_type, code, name) values (${id}, 'salle', 'S-NEUVE', 'Salle neuve')`)
+        return tx.execute(sql`select client_booking_mode from resources where id = ${id}`)
+      })) as unknown as [{ client_booking_mode: string }[]]
+      assert.equal(rows[0].client_booking_mode, 'approval')
     })
 
     it('met en attente de l’accueil, quel que soit le statut écrit par le code', async () => {
@@ -154,14 +156,14 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
     it('refuse une ressource fermée au portail, ou indisponible', async () => {
       assert.equal(
         await codeErreur(() => asClients([DURAND], (tx) => reserver(tx, { resource: CASIER }))),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
       await asTenant((tx) =>
         tx.execute(sql`update resources set status = 'maintenance' where id = ${VEHICULE}`),
       )
       assert.equal(
         await codeErreur(() => asClients([DURAND], (tx) => reserver(tx, { resource: VEHICULE, devis: true }))),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -179,7 +181,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
     it('n’accepte que la personne d’une entreprise de la réservation', async () => {
       assert.equal(
         await codeErreur(() => asTenant((tx) => reserver(tx, { member: PAUL }))),
-        PG_FOREIGN_KEY_VIOLATION,
+        DB_FOREIGN_KEY_VIOLATION,
       )
     })
   })
@@ -188,7 +190,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
     it('exige la personne qui réserve', async () => {
       assert.equal(
         await codeErreur(() => asClients([DURAND], (tx) => reserver(tx, { member: null }))),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -199,7 +201,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
         await codeErreur(() =>
           asClients([DURAND], (tx) => tx.execute(sql`update bookings set title = 'Autre' where id = ${id}`)),
         ),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
       // Confirmer soi-même sa demande : non.
       assert.equal(
@@ -208,7 +210,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
             tx.execute(sql`update bookings set status = 'confirmed' where id = ${id}`),
           ),
         ),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -218,7 +220,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
       await asClients([DURAND], (tx) =>
         tx.execute(sql`
           update bookings
-             set status = 'cancelled', cancelled_at = now(), cancellation_reason = 'Annulée par le client',
+             set status = 'cancelled', cancelled_at = current_timestamp(3), cancellation_reason = 'Annulée par le client',
                  cancelled_by_member_id = ${JEANNE}
            where id = ${id}`),
       )
@@ -238,11 +240,11 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
         await codeErreur(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              update bookings set status = 'cancelled', cancelled_at = now(), cancelled_by_member_id = ${JEANNE}
+              update bookings set status = 'cancelled', cancelled_at = current_timestamp(3), cancelled_by_member_id = ${JEANNE}
                where id = ${row.id as string}`),
           ),
         ),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -253,11 +255,11 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
         await codeErreur(() =>
           asTenant((tx) =>
             tx.execute(sql`
-              update bookings set status = 'cancelled', cancelled_at = now(), cancelled_by_member_id = ${JEANNE}
+              update bookings set status = 'cancelled', cancelled_at = current_timestamp(3), cancelled_by_member_id = ${JEANNE}
                where id = ${row.id as string}`),
           ),
         ),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -269,7 +271,7 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
             tx.execute(sql`update bookings set booked_by_member_id = null where id = ${row.id as string}`),
           ),
         ),
-        PG_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_BOOKING_REFUSED,
       )
     })
 
@@ -281,12 +283,12 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
           asTenant((tx) =>
             tx.execute(sql`
               update bookings
-                 set status = 'cancelled', cancelled_at = now(),
+                 set status = 'cancelled', cancelled_at = current_timestamp(3),
                      cancelled_by_member_id = ${JEANNE}, cancelled_by_staff_id = ${ACCUEIL}
                where id = ${id}`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       // Un auteur d'annulation sur une réservation qui ne l'est pas : non.
       assert.equal(
@@ -295,11 +297,11 @@ describe('réservation depuis l’espace client', { skip: raison }, () => {
             tx.execute(sql`update bookings set cancelled_by_staff_id = ${ACCUEIL} where id = ${id}`),
           ),
         ),
-        PG_CHECK_VIOLATION,
+        DB_CHECK_VIOLATION,
       )
       await asTenant((tx) =>
         tx.execute(sql`
-          update bookings set status = 'cancelled', cancelled_at = now(), cancelled_by_staff_id = ${ACCUEIL}
+          update bookings set status = 'cancelled', cancelled_at = current_timestamp(3), cancelled_by_staff_id = ${ACCUEIL}
            where id = ${id}`),
       )
       assert.equal((await ligne(id)).cancelled_by_staff_id, ACCUEIL)

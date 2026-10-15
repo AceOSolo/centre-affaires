@@ -13,7 +13,7 @@ import {
  * validation côté serveur : un champ ajouté ici apparaît à l'écran et se valide
  * de la même façon, sans second endroit à tenir d'accord.
  *
- * La colonne `attributes` est en JSONB : la base accepte n'importe quel objet.
+ * La colonne `attributes` est en JSON : la base accepte n'importe quel objet.
  * C'est donc ici, et seulement ici, que se décide ce qu'un casier ou un véhicule
  * a le droit de porter. Le module est pur — pas de base, pas de `FormData` —
  * pour être éprouvé par `node --test`.

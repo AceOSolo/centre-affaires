@@ -6,15 +6,16 @@ import {
   date,
   foreignKey,
   index,
-  integer,
-  pgEnum,
-  pgTable,
+  int,
+  mysqlEnum,
+  mysqlTable,
   smallint,
   text,
+  tinyint,
   unique,
   uniqueIndex,
-  uuid,
-} from 'drizzle-orm/pg-core'
+  varchar,
+} from 'drizzle-orm/mysql-core'
 
 import { deletedAt, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { tenantId } from '../../db/tenants.ts'
@@ -32,7 +33,7 @@ import { resourceTypeEnum, resources } from '../ressources/schema.ts'
  * dépend ni des contrats ni des réservations, qui l'importent. Les factures,
  * qui dépendent de tout, sont dans `schema-factures.ts` (ADR 026).
  */
-export const ratePlans = pgTable(
+export const ratePlans = mysqlTable(
   'rate_plans',
   {
     id: primaryKeyId(),
@@ -53,9 +54,9 @@ export const ratePlans = pgTable(
     // Une seule grille par défaut **un jour donné** : deux rendraient le tarif
     // appliqué dépendant de l'ordre de lecture. Des grilles par défaut dont
     // les dates de validité se suivent sont permises — celle de l'an prochain
-    // se prépare d'avance (ADR 035). La contrainte d'exclusion
-    // `rate_plans_default_no_overlap` (migration 0038) le tient : Drizzle ne
-    // sait pas la décrire.
+    // se prépare d'avance (ADR 035). MySQL n'a pas de contrainte d'exclusion :
+    // les triggers `rate_plans_before_insert` / `_update`
+    // (`src/db/regles/50-facturation.sql`, `CA000`) le tiennent.
     check(
       'rate_plans_validity_ordered',
       sql`${table.validTo} is null or ${table.validFrom} is null or ${table.validTo} >= ${table.validFrom}`,
@@ -69,7 +70,7 @@ export const ratePlans = pgTable(
  */
 export const billingPeriods = ['monthly', 'quarterly', 'yearly'] as const
 export type BillingPeriod = (typeof billingPeriods)[number]
-export const billingPeriodEnum = pgEnum('billing_period', billingPeriods)
+export const billingPeriodEnum = (name: string) => mysqlEnum(name, billingPeriods)
 
 /**
  * Unité facturée. `unit` couvre le forfait : un casier au mois, une prestation.
@@ -83,25 +84,35 @@ export const billingPeriodEnum = pgEnum('billing_period', billingPeriods)
  */
 export const rateUnits = ['hour', 'half_day', 'day', 'week', 'month', 'unit'] as const
 export type RateUnit = (typeof rateUnits)[number]
-export const rateUnitEnum = pgEnum('rate_unit', rateUnits)
+export const rateUnitEnum = (name: string) => mysqlEnum(name, rateUnits)
 
 /**
  * Ligne de grille : un prix pour un type de ressource, ou pour une ressource
  * précise quand elle mérite son propre tarif. La ligne nominative l'emporte sur
  * la ligne de type — voir `resolveRate()`.
  */
-export const ratePlanItems = pgTable(
+export const ratePlanItems = mysqlTable(
   'rate_plan_items',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    ratePlanId: uuid('rate_plan_id').notNull(),
+    ratePlanId: char('rate_plan_id', { length: 36 }).notNull(),
     resourceType: resourceTypeEnum('resource_type').notNull(),
     /** Nul : le tarif vaut pour tout le type. */
-    resourceId: uuid('resource_id'),
+    resourceId: char('resource_id', { length: 36 }),
     unit: rateUnitEnum('unit').notNull(),
+    /**
+     * Colonnes générées des index uniques partiels (conventions §3.1) : `1`
+     * quand le prix est vivant, `NULL` sinon ; `type_live` seulement pour un
+     * tarif par type (sans ressource). Jamais écrites par le code.
+     */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, { mode: 'virtual' }),
+    typeLive: tinyint('type_live').generatedAlwaysAs(
+      sql`if(resource_id is null and deleted_at is null, 1, null)`,
+      { mode: 'virtual' },
+    ),
     /** Centimes, entier. Jamais de flottant pour de l'argent (décision 5). */
-    amountCents: integer('amount_cents').notNull(),
+    amountCents: int('amount_cents').notNull(),
     ...timestamps(),
     /**
      * Retrait d'un prix de la grille (décision 6) : il cesse de s'appliquer,
@@ -128,12 +139,19 @@ export const ratePlanItems = pgTable(
     // Un seul prix actif par (grille, type, unité) et par (grille, ressource,
     // unité) : sinon le tarif appliqué dépendrait de l'ordre de lecture. Un prix
     // retiré libère sa place pour celui qui le remplace.
-    uniqueIndex('rate_plan_items_type_key')
-      .on(table.ratePlanId, table.resourceType, table.unit)
-      .where(sql`resource_id is null and deleted_at is null`),
-    uniqueIndex('rate_plan_items_resource_key')
-      .on(table.ratePlanId, table.resourceId, table.unit)
-      .where(sql`resource_id is not null and deleted_at is null`),
+    // `resource_id` nul ne se heurte jamais : MySQL laisse plusieurs `NULL`.
+    uniqueIndex('rate_plan_items_type_key').on(
+      table.ratePlanId,
+      table.resourceType,
+      table.unit,
+      table.typeLive,
+    ),
+    uniqueIndex('rate_plan_items_resource_key').on(
+      table.ratePlanId,
+      table.resourceId,
+      table.unit,
+      table.live,
+    ),
   ],
 )
 
@@ -151,13 +169,26 @@ export type NewRatePlanItem = typeof ratePlanItems.$inferInsert
  * - `discount_amount_cents` : un montant par période, en centimes.
  *
  * Le montant net d'une ligne est calculé par la base, par une seule règle
- * d'arrondi : `line_net_amount_cents()` (migration 0029, ADR 023), dont
+ * d'arrondi : `line_net_amount_cents()` (ADR 023), dont
  * `lineNetAmountCents()` (`montants.ts`) est le jumeau éprouvé contre elle.
  */
 
 /**
  * Expression SQL du montant net d'une ligne, pour une colonne générée.
  * Les arguments sont des noms de colonnes (ou `NULL`), jamais une saisie.
+ *
+ * MySQL interdit d'appeler une fonction stockée dans une colonne générée :
+ * l'expression de `line_net_amount_cents()` est donc écrite en ligne, en
+ * arithmétique **entière** exacte. Arrondi au plus proche, la moitié
+ * s'éloignant de zéro, comme `round(numeric)` de PostgreSQL :
+ *
+ *   N   = (quantité × prix − remise en montant) × (10000 − remise en bp) × prorata_num
+ *   D   = 10000 × prorata_den
+ *   net = signe(N) × ⌊(2·|N| + D) / (2·D)⌋
+ *
+ * Nul si la quantité ou le prix est nul. La fonction SQL
+ * `line_net_amount_cents()` (`50-facturation.sql`) porte la même expression :
+ * `montants.db.test.ts` éprouve les deux contre `lineNetAmountCents()`.
  */
 export function lineNetAmountSql(columns: {
   quantity: string
@@ -167,15 +198,13 @@ export function lineNetAmountSql(columns: {
   prorataNumerator?: string
   prorataDenominator?: string
 }) {
-  const args = [
-    columns.quantity,
-    columns.unitPrice,
-    columns.discountBp ?? 'NULL',
-    columns.discountCents ?? 'NULL',
-    columns.prorataNumerator ?? 'NULL',
-    columns.prorataDenominator ?? 'NULL',
-  ]
-  return sql.raw(`line_net_amount_cents(${args.join(', ')})`)
+  const discountBp = columns.discountBp ?? 'NULL'
+  const discountCents = columns.discountCents ?? 'NULL'
+  const numerator = columns.prorataNumerator ?? 'NULL'
+  const denominator = columns.prorataDenominator ?? 'NULL'
+  const n = `((${columns.quantity} * ${columns.unitPrice} - coalesce(${discountCents}, 0)) * (10000 - coalesce(${discountBp}, 0)) * coalesce(${numerator}, 1))`
+  const d = `(10000 * coalesce(${denominator}, 1))`
+  return sql.raw(`(sign(${n}) * ((2 * abs(${n}) + ${d}) div (2 * ${d})))`)
 }
 
 /**
@@ -186,7 +215,7 @@ export function lineNetAmountSql(columns: {
  */
 export const serviceNatures = ['package', 'act'] as const
 export type ServiceNature = (typeof serviceNatures)[number]
-export const serviceNatureEnum = pgEnum('service_nature', serviceNatures)
+export const serviceNatureEnum = (name: string) => mysqlEnum(name, serviceNatures)
 
 /**
  * Codes stables des services que le code retrouve sans passer par l'écran
@@ -213,7 +242,7 @@ export const serviceCodes = {
  * Distinct des grilles tarifaires : une ligne de grille est liée à un type de
  * ressource (ADR 009), un service non (D7).
  */
-export const services = pgTable(
+export const services = mysqlTable(
   'services',
   {
     id: primaryKeyId(),
@@ -222,34 +251,35 @@ export const services = pgTable(
      * Code stable, pour les services que le code doit retrouver (`serviceCodes`).
      * Nul pour un service saisi à l'écran que rien ne cherche par son code.
      */
-    code: text('code'),
+    code: varchar('code', { length: 100 }),
     name: text('name').notNull(),
     description: text('description'),
     nature: serviceNatureEnum('nature').notNull(),
     /** Unité de facturation : `month` pour un forfait mensuel, `unit` pour un acte. */
     unit: rateUnitEnum('unit').notNull(),
     /** Prix unitaire HT en centimes (décision 5). */
-    unitPriceCents: integer('unit_price_cents').notNull(),
+    unitPriceCents: int('unit_price_cents').notNull(),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
     /** Taux de TVA en points de base : 2000 = 20 %. */
-    vatRateBp: integer('vat_rate_bp').notNull().default(2000),
+    vatRateBp: int('vat_rate_bp').notNull().default(2000),
     /** Proposé à la souscription. Un service inactif reste facturé à ceux qui l'ont. */
     isActive: boolean('is_active').notNull().default(true),
     ...timestamps(),
     deletedAt: deletedAt(),
+    /** `1` tant que le service est vivant, `NULL` archivé : sert l'unicité du code. */
+    live: tinyint('live').generatedAlwaysAs(sql`if(deleted_at is null, 1, null)`, { mode: 'virtual' }),
   },
   (table) => [
     unique('services_tenant_id_id_key').on(table.tenantId, table.id),
     // Un code ne désigne qu'un service vivant : sinon la facturation
     // choisirait selon l'ordre de lecture. Un service archivé rend son code.
-    uniqueIndex('services_tenant_code_key')
-      .on(table.tenantId, table.code)
-      .where(sql`code is not null and deleted_at is null`),
+    // `code` nul ne se heurte jamais (plusieurs `NULL` permis).
+    uniqueIndex('services_tenant_code_key').on(table.tenantId, table.code, table.live),
     check(
       'services_code_format',
-      sql`${table.code} is null or ${table.code} ~ '^[a-z0-9]+([._-][a-z0-9]+)*$'`,
+      sql`${table.code} is null or REGEXP_LIKE(${table.code}, '^[a-z0-9]+([._-][a-z0-9]+)*$', 'c')`,
     ),
-    check('services_name_not_blank', sql`btrim(${table.name}) <> ''`),
+    check('services_name_not_blank', sql`trim(${table.name}) <> ''`),
     check('services_unit_price_positive', sql`${table.unitPriceCents} >= 0`),
     check('services_vat_rate_valid', sql`${table.vatRateBp} between 0 and 10000`),
     // Un acte se compte à l'unité : c'est ce que le relevé des plis produit.
@@ -271,7 +301,7 @@ export type NewService = typeof services.$inferInsert
  *
  * Active tant que `deleted_at` est nul, archivée ensuite (décision 6).
  */
-export const offers = pgTable(
+export const offers = mysqlTable(
   'offers',
   {
     id: primaryKeyId(),
@@ -281,7 +311,7 @@ export const offers = pgTable(
     /** Période de facturation proposée pour le contrat qui en sera tiré. */
     billingPeriod: billingPeriodEnum('billing_period').notNull().default('monthly'),
     /** Durée d'engagement proposée, en mois. Nulle : sans engagement. */
-    commitmentMonths: integer('commitment_months'),
+    commitmentMonths: int('commitment_months'),
     currency: char('currency', { length: 3 }).notNull().default('EUR'),
     /**
      * Présentée dans l'espace client (R23, ADR 036) : le client la voit, avec
@@ -295,7 +325,7 @@ export const offers = pgTable(
   },
   (table) => [
     unique('offers_tenant_id_id_key').on(table.tenantId, table.id),
-    check('offers_name_not_blank', sql`btrim(${table.name}) <> ''`),
+    check('offers_name_not_blank', sql`trim(${table.name}) <> ''`),
     check(
       'offers_commitment_valid',
       sql`${table.commitmentMonths} is null or ${table.commitmentMonths} between 1 and 120`,
@@ -316,24 +346,24 @@ export type NewOffer = typeof offers.$inferInsert
  * période (dix numérisations par mois) : le contrat tiré de l'offre la porte
  * sur une souscription (`subscribed_services.included_quantity`, ADR 024).
  */
-export const offerItems = pgTable(
+export const offerItems = mysqlTable(
   'offer_items',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
-    offerId: uuid('offer_id').notNull(),
+    offerId: char('offer_id', { length: 36 }).notNull(),
     resourceType: resourceTypeEnum('resource_type'),
-    resourceId: uuid('resource_id'),
-    serviceId: uuid('service_id'),
-    quantity: integer('quantity').notNull().default(1),
+    resourceId: char('resource_id', { length: 36 }),
+    serviceId: char('service_id', { length: 36 }),
+    quantity: int('quantity').notNull().default(1),
     /** Unité dans laquelle la quantité et le prix s'expriment. */
     unit: rateUnitEnum('unit').notNull().default('month'),
     /** Prix forfaitaire HT par unité, en centimes. */
-    priceCents: integer('price_cents'),
-    discountBp: integer('discount_bp'),
-    discountAmountCents: integer('discount_amount_cents'),
+    priceCents: int('price_cents'),
+    discountBp: int('discount_bp'),
+    discountAmountCents: int('discount_amount_cents'),
     /** Taux de TVA imposé ; nul : celui du service, ou celui du centre. */
-    vatRateBp: integer('vat_rate_bp'),
+    vatRateBp: int('vat_rate_bp'),
     /** Ordre d'affichage dans l'offre. */
     position: smallint('position').notNull().default(0),
     /**
@@ -349,7 +379,7 @@ export const offerItems = pgTable(
     unique('offer_items_tenant_id_id_key').on(table.tenantId, table.id),
     check(
       'offer_items_label_not_blank',
-      sql`${table.label} is null or btrim(${table.label}) <> ''`,
+      sql`${table.label} is null or trim(${table.label}) <> ''`,
     ),
     foreignKey({
       name: 'offer_items_offer_fk',
@@ -368,11 +398,11 @@ export const offerItems = pgTable(
     }).onDelete('restrict'),
     check(
       'offer_items_one_target',
-      sql`num_nonnulls(${table.resourceType}, ${table.resourceId}, ${table.serviceId}) = 1`,
+      sql`(${table.resourceType} is not null) + (${table.resourceId} is not null) + (${table.serviceId} is not null) = 1`,
     ),
     check(
       'offer_items_one_pricing',
-      sql`num_nonnulls(${table.priceCents}, ${table.discountBp}, ${table.discountAmountCents}) <= 1`,
+      sql`(${table.priceCents} is not null) + (${table.discountBp} is not null) + (${table.discountAmountCents} is not null) <= 1`,
     ),
     check('offer_items_quantity_positive', sql`${table.quantity} > 0`),
     check(

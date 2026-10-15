@@ -1,6 +1,8 @@
-import type postgres from 'postgres'
+import { and, eq, isNull, sql } from 'drizzle-orm'
 
-import { serviceCodes, type RateUnit, type ServiceNature } from './schema.ts'
+import type { Transaction } from '../../db/index.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
+import { serviceCodes, services, type RateUnit, type ServiceNature } from './schema.ts'
 
 /**
  * Services que le code retrouve par leur code stable (ADR 024) : ils doivent
@@ -87,17 +89,20 @@ export type SeedReport = {
  * code est laissé tel quel — son prix se gère à l'écran, rejouer le script ne
  * l'écrase pas.
  *
- * À appeler dans une transaction où `app.tenant_id` est posé, sous le rôle
- * applicatif : les politiques d'isolation par centre s'appliquent.
+ * À appeler dans une transaction de `withTenant()` : le centre vient de son
+ * contexte.
  */
-export async function seedExpectedServices<Types extends Record<string, unknown>>(
-  tx: postgres.TransactionSql<Types>,
+export async function seedExpectedServices(
+  tx: Transaction,
   prices: Readonly<Record<string, number | null | undefined>>,
 ): Promise<SeedReport> {
   const report: SeedReport = { created: [], existing: [], withoutPrice: [] }
   for (const service of expectedServices) {
-    const [living] = await tx`
-      select id from services where code = ${service.code} and deleted_at is null`
+    const [living] = await tx
+      .select({ id: services.id })
+      .from(services)
+      .where(and(eq(services.code, service.code), isNull(services.deletedAt)))
+      .limit(1)
     if (living) {
       report.existing.push(service.code)
       continue
@@ -110,13 +115,28 @@ export async function seedExpectedServices<Types extends Record<string, unknown>
     if (!Number.isSafeInteger(price) || price < 0) {
       throw new RangeError(`Prix de ${service.code} invalide : un entier de centimes, 0 ou plus.`)
     }
-    const inserted = await tx`
-      insert into services (code, name, description, nature, unit, unit_price_cents, vat_rate_bp)
-      values (${service.code}, ${service.name}, ${service.description}, ${service.nature},
-              ${service.unit}, ${price}, ${service.vatRateBp})
-      on conflict (tenant_id, code) where code is not null and deleted_at is null do nothing
-      returning id`
-    if (inserted.length > 0) report.created.push(service.code)
+    // Un service vivant de même code apparu entre-temps : l'index unique le
+    // refuse, l'insertion ne fait rien et l'identifiant reste introuvable.
+    const id = uuidv7()
+    await tx
+      .insert(services)
+      .values({
+        id,
+        code: service.code,
+        name: service.name,
+        description: service.description,
+        nature: service.nature,
+        unit: service.unit,
+        unitPriceCents: price,
+        vatRateBp: service.vatRateBp,
+      })
+      .onDuplicateKeyUpdate({ set: { id: sql`id` } })
+    const [inserted] = await tx
+      .select({ id: services.id })
+      .from(services)
+      .where(eq(services.id, id))
+      .limit(1)
+    if (inserted) report.created.push(service.code)
     else report.existing.push(service.code)
   }
   return report

@@ -25,9 +25,8 @@ l'entreprise.
 
 | Sous-traitant | Rôle | Données concernées | Localisation | Garanties | État |
 |---|---|---|---|---|---|
-| **Neon** (Neon, Inc., États-Unis) | Base PostgreSQL, authentification (Neon Auth), stockage objet (bucket `uploads`) | toutes | AWS `eu-central-1`, Francfort (ADR 003, 015) | Accord de traitement (DPA) de Neon. Accès possible du fournisseur depuis les États-Unis : garanties de transfert à vérifier dans le DPA. | DPA à accepter et à archiver ; garanties à vérifier |
-| **Neon Auth**, par Neon | Courriels d'authentification (vérification d'adresse, mot de passe) envoyés depuis `auth@mail.myneon.app` tant qu'aucun SMTP propre n'est configuré (ADR 008) | adresse, nom | à vérifier | DPA de Neon | à vérifier |
-| **OVHcloud** (OVH SAS, France) | VPS de production : application, Apache, journaux, fichiers en transit pendant la sauvegarde ; zone DNS | toutes, en transit ; journaux | centre de données du VPS : **à vérifier qu'il est en UE** | contrat OVHcloud, accord de traitement inclus | localisation à vérifier |
+| **OVHcloud** (OVH SAS, France) | VPS de production, qui héberge l'application, **la base MySQL** (conteneur Docker du même serveur, comptes d'authentification compris), Apache, les journaux et, si le stockage objet y est installé (MinIO), les documents ; fichiers en transit pendant la sauvegarde ; zone DNS | toutes ; journaux | centre de données du VPS : **à vérifier qu'il est en UE**. Le centre est responsable de l'exploitation de la base (ADR 042) | contrat OVHcloud, accord de traitement inclus | localisation à vérifier |
+| **Stockage objet des documents** (MinIO sur le VPS, ou S3 d'un hébergeur de l'UE) | Bucket `uploads` : scans de courrier et photos, chiffrés par l'application avant dépôt (ADR 020) | numérisations, photos, chiffrées | région UE, imposée par l'application (R33) | si MinIO : couvert par OVHcloud ; sinon DPA de l'hébergeur | à choisir |
 | **Destination des sauvegardes** (recommandée : OVHcloud Object Storage) | Conservation des sauvegardes, chiffrées avant envoi : le prestataire ne peut pas les lire (ADR 022) | toutes, chiffrées | UE, dans une autre région que le VPS | DPA du prestataire | à choisir |
 | **Brevo** (Sendinblue SAS, France) | Envoi des courriels transactionnels par SMTP (ADR 015) | adresse du destinataire, objet, texte | Europe (ADR 015) | DPA à accepter dans le compte Brevo ; suivi des ouvertures et des clics désactivé | DPA à accepter et à archiver |
 | **Google** (Google Agenda) | Agendas des salles reliées (ADR 014) | objet de la réservation, ressource, créneau, lien vers la fiche | aucune garantie de localisation pour un compte Gmail : **transfert hors UE possible** | conditions de Google ; transfert à encadrer | ADR 014 au statut « proposé » : compromis à valider |
@@ -38,24 +37,31 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 
 ## Mesures de sécurité communes (art. 32)
 
-- **Localisation** : base et stockage en UE. Polices, logos et photos servis
+- **Localisation** : base sur le VPS du centre, stockage en UE. Polices, logos et photos servis
   depuis le domaine du centre, jamais chez un tiers : aucun appel du
   navigateur ne transmet l'adresse IP d'un visiteur à un tiers (ADR 004).
 - **Transport** : HTTPS (Let's Encrypt), HTTP redirigé, cookies `Secure`.
   Courriels toujours chiffrés (STARTTLS exigé).
 - **Authentification et droits** :
-  - Neon Auth gère les comptes ;
+  - Better Auth, auto-hébergé, gère les comptes dans la base du centre ;
   - un compte ne donne aucun droit : l'accès est accordé par une liste
     (`staff_members`, `client_members`), sur une adresse vérifiée (ADR 008,
     015) ;
   - le contrôle a lieu dans chaque action serveur, pas seulement à l'entrée
     des pages.
-- **Isolation en base (RLS)** :
-  - par centre, fermée par défaut ;
-  - par entreprise cliente, sous la portée client (ADR 019) ;
-  - l'application se connecte avec un rôle sans `BYPASSRLS` ni droit de
-    modifier le schéma ;
-  - le propriétaire de la base n'est pas sur le serveur (ADR 003, 013).
+- **Isolation des données** (la base MySQL n'a pas de RLS, ADR 042) :
+  - par centre : l'identité du centre est posée sur chaque transaction ; la
+    base refuse par trigger d'écrire pour un autre centre, et les requêtes
+    filtrent sur le centre ;
+  - par entreprise cliente, sous la portée client (ADR 019) : chaque requête
+    de l'espace client filtre sur les entreprises du compte, et la base
+    refuse par trigger d'écrire hors de cette liste ;
+  - l'application se connecte avec un utilisateur sans droit de modifier le
+    schéma (lecture et écriture seulement) ;
+  - le mot de passe administrateur de la base n'est utilisé que pour les
+    migrations (ADR 042) ;
+  - la base n'est joignable par aucun port ouvert au réseau : seuls les
+    conteneurs du compose l'atteignent.
 - **Rôles** : exploitant et accueil (ADR 019).
 - **Traçabilité** : journal des consultations de numérisations, que
   l'application ne peut ni modifier ni effacer (ADR 015). Les plis, les
@@ -67,10 +73,11 @@ secret ni donnée. Il ne figure ici que pour mémoire.
     (ADR 020, R22) ;
   - sauvegardes chiffrées avant de quitter le serveur, pour des clés privées
     gardées hors du serveur (ADR 022).
-- **Pas de données réelles en développement** : la branche de base `dev` sert
-  au travail quotidien. Aucune branche ne doit être créée depuis
-  `production` tant que les numérisations ne sont pas toutes chiffrées (B3,
-  ADR 020).
+- **Pas de données réelles en développement** : la base locale est vide ou
+  fictive (`infra/seed-demo.mjs`). Une restauration de la production sur un
+  poste de développement n'est faite que pour un exercice, sur un disque
+  chiffré, puis effacée ; la clé des documents de production n'y est jamais
+  mise (ADR 020).
 - **Secrets du serveur** : hors du dépôt, dans un `.env` en `chmod 600`. Clé
   de déploiement réservée à la CI.
 - **Continuité** : sauvegarde nocturne testée, procédure de restauration,
@@ -90,11 +97,11 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Finalité | Authentifier les membres de l'équipe, leur ouvrir le back-office selon leur rôle (exploitant, accueil), et tracer qui enregistre, numérise et consulte. |
 | Base légale | Intérêt légitime (art. 6-1-f) : sécuriser l'outil et ses données. |
 | Personnes | Membres de l'équipe du centre. |
-| Données | Adresse électronique, nom, rôle, identifiant de compte. Mot de passe haché et sessions (adresse IP, navigateur, dates), chez Neon Auth. Auteur des plis, des numérisations et des consultations. |
+| Données | Adresse électronique, nom, rôle, identifiant de compte. Mot de passe haché et sessions (adresse IP, navigateur, dates), dans la base du centre (Better Auth). Auteur des plis, des numérisations et des consultations. |
 | Destinataires | Exploitant. |
-| Sous-traitants | Neon (base, Neon Auth), OVHcloud (serveur). |
-| Transferts hors UE | Aucun prévu ; garanties de Neon à vérifier. |
-| Conservation | Tant que la personne est dans l'équipe. Le retrait est logique : la ligne reste, car elle signe les actions passées. Nom et adresse anonymisés 12 mois après le retrait (**à valider**), par la tâche de nuit, ou plus tôt à la demande de la personne (écran Équipe). Comptes Neon Auth : **à fixer**. |
+| Sous-traitants | OVHcloud (serveur, qui héberge la base). |
+| Transferts hors UE | Aucun. |
+| Conservation | Tant que la personne est dans l'équipe. Le retrait est logique : la ligne reste, car elle signe les actions passées. Nom et adresse anonymisés 12 mois après le retrait (**à valider**), par la tâche de nuit, ou plus tôt à la demande de la personne (écran Équipe). Comptes d'authentification : **à fixer**. |
 | Code | `src/db/staff.ts`, `src/lib/auth/`, ADR 008, 019 |
 
 ### T2. Clients, prospects et contrats
@@ -106,7 +113,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Personnes | Dirigeants et interlocuteurs des entreprises clientes et prospects. Entrepreneurs individuels, pour qui la fiche de l'entreprise est une donnée personnelle. |
 | Données | Fiche : raison sociale, forme, SIRET, n° de TVA, adresse, courriel, téléphone, statut, notes, date du dernier contact noté par l'équipe. Contacts : nom, fonction, courriel, téléphone, rôles (principal, facturation), notes. Contrats : référence, type, ressource, dates, montant, résiliation, notes. Relances d'impayés : palier, canal, adresses des destinataires, texte de la lettre, auteur (ADR 034). |
 | Destinataires | Équipe du centre. Plateforme agréée de facturation électronique à partir de la vague 2 (à choisir, ADR 016). |
-| Sous-traitants | Neon, OVHcloud. |
+| Sous-traitants | OVHcloud. |
 | Transferts hors UE | Aucun prévu. |
 | Conservation | Prospects : 36 mois après leur dernière activité (création, dernier contact noté, réservation, courrier…). Clients : 60 mois après la fin de la relation (dernier contrat, réservation, pli, facture ou paiement). Au terme, la fiche, ses contacts, ses accès et leurs traces sont anonymisés chaque nuit ; les contrats restent, sans leurs notes. Jamais tant qu'une facture n'est pas soldée, qu'un contrat vit, qu'une réservation est à venir, qu'un service ou un mandat de prélèvement est actif. Factures, avoirs et paiements : 10 ans, jamais anonymisés (identité de l'acheteur figée à l'émission). **À valider** sauf les factures, imposées par la loi. |
 | Exercice des droits | Effacement : anonymisation à la demande sur la fiche client (exploitant), refusée et expliquée tant qu'une exclusion demeure (ADR 040). Le fondement, la date de réception de la demande et le membre de l'équipe qui la traite restent sur la ligne anonymisée (ADR 041). |
@@ -119,12 +126,12 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Finalité | Permettre aux personnes que désigne une entreprise cliente de consulter son courrier et ses réservations, et d'y déposer des demandes. |
 | Base légale | Intérêt légitime (art. 6-1-f) : ouvrir à l'entreprise cliente, partie au contrat, l'accès par les personnes qu'elle désigne. |
 | Personnes | Personnes inscrites sur la fiche d'une entreprise cliente. |
-| Données | Adresse électronique, nom, identifiant de compte, entreprise(s) rattachée(s). Mot de passe haché et sessions, chez Neon Auth. Demandes d'ouverture déposées. |
+| Données | Adresse électronique, nom, identifiant de compte, entreprise(s) rattachée(s). Mot de passe haché et sessions, dans la base du centre (Better Auth). Demandes d'ouverture déposées. |
 | Destinataires | Équipe du centre. Les autres personnes inscrites sur la même fiche voient le même courrier. |
-| Sous-traitants | Neon, OVHcloud, Brevo (courriel d'invitation). |
+| Sous-traitants | OVHcloud, Brevo (courriel d'invitation). |
 | Transferts hors UE | Aucun prévu. |
 | Conservation | Tant que l'accès est ouvert. Le retrait est logique : la ligne reste, car elle signe les demandes et les consultations. Nom et adresse anonymisés 12 mois après le retrait (**à valider**), ou plus tôt à la demande de la personne (fiche client), et avec l'entreprise quand elle l'est. |
-| Mesures propres | Isolation entre entreprises par la RLS, sous portée client (ADR 019). Rattachement du compte sur une adresse vérifiée. |
+| Mesures propres | Isolation entre entreprises par filtre explicite des requêtes et gardes d'écriture en base, sous portée client (ADR 019, 042). Rattachement du compte sur une adresse vérifiée. |
 | Code | `src/modules/clients/schema.ts` (`client_members`), `comptes.ts`, ADR 015, 019 |
 
 ### T4. Réservations et demandes de réservation
@@ -136,7 +143,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Personnes | Demandeurs (prospects, particuliers, représentants d'entreprises), clients, équipe. |
 | Données | Nom, adresse électronique et téléphone du demandeur. Objet et notes saisis librement. Créneau, ressource, statut, canal, client, contrat. Dates de création et d'annulation, motif. |
 | Destinataires | Équipe du centre. Le client voit ses propres réservations. Le public ne voit que des créneaux occupés, sans identité. |
-| Sous-traitants | Neon, OVHcloud. Google, pour l'objet et le créneau des réservations confirmées des salles reliées (T8). |
+| Sous-traitants | OVHcloud. Google, pour l'objet et le créneau des réservations confirmées des salles reliées (T8). |
 | Transferts hors UE | Voir T8. |
 | Conservation | Coordonnées du demandeur : 12 mois après la fin du créneau ou l'annulation, puis anonymisation par la tâche nocturne (ADR 020). Durée **à valider**. Le créneau est conservé (historique, statistiques). |
 | Mesures propres | Au plus 5 demandes par adresse sur 24 heures. Préavis, horizon et durée maximale contrôlés côté serveur. Aucune identité exposée au public. |
@@ -152,7 +159,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Données | Expéditeur, type de pli, dates de réception, de demande et d'ouverture, note du centre, auteurs des actions. Images de l'enveloppe et du contenu (PDF, JPEG, PNG). |
 | Données sensibles | Un courrier numérisé peut contenir des données de toute nature, y compris des catégories particulières (art. 9) ou un numéro de sécurité sociale. Le centre ne les exploite pas : il les transmet à leur destinataire, sur sa demande. **Analyse d'impact (AIPD) à évaluer.** |
 | Destinataires | Équipe du centre ; personnes inscrites sur la fiche de l'entreprise destinataire. |
-| Sous-traitants | Neon (base et stockage objet, Francfort), OVHcloud (transit), Brevo (notification, sans document ni expéditeur). |
+| Sous-traitants | OVHcloud (base et transit), hébergeur du stockage objet (UE), Brevo (notification, sans document ni expéditeur). |
 | Transferts hors UE | Aucun. Les numérisations ne sont jamais envoyées par courriel. |
 | Conservation | Numérisations : 12 mois, puis effacement du fichier (validé le 30/09/2026). Plis : expéditeur et note anonymisés avec l'entreprise, 60 mois après la fin de la relation (**à valider**) ; le pli et ses dates restent au relevé. |
 | Mesures propres | Jamais d'URL directe ni signée : chaque lecture passe par l'application, qui vérifie le droit et journalise (T6). Type de fichier lu dans le contenu. Chiffrement au repos en cours (ADR 020). Isolation par entreprise (ADR 019). |
@@ -167,7 +174,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Personnes | Membres de l'équipe, personnes de l'espace client. |
 | Données | Numérisation consultée, date et heure, type de lecteur, membre ou accès client, identifiant de compte. |
 | Destinataires | Exploitant. |
-| Sous-traitants | Neon. |
+| Sous-traitants | OVHcloud. |
 | Transferts hors UE | Aucun. |
 | Conservation | 12 mois (validé le 30/09/2026), puis effacement par la seule fonction de purge. |
 | Mesures propres | L'application ne peut qu'ajouter des lignes : ni modification, ni effacement. L'inscription précède l'envoi du fichier ; si elle échoue, rien n'est envoyé. |
@@ -182,7 +189,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Personnes | Personnes de l'espace client, équipe du centre. |
 | Données | Adresse du destinataire. Objet, qui contient le nom de l'entreprise. Texte, sans document ni expéditeur. Chaque destinataire reçoit un message séparé. |
 | Destinataires | Le destinataire du message. |
-| Sous-traitants | Brevo, par SMTP. Neon pour les courriels d'authentification (T1, T3). |
+| Sous-traitants | Brevo, par SMTP, y compris pour les courriels d'authentification (vérification d'adresse, mot de passe) : plus aucun tiers n'en envoie (ADR 042). |
 | Transferts hors UE | Aucun prévu. |
 | Conservation | L'application ne garde pas d'historique des envois. Journaux d'envoi chez Brevo : durée **à vérifier**. |
 | Code | `src/lib/courriel.ts`, `src/modules/courrier/notifications.ts`, `src/modules/clients/invitation.ts` |
@@ -228,14 +235,13 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Sous-traitants | Hébergeur de la destination (à choisir). Il reçoit des fichiers chiffrés qu'il ne peut pas lire. |
 | Transferts hors UE | Aucun : destination en UE. |
 | Conservation | 7 lots quotidiens, 4 hebdomadaires, 12 mensuels. Une donnée effacée de la base y reste jusqu'à 12 mois de plus. Toute restauration relance la purge avant la réouverture. |
-| Mesures propres | Chiffrement sur le serveur pour des clés publiques ; les clés privées sont détenues par deux personnes, hors du serveur. Rôle de base en lecture seule. Empreintes vérifiées après l'envoi. Exercice de restauration trimestriel. |
+| Mesures propres | Chiffrement sur le serveur pour des clés publiques ; les clés privées sont détenues par deux personnes, hors du serveur. Utilisateur de base en lecture seule. Empreintes vérifiées après l'envoi. Exercice de restauration trimestriel. |
 | Code | `infra/serveur/sauvegarde.sh`, ADR 022, `docs/exploitation/` |
 
 ## Reste à faire
 
 1. **Compléter** le représentant légal et le point de contact RGPD.
 2. **Accepter et archiver les DPA** :
-   - Neon, en vérifiant ses garanties de transfert ;
    - Brevo ;
    - OVHcloud ;
    - le prestataire de la destination des sauvegardes.

@@ -1,8 +1,9 @@
 import { sql } from 'drizzle-orm'
-import { check, integer, pgEnum, pgTable, uniqueIndex, uuid } from 'drizzle-orm/pg-core'
+import { char, check, int, mysqlEnum, mysqlTable, uniqueIndex } from 'drizzle-orm/mysql-core'
 
 import { primaryKeyId, timestamps } from './columns.ts'
-import { tenants } from './tenants.ts'
+import { tenantContext } from './contexte.ts'
+import { DEFAULT_TENANT_ID, tenants } from './tenants.ts'
 
 /**
  * Numérotation des documents d'un centre : contrats, factures, avoirs (ADR 021).
@@ -11,14 +12,15 @@ import { tenants } from './tenants.ts'
  * (contrats aujourd'hui, facturation en vague 2), au même titre que `tenants`.
  *
  * Le code ne lit ni n'écrit jamais ces compteurs lui-même. Il demande un numéro
- * à la fonction SQL `next_document_number(type)`, seule à pouvoir les faire
- * avancer : le rôle applicatif n'a que la lecture sur cette table (migration
- * 0026). Un compteur que l'application peut remettre à zéro ne garantit plus
+ * à la fonction SQL `next_document_number(type)` (`src/db/regles/05-fondations.sql`),
+ * seule à pouvoir les faire avancer : l'utilisateur applicatif n'a que la
+ * lecture sur cette table (`infra/migrer.ts`) et la fonction s'exécute avec les
+ * droits de son créateur (`SQL SECURITY DEFINER`). Un compteur que l'application peut remettre à zéro ne garantit plus
  * une numérotation sans trou ni doublon.
  */
 export const documentTypes = ['contract', 'invoice', 'credit_note'] as const
 export type DocumentType = (typeof documentTypes)[number]
-export const documentTypeEnum = pgEnum('document_type', documentTypes)
+export const documentTypeEnum = (name: string) => mysqlEnum(name, documentTypes)
 
 /** Préfixe porté par chaque numéro, tel que l'écrit `next_document_number()`. */
 export const documentPrefixes: Record<DocumentType, string> = {
@@ -27,7 +29,7 @@ export const documentPrefixes: Record<DocumentType, string> = {
   credit_note: 'AV',
 }
 
-export const documentSequences = pgTable(
+export const documentSequences = mysqlTable(
   'document_sequences',
   {
     id: primaryKeyId(),
@@ -37,22 +39,23 @@ export const documentSequences = pgTable(
      * centres ne sont jamais supprimés physiquement en production (décision 6) ;
      * la cascade sert les bases de test, qui en créent et en effacent.
      */
-    tenantId: uuid('tenant_id')
+    tenantId: char('tenant_id', { length: 36 })
       .notNull()
-      .default(sql`tenant_id_default()`)
+      .default(DEFAULT_TENANT_ID)
+      .$defaultFn(() => tenantContext.getStore() ?? DEFAULT_TENANT_ID)
       .references(() => tenants.id, { onDelete: 'cascade' }),
     documentType: documentTypeEnum('document_type').notNull(),
     /**
      * Année civile du centre (dans son fuseau) à laquelle appartient la série :
      * une série par an, chacune continue, l'année figurant dans le numéro.
      */
-    year: integer('year').notNull(),
+    year: int('year').notNull(),
     /** Dernier numéro attribué dans la série. 0 : aucun encore. */
-    lastValue: integer('last_value').notNull().default(0),
+    lastValue: int('last_value').notNull().default(0),
     ...timestamps(),
   },
   (table) => [
-    // Cible de l'`ON CONFLICT` de `next_document_number()` : une ligne par série.
+    // Cible de l'`ON DUPLICATE KEY UPDATE` de `next_document_number()` : une ligne par série.
     uniqueIndex('document_sequences_series_key').on(
       table.tenantId,
       table.documentType,

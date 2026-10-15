@@ -15,12 +15,12 @@ renuméroter casserait ces renvois sans rien gagner.
 |---|---|---|---|
 | 001 | [Choix de la stack](001-stack.md) | 2026-09-18 | accepté ; hébergement remplacé par l'ADR 013 (VPS), PostgreSQL 17 remplacé par 18 (ADR 003) |
 | 002 | [Schéma des ressources et des réservations](002-schema-ressources-reservations.md) | 2026-09-18 | accepté |
-| 003 | [Plateforme Neon et rôle applicatif sans BYPASSRLS](003-neon-et-role-applicatif.md) | 2026-09-18 | accepté |
+| 003 | [Plateforme Neon et rôle applicatif sans BYPASSRLS](003-neon-et-role-applicatif.md) | 2026-09-18 | accepté ; remplacé par l'ADR 042 (MySQL sur le VPS) |
 | 004 | [Socle d'interface](004-socle-ui.md) | 2026-09-18 | accepté |
 | 005 | [Demandes de réservation publiques](005-demandes-de-reservation-publiques.md) | 2026-09-18 | accepté |
 | 006 | [Clients, grilles tarifaires et contrats](006-clients-tarifs-contrats.md) | 2026-09-18 | accepté ; prorata et unité entamée paramétrés par l'ADR 023, échéancier versionné par l'ADR 025 |
 | 007 | *absent* : numéro jamais attribué | — | — |
-| 008 | [Authentification et accès au back-office](008-authentification-et-acces-au-back-office.md) | 2026-09-18 | accepté |
+| 008 | [Authentification et accès au back-office](008-authentification-et-acces-au-back-office.md) | 2026-09-18 | accepté ; Neon Auth remplacé par Better Auth auto-hébergé (ADR 042) |
 | 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté ; durée de la demi-journée paramétrée par l'ADR 023 |
 | 010 | [Calendrier de sélection d'un créneau](010-calendrier-de-selection.md) | 2026-09-18 | accepté — **numéro en double** |
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
@@ -56,6 +56,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 039 | [États des lieux : modèles versionnés par type, état clos figé, photos chiffrées](039-etats-des-lieux.md) | 2026-10-02 | accepté ; met en œuvre la décision D8 de l'ADR 016, compression dans le navigateur ; mise en œuvre des écrans, des photos et de la purge ajoutée ; rechiffrement des photos et nom du modèle figé par l'ADR 041 ; choix à valider par le centre |
 | 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; compte auxiliaire figé, anonymisation tracée et tâche de nuit isolée par l'ADR 041 ; durées à valider par le centre |
 | 041 | [Correctifs de la dernière vague : export comptable après anonymisation, rattrapage du courrier, tâche de nuit, et manques de schéma tranchés](041-correctifs-de-la-derniere-vague-et-manques-ecartes.md) | 2026-10-02 | accepté ; corrige les ADR 037 et 040, précise les ADR 030, 036, 038 et 039 ; choix à valider par le centre |
+| 042 | [MySQL sur le VPS, Better Auth auto-hébergé, fin de la RLS](042-mysql-sur-le-vps.md) | 2026-10-15 | accepté ; remplace l'ADR 003 |
 
 ## Numéros en double et numéro manquant
 

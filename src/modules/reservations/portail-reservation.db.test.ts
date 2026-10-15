@@ -2,10 +2,11 @@ import assert from 'node:assert/strict'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { eq, sql } from 'drizzle-orm'
-import { migrate } from 'drizzle-orm/postgres-js/migrator'
 
-import { createDatabase, withTenant, type Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { withTenant, type Transaction } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { addDaysToIsoDate, todayIsoDate, wallClockToUtc } from '../../lib/dates.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { contracts } from '../contrats/schema.ts'
@@ -37,23 +38,11 @@ import { bookings } from './schema.ts'
  *   demande à l'accueil ;
  * - l'annulation par le client, et par l'équipe, tracées.
  */
-const ownerUrl = process.env.TEST_OWNER_DATABASE_URL ?? process.env.DATABASE_URL
-const appUrl = process.env.TEST_DATABASE_URL
-
-const raison = !appUrl
-  ? 'TEST_DATABASE_URL non défini'
-  : !ownerUrl
-    ? 'TEST_OWNER_DATABASE_URL non défini'
-    : false
-
-describe('réservation depuis l’espace client, de la disponibilité à l’écriture', { skip: raison }, () => {
-  // Les requêtes ouvrent leur propre connexion, par APP_DATABASE_URL. Aucun
-  // courriel ne part : SMTP non configuré.
-  if (appUrl) process.env.APP_DATABASE_URL = appUrl
+describe('réservation depuis l’espace client, de la disponibilité à l’écriture', { skip: raisonDeSaut }, () => {
+  // Aucun courriel ne part : SMTP non configuré.
   delete process.env.SMTP_HOST
 
-  const owner = createDatabase(ownerUrl ?? '', { onnotice: () => {} })
-  const app = createDatabase(appUrl ?? '')
+  let bases: TestDatabases
 
   const SALLE = '01a00000-0000-7000-8000-0000000f0a01'
   const VEHICULE = '01a00000-0000-7000-8000-0000000f0a02'
@@ -83,7 +72,7 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
   })
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
-    withTenant(DEFAULT_TENANT_ID, run, app.db)
+    withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
 
   const reserver = (
     accounts: ClientAccount[],
@@ -119,17 +108,23 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
   let centreEmail: string | null = null
 
   before(async () => {
-    await migrate(owner.db, { migrationsFolder: './src/db/migrations' })
-    const [tenant] = await owner.client`select email from tenants where id = ${DEFAULT_TENANT_ID}`
-    centreEmail = tenant.email
+    bases = await ouvrirBasesDeTest()
+    // Les requêtes du module passent par la base du processus : on lui donne
+    // celle des tests.
+    ;(globalThis as { database?: unknown }).database = bases.app
+    const [rows] = await bases.owner.client.query('select email from tenants where id = ?', [DEFAULT_TENANT_ID])
+    centreEmail = (rows as { email: string | null }[])[0].email
   })
 
   beforeEach(async () => {
-    await owner.client`truncate table bookings, contracts, rate_plan_items, rate_plans, clients, resources, opening_hours, closures cascade`
-    await owner.client`truncate table staff_members cascade`
-    // Les messages au centre sans client, et les modèles, ne suivent pas les clients.
-    await owner.client`truncate table notification_deliveries, notification_templates`
-    await owner.client`update tenants set email = 'accueil@centre.test' where id = ${DEFAULT_TENANT_ID}`
+    await viderTables(
+      bases.owner,
+      'bookings', 'contracts', 'rate_plan_items', 'rate_plans', 'client_members', 'clients',
+      'resources', 'opening_hours', 'closures', 'staff_members',
+      // Les messages au centre sans client, et les modèles, ne suivent pas les clients.
+      'notification_deliveries', 'notification_templates',
+    )
+    await bases.owner.client.query("update tenants set email = 'accueil@centre.test' where id = ?", [DEFAULT_TENANT_ID])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into resources (id, resource_type, code, name, client_booking_mode) values
@@ -139,8 +134,9 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
           (${BUREAU}, 'bureau', 'B-PRT', 'Bureau 3', 'instant')`)
       // Le centre ouvre de 7 h à 21 h, tous les jours.
       await tx.execute(sql`
-        insert into opening_hours (weekday, opens_at, closes_at)
-        select day, '07:00', '21:00' from generate_series(1, 7) as day`)
+        insert into opening_hours (weekday, opens_at, closes_at) values
+          (1, '07:00', '21:00'), (2, '07:00', '21:00'), (3, '07:00', '21:00'), (4, '07:00', '21:00'),
+          (5, '07:00', '21:00'), (6, '07:00', '21:00'), (7, '07:00', '21:00')`)
       await tx.execute(sql`
         insert into clients (id, name, status) values
           (${DURAND}, 'Atelier Durand', 'active'), (${PETIT}, 'Boulangerie Petit', 'active')`)
@@ -159,26 +155,22 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
           (${PUBLIQUE}, 'salle', 'hour', 2500),
           (${PUBLIQUE}, 'vehicule', 'hour', 3000),
           (${RESIDENTS}, 'salle', 'hour', 2000)`)
-      const [contract] = await tx
-        .insert(contracts)
-        .values({
-          clientId: DURAND,
-          reference: 'CT-PRT-1',
-          contractType: 'domiciliation',
-          startsOn: '2026-01-01',
-          amountCents: 3_000,
-          ratePlanId: RESIDENTS,
-        })
-        .returning({ id: contracts.id })
+      const contract = await insertReturning(tx, contracts, {
+        clientId: DURAND,
+        reference: 'CT-PRT-1',
+        contractType: 'domiciliation',
+        startsOn: '2026-01-01',
+        amountCents: 3_000,
+        ratePlanId: RESIDENTS,
+      })
       await tx.update(contracts).set({ status: 'active' }).where(eq(contracts.id, contract.id))
     })
   })
 
   after(async () => {
-    await owner.client`update tenants set email = ${centreEmail} where id = ${DEFAULT_TENANT_ID}`
-    // Le pool ouvert par les requêtes du module, sans quoi le processus ne finit pas.
-    const global = globalThis as { database?: { client: { end: () => Promise<void> } } }
-    await Promise.all([owner.client.end(), app.client.end(), global.database?.client.end()])
+    await bases.owner.client.query('update tenants set email = ? where id = ?', [centreEmail, DEFAULT_TENANT_ID])
+    delete (globalThis as { database?: unknown }).database
+    await bases.fermer()
   })
 
   describe('disponibilités et montant', () => {
@@ -271,7 +263,7 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
       assert.equal(await updateClientBookingMode(SALLE, 'closed'), true)
       const day = await listPortalDayAvailability(durand, jour, TZ)
       assert.equal(day.some(({ resource }) => resource.id === SALLE), false)
-      await asTenant((tx) => tx.execute(sql`update resources set deleted_at = now() where id = ${VEHICULE}`))
+      await asTenant((tx) => tx.execute(sql`update resources set deleted_at = current_timestamp(3) where id = ${VEHICULE}`))
       assert.equal(await updateClientBookingMode(VEHICULE, 'approval'), false)
     })
 
@@ -291,7 +283,7 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
     it('fige le devis : un nouveau prix de la grille ne change pas la réservation', async () => {
       const created = await reserver(durand, SALLE)
       await asTenant(async (tx) => {
-        await tx.execute(sql`update rate_plan_items set deleted_at = now() where rate_plan_id = ${RESIDENTS}`)
+        await tx.execute(sql`update rate_plan_items set deleted_at = current_timestamp(3) where rate_plan_id = ${RESIDENTS}`)
         await tx.execute(sql`
           insert into rate_plan_items (rate_plan_id, resource_type, unit, amount_cents)
           values (${RESIDENTS}, 'salle', 'hour', 5000)`)

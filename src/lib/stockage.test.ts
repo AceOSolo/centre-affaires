@@ -15,9 +15,12 @@ import {
  * quittent pas l'Union européenne, même sur une variable mal recopiée.
  */
 describe('région du stockage', () => {
-  it('accepte la région de Neon et les autres régions de l’Union', () => {
+  it('accepte les régions de l’Union (AWS, Scaleway, OVHcloud) régions de l’Union', () => {
     assert.equal(assertEuropeanRegion('eu-central-1'), 'eu-central-1')
     assert.equal(assertEuropeanRegion(' eu-west-3 '), 'eu-west-3')
+    for (const region of ['fr-par', 'nl-ams', 'pl-waw', 'gra', 'sbg', 'rbx', 'de', 'waw']) {
+      assert.equal(assertEuropeanRegion(region), region)
+    }
     for (const region of Object.keys(EU_STORAGE_REGIONS)) {
       assert.equal(assertEuropeanRegion(region), region)
     }
@@ -43,8 +46,8 @@ describe('région du stockage', () => {
   })
 
   it('refuse une région absente plutôt que de laisser le SDK choisir', () => {
-    assert.throws(() => assertEuropeanRegion(undefined), /AWS_REGION manquant/)
-    assert.throws(() => assertEuropeanRegion('  '), /AWS_REGION manquant/)
+    assert.throws(() => assertEuropeanRegion(undefined), /S3_REGION manquant/)
+    assert.throws(() => assertEuropeanRegion('  '), /S3_REGION manquant/)
   })
 
   it('ne confond pas une région avec une propriété héritée', () => {
@@ -54,9 +57,12 @@ describe('région du stockage', () => {
   it('refuse de déposer, lire ou effacer quoi que ce soit hors de l’Union', async () => {
     // Le point d'accès ne mène nulle part : l'erreur doit tomber avant toute
     // connexion, au moment de créer le client.
-    const saved = { endpoint: process.env.AWS_ENDPOINT_URL_S3, region: process.env.AWS_REGION }
-    process.env.AWS_ENDPOINT_URL_S3 = 'http://127.0.0.1:9'
-    process.env.AWS_REGION = 'us-east-1'
+    const noms = ['S3_ENDPOINT', 'S3_REGION', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'] as const
+    const saved = Object.fromEntries(noms.map((name) => [name, process.env[name]]))
+    process.env.S3_ENDPOINT = 'http://127.0.0.1:9'
+    process.env.S3_REGION = 'us-east-1'
+    process.env.S3_ACCESS_KEY_ID = 'test'
+    process.env.S3_SECRET_ACCESS_KEY = 'test'
     try {
       await assert.rejects(
         putObject('courrier/test.pdf', new Uint8Array([1]), 'application/pdf'),
@@ -65,10 +71,8 @@ describe('région du stockage', () => {
       await assert.rejects(readObjectBytes('courrier/test.pdf'), StorageRegionError)
       await assert.rejects(deleteObject('courrier/test.pdf'), StorageRegionError)
     } finally {
-      for (const [name, value] of [
-        ['AWS_ENDPOINT_URL_S3', saved.endpoint],
-        ['AWS_REGION', saved.region],
-      ] as const) {
+      for (const name of noms) {
+        const value = saved[name]
         if (value === undefined) delete process.env[name]
         else process.env[name] = value
       }

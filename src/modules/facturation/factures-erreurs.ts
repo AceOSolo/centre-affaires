@@ -1,20 +1,21 @@
 import {
-  PG_CHECK_VIOLATION,
-  PG_EXCLUSION_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  PG_INVOICE_INVALID,
-  PG_INVOICE_LOCKED,
-  PG_UNIQUE_VIOLATION,
-  pgConstraintName,
-  pgErrorCode,
+  DB_CHECK_VIOLATION,
+  DB_EXCLUSION_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  DB_INVOICE_INVALID,
+  DB_INVOICE_LOCKED,
+  DB_UNIQUE_VIOLATION,
+  dbConstraintName,
+  dbErrorCode,
 } from '../../db/errors.ts'
+import { guardMessage, mentionsConstraint } from './erreurs-base.ts'
 
 /**
  * Les refus de la base, dits à l'équipe (ADR 026).
  *
  * Les gardes de la facturation (`CA002`, `CA003`) écrivent leur message en
  * français et disent quoi corriger : il est repris tel quel. Les contraintes
- * génériques (unicité, exclusion) ont un message technique en anglais : elles
+ * génériques (unicité, chevauchement) ont un message technique en anglais : elles
  * sont traduites d'après leur nom.
  */
 const constraintMessages: Record<string, string> = {
@@ -37,16 +38,14 @@ const constraintMessages: Record<string, string> = {
 }
 
 /** Message à montrer pour une erreur de la base, sans jamais montrer la requête. */
-export function pgMessage(error: unknown): string {
-  const constraint = pgConstraintName(error)
+export function dbMessage(error: unknown): string {
+  const constraint =
+    dbConstraintName(error) ?? Object.keys(constraintMessages).find((name) => mentionsConstraint(error, name))
   if (constraint && constraintMessages[constraint]) return constraintMessages[constraint]
-  const code = pgErrorCode(error)
-  if (code === PG_INVOICE_LOCKED || code === PG_INVOICE_INVALID || code?.startsWith('CA')) {
-    for (let cause: unknown = error, depth = 0; cause && depth < 10; depth++) {
-      const { code: causeCode, message } = cause as { code?: unknown; message?: unknown }
-      if (causeCode === code && typeof message === 'string') return message
-      cause = (cause as { cause?: unknown }).cause
-    }
+  const code = dbErrorCode(error)
+  if (code === DB_INVOICE_LOCKED || code === DB_INVOICE_INVALID || code?.startsWith('CA')) {
+    const message = guardMessage(error)
+    if (message) return message
   }
   if (code) return `La base a refusé l’écriture (code ${code}${constraint ? `, ${constraint}` : ''}).`
   return error instanceof Error ? error.message : 'Erreur inattendue.'
@@ -54,14 +53,14 @@ export function pgMessage(error: unknown): string {
 
 /** Refus métier de la base : une règle de facturation, pas une panne. */
 export function isInvoiceRefusal(error: unknown): boolean {
-  const code = pgErrorCode(error)
+  const code = dbErrorCode(error)
   return (
-    code === PG_INVOICE_LOCKED ||
-    code === PG_INVOICE_INVALID ||
-    code === PG_UNIQUE_VIOLATION ||
-    code === PG_EXCLUSION_VIOLATION ||
-    code === PG_CHECK_VIOLATION ||
-    code === PG_FOREIGN_KEY_VIOLATION
+    code === DB_INVOICE_LOCKED ||
+    code === DB_INVOICE_INVALID ||
+    code === DB_UNIQUE_VIOLATION ||
+    code === DB_EXCLUSION_VIOLATION ||
+    code === DB_CHECK_VIOLATION ||
+    code === DB_FOREIGN_KEY_VIOLATION
   )
 }
 
@@ -76,6 +75,6 @@ export class InvoiceRefusedError extends Error {
   }
 
   static from(error: unknown): InvoiceRefusedError {
-    return new InvoiceRefusedError(pgMessage(error), pgErrorCode(error))
+    return new InvoiceRefusedError(dbMessage(error), dbErrorCode(error))
   }
 }

@@ -1,6 +1,8 @@
 import { and, asc, desc, eq, gte, isNull, lte, sql } from 'drizzle-orm'
 
+import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import { uuidv7 } from '../../lib/uuid.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients, type Client } from '../clients/schema.ts'
@@ -80,7 +82,9 @@ export async function listInvoices(filters: InvoiceFilters = {}): Promise<Invoic
       )
       .orderBy(
         desc(sql`${invoices.status} = 'draft'`),
-        sql`${invoices.issueDate} desc nulls first`,
+        // `desc nulls first` de PostgreSQL : MySQL place les nuls en dernier.
+        desc(sql`${invoices.issueDate} is null`),
+        desc(invoices.issueDate),
         desc(invoices.number),
         asc(clients.name),
         desc(invoices.createdAt),
@@ -216,9 +220,20 @@ export async function findInvoiceLine(
 /* Brouillons                                                                 */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Recalcule la TVA par taux (répartition de l'arrondi, EN 16931 BR-CO-17) et
+ * les totaux d'un brouillon. MySQL n'a pas de trigger d'instruction : la base
+ * pose seulement la TVA provisoire de chaque ligne, ce recalcul se demande
+ * après une série d'écritures de lignes, dans la même transaction.
+ * `issue_invoice` et `draft_credit_note` le font d'elles-mêmes.
+ */
+export async function refreshInvoiceAmounts(tx: Transaction, invoiceId: string): Promise<void> {
+  await tx.execute(sql`select invoice_refresh_amounts(${invoiceId})`)
+}
+
 /** Le brouillon, verrouillé pour la transaction ; une erreur s'il ne l'est plus. */
 async function lockDraft(tx: Transaction, id: string): Promise<Invoice> {
-  const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, id)).for('no key update').limit(1)
+  const [invoice] = await tx.select().from(invoices).where(eq(invoices.id, id)).for('update').limit(1)
   if (!invoice) throw new InvoiceRefusedError('Facture introuvable.')
   if (invoice.deletedAt) throw new InvoiceRefusedError('Ce brouillon a été abandonné : il ne se modifie plus.')
   if (invoice.status !== 'draft') {
@@ -331,6 +346,7 @@ export async function addManualLine(invoiceId: string, input: ManualLineInput): 
         periodStart: input.periodStart,
         periodEnd: input.periodEnd,
       })
+      await refreshInvoiceAmounts(tx, invoiceId)
     }),
   )
 }
@@ -379,6 +395,7 @@ export async function updateDraftLine(invoiceId: string, lineId: string, input: 
             : {}),
         })
         .where(eq(invoiceLines.id, lineId))
+      await refreshInvoiceAmounts(tx, invoiceId)
     }),
   )
 }
@@ -390,8 +407,9 @@ export async function removeDraftLine(invoiceId: string, lineId: string): Promis
       await lockDraft(tx, invoiceId)
       await tx
         .update(invoiceLines)
-        .set({ deletedAt: sql`now()` })
+        .set({ deletedAt: maintenant() })
         .where(and(eq(invoiceLines.id, lineId), eq(invoiceLines.invoiceId, invoiceId), isNull(invoiceLines.deletedAt)))
+      await refreshInvoiceAmounts(tx, invoiceId)
     }),
   )
 }
@@ -401,7 +419,7 @@ export async function abandonDraft(id: string): Promise<void> {
   await refusing(() =>
     withTenant(currentTenantId(), async (tx) => {
       await lockDraft(tx, id)
-      await tx.update(invoices).set({ deletedAt: sql`now()` }).where(eq(invoices.id, id))
+      await tx.update(invoices).set({ deletedAt: maintenant() }).where(eq(invoices.id, id))
     }),
   )
 }
@@ -411,10 +429,10 @@ export async function abandonDraft(id: string): Promise<void> {
 /* -------------------------------------------------------------------------- */
 
 async function issueIn(tx: Transaction, id: string, staffMemberId: string): Promise<string> {
-  const [row] = await tx.execute<{ number: string }>(
-    sql`select issue_invoice(${id}::uuid, ${staffMemberId}::uuid) as number`,
-  )
-  return row.number
+  const [rows] = (await tx.execute(
+    sql`select issue_invoice(${id}, ${staffMemberId}) as number`,
+  )) as unknown as [{ number: string }[]]
+  return rows[0].number
 }
 
 /**
@@ -478,10 +496,10 @@ export async function prepareCreditNote(invoiceId: string, reason: string): Prom
         )
         .limit(1)
       if (open) return open.id
-      const [row] = await tx.execute<{ id: string }>(
-        sql`select draft_credit_note(${invoiceId}::uuid, ${reason}) as id`,
-      )
-      return row.id
+      // Procédure : l'identifiant du brouillon est fourni par l'appelant (§4.1).
+      const id = uuidv7()
+      await tx.execute(sql`call draft_credit_note(${id}, ${invoiceId}, ${reason})`)
+      return id
     }),
   )
 }
@@ -514,11 +532,10 @@ export async function creditInFull(
           'Un brouillon d’avoir est déjà ouvert sur cette facture : émettez-le ou abandonnez-le d’abord.',
         )
       }
-      const [row] = await tx.execute<{ id: string }>(
-        sql`select draft_credit_note(${invoiceId}::uuid, ${reason}) as id`,
-      )
-      const number = await issueIn(tx, row.id, staffMemberId)
-      return { id: row.id, number }
+      const id = uuidv7()
+      await tx.execute(sql`call draft_credit_note(${id}, ${invoiceId}, ${reason})`)
+      const number = await issueIn(tx, id, staffMemberId)
+      return { id, number }
     }),
   )
 }

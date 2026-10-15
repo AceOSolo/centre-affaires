@@ -1,12 +1,13 @@
-import { and, asc, eq, gte, isNull, lte, ne, sql } from 'drizzle-orm'
+import { and, asc, eq, gte, isNull, lte, ne } from 'drizzle-orm'
 
 import {
-  PG_CLIENT_BOOKING_REFUSED,
-  PG_EXCLUSION_VIOLATION,
-  PG_FOREIGN_KEY_VIOLATION,
-  pgErrorCode,
+  DB_CLIENT_BOOKING_REFUSED,
+  DB_EXCLUSION_VIOLATION,
+  DB_FOREIGN_KEY_VIOLATION,
+  dbErrorCode,
 } from '../../db/errors.ts'
 import type { Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
@@ -21,6 +22,7 @@ import { quoteInTransaction } from '../facturation/devis-queries.ts'
 import { guardMessage } from '../facturation/erreurs-base.ts'
 import { closures, openingHours, resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange } from './availability.ts'
+import { listBusyRanges } from './creneaux-occupes.ts'
 import { dayAvailability, type BusyRange, type DayAvailabilityOf } from './disponibilites.ts'
 import {
   isPortalBookable,
@@ -36,7 +38,7 @@ import { bookings } from './schema.ts'
  * ressources, les horaires et la grille se lisent comme sous `withTenant()`
  * (tables sans client), les contrats du client sont les siens, et les
  * réservations des autres ne se lisent que par leurs heures
- * (`booking_busy_ranges()`). Le devis est celui de la vague 2 (`quote()`,
+ * (`listBusyRanges()`). Le devis est celui de la vague 2 (`quote()`,
  * ADR 023), calculé dans la transaction qui écrit et figé avec la
  * réservation ; le statut est posé par la base selon le réglage de la
  * ressource.
@@ -81,15 +83,7 @@ async function portalResources(tx: Transaction): Promise<PortalResource[]> {
 /** Créneaux occupés d'une journée, toutes ressources : leurs heures seulement. */
 async function busyRanges(tx: Transaction, isoDate: string, timeZone: string): Promise<BusyRange[]> {
   const day = dayRangeUtc(isoDate, timeZone)
-  // Les `timestamptz` d'un `execute` reviennent en chaînes.
-  const rows = await tx.execute(sql`
-    select resource_id, starts_at, ends_at
-      from booking_busy_ranges(${day.startsAt.toISOString()}::timestamptz, ${day.endsAt.toISOString()}::timestamptz)`)
-  return rows.map((row) => ({
-    resourceId: String(row.resource_id),
-    startsAt: new Date(row.starts_at as string),
-    endsAt: new Date(row.ends_at as string),
-  }))
+  return listBusyRanges(tx, day.startsAt, day.endsAt)
 }
 
 /**
@@ -204,7 +198,7 @@ export type CreatedPortalBooking = {
  * écrit ici est ignoré : la base le pose selon le réglage de la ressource, et
  * c'est celui qu'elle rend qui est renvoyé.
  *
- * @throws PortalBookingError pour un créneau pris (23P01), une ressource
+ * @throws PortalBookingError pour un créneau pris (CA000), une ressource
  * fermée au portail ou une écriture refusée (CA009), une personne qui n'est
  * plus de l'entreprise (23503).
  */
@@ -221,24 +215,20 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
         endsAt: input.endsAt,
         clientId: account.clientId,
       })
-      const [row] = await tx
-        .insert(bookings)
-        .values({
-          resourceId: input.resourceId,
-          clientId: account.clientId,
-          kind: 'booking',
-          channel: 'client',
-          bookedByMemberId: account.memberId,
-          title: input.title,
-          notes: input.notes,
-          startsAt: input.startsAt,
-          endsAt: input.endsAt,
-          // Ignoré : la base le pose selon le réglage de la ressource (ADR 036).
-          status: 'pending',
-          ...(quote.ok ? bookingQuoteColumns(quote.quote, new Date()) : NO_BOOKING_QUOTE),
-        })
-        .returning()
-      return row
+      return insertReturning(tx, bookings, {
+        resourceId: input.resourceId,
+        clientId: account.clientId,
+        kind: 'booking',
+        channel: 'client',
+        bookedByMemberId: account.memberId,
+        title: input.title,
+        notes: input.notes,
+        startsAt: input.startsAt,
+        endsAt: input.endsAt,
+        // Ignoré : la base le pose selon le réglage de la ressource (ADR 036).
+        status: 'pending',
+        ...(quote.ok ? bookingQuoteColumns(quote.quote, new Date()) : NO_BOOKING_QUOTE),
+      })
     })
     return {
       id: created.id,
@@ -246,20 +236,20 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
       quote: frozenQuoteDisplay(created),
     }
   } catch (error) {
-    const code = pgErrorCode(error)
-    if (code === PG_EXCLUSION_VIOLATION) {
+    const code = dbErrorCode(error)
+    if (code === DB_EXCLUSION_VIOLATION) {
       throw new PortalBookingError(
         'conflit',
         'Ce créneau vient d’être pris. Choisissez-en un autre parmi les créneaux libres.',
       )
     }
-    if (code === PG_CLIENT_BOOKING_REFUSED) {
+    if (code === DB_CLIENT_BOOKING_REFUSED) {
       throw new PortalBookingError(
         'refus',
         guardMessage(error) ?? 'Cette ressource ne se réserve pas depuis l’espace client : contactez le centre.',
       )
     }
-    if (code === PG_FOREIGN_KEY_VIOLATION) {
+    if (code === DB_FOREIGN_KEY_VIOLATION) {
       throw new PortalBookingError(
         'acces',
         'Votre accès à cette entreprise a changé. Reconnectez-vous, puis réessayez.',
