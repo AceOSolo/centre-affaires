@@ -1,5 +1,3 @@
-import { randomBytes } from 'node:crypto'
-
 /**
  * Les identifiants viennent de l'URL ou d'un champ caché. Un texte qui n'est
  * pas un UUID n'est pas une erreur de base à laisser remonter en 500 : la page
@@ -20,7 +18,9 @@ export function isUuid(value: string | undefined | null): value is string {
  * valeur par défaut pour les insertions en SQL direct.
  */
 export function uuidv7(): string {
-  const bytes = randomBytes(16)
+  // Web Crypto, disponible côté serveur comme côté navigateur : ce module est
+  // importé par les fichiers de schéma, donc parfois par du code client.
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
   let ms = Date.now()
   for (let i = 5; i >= 0; i--) {
     bytes[i] = ms % 256
@@ -28,6 +28,6 @@ export function uuidv7(): string {
   }
   bytes[6] = (bytes[6] & 0x0f) | 0x70
   bytes[8] = (bytes[8] & 0x3f) | 0x80
-  const hex = bytes.toString('hex')
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('')
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
