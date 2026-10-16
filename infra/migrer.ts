@@ -31,6 +31,31 @@ await root.client.query(
   `create database if not exists \`${name}\` character set utf8mb4 collate utf8mb4_0900_as_ci`,
 )
 
+// Une base créée avant nous garde sa collation, et les tables héritent de
+// celle-ci : avec une collation différente de celle des connexions
+// (`utf8mb4_0900_as_ci`), MySQL refuse de comparer une colonne à `@app_tenant_id`
+// (erreur 1267), donc tout trigger de garde échouerait.
+const [[schema]] = (await root.client.query(
+  `select default_collation_name as collation,
+          (select count(*) from information_schema.tables
+            where table_schema = ? and table_type = 'BASE TABLE') as tables
+     from information_schema.schemata where schema_name = ?`,
+  [name, name],
+)) as unknown as [[{ collation: string; tables: number }]]
+if (schema.collation !== 'utf8mb4_0900_as_ci') {
+  if (schema.tables > 0) {
+    throw new Error(
+      `La base ${name} a la collation ${schema.collation} et contient déjà des tables. ` +
+        'Il faut utf8mb4_0900_as_ci : vider la base (DROP DATABASE puis relancer ce script, qui la recrée) ' +
+        'ou convertir ses tables avant de poursuivre.',
+    )
+  }
+  await root.client.query(
+    `alter database \`${name}\` character set utf8mb4 collate utf8mb4_0900_as_ci`,
+  )
+  console.log(`Collation de ${name} : ${schema.collation} → utf8mb4_0900_as_ci.`)
+}
+
 const appUser = process.env.DB_USER
 const appPassword = process.env.DB_PASSWORD
 if (appUser && appUser !== admin.user) {
