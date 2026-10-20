@@ -1,10 +1,34 @@
 # Roadmap — couverture du cahier des charges DOMOTOP
 
-État au 02/10/2026, après l'intégration de la dernière vague (autonomie
-client, états des lieux, anonymisation : ADR 036 à 040) et ses correctifs
-(revue et manques de schéma : ADR 041, migration 0044). Audit initial du
-30/09/2026 de l'arbre de travail (fichiers non commités compris) face aux deux
-documents du 18/09/2026 :
+État au 20/10/2026. Depuis l'intégration de la dernière vague le 02/10
+(autonomie client, états des lieux, anonymisation : ADR 036 à 041) :
+
+- **ADR 042** : MySQL 8.4 sur le VPS, dans le même compose que l'application,
+  Better Auth auto-hébergé, fin de la RLS (gardes d'écriture en triggers,
+  filtres de lecture dans le code) ; la structure est regénérée (migration
+  `0000`), suivie des migrations `0001` à `0003` du 20/10 ;
+- **ADR 043** : demandes par produit et devis structuré repris par Dolibarr ;
+- **ADR 044** : tournée du courrier, pages numérisées comptées, classement
+  côté client ;
+- **ADR 045** : inscription libre sur le site, comptes gérés par l'équipe ;
+- **ADR 046** : **Dolibarr tient le commercial et la facturation** ; la
+  facturation du site est en sommeil (droits retirés à tous les rôles, lot
+  planifié arrêté) ; tiers, contrats, offres et envoi des consommations
+  passent par la passerelle avec Dolibarr (seconde tranche, à faire) ;
+- **ADR 047** : défenses contre les robots (plafonds par adresse IP, ALTCHA) ;
+- **ADR 048** : menu du back-office rangé par le parcours d'une demande ;
+- **ADR 049** : produits et tarifs reçus de Dolibarr par son module Webhook ;
+- **ADR 050** : écran « Aujourd'hui », page d'arrivée de l'équipe ;
+- **ADR 051** : nginx devant l'application (et non Apache), port local 3100.
+
+**Rien de cela n'est en production.** La version en ligne est celle du
+06/10/2026, d'avant MySQL : le job de déploiement a été retiré de la CI le
+15/10 (commit `e469801`) et n'est pas rétabli. La mise en ligne se fait à la
+main (`infra/serveur/README.md`, section 4) ; rétablir le déploiement
+automatique est une décision en attente.
+
+Audit initial du 30/09/2026 de l'arbre de travail (fichiers non commités
+compris) face aux deux documents du 18/09/2026 :
 
 - *DOMOTOP — Application de gestion de centre d'affaires* (support, 25 slides)
 - *09-18 Analyse — Cahier des charges application de gestion de centre d'affaires*
@@ -14,17 +38,24 @@ Les documents découpent le projet en trois lots : **1. socle d'exploitation**,
 Les deux ordres concordent, sauf sur la facturation (voir D1).
 
 Statuts : ✅ couvert de la base à l'écran · ◐ partiel · ○ absent ·
-⟳ en cours dans une autre session. Effort : S < 1 j, M 1–3 j, L > 3 j.
+⟳ en cours dans une autre session · **sommeil** : construit, puis mis en
+sommeil, l'exigence étant tenue par Dolibarr (ADR 046). Effort : S < 1 j,
+M 1–3 j, L > 3 j.
 
 ## Synthèse
 
-**28** exigences couvertes, **5** partielles, **0** absente, sur 33 (après
-les correctifs de la dernière vague, ADR 041 ; 27 et 6 à son intégration le
-02/10/2026 ; 21, 10 et 2 après la vague 2 ; 11, 14 et 8 après la vague 1 ;
-l'audit du 30/09 en comptait 5, 18 et 10). Les cinq partielles n'attendent
-plus que des décisions ou des gestes hors du code : validation des cas
-tarifaires (R10), plateforme agréée (R16), constat à l'écran à 375 px (R25),
-durées, DPA et AIPD (R29), installation des sauvegardes (R30).
+**23** exigences couvertes, **6** partielles, **4** en sommeil, **0**
+absente, sur 33 (au 20/10/2026, après l'ADR 046 ; 28 couvertes et 5
+partielles après les correctifs de la dernière vague, ADR 041 ; 27 et 6 à son
+intégration le 02/10/2026 ; 21, 10 et 2 après la vague 2 ; 11, 14 et 8 après
+la vague 1 ; l'audit du 30/09 en comptait 5, 18 et 10). La facturation
+(R13 à R16) est en sommeil : Dolibarr la tient (ADR 046). Deux exigences
+redeviennent partielles pour la même raison : « Mes factures » (R17) et le
+chiffre d'affaires des indicateurs (R31), vides tant que la passerelle ne
+lit pas les factures de Dolibarr. Les quatre autres partielles n'attendent
+que des décisions ou des gestes hors du code : validation des cas tarifaires
+(R10), constat à l'écran à 375 px (R25), durées, DPA et AIPD (R29),
+installation des sauvegardes (R30).
 
 | Réf. | Exigence | Statut | Ce qui manque | Effort | Phase |
 |---|---|---|---|---|---|
@@ -35,19 +66,19 @@ durées, DPA et AIPD (R29), installation des sauvegardes (R30).
 | R05 | Réservation : créneau, statut, canal, client, contrat | ✅ | — (canal posé par chaque chemin et affiché sur la fiche ; rattachement à un contrat actif du même client qui couvre le créneau, vérifié à l'écriture) | — | — |
 | R06 | États des lieux configurables avec photos | ✅ | — (modèles de champs par type de ressource, versionnés et édités à l'écran ; saisie depuis la ressource, la réservation ou le contrat ; clôture figée ; photos compressées dans le navigateur, chiffrées, consultation journalisée ; comparaison sortie / entrée ; vue imprimable ; validation par le client ; ADR 039). À valider par le centre : modèles de départ, compression (1920 px, JPEG 0,8) | — | 4 |
 | R07 | CRM : fiche, contacts, historique | ✅ | — (vague 2 : services souscrits en cours, à venir et historique sur la fiche, mandats SEPA, lien vers les factures du client ; vague 1 : contacts CRM, historique des réservations, recherche par SIRET ou contact) | — | 2 |
-| R08 | Grilles jour / semaine / mois | ✅ | — (unité `week`, dates de validité appliquées au devis, écran de modification des grilles, ADR 023 ; grilles par défaut successives, celle de l'an prochain préparée d'avance, ADR 035) | — | 2 |
-| R09 | Offres groupées ressources + services | ✅ | — (catalogue `/services`, offres `/offres` chiffrées par `priceOffer`, contrat tiré d'une offre, ADR 024 et 028). Manques de schéma : une offre à plusieurs ressources précises n'en occupe qu'une (`contracts.resource_id`), la désignation commerciale par ligne d'offre est faite (dernière vague, ADR 036) | — | 2 |
+| R08 | Grilles jour / semaine / mois | ✅ | — (unité `week`, dates de validité appliquées au devis, écran de modification des grilles, ADR 023 ; grilles par défaut successives, celle de l'an prochain préparée d'avance, ADR 035). Prix de la grille par défaut reçus de Dolibarr par son module Webhook (`POST /api/dolibarr/produits`, références `tarif.<type>.<unité>`, ADR 049) ; l'écran Tarifs reste ouvert, une saisie y est écrasée au prochain envoi | — | 2 |
+| R09 | Offres groupées ressources + services | ✅ | — (catalogue `/services`, offres `/offres` chiffrées par `priceOffer`, contrat tiré d'une offre, ADR 024 et 028). Manques de schéma : une offre à plusieurs ressources précises n'en occupe qu'une (`contracts.resource_id`), la désignation commerciale par ligne d'offre est faite (dernière vague, ADR 036). Services du catalogue reçus de Dolibarr (ADR 049) ; les offres passent dans Dolibarr avec la seconde tranche de la passerelle (ADR 046 § 5) | — | 2 |
 | R10 | Remises, engagement, prorata paramétrables | ◐ | Fait : règles du centre à l'écran `/configuration`, prorata jours réels / base 30 / aucun, remises par ligne, engagement et fin possible, jeu de cas figé (`cas-tarifaires.ts`), ADR 023 ; reconduction tacite inscrite chaque nuit, avec son journal (ADR 033). Reste : faire valider le jeu de cas et les choix « à valider » par l'exploitation ; poser la tâche nocturne sur le VPS | S | 2 |
-| R11 | Moteur tarifaire unique | ✅ | — (`quote()` partagé par le back-office et le portail, devis figé sur la réservation, grille du contrat avant la grille par défaut, ADR 023). Les séries posées en masse restent non chiffrées | — | 2 |
+| R11 | Moteur tarifaire unique | ✅ | — (`quote()` partagé par le back-office et le portail, devis figé sur la réservation, grille du contrat avant la grille par défaut, ADR 023). Il chiffre avec les prix reçus de Dolibarr (ADR 049). Les séries posées en masse restent non chiffrées | — | 2 |
 | R12 | Contrat généré, PDF, avenants | ✅ | — (contrat tiré d'une offre, avenants de prix et de ressource, document imprimable archivé avec empreinte SHA-256, ADR 025 et 028). La signature reste manuelle ; le dépôt d'un exemplaire signé (scan) est écarté, le cahier des charges ne le demandant pas (ADR 041) | — | 2 |
-| R13 | Facturation intégrée | ✅ | — (lot mensuel `/factures/preparer`, brouillons, émission numérotée sans trou, avoirs, vue imprimable, ADR 026 et 029 ; lot planifié le 1er du mois, ADR 033). Reste en production : poser la tâche dans la crontab du VPS (`infra/serveur/README.md`) | — | 2 |
-| R14 | Actes à l'acte sur la facture | ✅ | — (plis ouverts valorisés par `priceActs` : inclus à 0 €, puis prix de la souscription ou du catalogue ; le relevé CSV reste un contrôle). Prérequis en production : le prix du service `courrier.ouverture` | — | 2 |
-| R15 | Facture = location + forfaits + actes | ✅ | — (une facture par client et par mois : loyers et lignes de contrat à l'échéancier versionné, forfaits, réservations au devis figé, actes ; chaque ligne garde sa source) | — | 2 |
-| R16 | Export comptable, paiement, e-facturation | ◐ | Fait : pointage des paiements, relances imprimables et journalisées (courriel et courrier), mandats SEPA chiffrés et rechiffrés à la rotation de clé, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée (ADR 027, 030 et 034) ; export FEC inchangé quand un client est renommé ou anonymisé, ses libellés venant de la pièce (ADR 041). Reste : choisir et raccorder la plateforme agréée (émission obligatoire au 01/09/2027) | M–L | 2 |
-| R17 | Contrats et factures côté client | ✅ | — (« Mes contrats » : contrats engagés, prix en vigueur, avenants signés, documents archivés imprimables ; « Mes factures » : factures et avoirs émis, reste à régler, coordonnées de virement, vue imprimable commune avec le back-office ; ADR 036). Le dépôt du contrat signé (scan) est écarté (ADR 041) | — | 3 |
+| R13 | Facturation intégrée | sommeil | Construit (lot mensuel `/factures/preparer`, brouillons, émission numérotée sans trou, avoirs, vue imprimable, ADR 026 et 029 ; lot planifié, ADR 033), **mis en sommeil** : la facturation est tenue dans Dolibarr (ADR 046). Droits de facturation retirés à tous les rôles, lot planifié arrêté (`/api/maintenance/facturation` répond `410`) : ne pas poser sa tâche, et la retirer de la crontab du VPS si elle y est. Aucune facture réelle n'a été émise par le site | — | 2 |
+| R14 | Actes à l'acte sur la facture | sommeil | Construit (plis ouverts valorisés par `priceActs` : inclus à 0 €, puis prix de la souscription ou du catalogue ; pages numérisées comptées, ADR 044), **en sommeil** avec la facturation du site (ADR 046). Les actes sont à transmettre à Dolibarr comme consommations facturables : seconde tranche de la passerelle, à faire (ADR 046 § 5) | — | 2 |
+| R15 | Facture = location + forfaits + actes | sommeil | Construit (une facture par client et par mois : loyers et lignes de contrat à l'échéancier versionné, forfaits, réservations au devis figé, actes ; chaque ligne garde sa source), **en sommeil** : Dolibarr fait les factures (ADR 046) | — | 2 |
+| R16 | Export comptable, paiement, e-facturation | sommeil | Construit (pointage des paiements, relances, mandats SEPA chiffrés, remises de prélèvement `pain.008`, export FEC, représentation EN 16931 contrôlée, ADR 027, 030, 034 et 041), **en sommeil** : règlements, prélèvements, relances et export comptable sont tenus dans Dolibarr (ADR 046). **La plateforme agréée** (émission obligatoire au 01/09/2027) **se raccorde par Dolibarr**, jamais par le site | — | 2 |
+| R17 | Contrats et factures côté client | ◐ | « Mes contrats » en place : contrats engagés, prix en vigueur, avenants signés, documents archivés imprimables (ADR 036). « Mes factures » (`/compte/factures`) : page en place et **vide**, le site n'émettant plus de facture (ADR 046) ; son onglet ne paraît qu'avec une facture (`clientSections`). Reste : factures lues depuis ce que Dolibarr transmet, ou renvoi vers ses documents, avec la seconde tranche de la passerelle (ADR 046 § 5). Le dépôt du contrat signé (scan) est écarté (ADR 041) | — | 3 |
 | R18 | Forfaits de services souscrits | ✅ | — (souscriptions à prix figé, changement de conditions daté, fin, annulation, actes inclus, ADR 024 ; un mois sans prorata dû une fois par chaîne, ADR 032 ; souscription d'un contrat brouillon montrée « en attente », ADR 035). Les inclus se comptent par mois civil (ADR 035) | — | 2 |
 | R19 | Réception du courrier, photo d'enveloppe | ✅ | Photo facultative (à rendre obligatoire ?) | S | — |
-| R20 | Notification à la réception | ✅ | Courriel en fin de tournée (un par entreprise : nombre et nature des plis ; « pas de courrier aujourd'hui » aux domiciliés sans pli, refusable à part, ADR 044), à la numérisation, alerte au staff sur demande d'ouverture. Effectif en production une fois `SMTP_URL` et `MAIL_FROM` configurés (SMTP en UE) | — | — |
+| R20 | Notification à la réception | ✅ | Courriel en fin de tournée (un par entreprise : nombre et nature des plis ; « pas de courrier aujourd'hui » aux domiciliés sans pli, refusable à part, ADR 044), à la numérisation, alerte au staff sur demande d'ouverture. Effectif en production une fois `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD` et `MAIL_FROM` configurés (SMTP de Brevo, en UE ; `src/lib/courriel.ts`) | — | — |
 | R21 | Espace courrier client | ✅ | — (boîte aux lettres paginée et filtrée, enveloppe et numérisations déchiffrées et journalisées ; demandes d'ouverture, de numérisation et de réexpédition, suivi daté, annulation tracée ; file de l'accueil ; actes et frais d'affranchissement facturés par le lot, une demande laissée de côté étant reprise par le lot suivant ; ADR 037, ADR 041). Pages du contenu comptées au dépôt, facturées au-delà des pages comprises dans l'ouverture (service `courrier.page`) ; classement par personne façon espace bancaire : lu, traité, catégories, étiquettes, actions groupées (ADR 044). À valider : TVA des frais d'affranchissement, prix des pages et pages comprises. L'accueil ne dépose pas encore de demande au nom du client depuis l'écran (la base le permet) | — | 3 |
 | R22 | Scans : chiffrement, accès journalisé, purge | ✅ | Accès restreint et journalisé, purge nocturne, chiffrement au repos (ADR 020). Reste en production : créer la clé, lancer la reprise `infra/chiffrer-documents.ts` | — | 0 |
 | R23 | Réservation en ligne côté client | ✅ | — (filtres par type et par date, créneaux libres du moteur commun, tarif du contrat annoncé puis figé, confirmation immédiate ou accord de l'accueil selon la ressource, « Mes réservations » avec annulation tracée, offres groupées demandées en une action, la demande étant conservée et traitée dans « Demandes » ; ADR 036, ADR 041). À valider : ressources en confirmation immédiate, pas de plafond de durée | — | 3 |
@@ -58,7 +89,7 @@ durées, DPA et AIPD (R29), installation des sauvegardes (R30).
 | R28 | Comptes isolés, second facteur staff | ✅ | — (espace client sous portée client : filtres explicites et gardes d'écriture en base depuis la migration vers MySQL, ADR 019 et 042 ; RLS à l'origine). Second facteur écarté (ADR 016) | — | 1 |
 | R29 | Registre RGPD, durées de conservation | ◐ | Fait : registre et tableau des durées (`docs/rgpd/`), durées réglées à l'écran `/configuration`, anonymisation chaque nuit des entreprises, contacts, accès et membres retirés au terme, exclusions tenues par la base, effacement à la demande, tracé avec son fondement, la date de la demande et son auteur (ADR 040, ADR 041) ; tâche de nuit dont chaque étape est isolée. Restent : valider les durées proposées, archiver les DPA, évaluer l'AIPD du courrier | S | 0 |
 | R30 | Sauvegardes, restauration, reprise | ◐ | Script, procédure, plan de reprise et exercice local faits (ADR 022, `docs/exploitation/`). Pile MySQL : `mysqldump` chiffré, restauration et plan de reprise réécrits (ADR 042). Restent : installation sur le VPS (utilisateur `sauvegarde`, destination, clés), premier exercice de restauration sur MySQL | S | 0 |
-| R31 | Indicateurs (occupation, revenu) | ✅ | — (`/indicateurs` : occupation par ressource et par type, chiffre d'affaires des factures et avoirs émis par ressource, service et nature, encaissements, encours, tendance sur 12 mois). Écarts documentés : la rentabilité des services (aucun coût saisi) et les heures administratives économisées ne se mesurent pas dans l'application | — | 2 |
+| R31 | Indicateurs (occupation, revenu) | ◐ | Fait : `/indicateurs` (depuis Réglages), occupation par ressource et par type. Le chiffre d'affaires, les encaissements, l'encours et leur tendance lisent les factures du site : **vides** depuis que la facturation est tenue dans Dolibarr (ADR 046). Reste : les relire depuis Dolibarr ou les retirer, avec la seconde tranche. Écarts documentés : la rentabilité des services (aucun coût saisi) et les heures administratives économisées ne se mesurent pas dans l'application | — | 2 |
 | R32 | Une seule API métier | ✅ | — | — | — |
 | R33 | Stockage documentaire | ✅ | — (région UE contrôlée par `stockage.ts` ; photos d'états des lieux compressées dans le navigateur, chiffrées, purgées au terme avec leur journal, ADR 039 ; rechiffrées à la rotation de clé comme les numérisations, ADR 041). Le dépôt du contrat signé (scan) est écarté : le cahier des charges ne le demande pas (ADR 041) | — | 4 |
 
@@ -69,10 +100,12 @@ se trouve en annexe.
 
 - ~~**B1. `bookings.client_id` n'a pas de migration.**~~ Résolu : la migration
   0023 crée la colonne, la clé étrangère et l'index.
-- **B2. Courrier, comptes clients, stockage et agenda Google : commités, pas
-  encore sur `main`.** Ils sont sur la branche `feat/compte-client-courrier`
-  (commits `aea45b0` et `0627417`, migrations 0019 à 0024, ADR 014 et 015).
-  → Pull request vers `main`, puis déploiement.
+- ~~**B2. Courrier, comptes clients, stockage et agenda Google : commités, pas
+  encore sur `main`.**~~ Résolu : la branche `feat/compte-client-courrier` a
+  été fusionnée dans `main` le 02/10/2026 (pull request n° 4, commit
+  `5bbb632`). `main` n'a plus bougé jusqu'au 15/10 : c'est cette version
+  (`d4e34a2`, encore sur Neon) que le job de déploiement a mise en ligne le
+  06/10.
 - ~~**B3. Les scans sont stockés en clair et les branches Neon les copient.** (les branches n'existent plus depuis la migration vers MySQL, ADR 042)~~
   Résolu dans le code : les documents sont chiffrés avant dépôt, avec une clé
   propre à chaque environnement (ADR 020). Reste en production : lancer la
@@ -121,7 +154,7 @@ virement et prélèvement suivis à la main.
 | D8 | Champs d'état des lieux par type ; photos | Non tranché (slide 5) | Modèles de champs en JSONB en base, versionnés. Compression à l'upload avec `sharp` (nouvelle dépendance, à justifier). → ADR 039 : compression dans le navigateur (canvas), sans dépendance. |
 | D9 | Durées de conservation par type de donnée | `CLAUDE.md` RGPD, ADR 015 | Tableau des durées plus registre des traitements dans `docs/`. |
 | D10 | Demandes par produit et devis Dolibarr (20/10/2026) | ADR 005 (une seule demande, pour les salles) ; ADR 016 et D1 (facturation dans l'application) | **ADR 043.** Trois produits — salle ou bureau, camion, domiciliation — chacun avec ses questions ; chaque demande produit un devis structuré (`DV-AAAA-NNNN`) que Dolibarr vient chercher par une API (`docs/integrations/dolibarr.md`). **Dolibarr fera aussi les factures** : D1 est amendée, la bascule (lot, contrats, actes du courrier, relances, SEPA, FEC, plateforme agréée) est à trancher avec le développeur Dolibarr dans un ADR suivant. En attendant, le lot de l'application ne facture plus une réservation qui a un devis vivant. |
-| D11 | Commercial et facturation dans Dolibarr ; menu par produit (20/10/2026) | ADR 016 et D1 (facturation dans l'application) ; ADR 006, 023, 024 (clients, tarifs, offres dans l'application) | **ADR 046.** Tiers, contrats, offres, services, tarifs, factures, règlements et export comptable passent dans Dolibarr ; le site fait la passerelle. Première tranche : droits de facturation retirés à tous les rôles, lot planifié arrêté, menu rangé en rayons Salles, Bureaux, Domiciliation, Camion. Seconde tranche, avec le développeur Dolibarr : réception des tiers, contrats et tarifs, envoi des consommations, écrans commerciaux en lecture seule. |
+| D11 | Commercial et facturation dans Dolibarr ; rangement du back-office (20/10/2026) | ADR 016 et D1 (facturation dans l'application) ; ADR 006, 023, 024 (clients, tarifs, offres dans l'application) | **ADR 046.** Tiers, contrats, offres, services, tarifs, factures, règlements et export comptable passent dans Dolibarr ; le site fait la passerelle. Première tranche : droits de facturation retirés à tous les rôles, lot planifié arrêté. **Menu** : d'abord rangé en rayons par produit (ADR 046), puis **par le parcours d'une demande** (ADR 048 : ce qui arrive, commande, administratif, gestion, retour client, réglages), précédé de l'écran « Aujourd'hui » (ADR 050) ; le produit se choisit dans les pages (filtres `?type=`, `?produit=`). Passerelle entrante : produits et tarifs reçus (ADR 049) ; réception des tiers et des contrats, envoi des consommations, écrans commerciaux en lecture seule : seconde tranche, avec le développeur Dolibarr. |
 
 ## Phases
 
@@ -143,8 +176,15 @@ testée et documentée) ; R33 (contrôle de la région UE au démarrage).
   client en RLS.
 - R16 (cadrage) : format d'export comptable fixé par ADR, sans intégration.
 
-### Phase 2 — Lot 2 « monétisation » (tranche 3 de `CLAUDE.md`) — faite
+### Phase 2 — Lot 2 « monétisation » (tranche 3 de `CLAUDE.md`) — faite, facturation en sommeil
 Préalable : D1, D5, D7.
+
+**En sommeil depuis le 20/10/2026** (ADR 046, D11) : la facturation (R13 à
+R16) est tenue dans Dolibarr. Le code et les tables restent, sans droit
+accordé à aucun rôle ; le lot planifié est arrêté et ne se pose plus dans la
+crontab. Les tarifs et les services arrivent de Dolibarr (ADR 049) ; tiers,
+contrats et consommations facturables suivent avec la seconde tranche de la
+passerelle.
 
 **Faite** : vague 2 intégrée le 01/10/2026 (six tranches parallèles, ADR 023 à
 030), corrigée le 02/10/2026 après revue (ADR 032 : avenant de prix refusé sur
@@ -152,7 +192,8 @@ une période facturée, avoirs au centime du TTC, forfaits sans prorata, motif
 d'exonération exigé). Restes, suivis dans le tableau de synthèse : raccordement à la plateforme
 agréée (R16), validation du jeu de cas tarifaires (R10). Faits le 02/10/2026 :
 reconduction tacite (R10) et lancement planifié du lot (R13), crontab à poser
-sur le VPS (ADR 033) ; journal des relances et rechiffrement des mandats
+sur le VPS pour la reconduction seulement (ADR 033 ; le lot est arrêté par
+l'ADR 046) ; journal des relances et rechiffrement des mandats
 (R16, ADR 034), les remises de prélèvement restant sans table (ADR 034). Manques de schéma relevés à l'intégration : voir
 ci-dessous.
 
