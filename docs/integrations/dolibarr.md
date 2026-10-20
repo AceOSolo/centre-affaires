@@ -3,6 +3,10 @@
 Pour le développeur qui écrit le connecteur Dolibarr. Décision et raisons :
 [ADR 043](../decisions/043-demandes-par-produit-et-devis-dolibarr.md).
 
+Les produits et les tarifs vont dans l'autre sens, de Dolibarr vers le site,
+par le module Webhook de Dolibarr et sans code : voir
+[dolibarr-produits.md](dolibarr-produits.md) (ADR 049).
+
 ## Le principe
 
 L'application recueille les demandes (salle ou bureau, camion, domiciliation)

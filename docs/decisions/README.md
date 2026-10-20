@@ -63,6 +63,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 046 | [Dolibarr tient le commercial et la facturation ; le back-office est rangé par produit](046-dolibarr-commercial-et-facturation-admin-par-produit.md) | 2026-10-20 | accepté ; amende l'ADR 016, met en sommeil les ADR 026 à 034, tranche l'ADR 043 § 6 ; première tranche faite (facturation coupée, menu par produit), passerelle entrante à construire avec le développeur Dolibarr ; menu par produit remplacé par l'ADR 048 |
 | 047 | [Défenses contre les robots sur ce qui s'écrit sans compte](047-defenses-anti-robot.md) | 2026-10-20 | accepté ; plafonds par IP et du site sur les demandes publiques, champ piège, preuve de travail ALTCHA auto-hébergée (formulaires publics, inscription), Better Auth resserré, en-têtes de sécurité |
 | 048 | [Menu du back-office rangé par le parcours d'une demande](048-menu-du-back-office-par-parcours-client.md) | 2026-10-20 | accepté ; remplace le menu par produit de l'ADR 046 (filtres par produit des pages conservés) |
+| 049 | [Produits et tarifs reçus de Dolibarr par son module Webhook](049-produits-recus-de-dolibarr.md) | 2026-10-20 | accepté ; première pièce de la passerelle entrante de l'ADR 046 § 5 (services et tarifs, `POST /api/dolibarr/produits`), sans migration ; tiers et contrats restent à faire |
 | 050 | [Écran « Aujourd'hui », page d'arrivée de l'équipe](050-ecran-aujourdhui.md) | 2026-10-20 | accepté ; amende l'ADR 048 (ordre des groupes du menu : « Aujourd'hui » en tête) |
 
 ## Numéros en double et numéro manquant

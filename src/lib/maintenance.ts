@@ -17,7 +17,25 @@ export function isMaintenanceRequest(request: Request): boolean {
  */
 export function hasBearerToken(request: Request, expected: string | undefined): boolean {
   if (!expected) return false
-  const given = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
+  return sameToken(request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '', expected)
+}
+
+/**
+ * Comme `hasBearerToken`, ou le jeton dans l'adresse (`?jeton=…`) : le module
+ * Webhook de Dolibarr ne sait poser aucun en-tête (ADR 049). L'adresse finit
+ * dans les journaux d'Apache et dans l'historique des webhooks de Dolibarr :
+ * réservé aux routes qui n'écrivent que ce que Dolibarr fait déjà foi.
+ */
+export function hasBearerOrQueryToken(request: Request, expected: string | undefined): boolean {
+  if (!expected) return false
+  if (hasBearerToken(request, expected)) return true
+  // Un jeton en base64 collé tel quel dans l'adresse : son « + » se lit comme
+  // une espace. Un jeton n'en contient jamais, il est rendu à l'identique.
+  const given = (new URL(request.url).searchParams.get('jeton') ?? '').replaceAll(' ', '+')
+  return sameToken(given, expected)
+}
+
+function sameToken(given: string, expected: string): boolean {
   const a = Buffer.from(given)
   const b = Buffer.from(expected)
   // Comparaison à temps constant : la durée de la réponse ne doit pas
