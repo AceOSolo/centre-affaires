@@ -90,14 +90,16 @@ if (appUser && appUser !== admin.user) {
   // table par table, car MySQL ne sait pas retirer un droit d'une table sous un
   // droit accordé sur toute la base. Les compteurs de numérotation ne se
   // touchent que par `next_document_number()`, routine `SQL SECURITY DEFINER`
-  // (ADR 021) : l'application les lit seulement. Une table ajoutée plus tard
-  // reçoit ses droits au prochain `npm run db:migrer`.
+  // (ADR 021) : l'application les lit seulement. Les vues (`contract_segments`,
+  // `contract_price_versions`) se lisent seulement, elles aussi. Une table ajoutée
+  // plus tard reçoit ses droits au prochain `npm run db:migrer`.
   const [tables] = (await client.query(
-    `select table_name as name from information_schema.tables
-      where table_schema = database() and table_type = 'BASE TABLE' and table_name <> '__migrations'`,
-  )) as unknown as [{ name: string }[]]
-  for (const { name: table } of tables) {
-    const privileges = table === 'document_sequences' ? 'select' : 'select, insert, update, delete'
+    `select table_name as name, table_type as type from information_schema.tables
+      where table_schema = database() and table_type in ('BASE TABLE', 'VIEW') and table_name <> '__migrations'`,
+  )) as unknown as [{ name: string; type: string }[]]
+  for (const { name: table, type } of tables) {
+    const privileges =
+      type === 'VIEW' || table === 'document_sequences' ? 'select' : 'select, insert, update, delete'
     await client.query(`grant ${privileges} on \`${name}\`.\`${table}\` to ?@'%'`, [appUser])
   }
   await client.query(`grant execute on \`${name}\`.* to ?@'%'`, [appUser])
