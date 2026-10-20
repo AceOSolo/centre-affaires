@@ -56,11 +56,12 @@ export default async function AccesReservePage({
         )}
       </div>
       <div>
+        {/* La page d'arrivée de l'équipe (ADR 050). */}
         <Link
-          href="/reservations"
+          href="/aujourdhui"
           className="inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
         >
-          Revenir au planning
+          Revenir à « Aujourd’hui »
         </Link>
       </div>
     </div>

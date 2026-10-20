@@ -94,10 +94,10 @@ export default async function DemandesPage({
                 : 'Aucune demande de réservation en attente.'}
             </p>
             <Link
-              href="/reservations"
+              href="/aujourdhui"
               className="mt-4 inline-block text-sm text-muted-foreground underline-offset-2 hover:underline"
             >
-              Revenir au planning
+              Revenir à « Aujourd’hui »
             </Link>
           </div>
         ) : (
