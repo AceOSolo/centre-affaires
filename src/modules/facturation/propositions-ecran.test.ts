@@ -152,3 +152,21 @@ describe('proposalGuidance', () => {
     assert.match(proposalGuidance({ ...draft, status: 'sent', lines: [], dolibarrRef: 'PR2610-0001' }), /PR2610-0001/)
   })
 })
+
+describe('devis dans « Demandes » (ADR 048)', () => {
+  it('range un devis par le produit de sa ressource, la domiciliation à part', async () => {
+    const { proposalProductKey } = await import('./propositions.ts')
+    assert.equal(proposalProductKey({ product: 'domiciliation', resourceType: null }), 'domiciliation')
+    assert.equal(proposalProductKey({ product: 'espace', resourceType: 'bureau' }), 'bureaux')
+    assert.equal(proposalProductKey({ product: 'espace', resourceType: 'salle' }), 'salles')
+    assert.equal(proposalProductKey({ product: 'vehicule', resourceType: 'vehicule' }), 'vehicules')
+  })
+
+  it('ne montre un devis à compléter qu’une fois : pas s’il accompagne une demande en attente', async () => {
+    const { awaitsReception } = await import('./propositions.ts')
+    assert.equal(awaitsReception({ status: 'draft', bookingStatus: null }), true)
+    assert.equal(awaitsReception({ status: 'draft', bookingStatus: 'confirmed' }), true)
+    assert.equal(awaitsReception({ status: 'draft', bookingStatus: 'pending' }), false)
+    assert.equal(awaitsReception({ status: 'ready', bookingStatus: null }), false)
+  })
+})

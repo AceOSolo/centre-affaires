@@ -8,8 +8,8 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { dbRefusalMessage } from '../contrats/erreurs.ts'
 import type { Answers } from '../reservations/questionnaires.ts'
-import { bookings, type BookingChannel } from '../reservations/schema.ts'
-import { resources } from '../ressources/schema.ts'
+import { bookings, type BookingChannel, type BookingStatus } from '../reservations/schema.ts'
+import { resources, type ResourceType } from '../ressources/schema.ts'
 import {
   lineFromBooking,
   validatesOnCreation,
@@ -160,11 +160,15 @@ export async function findProposalForBooking(bookingId: string): Promise<Pick<Pr
 
 export type ProposalListItem = Pick<
   Proposal,
-  'id' | 'number' | 'product' | 'status' | 'channel' | 'requesterName' | 'requesterCompany' | 'requesterEmail' | 'createdAt' | 'currency'
+  'id' | 'number' | 'product' | 'status' | 'channel' | 'requesterName' | 'requesterCompany' | 'requesterEmail' | 'createdAt' | 'currency' | 'bookingId'
 > & {
   clientName: string | null
   bookingStartsAt: Date | null
+  /** État de la réservation liée : un devis de camion attend avec sa demande. */
+  bookingStatus: BookingStatus | null
   resourceName: string | null
+  /** Type de la ressource réservée, pour ranger le devis par produit (ADR 048). */
+  resourceType: ResourceType | null
   netCents: number
   lineCount: number
 }
@@ -174,7 +178,7 @@ export type ProposalListItem = Pick<
  * `product` : ceux d'un seul produit (le rayon Domiciliation, ADR 046).
  */
 export async function listProposals(
-  filters: { statuses?: readonly ProposalStatus[]; product?: ProposalProduct; limit?: number } = {},
+  filters: { statuses?: readonly ProposalStatus[]; product?: ProposalProduct; clientId?: string; limit?: number } = {},
 ): Promise<ProposalListItem[]> {
   const tenantId = currentTenantId()
   return withTenant(tenantId, async (tx) => {
@@ -201,10 +205,13 @@ export async function listProposals(
           requesterEmail: proposals.requesterEmail,
           createdAt: proposals.createdAt,
           currency: proposals.currency,
+          bookingId: proposals.bookingId,
         },
         clientName: clients.name,
         bookingStartsAt: bookings.startsAt,
+        bookingStatus: bookings.status,
         resourceName: resources.name,
+        resourceType: resources.resourceType,
         netCents: totals.netCents,
         lineCount: totals.lineCount,
       })
@@ -218,6 +225,7 @@ export async function listProposals(
           eq(proposals.tenantId, tenantId),
           filters.statuses?.length ? inArray(proposals.status, [...filters.statuses]) : undefined,
           filters.product ? eq(proposals.product, filters.product) : undefined,
+          filters.clientId ? eq(proposals.clientId, filters.clientId) : undefined,
         ),
       )
       .orderBy(desc(proposals.createdAt))
@@ -226,7 +234,9 @@ export async function listProposals(
       ...row.proposal,
       clientName: row.clientName,
       bookingStartsAt: row.bookingStartsAt,
+      bookingStatus: row.bookingStatus,
       resourceName: row.resourceName,
+      resourceType: row.resourceType,
       netCents: Number(row.netCents ?? 0),
       lineCount: Number(row.lineCount ?? 0),
     }))

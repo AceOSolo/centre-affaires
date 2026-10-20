@@ -6,6 +6,7 @@ import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
+import { formatDateTime } from '../../../../lib/dates.ts'
 import { archiveClientAction } from '../../../../modules/clients/actions.ts'
 import { listClientContacts } from '../../../../modules/clients/contacts-queries.ts'
 import { phoneHref } from '../../../../modules/clients/contacts-regles.ts'
@@ -35,6 +36,9 @@ import {
 import { listContracts } from '../../../../modules/contrats/queries.ts'
 import { SepaMandatesSection } from '../../../../modules/facturation/mandats-section.tsx'
 import { ClientSubscriptionsSection } from '../../../../modules/facturation/souscriptions-section.tsx'
+import { ProposalStatusBadge } from '../../../../modules/facturation/proposal-status.tsx'
+import { proposalProductLabels } from '../../../../modules/facturation/propositions.ts'
+import { listProposals } from '../../../../modules/facturation/propositions-queries.ts'
 import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import {
   bookingStatusBadgeStyles,
@@ -75,12 +79,14 @@ export default async function ClientPage({
   const client = await findClient(id)
   if (!client) notFound()
 
-  const [contracts, members, contacts, history, timeZone] = await Promise.all([
+  const [contracts, members, contacts, history, timeZone, clientProposals] = await Promise.all([
     listContracts({ clientId: client.id }),
     listClientMembers(client.id),
     listClientContacts(client.id),
     listClientBookingHistory(client.id),
     currentTimeZone(),
+    // La commande du client, de son devis à son contrat (ADR 048).
+    can(staff.role, 'demandes.traiter') ? listProposals({ clientId: client.id, limit: 20 }) : null,
   ])
   const address = formatAddress(client)
   const notice = typeof contactNotice === 'string' ? contactNotices.get(contactNotice) : undefined
@@ -311,6 +317,69 @@ export default async function ClientPage({
           </>
         )}
       </section>
+
+      {clientProposals && (
+        <section aria-labelledby="devis-titre" className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <h2 id="devis-titre" className="text-sm font-semibold tracking-tight">
+              Devis <span className="font-normal text-muted-foreground">({clientProposals.length})</span>
+            </h2>
+            <Link
+              href={`/devis/nouveau?client=${client.id}`}
+              className="text-sm text-muted-foreground underline-offset-2 hover:underline"
+            >
+              Nouveau devis
+            </Link>
+          </div>
+          {clientProposals.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-white px-4 py-6 text-sm text-muted-foreground">
+              Aucun devis pour ce client. Une réservation ou une demande depuis son espace en crée un ;
+              l’accueil peut aussi en établir un à la main.
+            </p>
+          ) : (
+            <div className="overflow-x-auto rounded-lg border border-border bg-white">
+              <table className="w-full text-left text-sm">
+                <thead className="border-b border-border bg-muted text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="px-4 py-2">Devis</th>
+                    <th scope="col" className="px-4 py-2">Produit</th>
+                    <th scope="col" className="px-4 py-2">Créé le</th>
+                    <th scope="col" className="px-4 py-2 text-right">Montant HT</th>
+                    <th scope="col" className="px-4 py-2">État</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {clientProposals.map((proposal) => (
+                    <tr key={proposal.id} className="border-b border-border last:border-0">
+                      <td className="px-4 py-2">
+                        <Link
+                          href={`/devis/${proposal.id}`}
+                          className="font-medium text-primary underline-offset-2 hover:underline tabular"
+                        >
+                          {proposal.number}
+                        </Link>
+                      </td>
+                      <td className="px-4 py-2">
+                        {proposalProductLabels[proposal.product]}
+                        {proposal.resourceName && (
+                          <span className="block text-xs text-muted-foreground">{proposal.resourceName}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-2 tabular">{formatDateTime(proposal.createdAt, timeZone)}</td>
+                      <td className="px-4 py-2 text-right tabular">
+                        {proposal.lineCount > 0 ? formatCents(proposal.netCents, proposal.currency) : '—'}
+                      </td>
+                      <td className="px-4 py-2">
+                        <ProposalStatusBadge status={proposal.status} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-baseline justify-between gap-3">

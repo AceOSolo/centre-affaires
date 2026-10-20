@@ -1,5 +1,7 @@
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { describeAnswers, questionnaires, type Answers } from '../reservations/questionnaires.ts'
+import { productOf, type ProductKey } from '../ressources/produits.ts'
+import type { ResourceType } from '../ressources/schema.ts'
 import { lineNetAmountCents, vatAmountCents } from './montants.ts'
 import type { RateUnit } from './schema.ts'
 import type { ProposalLineSource, ProposalProduct, ProposalStatus } from './schema-devis.ts'
@@ -145,6 +147,24 @@ export function lineFromBooking(booking: BookingForLine, timeZone: string): Line
  */
 export function validatesOnCreation(product: ProposalProduct, lineCount: number): boolean {
   return questionnaires[product].autoValidate && lineCount > 0
+}
+
+/**
+ * Rayon d'un devis dans les filtres par produit du back-office (ADR 046) :
+ * celui de la ressource réservée, ou la domiciliation, qui n'en réserve pas.
+ */
+export function proposalProductKey(proposal: { product: ProposalProduct; resourceType: ResourceType | null }): ProductKey | undefined {
+  if (proposal.product === 'domiciliation') return 'domiciliation'
+  return proposal.resourceType ? productOf(proposal.resourceType).key : undefined
+}
+
+/**
+ * Un devis attend l'accueil dans « Demandes » (ADR 048) : à compléter, et pas
+ * déjà présenté avec la demande de réservation qu'il accompagne — la carte de
+ * cette demande y mène, il n'apparaît pas deux fois.
+ */
+export function awaitsReception(proposal: { status: ProposalStatus; bookingStatus: string | null }): boolean {
+  return proposal.status === 'draft' && proposal.bookingStatus !== 'pending'
 }
 
 /** Ce que l'accueil peut faire d'un devis, selon son état. */

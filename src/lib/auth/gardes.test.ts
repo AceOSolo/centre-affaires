@@ -49,7 +49,8 @@ describe('gardes du back-office', () => {
   it('garde chaque page et chaque route par un droit', () => {
     const sansGarde = portes
       .filter((file) => !OUVERTES_A_TOUTE_L_EQUIPE.includes(rel(file)))
-      .filter((file) => !/\brequirePermission\(\s*'[^']+'\s*\)/.test(code(file)))
+      // `requireAnyPermission(…)` : une page qui réunit des écrans (« Réglages », ADR 048).
+      .filter((file) => !/\b(requirePermission\(\s*'[^']+'\s*\)|requireAnyPermission\()/.test(code(file)))
       .map(rel)
     assert.deepEqual(sansGarde, [])
   })

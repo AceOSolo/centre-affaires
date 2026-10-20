@@ -36,12 +36,16 @@ const first = (value: string | string[] | undefined) => (Array.isArray(value) ? 
 export default async function NewProposalPage({
   searchParams,
 }: {
-  searchParams: Promise<{ produit?: string | string[]; reservation?: string | string[] }>
+  searchParams: Promise<{ produit?: string | string[]; reservation?: string | string[]; client?: string | string[] }>
 }) {
   await requirePermission('demandes.traiter')
   const params = await searchParams
   const timeZone = await currentTimeZone()
   const reservationId = first(params.reservation)
+  // Depuis la fiche d'un client (ADR 048) : l'entreprise est présélectionnée.
+  const clientParam = first(params.client)
+  const presetClientId = clientParam && isUuid(clientParam) ? clientParam : undefined
+  const clientQuery = presetClientId ? `&client=${presetClientId}` : ''
   const booking = reservationId && isUuid(reservationId) ? await findBooking(reservationId) : undefined
   const existing = booking ? await findProposalForBooking(booking.id) : undefined
 
@@ -106,7 +110,7 @@ export default async function NewProposalPage({
             {proposalProducts.map((candidate) => (
               <li key={candidate}>
                 <Link
-                  href={`/devis/nouveau?produit=${candidate}`}
+                  href={`/devis/nouveau?produit=${candidate}${clientQuery}`}
                   className="flex h-full flex-col gap-1 rounded-lg border border-border bg-white px-4 py-3 transition-colors duration-150 ease-out hover:border-accent hover:bg-accent/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <span className="font-medium text-primary">{questionnaires[candidate].label}</span>
@@ -139,7 +143,9 @@ export default async function NewProposalPage({
             requesterEmail: booking.requesterEmail ?? '',
             requesterPhone: booking.requesterPhone ?? '',
           }
-      : emptyRequester,
+      : presetClientId
+        ? { ...emptyRequester, recipient: 'client' as const, clientId: presetClientId }
+        : emptyRequester,
     answers: {},
     reservation: booking?.id ?? '',
   }
@@ -154,7 +160,10 @@ export default async function NewProposalPage({
           <>
             {' '}
             ·{' '}
-            <Link href="/devis/nouveau" className="text-primary underline-offset-2 hover:underline">
+            <Link
+              href={presetClientId ? `/devis/nouveau?client=${presetClientId}` : '/devis/nouveau'}
+              className="text-primary underline-offset-2 hover:underline"
+            >
               Changer
             </Link>
           </>

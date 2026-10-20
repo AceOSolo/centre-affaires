@@ -17,6 +17,9 @@ import {
   OFFER_REQUEST_LIST_DAYS,
   listOfferRequests,
 } from '../../../modules/facturation/offres-portail.ts'
+import { ProposalStatusBadge } from '../../../modules/facturation/proposal-status.tsx'
+import { awaitsReception, proposalProductLabels, proposalProductKey } from '../../../modules/facturation/propositions.ts'
+import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 import {
   confirmBookingAction,
@@ -49,11 +52,21 @@ export default async function DemandesPage({
   // Chaque rayon produit du menu ouvre la file de son produit (ADR 046).
   const product = parseProduct((await searchParams).produit)
   const timeZone = await currentTimeZone()
-  const [pending, offerRequests] = await Promise.all([
+  const [pending, offerRequests, openProposals] = await Promise.all([
     listPendingRequests(product && typesOf(product)),
     // Les offres groupées ne relèvent d'aucun produit : file complète seulement.
     product ? [] : listOfferRequests(),
+    // Tout ce qui arrive se traite ici (ADR 048) : les devis à compléter aussi,
+    // dont la domiciliation, qui ne réserve pas de créneau.
+    listProposals({ statuses: ['draft', 'ready'] }),
   ])
+  const proposalOfBooking = new Map(
+    openProposals.filter((proposal) => proposal.bookingId).map((proposal) => [proposal.bookingId, proposal]),
+  )
+  const proposalsToComplete = openProposals.filter(
+    (proposal) => awaitsReception(proposal) && (!product || proposalProductKey(proposal) === product.key),
+  )
+  const showsBookings = product?.key !== 'domiciliation'
   const canDrawContract = can(member.role, 'contrats.creer')
   const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
 
@@ -62,21 +75,20 @@ export default async function DemandesPage({
       <section aria-labelledby="reservations-titre" className="flex flex-col gap-6">
         <div>
           <h1 id="reservations-titre" className="text-2xl font-semibold tracking-tight">
-            Demandes à valider{product && ` · ${product.label}`}
+            Demandes{product && ` · ${product.label}`}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Déposées depuis le site public ou depuis l’espace client. Chaque demande occupe déjà son
-            créneau : la refuser le libère.
+            Tout ce qui arrive des clients : réservations à valider, devis à compléter, offres
+            demandées. Une demande de réservation occupe déjà son créneau : la refuser le libère.
           </p>
         </div>
 
         <ProductFilter
           active={product}
-          only={['salles', 'bureaux', 'vehicules']}
           href={(key) => (key ? `/demandes?produit=${key}` : '/demandes')}
         />
 
-        {pending.length === 0 ? (
+        {!showsBookings ? null : pending.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
             <p className="text-sm text-muted-foreground">
               {product
@@ -178,6 +190,20 @@ export default async function DemandesPage({
                           ? `${formatCents(quote.totalCents, quote.currency)} TTC, figé sur la demande`
                           : 'Non chiffrée : à préciser au client'}
                       </dd>
+                      {proposalOfBooking.get(booking.id) && (
+                        <>
+                          <dt className="text-muted-foreground">Devis</dt>
+                          <dd className="flex flex-wrap items-center gap-2">
+                            <Link
+                              href={`/devis/${proposalOfBooking.get(booking.id)!.id}`}
+                              className="font-medium text-primary underline-offset-2 hover:underline tabular"
+                            >
+                              {proposalOfBooking.get(booking.id)!.number}
+                            </Link>
+                            <ProposalStatusBadge status={proposalOfBooking.get(booking.id)!.status} />
+                          </dd>
+                        </>
+                      )}
                     </dl>
 
                     {booking.notes && (
@@ -227,6 +253,73 @@ export default async function DemandesPage({
               )
             })}
           </ul>
+        )}
+      </section>
+
+      <section aria-labelledby="devis-titre" className="flex flex-col gap-4">
+        <div>
+          <h2 id="devis-titre" className="text-lg font-semibold tracking-tight">
+            Devis à compléter{' '}
+            <span className="font-normal text-muted-foreground">({proposalsToComplete.length})</span>
+          </h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Domiciliations, camions, devis établis par l’accueil : à chiffrer ou à relire, puis à
+            valider pour qu’ils partent vers Dolibarr. Ceux qui accompagnent une demande de
+            réservation se traitent depuis sa carte, ci-dessus.
+          </p>
+        </div>
+        {proposalsToComplete.length === 0 ? (
+          <p className="rounded-lg border border-dashed border-border bg-white px-6 py-8 text-center text-sm text-muted-foreground">
+            Aucun devis à compléter. Un devis s’établit aussi à la main depuis{' '}
+            <Link href="/devis/nouveau" className="underline underline-offset-2">
+              « Nouveau devis »
+            </Link>
+            .
+          </p>
+        ) : (
+          <div className="overflow-x-auto rounded-lg border border-border bg-white">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border bg-muted text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-4 py-2">Devis</th>
+                  <th scope="col" className="px-4 py-2">Produit</th>
+                  <th scope="col" className="px-4 py-2">Pour</th>
+                  <th scope="col" className="px-4 py-2">Reçu le</th>
+                  <th scope="col" className="px-4 py-2">État</th>
+                </tr>
+              </thead>
+              <tbody>
+                {proposalsToComplete.map((proposal) => (
+                  <tr key={proposal.id} className="border-b border-border last:border-0">
+                    <td className="px-4 py-3">
+                      <Link
+                        href={`/devis/${proposal.id}`}
+                        className="font-medium text-primary underline-offset-2 hover:underline tabular"
+                      >
+                        {proposal.number}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-3">
+                      {proposalProductLabels[proposal.product]}
+                      {proposal.resourceName && (
+                        <span className="block text-xs text-muted-foreground">{proposal.resourceName}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3">
+                      {proposal.clientName ?? proposal.requesterCompany ?? proposal.requesterName ?? '—'}
+                      {!proposal.clientName && proposal.requesterEmail && (
+                        <span className="block text-xs text-muted-foreground">{proposal.requesterEmail}</span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 tabular">{formatDateTime(proposal.createdAt, timeZone)}</td>
+                    <td className="px-4 py-3">
+                      <ProposalStatusBadge status={proposal.status} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
       </section>
 

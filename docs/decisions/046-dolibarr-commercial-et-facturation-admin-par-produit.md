@@ -5,7 +5,9 @@
 en sommeil les ADR 026 à 034 (factures, paiements, lot, relances,
 prélèvements, export comptable), tranche le point renvoyé par l'ADR 043 § 6
 (« la bascule de la facturation »), étend l'ADR 043 aux fiches clients,
-contrats, offres, services et tarifs ; première tranche faite, la seconde
+contrats, offres, services et tarifs ; menu par produit remplacé par le
+menu par parcours de l'ADR 048 (filtres par produit des pages conservés) ;
+première tranche faite, la seconde
 (passerelle entrante) est à construire avec le développeur Dolibarr
 
 ## Contexte

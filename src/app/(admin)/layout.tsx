@@ -3,14 +3,15 @@ import Link from 'next/link'
 
 import { withTenant } from '../../db/index.ts'
 import { staffRoleLabels } from '../../db/staff.ts'
-import { permissionsOf } from '../../lib/auth/permissions.ts'
+import { can, permissionsOf } from '../../lib/auth/permissions.ts'
 import { requireStaff } from '../../lib/auth/staff.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
 import { staffHasClientSpace } from '../../modules/comptes/espace-equipe.ts'
 import { openStaffClientSpaceAction } from '../../modules/comptes/espace-equipe-actions.ts'
 import { countPendingMailRequests } from '../../modules/courrier/demandes-queries.ts'
+import { awaitsReception } from '../../modules/facturation/propositions.ts'
+import { listProposals } from '../../modules/facturation/propositions-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
-import { productOf, type ProductKey } from '../../modules/ressources/produits.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { MobileMenu } from './mobile-menu.tsx'
 import { Nav } from './nav.tsx'
@@ -36,9 +37,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // `requirePermission()` — les actions ne passent pas par cette coque
   // (ADR 008, ADR 019).
   const { user, member } = await requireStaff()
-  const [tenant, pending, mailRequests, hasClientSpace] = await Promise.all([
+  const [tenant, pending, draftProposals, mailRequests, hasClientSpace] = await Promise.all([
     currentTenant(),
     listPendingBookings(),
+    // Les devis à compléter entrent aussi dans « Demandes » (ADR 048).
+    can(member.role, 'demandes.traiter') ? listProposals({ statuses: ['draft'] }) : [],
     // Demandes de courrier à traiter, toutes natures (ADR 037).
     countPendingMailRequests().then((counts) => counts.total),
     withTenant(currentTenantId(), (tx) => staffHasClientSpace(tx, user)),
@@ -64,17 +67,14 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     </Link>
   )
 
-  // Chaque rayon produit du menu compte ses propres demandes (ADR 046).
-  const pendingByProduct: Partial<Record<ProductKey, number>> = {}
-  for (const booking of pending) {
-    const { key } = productOf(booking.resource.resourceType)
-    pendingByProduct[key] = (pendingByProduct[key] ?? 0) + 1
-  }
+  // « Demandes » compte tout ce qui attend l'accueil, une fois chacun : les
+  // réservations en attente, et les devis à compléter qui n'en accompagnent
+  // pas une (ADR 048).
+  const inboxCount = pending.length + draftProposals.filter(awaitsReception).length
 
   const nav = (
     <Nav
-      pendingCount={pending.length}
-      pendingByProduct={pendingByProduct}
+      inboxCount={inboxCount}
       mailRequestCount={mailRequests}
       allowed={permissionsOf(member.role)}
     />

@@ -77,6 +77,22 @@ export async function requirePermission(permission: Permission): Promise<{
 }
 
 /**
+ * Garde d'une page qui réunit des écrans de droits différents (« Réglages »,
+ * ADR 048) : le rôle doit permettre **au moins un** de ces droits. Chaque
+ * écran réuni garde le sien ; la page n'en montre que ceux du rôle.
+ */
+export async function requireAnyPermission(permissions: readonly Permission[]): Promise<{
+  user: AuthenticatedUser
+  member: StaffMember
+}> {
+  const staff = await requireStaff()
+  if (!permissions.some((permission) => can(staff.member.role, permission))) {
+    redirect(`/acces-reserve?droit=${permissions[0] ?? ''}`)
+  }
+  return staff
+}
+
+/**
  * @deprecated Remplacée par `requirePermission('equipe.gerer')` ou le droit
  * précis de l'action (ADR 019). Gardée le temps que tout appel ait migré.
  */
