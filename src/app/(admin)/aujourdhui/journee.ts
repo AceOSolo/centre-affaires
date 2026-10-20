@@ -1,4 +1,5 @@
 import type { Permission } from '../../../lib/auth/permissions.ts'
+import type { OfferRequestStatus } from '../../../modules/contrats/schema.ts'
 import type { BookingKind, BookingStatus } from '../../../modules/reservations/schema.ts'
 
 /**
@@ -13,8 +14,24 @@ export const todayPermissions = [
   'reservations.gerer',
 ] as const satisfies readonly Permission[]
 
+/**
+ * Ce qu'attend « Demandes » (ADR 048), compté une fois chacun : les
+ * réservations en attente, les devis à compléter qui n'en accompagnent pas
+ * une (`awaitsReception`, compté par l'appelant) et les offres demandées
+ * depuis l'espace client, encore à traiter. Le compteur du menu et la tuile
+ * d'« Aujourd'hui » (ADR 050) disent ce même nombre.
+ */
+export function inboxCount(inbox: {
+  pendingBookings: number
+  proposalsToComplete: number
+  offerRequests: readonly { status: OfferRequestStatus }[]
+}): number {
+  const openOfferRequests = inbox.offerRequests.filter((request) => request.status === 'requested').length
+  return inbox.pendingBookings + inbox.proposalsToComplete + openOfferRequests
+}
+
 export type TodayCounts = {
-  /** Réservations en attente et devis à compléter, comme le compteur du menu (ADR 048). */
+  /** Ce qu'attend « Demandes », comme le compteur du menu (`inboxCount`, ADR 048). */
   requests: number
   mailRequests: number
   inspectionsToFinish: number

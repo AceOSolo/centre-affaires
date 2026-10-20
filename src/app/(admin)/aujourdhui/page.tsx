@@ -15,11 +15,12 @@ import { currentTenant } from '../../../lib/tenant.ts'
 import { listClients } from '../../../modules/clients/queries.ts'
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { listInspections } from '../../../modules/etats-des-lieux/queries.ts'
+import { listOfferRequests } from '../../../modules/facturation/offres-portail.ts'
 import { awaitsReception } from '../../../modules/facturation/propositions.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
 import { bookingStatusLabels } from '../../../modules/reservations/labels.ts'
 import { listBookingsForDay, listPendingBookings } from '../../../modules/reservations/queries.ts'
-import { dayTimeline, todayPermissions, todoTiles, type TodayCounts } from './journee.ts'
+import { dayTimeline, inboxCount, todayPermissions, todoTiles, type TodayCounts } from './journee.ts'
 
 export const metadata = { title: 'Aujourd’hui' }
 
@@ -51,13 +52,15 @@ export default async function AujourdhuiPage() {
   const now = new Date()
   const today = todayIsoDate(timeZone, now)
 
-  const [dayBookings, clients, pending, draftProposals, mailRequests, toFinish, toSign] = await Promise.all([
+  const [dayBookings, clients, pending, draftProposals, offerRequests, mailRequests, toFinish, toSign] = await Promise.all([
     allowed('reservations.gerer') ? listBookingsForDay(today, timeZone) : [],
     // Le nom de l'entreprise, comme sur le planning ; une demande du site n'a que celui du demandeur.
     allowed('reservations.gerer') || allowed('demandes.traiter') ? listClients() : [],
     allowed('demandes.traiter') ? listPendingBookings() : [],
     // Comptés comme dans le menu : un devis qui accompagne une demande en attente n'est compté qu'une fois (ADR 048).
     allowed('demandes.traiter') ? listProposals({ statuses: ['draft'] }) : [],
+    // Les offres demandées depuis l'espace client attendent aussi dans « Demandes » (ADR 048).
+    allowed('demandes.traiter') ? listOfferRequests() : [],
     allowed('courrier.gerer') ? countPendingMailRequests().then((counts) => counts.total) : 0,
     allowed('etats-des-lieux.gerer') ? listInspections({ stage: 'draft' }) : [],
     allowed('etats-des-lieux.gerer') ? listInspections({ stage: 'to_sign' }) : [],
@@ -65,7 +68,11 @@ export default async function AujourdhuiPage() {
 
   const tiles = todoTiles(
     {
-      requests: pending.length + draftProposals.filter(awaitsReception).length,
+      requests: inboxCount({
+        pendingBookings: pending.length,
+        proposalsToComplete: draftProposals.filter(awaitsReception).length,
+        offerRequests,
+      }),
       mailRequests,
       inspectionsToFinish: toFinish.length,
       inspectionsToSign: toSign.length,

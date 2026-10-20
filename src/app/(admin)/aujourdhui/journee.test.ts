@@ -2,9 +2,23 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { can } from '../../../lib/auth/permissions.ts'
-import { dayTimeline, todoTiles } from './journee.ts'
+import { dayTimeline, inboxCount, todoTiles } from './journee.ts'
 
 const counts = { requests: 3, mailRequests: 1, inspectionsToFinish: 0, inspectionsToSign: 2 }
+
+describe('demandes à traiter (menu et tuile, ADR 048)', () => {
+  it('compte les offres demandées encore à traiter, avec les réservations et les devis', () => {
+    const offerRequests = [{ status: 'requested' as const }, { status: 'contracted' as const }, { status: 'dismissed' as const }]
+    assert.equal(inboxCount({ pendingBookings: 2, proposalsToComplete: 1, offerRequests }), 4)
+  })
+
+  it('ne dit pas « aucune demande » quand une offre seule attend', () => {
+    const requests = inboxCount({ pendingBookings: 0, proposalsToComplete: 0, offerRequests: [{ status: 'requested' }] })
+    assert.equal(requests, 1)
+    const [tile] = todoTiles({ requests, mailRequests: 0, inspectionsToFinish: 0, inspectionsToSign: 0 }, () => true)
+    assert.equal(tile.label, '1 demande à traiter')
+  })
+})
 
 describe('tuiles « à traiter »', () => {
   it('dit le nombre et accorde le pluriel', () => {
