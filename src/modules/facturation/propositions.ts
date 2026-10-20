@@ -159,6 +159,18 @@ export function proposalProductKey(proposal: { product: ProposalProduct; resourc
 }
 
 /**
+ * Devis du produit choisi par les pastilles (`?produit=`, ADR 046 et 048),
+ * avec les clés de partout ailleurs : `salles`, `bureaux`, `domiciliation`,
+ * `vehicules`. Sans produit : tous.
+ */
+export function proposalsOfProduct<T extends { product: ProposalProduct; resourceType: ResourceType | null }>(
+  proposals: readonly T[],
+  product: ProductKey | undefined,
+): T[] {
+  return proposals.filter((proposal) => !product || proposalProductKey(proposal) === product)
+}
+
+/**
  * Un devis attend l'accueil dans « Demandes » (ADR 048) : à compléter, et pas
  * déjà présenté avec la demande de réservation qu'il accompagne — la carte de
  * cette demande y mène, il n'apparaît pas deux fois.

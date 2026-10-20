@@ -162,6 +162,31 @@ describe('devis dans « Demandes » (ADR 048)', () => {
     assert.equal(proposalProductKey({ product: 'vehicule', resourceType: 'vehicule' }), 'vehicules')
   })
 
+  it('filtre les devis par les clés de produit des pastilles, comme partout ailleurs', async () => {
+    const { proposalsOfProduct } = await import('./propositions.ts')
+    const { parseProduct, products } = await import('../ressources/produits.ts')
+    const devis = [
+      { id: 'salle', product: 'espace' as const, resourceType: 'salle' as const },
+      { id: 'bureau', product: 'espace' as const, resourceType: 'bureau' as const },
+      { id: 'camion', product: 'vehicule' as const, resourceType: 'vehicule' as const },
+      { id: 'domiciliation', product: 'domiciliation' as const, resourceType: null },
+    ]
+    const ids = (value: string | undefined) => proposalsOfProduct(devis, parseProduct(value)?.key).map((item) => item.id)
+    // Chaque pastille de `ProductFilter` (`/devis?produit=…`) garde les siens.
+    assert.deepEqual(
+      products.map((product) => [product.key, ids(product.key)]),
+      [
+        ['salles', ['salle']],
+        ['bureaux', ['bureau']],
+        ['domiciliation', ['domiciliation']],
+        ['vehicules', ['camion']],
+      ],
+    )
+    // Sans produit, ou avec les anciennes valeurs (`espace`, `vehicule`) : tous,
+    // et la pastille « Tous les produits » est celle qui est allumée.
+    for (const value of [undefined, 'espace', 'vehicule']) assert.equal(ids(value).length, devis.length, String(value))
+  })
+
   it('ne montre un devis à compléter qu’une fois : pas s’il accompagne une demande en attente', async () => {
     const { awaitsReception } = await import('./propositions.ts')
     assert.equal(awaitsReception({ status: 'draft', bookingStatus: null }), true)

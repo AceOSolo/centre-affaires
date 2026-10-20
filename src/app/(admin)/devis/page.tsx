@@ -12,9 +12,10 @@ import {
   proposalStatusGroups,
 } from '../../../modules/facturation/propositions-ecran.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
-import { proposalProductLabels } from '../../../modules/facturation/propositions.ts'
-import { proposalProducts, type ProposalProduct } from '../../../modules/facturation/schema-devis.ts'
+import { proposalProductLabels, proposalsOfProduct } from '../../../modules/facturation/propositions.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
+import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
+import { parseProduct, type ProductKey } from '../../../modules/ressources/produits.ts'
 
 export const metadata = { title: 'Devis' }
 
@@ -31,24 +32,28 @@ export default async function ProposalsPage({
   await requirePermission('demandes.traiter')
   const [{ statut, produit }, timeZone] = await Promise.all([searchParams, currentTimeZone()])
   const group = parseStatusGroup(statut)
-  // Le rayon Domiciliation du menu ouvre ses seuls devis (ADR 046).
-  const rawProduct = Array.isArray(produit) ? produit[0] : produit
-  const product = proposalProducts.find((candidate): candidate is ProposalProduct => candidate === rawProduct)
-  const proposals = await listProposals({ statuses: proposalStatusGroupStatuses[group], product })
-  const groupHref = (candidate: typeof group) => {
+  // Le produit se choisit dans la page, par les pastilles (ADR 048) : mêmes
+  // clés que Demandes et États des lieux (`?produit=salles`…).
+  const product = parseProduct(produit)
+  const proposals = proposalsOfProduct(
+    await listProposals({ statuses: proposalStatusGroupStatuses[group] }),
+    product?.key,
+  )
+  const href = (candidate: typeof group, productKey: ProductKey | undefined) => {
     const query = new URLSearchParams()
     if (candidate !== 'a-completer') query.set('statut', candidate)
-    if (product) query.set('produit', product)
+    if (productKey) query.set('produit', productKey)
     const search = query.toString()
     return search ? `/devis?${search}` : '/devis'
   }
+  const groupHref = (candidate: typeof group) => href(candidate, product?.key)
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">
-            Devis{product && ` · ${proposalProductLabels[product]}`}
+            Devis{product && ` · ${product.label}`}
           </h1>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
             Chaque demande du site ou de l’espace client dépose son devis. L’accueil le complète et le
@@ -62,6 +67,8 @@ export default async function ProposalsPage({
           Nouveau devis
         </Link>
       </div>
+
+      <ProductFilter active={product} href={(key) => href(group, key)} />
 
       <nav aria-label="Filtrer les devis par état" className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
         {proposalStatusGroups.map((candidate) => (
@@ -78,7 +85,11 @@ export default async function ProposalsPage({
 
       {proposals.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
-          <p className="mx-auto max-w-prose text-sm text-muted-foreground">{emptyGroupMessages[group]}</p>
+          <p className="mx-auto max-w-prose text-sm text-muted-foreground">
+            {product
+              ? `Aucun devis pour ce produit (${product.label}) dans « ${proposalStatusGroupLabels[group]} ».`
+              : emptyGroupMessages[group]}
+          </p>
           <div className="mt-4 flex flex-wrap justify-center gap-4">
             <Link
               href="/devis/nouveau"
@@ -86,6 +97,11 @@ export default async function ProposalsPage({
             >
               Établir un devis
             </Link>
+            {product && (
+              <Link href={href(group, undefined)} className="self-center text-sm text-primary underline-offset-2 hover:underline">
+                Voir tous les produits
+              </Link>
+            )}
             {group !== 'tous' && (
               <Link href={groupHref('tous')} className="self-center text-sm text-primary underline-offset-2 hover:underline">
                 Voir tous les devis

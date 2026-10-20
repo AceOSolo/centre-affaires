@@ -180,11 +180,12 @@ export type ProposalListItem = Pick<
 }
 
 /**
- * Devis du centre, les plus récents d'abord ; `statuses` vide : tous ;
- * `product` : ceux d'un seul produit (le rayon Domiciliation, ADR 046).
+ * Devis du centre, les plus récents d'abord ; `statuses` vide : tous. Le
+ * filtre par produit des écrans se fait sur `resourceType`
+ * (`proposalsOfProduct`, ADR 048).
  */
 export async function listProposals(
-  filters: { statuses?: readonly ProposalStatus[]; product?: ProposalProduct; clientId?: string; limit?: number } = {},
+  filters: { statuses?: readonly ProposalStatus[]; clientId?: string; limit?: number } = {},
 ): Promise<ProposalListItem[]> {
   const tenantId = currentTenantId()
   return withTenant(tenantId, async (tx) => {
@@ -230,7 +231,6 @@ export async function listProposals(
         and(
           eq(proposals.tenantId, tenantId),
           filters.statuses?.length ? inArray(proposals.status, [...filters.statuses]) : undefined,
-          filters.product ? eq(proposals.product, filters.product) : undefined,
           filters.clientId ? eq(proposals.clientId, filters.clientId) : undefined,
         ),
       )

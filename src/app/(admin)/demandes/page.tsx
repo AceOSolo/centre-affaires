@@ -18,7 +18,7 @@ import {
   listOfferRequests,
 } from '../../../modules/facturation/offres-portail.ts'
 import { ProposalStatusBadge } from '../../../modules/facturation/proposal-status.tsx'
-import { awaitsReception, proposalProductLabels, proposalProductKey } from '../../../modules/facturation/propositions.ts'
+import { awaitsReception, proposalProductLabels, proposalsOfProduct } from '../../../modules/facturation/propositions.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 import {
@@ -63,9 +63,7 @@ export default async function DemandesPage({
   const proposalOfBooking = new Map(
     openProposals.filter((proposal) => proposal.bookingId).map((proposal) => [proposal.bookingId, proposal]),
   )
-  const proposalsToComplete = openProposals.filter(
-    (proposal) => awaitsReception(proposal) && (!product || proposalProductKey(proposal) === product.key),
-  )
+  const proposalsToComplete = proposalsOfProduct(openProposals.filter(awaitsReception), product?.key)
   const showsBookings = product?.key !== 'domiciliation'
   const canDrawContract = can(member.role, 'contrats.creer')
   const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
