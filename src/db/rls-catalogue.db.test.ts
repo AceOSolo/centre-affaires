@@ -120,9 +120,11 @@ describe('catalogue : isolation par centre', { skip: raisonDeSaut }, () => {
       return
     }
     for (const requete of [
-      sql`insert into document_sequences (id, tenant_id, document_type, year, last_value)
+      // `last_value` est un mot réservé de MySQL 8 : sans guillemets, la requête
+      // échoue à l'analyse, avant tout contrôle de droit.
+      sql`insert into document_sequences (id, tenant_id, document_type, year, \`last_value\`)
           values (${uuidv7()}, ${DEFAULT_TENANT_ID}, 'invoice', 2026, 41)`,
-      sql`update document_sequences set last_value = 0`,
+      sql`update document_sequences set \`last_value\` = 0`,
       sql`delete from document_sequences`,
     ]) {
       const refuse = await code(() =>
