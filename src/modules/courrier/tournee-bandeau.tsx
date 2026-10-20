@@ -17,12 +17,20 @@ export function BatchBanner({ batch, timeZone }: { batch: OpenBatch | undefined;
           <MailIcon size={20} className="shrink-0" />
           Aucune tournée en cours : le premier courrier enregistré l’ouvre.
         </p>
-        <Link
-          href="/courrier/tournee"
-          className="rounded-md border border-border bg-white px-3 py-1.5 text-sm font-medium hover:bg-muted"
-        >
-          Pas de courrier aujourd’hui ?
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link
+            href="/courrier/tournee"
+            className="rounded-md border border-border bg-white px-3 py-1.5 text-sm font-medium hover:bg-muted"
+          >
+            Pas de courrier aujourd’hui ?
+          </Link>
+          <Link
+            href="/courrier/tournee/saisie"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary-hover"
+          >
+            Saisir le courrier du jour
+          </Link>
+        </div>
       </div>
     )
   }
@@ -44,12 +52,20 @@ export function BatchBanner({ batch, timeZone }: { batch: OpenBatch | undefined;
           </p>
         </div>
       </div>
-      <Link
-        href="/courrier/tournee"
-        className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-      >
-        Terminer la tournée
-      </Link>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          href="/courrier/tournee/saisie"
+          className="rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
+        >
+          Saisir d’autres plis
+        </Link>
+        <Link
+          href="/courrier/tournee"
+          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
+        >
+          Terminer la tournée
+        </Link>
+      </div>
     </div>
   )
 }

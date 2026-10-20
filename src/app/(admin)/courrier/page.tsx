@@ -66,11 +66,19 @@ export default async function CourrierPage({
               Relevé des ouvertures
             </Link>
           )}
+          {/* Pli par pli : pour joindre la photo de l'enveloppe, l'expéditeur ou une précision. */}
           <Link
             href={clientId ? `/courrier/nouveau?clientId=${clientId}` : '/courrier/nouveau'}
+            className="rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
+          >
+            Un pli avec photo
+          </Link>
+          {/* Le geste du matin : tout le courrier du jour sur un écran (« 3 pour Y, 2 pour X »). */}
+          <Link
+            href="/courrier/tournee/saisie"
             className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
           >
-            Enregistrer un courrier
+            Saisir le courrier du jour
           </Link>
         </div>
       </div>
@@ -107,10 +115,10 @@ export default async function CourrierPage({
             Aucun courrier enregistré. Le client verra chaque pli dans son espace dès son enregistrement.
           </p>
           <Link
-            href={clientId ? `/courrier/nouveau?clientId=${clientId}` : '/courrier/nouveau'}
+            href="/courrier/tournee/saisie"
             className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
           >
-            Enregistrer un courrier
+            Saisir le courrier du jour
           </Link>
         </div>
       ) : (
