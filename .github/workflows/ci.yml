@@ -41,4 +41,19 @@ jobs:
       TEST_DB_ADMIN_PASSWORD: ci
       TEST_DB_USER: centre_affaires
       TEST_DB_PASSWORD: ci
-
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx tsc --noEmit
+      - run: npm run lint
+      # Règle de rétention et refus du script de sauvegarde du serveur (ADR 022).
+      - run: bash infra/serveur/sauvegarde.test.sh
+      # Structure, règles métier, utilisateur applicatif (DB_USER) et ses droits
+      # (ADR 042) : ce que fait le serveur de production à chaque mise à jour.
+      - run: npm run db:migrer
+      - run: npm test
