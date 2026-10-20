@@ -72,6 +72,9 @@ describe('mot de passe oublié', { skip: raisonDeSaut }, () => {
   before(async () => {
     // Aucun courriel ne part d'un test, même quand `.env.local` configure le SMTP.
     for (const nom of ['SMTP_HOST', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM']) delete process.env[nom]
+    // La CI ne pose ni secret ni adresse du site : des valeurs de test suffisent.
+    process.env.AUTH_SECRET ||= 'secret-de-test-du-mot-de-passe-oublie-0123456789'
+    process.env.APP_URL ||= 'http://localhost:3000'
     bases = await ouvrirBasesDeTest()
     // Le refus des comptes bannis, à l'ouverture d'une session, passe par
     // `withTenant()` : la base du processus est celle des tests.
