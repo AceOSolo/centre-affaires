@@ -77,7 +77,7 @@ describe('conservation des demandes publiques', { skip: raisonDeSaut }, () => {
          from bookings where title = ?`,
       [titre],
     )
-    return (rows as Record<string, any>[])[0]
+    return (rows as Record<string, unknown>[])[0]
   }
 
   before(async () => {
@@ -105,7 +105,7 @@ describe('conservation des demandes publiques', { skip: raisonDeSaut }, () => {
     assert.equal(await anonymiser(), 1)
 
     const [rows] = await bases.owner.client.query('select * from bookings')
-    const row = (rows as Record<string, any>[])[0]
+    const row = (rows as Record<string, unknown>[])[0]
     assert.equal(row.requester_name, null)
     assert.equal(row.requester_email, null)
     assert.equal(row.requester_phone, null)

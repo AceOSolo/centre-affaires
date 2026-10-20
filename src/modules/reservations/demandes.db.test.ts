@@ -50,7 +50,7 @@ describe('demandes de réservation publiques', { skip: raisonDeSaut }, () => {
         DEFAULT_TENANT_ID,
         (tx) => tx.execute(sql`select * from bookings where ${where} order by starts_at`),
         bases.app.db,
-      )) as unknown as [Record<string, any>[]]
+      )) as unknown as [Record<string, unknown>[]]
       return rows
     }
 
