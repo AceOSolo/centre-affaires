@@ -6,6 +6,7 @@ import type { ProrataRule, RecurringBillingTiming, PaymentMethod } from '../../d
  * aussi côté client.
  */
 export const centreSettingsLabels: Record<string, string> = {
+  email: 'Adresse e-mail du centre',
   prorataRule: 'Prorata d’une période partielle',
   startedUnitToleranceMinutes: 'Tolérance avant une unité entamée',
   halfDayMinutes: 'Durée d’une demi-journée',

@@ -6,6 +6,7 @@ import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import type { PaymentMethod, ProrataRule, RecurringBillingTiming } from '../../db/tenants.ts'
 import {
   saveBankDetailsAction,
+  saveCentreContactAction,
   saveInvoicingRulesAction,
   savePricingRulesAction,
   saveSellerIdentityAction,
@@ -124,11 +125,12 @@ function TextField({
   hint?: string
   optional?: boolean
   suffix?: string
-  inputMode?: 'numeric' | 'decimal' | 'text'
+  inputMode?: 'numeric' | 'decimal' | 'text' | 'email'
   autoComplete?: string
   className?: string
 }) {
   const error = context.error(name)
+  const numeric = inputMode === 'numeric' || inputMode === 'decimal'
   return (
     <div className={className}>
       <label className={labelClass} htmlFor={name}>
@@ -142,9 +144,10 @@ function TextField({
           defaultValue={context.value(name)}
           inputMode={inputMode}
           autoComplete={autoComplete ?? 'off'}
+          spellCheck={inputMode === 'email' ? false : undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy(name, error, hint)}
-          className={`${fieldClass} ${inputMode ? 'tabular' : ''}`}
+          className={`${fieldClass} ${numeric ? 'tabular' : ''}`}
         />
         {suffix && <span className="shrink-0 text-sm text-muted-foreground">{suffix}</span>}
       </div>
@@ -244,13 +247,45 @@ function RadioField<T extends string>({
 }
 
 /**
- * Écran de configuration du centre (R10) : règles tarifaires, facturation,
- * identité légale et coordonnées bancaires du vendeur. Quatre formulaires
- * indépendants : enregistrer l'un ne touche pas aux autres.
+ * Écran de configuration du centre (R10) : adresse électronique du centre,
+ * règles tarifaires, facturation, identité légale et coordonnées bancaires du
+ * vendeur. Cinq formulaires indépendants : enregistrer l'un ne touche pas aux
+ * autres.
  */
 export function CentreSettingsForms({ values }: { values: Record<string, string> }) {
   return (
     <div className="flex flex-col gap-6">
+      <SettingsSection
+        id="contact"
+        title="Adresse e-mail du centre"
+        description={
+          <>
+            Les alertes à l’équipe y sont envoyées : demande de réservation, offre demandée, demande
+            de courrier, état des lieux signé. Les clients la voient aussi dans leur espace pour
+            joindre l’accueil.
+            {!values.email && (
+              <strong className="mt-1 block font-medium text-foreground">
+                Aucune adresse renseignée : ces alertes ne partent pas.
+              </strong>
+            )}
+          </>
+        }
+        action={saveCentreContactAction}
+        values={values}
+        submitLabel="Enregistrer l’adresse"
+      >
+        {(context) => (
+          <TextField
+            name="email"
+            context={context}
+            inputMode="email"
+            autoComplete="email"
+            className="max-w-md"
+            hint="Une boîte lue chaque jour par l’accueil. Exemple : accueil@centre.fr"
+          />
+        )}
+      </SettingsSection>
+
       <SettingsSection
         id="tarification"
         title="Règles tarifaires"

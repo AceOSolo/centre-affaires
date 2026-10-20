@@ -8,6 +8,7 @@ import {
   type RecurringBillingTiming,
   type Tenant,
 } from '../../db/tenants.ts'
+import { isValidEmail, normaliseEmail } from '../clients/contacts-regles.ts'
 import { isValidIban, normalizeIban } from './iban.ts'
 import {
   basisPointsToInput,
@@ -18,8 +19,9 @@ import {
 
 /**
  * Paramètres du centre éditables à l'écran de configuration (R10, ADR 023,
- * ADR 026, ADR 027) : règles tarifaires, règles de facturation, identité
- * légale et coordonnées bancaires du vendeur.
+ * ADR 026, ADR 027, ADR 038) : adresse électronique du centre, règles
+ * tarifaires, règles de facturation, identité légale et coordonnées bancaires
+ * du vendeur.
  *
  * Module pur : chaque section se lit et se valide ici, avec un message par
  * champ, avant que l'action serveur n'écrive. Les bornes reprennent les
@@ -44,6 +46,25 @@ function integerIn(value: string, min: number, max: number): number | undefined 
 
 function finish(fieldErrors: Record<string, string>, update: Partial<NewTenant>): SettingsResult {
   return Object.keys(fieldErrors).length > 0 ? { ok: false, fieldErrors } : { ok: true, update }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Adresse électronique du centre (ADR 038)                                 */
+/* ------------------------------------------------------------------------ */
+
+/**
+ * L'adresse où partent les alertes à l'équipe (demande de réservation, offre
+ * demandée, demande de courrier, état des lieux signé : les événements
+ * `centre` de `notificationEventAudience`), et celle que l'espace client
+ * affiche pour joindre l'accueil. Sans elle, ces alertes ne partent pas :
+ * elle est exigée.
+ */
+export function parseCentreContact(input: SettingsInput): SettingsResult {
+  const fieldErrors: Record<string, string> = {}
+  const email = normaliseEmail(read(input, 'email'))
+  if (!email) fieldErrors.email = 'Saisissez l’adresse du centre : les alertes à l’équipe y sont envoyées.'
+  else if (!isValidEmail(email)) fieldErrors.email = 'Adresse illisible : vérifiez la saisie. Exemple : accueil@centre.fr'
+  return finish(fieldErrors, { email })
 }
 
 /* ------------------------------------------------------------------------ */
@@ -260,6 +281,7 @@ export { basisPointsToInput, centsToInput }
 /** Paramètres du centre, mis en forme pour les champs de l'écran de configuration. */
 export function centreSettingsValues(tenant: Tenant): Record<string, string> {
   return {
+    email: tenant.email ?? '',
     prorataRule: tenant.prorataRule,
     startedUnitToleranceMinutes: String(tenant.startedUnitToleranceMinutes),
     halfDayMinutes: String(tenant.halfDayMinutes),

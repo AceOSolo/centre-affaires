@@ -10,6 +10,7 @@ import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import {
   parseBankDetails,
+  parseCentreContact,
   parseInvoicingRules,
   parsePricingRules,
   parseSellerIdentity,
@@ -62,6 +63,15 @@ async function saveSection(
   // L'identité du centre s'affiche aussi sur le site public et dans la coque.
   revalidatePath('/', 'layout')
   return { saved: true }
+}
+
+/** Adresse électronique du centre : alertes à l'équipe, contact de l'espace client (ADR 038). */
+export async function saveCentreContactAction(
+  _previous: SettingsFormState,
+  formData: FormData,
+): Promise<SettingsFormState> {
+  await requirePermission('centre.configurer')
+  return saveSection(parseCentreContact, formData)
 }
 
 /** Prorata, unité entamée, demi-journée, TVA par défaut (ADR 023). */

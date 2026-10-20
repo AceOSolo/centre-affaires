@@ -2,15 +2,18 @@
  * Identité publique du centre.
  *
  *   npm run db:centre   # node --env-file=.env.local infra/configurer-centre.mjs
+ *   CENTRE_EMAIL=accueil@… npm run db:centre   # avec l'adresse e-mail du centre
  *
  * Ce ne sont pas des données de démonstration : c'est la configuration du
  * centre, reprise du site public handfield.fr. Elle vit en base et non dans le
  * code, pour que le passage au multi-centres n'en demande pas la reprise
  * (décision 1).
  *
- * Le script est idempotent : le rejouer remet les valeurs ci-dessous.
+ * Le script est idempotent : le rejouer remet les valeurs ci-dessous, sauf
+ * l'adresse e-mail du centre quand `CENTRE_EMAIL` n'est pas posée.
  */
 import { withTenant } from '../src/db/index.ts'
+import { isValidEmail, normaliseEmail } from '../src/modules/clients/contacts-regles.ts'
 // Module TypeScript importé tel quel : Node 24 retire les types à la volée,
 // comme pour `infra/chiffrer-documents.ts`.
 import { seedExpectedServices } from '../src/modules/facturation/services-attendus.ts'
@@ -32,7 +35,11 @@ const CENTRE = {
   city: 'Saint-Quentin-Fallavier',
   country: 'FR',
   phone: '04 28 35 09 31',
-  email: null,
+  // Adresse où partent les alertes à l'équipe (demandes de réservation et de
+  // courrier, offres demandées, états des lieux signés, ADR 038), affichée
+  // aussi dans l'espace client. Aucune n'est inventée : `CENTRE_EMAIL`, sinon
+  // celle saisie à l'écran Configuration du centre, que le script ne touche pas.
+  email: normaliseEmail(process.env.CENTRE_EMAIL ?? '') || null,
   websiteUrl: 'https://www.handfield.fr',
   logoPath: '/handfield-logo.png',
   logoLightPath: '/handfield-logo-blanc.png',
@@ -77,6 +84,12 @@ const PRIX_DES_SERVICES = {
   'courrier.page': null,
 }
 
+// Même contrôle qu'à l'écran de configuration (`parseCentreContact`).
+if (CENTRE.email && !isValidEmail(CENTRE.email)) {
+  console.error(`CENTRE_EMAIL illisible : « ${CENTRE.email} ». Exemple : accueil@centre.fr`)
+  process.exit(1)
+}
+
 const { client, db } = ouvrirBase()
 
 try {
@@ -87,7 +100,7 @@ try {
       `update tenants set
          name = ?, slug = ?, tagline = ?, legal_name = ?,
          address_line1 = ?, address_line2 = ?, postal_code = ?, city = ?, country = ?,
-         phone = ?, email = ?, website_url = ?,
+         phone = ?, email = coalesce(?, email), website_url = ?,
          logo_path = ?, logo_light_path = ?, hero_image_path = ?,
          social_links = ?, timezone = ?, currency = ?
        where id = ?`,
@@ -101,7 +114,7 @@ try {
       ],
     )
     const [[row]] = await cnx.query(
-      'select name, city, phone, logo_path from tenants where id = ?',
+      'select name, city, phone, email, logo_path from tenants where id = ?',
       [DEFAULT_TENANT_ID],
     )
     return row
@@ -128,6 +141,14 @@ try {
   )
 
   console.log(`Centre configuré : ${centre.name}, ${centre.city} — ${centre.phone}`)
+  if (centre.email) {
+    console.log(`Adresse e-mail du centre : ${centre.email}`)
+  } else {
+    console.warn(
+      'Adresse e-mail du centre non renseignée : les alertes à l’équipe ne partent pas. ' +
+        'À saisir dans Réglages › Configuration du centre, ou rejouer avec CENTRE_EMAIL=…',
+    )
+  }
   for (const code of services.created) console.log(`Service créé : ${code}`)
   for (const code of services.existing) {
     console.log(`Service ${code} déjà au catalogue : laissé tel quel.`)

@@ -11,6 +11,7 @@ import {
   isValidSiret,
   missingInvoiceRequirements,
   parseBankDetails,
+  parseCentreContact,
   parseInvoicingRules,
   parsePricingRules,
   parseSellerIdentity,
@@ -19,6 +20,29 @@ import {
 
 const erreurs = (result: ReturnType<typeof parsePricingRules>) =>
   result.ok ? {} : result.fieldErrors
+
+describe('adresse e-mail du centre (ADR 038)', () => {
+  it('normalise l’adresse : sans espace autour, en minuscules', () => {
+    assert.deepEqual(parseCentreContact({ email: '  Accueil@Centre.FR ' }), {
+      ok: true,
+      update: { email: 'accueil@centre.fr' },
+    })
+  })
+
+  it('refuse une adresse illisible, avec un message sous le champ', () => {
+    for (const email of ['accueil', 'accueil@centre', 'accueil @centre.fr']) {
+      const result = parseCentreContact({ email })
+      assert.equal(result.ok, false, email)
+      if (!result.ok) assert.match(result.fieldErrors.email, /illisible/)
+    }
+  })
+
+  it('l’exige : sans elle, les alertes à l’équipe ne partent pas', () => {
+    const result = parseCentreContact({ email: '   ' })
+    assert.equal(result.ok, false)
+    if (!result.ok) assert.match(result.fieldErrors.email, /alertes/)
+  })
+})
 
 describe('règles tarifaires du centre (R10, ADR 023)', () => {
   const saisie = {

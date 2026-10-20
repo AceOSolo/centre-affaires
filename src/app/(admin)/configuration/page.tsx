@@ -10,9 +10,10 @@ import { RetentionSettingsSection } from '../../../modules/rgpd/durees-section.t
 export const metadata = { title: 'Configuration du centre' }
 
 /**
- * Paramètres du centre (R10) : règles tarifaires, facturation, identité légale
- * et coordonnées bancaires du vendeur ; durées de conservation des données
- * (R29, ADR 040). Réservé à l'exploitant
+ * Paramètres du centre (R10) : adresse électronique du centre, où partent les
+ * alertes à l'équipe (ADR 038) ; règles tarifaires, facturation, identité
+ * légale et coordonnées bancaires du vendeur ; durées de conservation des
+ * données (R29, ADR 040). Réservé à l'exploitant
  * (`centre.configurer`, ADR 019) : ces valeurs engagent chaque prix et chaque
  * facture.
  */
@@ -26,8 +27,8 @@ export default async function ConfigurationPage() {
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Configuration du centre</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-          Règles de calcul des prix, conditions de facturation, identité du vendeur et durées de
-          conservation des données. Les délais de
+          Adresse e-mail du centre, règles de calcul des prix, conditions de facturation, identité
+          du vendeur et durées de conservation des données. Les délais de
           réservation du site public se règlent dans{' '}
           <Link href="/disponibilites" className="underline underline-offset-2">
             Disponibilités
