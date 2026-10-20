@@ -3,39 +3,33 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-/**
- * Rubriques de l'espace client (R17, R21, R23, R24, R25, R26, R06). Les
- * libellés restent courts : sur un téléphone, les huit tiennent en trois
- * rangées sans défilement.
- */
-const sections = [
-  { href: '/compte/reservations', label: 'Réservations' },
-  { href: '/compte/offres', label: 'Offres' },
-  { href: '/compte/courrier', label: 'Courrier' },
-  { href: '/compte/contrats', label: 'Contrats' },
-  { href: '/compte/factures', label: 'Factures' },
-  { href: '/compte/etats-des-lieux', label: 'États des lieux' },
-  { href: '/compte/historique', label: 'Historique' },
-  { href: '/compte/preferences', label: 'Préférences' },
-]
+import { isActiveSection, type SpaceSection } from '../../../modules/clients/espace-rubriques.ts'
+
+/** Colonnes sur téléphone : aucune case vide pour deux, trois ou quatre rubriques. */
+const mobileColumns: Record<number, string> = {
+  1: 'grid-cols-1',
+  2: 'grid-cols-2',
+  4: 'grid-cols-2',
+}
 
 /**
- * Client parce que l'onglet actif dépend de l'URL ; l'état actif est dit par
- * `aria-current`, pas par la seule couleur.
+ * Rubriques de l'espace client, celles que l'entreprise utilise seulement
+ * (`clientSections`). Client parce que l'onglet actif dépend de l'URL ; l'état
+ * actif est dit par `aria-current`, pas par la seule couleur.
  *
- * Mobile d'abord (R25) : une grille de trois colonnes, chaque rubrique visible
- * et haute de 44 px, à 8 px de sa voisine — une bande qui défile cacherait les
- * dernières. À partir de `sm`, la barre d'onglets habituelle.
+ * Mobile d'abord (R25) : une grille, chaque rubrique visible et haute de
+ * 44 px, à 8 px de sa voisine — une bande qui défile cacherait les dernières.
+ * À partir de `sm`, la barre d'onglets habituelle.
  */
-export function CompteNav() {
+export function CompteNav({ sections }: { sections: SpaceSection[] }) {
   const pathname = usePathname()
   return (
     <nav
       aria-label="Espace client"
-      className="grid grid-cols-3 gap-2 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-b sm:border-border"
+      className={`grid ${mobileColumns[sections.length] ?? 'grid-cols-3'} gap-2 sm:flex sm:gap-1 sm:overflow-x-auto sm:border-b sm:border-border`}
     >
       {sections.map((section) => {
-        const active = pathname === section.href || pathname.startsWith(`${section.href}/`)
+        const active = isActiveSection(section.href, pathname)
         return (
           <Link
             key={section.href}

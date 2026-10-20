@@ -15,8 +15,8 @@ import { describe, it } from 'node:test'
 const SRC = join(import.meta.dirname, '..', '..')
 const ESPACES = [join(SRC, 'app', '(portail)', 'compte'), join(SRC, 'app', '(impression)', 'compte')]
 
-/** L'entrée de l'espace ne fait que rediriger vers une rubrique gardée. */
-const REDIRECTIONS = ['app/(portail)/compte/page.tsx']
+/** Pages qui ne font que rediriger vers une rubrique gardée : aucune depuis que `/compte` est un accueil. */
+const REDIRECTIONS: string[] = []
 
 const walk = (dir: string): string[] =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>

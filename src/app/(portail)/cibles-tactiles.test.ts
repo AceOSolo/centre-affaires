@@ -5,6 +5,8 @@ import { describe, it } from 'node:test'
 
 import ts from 'typescript'
 
+import { clientSections } from '../../modules/clients/espace-rubriques.ts'
+
 /**
  * Revue mobile du portail (R25, `CLAUDE.md` : portail vérifié à 375 px, cibles
  * de 44 px), éprouvée sur les sources.
@@ -202,29 +204,25 @@ describe('portail : cibles tactiles et largeur mobile (R25)', () => {
     assert.deepEqual(tooWide, [], `Largeurs fixes trop grandes :\n${tooWide.join('\n')}`)
   })
 
-  it('réunit les huit rubriques de l’espace client, dans l’ordre, chacune vers une page', () => {
-    const nav = parsed.find((file) => file.path.replace(/\\/g, '/').endsWith('compte/compte-nav.tsx'))
-    assert.ok(nav, 'compte-nav.tsx introuvable')
-    const sections = nav.topLevel.get('sections')
-    assert.ok(sections && ts.isArrayLiteralExpression(sections), 'liste `sections` introuvable')
-    const hrefs = sections.elements.map((element) => {
-      assert.ok(ts.isObjectLiteralExpression(element))
-      const href = element.properties.find(
-        (property): property is ts.PropertyAssignment =>
-          ts.isPropertyAssignment(property) && property.name.getText() === 'href',
-      )
-      assert.ok(href && ts.isStringLiteral(href.initializer))
-      return href.initializer.text
-    })
-    assert.deepEqual(hrefs, [
-      '/compte/reservations',
+  it('mène chaque rubrique de l’espace client vers une page', () => {
+    // Toutes les rubriques possibles (`clientSections`, signaux allumés), plus
+    // les liens discrets de la coque et l'accès aux formules depuis l'accueil.
+    const hrefs = [
+      ...clientSections({ domiciliated: true, invoices: 1, contracts: 1, inspections: 1 }).map((section) => section.href),
+      '/compte/historique',
+      '/compte/preferences',
       '/compte/offres',
+    ]
+    assert.deepEqual(hrefs, [
+      '/compte',
+      '/compte/reservations',
       '/compte/courrier',
-      '/compte/contrats',
       '/compte/factures',
+      '/compte/contrats',
       '/compte/etats-des-lieux',
       '/compte/historique',
       '/compte/preferences',
+      '/compte/offres',
     ])
     // Aucune rubrique ne mène à une page absente (404).
     for (const href of hrefs) {

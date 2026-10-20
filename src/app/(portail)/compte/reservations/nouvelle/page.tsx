@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-import { ArrowRightIcon, CheckIcon, ClockIcon, UsersIcon } from '../../../../../components/ui/icons.tsx'
+import { CheckIcon, ClockIcon, UsersIcon } from '../../../../../components/ui/icons.tsx'
 import {
   addDaysToIsoDate,
   formatLongDate,
@@ -20,7 +20,7 @@ import {
   requestBounds,
   requestPolicyMessage,
 } from '../../../../../modules/reservations/request-policy.ts'
-import { resourceTypeLabels } from '../../../../../modules/ressources/labels.ts'
+import { resourceTypeLabels, resourceTypePluralLabels } from '../../../../../modules/ressources/labels.ts'
 import { resourceTypes, type ResourceType } from '../../../../../modules/ressources/schema.ts'
 
 export const metadata = { title: 'Réserver un espace' }
@@ -28,6 +28,13 @@ export const metadata = { title: 'Réserver un espace' }
 const fieldClass =
   'mt-1 w-full min-h-11 rounded-sm border border-border bg-white px-3 py-2 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-accent/40'
 const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary'
+const chipOn = 'border-primary bg-primary text-primary-foreground'
+const chipOff = 'border-border bg-white text-foreground hover:border-primary'
+/** Jours proposés d'un geste avant de passer par le calendrier. */
+const QUICK_DAYS = 6
+/** Le jour d'une date murale, lu sans fuseau : midi UTC ne change jamais de date. */
+const weekdayFormat = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', timeZone: 'UTC' })
+const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 const secondaryClass = `inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border bg-white px-4 text-sm font-medium transition-colors hover:bg-muted ${focusClass}`
 
 /**
@@ -58,7 +65,11 @@ export default async function NouvelleReservationPage({
   const outOfRange = Boolean(requestedDate && (requestedDate < minDate || requestedDate > maxDate))
   const date = requestedDate && !outOfRange ? requestedDate : minDate
 
-  const day = await listPortalDayAvailability(accounts, date, timeZone)
+  // Seuls les produits réservés sur un créneau (ADR 043) : une boîte aux
+  // lettres se loue au mois, elle n'a rien à faire dans un choix d'horaires.
+  const day = (await listPortalDayAvailability(accounts, date, timeZone)).filter(
+    ({ resource }) => productForResourceType(resource.resourceType) !== undefined,
+  )
   const types = resourceTypes.filter((type) => day.some(({ resource }) => resource.resourceType === type))
   const type = types.find((candidate) => candidate === params.type) as ResourceType | undefined
   const shown = day
@@ -70,15 +81,15 @@ export default async function NouvelleReservationPage({
   const selected = params.ressource ? shown.find(({ resource }) => resource.id === params.ressource) : undefined
 
   const dateLabel = formatLongDate(date, timeZone)
-  const href = (changes: { date?: string; ressource?: string }) => {
+  const href = (changes: { type?: ResourceType | null; date?: string; ressource?: string }) => {
     const query = new URLSearchParams()
-    if (type) query.set('type', type)
+    const nextType = changes.type === undefined ? type : changes.type
+    if (nextType) query.set('type', nextType)
     query.set('date', changes.date ?? date)
     if (changes.ressource) query.set('ressource', changes.ressource)
     return `/compte/reservations/nouvelle?${query.toString()}${changes.ressource ? '#reserver' : ''}`
   }
-  const previous = addDaysToIsoDate(date, -1)
-  const next = addDaysToIsoDate(date, 1)
+  const quickDays = Array.from({ length: QUICK_DAYS }, (_, index) => addDaysToIsoDate(minDate, index)).filter((day) => day <= maxDate)
 
   return (
     <div className="flex flex-col gap-8">
@@ -93,8 +104,8 @@ export default async function NouvelleReservationPage({
           Réserver un espace
         </h1>
         <p className="mt-2 max-w-prose text-muted-foreground">
-          Choisissez un type d’espace et une date : seuls les créneaux libres sont proposés, avec le
-          tarif de votre contrat. {requestPolicyMessage(tenant)}
+          Choisissez un jour, puis un espace : seuls les créneaux libres sont proposés, avec le tarif
+          de votre contrat. {requestPolicyMessage(tenant)}
         </p>
       </div>
 
@@ -108,53 +119,70 @@ export default async function NouvelleReservationPage({
         </div>
       ) : (
         <>
-          <form
-            method="get"
-            className="grid gap-4 rounded-lg border border-border bg-white p-4 sm:grid-cols-[1fr_1fr_auto] sm:items-end sm:p-5"
-          >
-            <div>
-              <label htmlFor="type" className="block text-sm font-medium">
-                Type d’espace
-              </label>
-              <select id="type" name="type" defaultValue={type ?? ''} className={fieldClass}>
-                <option value="">Tous les types</option>
-                {types.map((candidate) => (
-                  <option key={candidate} value={candidate}>
-                    {resourceTypeLabels[candidate]}
-                  </option>
+          <div className="flex flex-col gap-5 rounded-lg border border-border bg-white p-4 sm:p-5">
+            {types.length > 1 && (
+              <nav aria-label="Type d’espace" className="flex flex-wrap gap-2">
+                {[undefined, ...types].map((candidate) => (
+                  <Link
+                    key={candidate ?? 'tous'}
+                    href={href({ type: candidate ?? null })}
+                    aria-current={candidate === type ? 'true' : undefined}
+                    className={`inline-flex min-h-11 items-center rounded-full border px-4 text-sm font-medium transition-colors ${focusClass} ${candidate === type ? chipOn : chipOff}`}
+                  >
+                    {candidate ? resourceTypePluralLabels[candidate] : 'Tous les espaces'}
+                  </Link>
                 ))}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="date" className="block text-sm font-medium">
-                Date
-              </label>
-              <input
-                id="date"
-                name="date"
-                type="date"
-                required
-                min={minDate}
-                max={maxDate}
-                defaultValue={date}
-                aria-invalid={outOfRange ? true : undefined}
-                aria-describedby={outOfRange ? 'date-error' : undefined}
-                className={fieldClass}
-              />
-            </div>
-            <button
-              type="submit"
-              className={`inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover ${focusClass}`}
-            >
-              Voir les disponibilités
-            </button>
-            {outOfRange && (
-              <p id="date-error" role="alert" className="text-sm text-destructive sm:col-span-3">
-                Cette date est hors de la période ouverte à la réservation : {requestPolicyMessage(tenant)}{' '}
-                Disponibilités du {dateLabel}.
-              </p>
+              </nav>
             )}
-          </form>
+
+            {/* Les six premiers jours d'un geste ; le calendrier pour aller plus loin. */}
+            <nav aria-label="Date" className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+              {quickDays.map((day) => {
+                const at = new Date(`${day}T12:00:00Z`)
+                return (
+                  <Link
+                    key={day}
+                    href={href({ date: day })}
+                    aria-current={day === date ? 'date' : undefined}
+                    className={`flex min-h-14 flex-col items-center justify-center rounded-md border px-2 text-sm font-medium transition-colors ${focusClass} ${day === date ? chipOn : chipOff}`}
+                  >
+                    <span className="text-xs capitalize opacity-80">{weekdayFormat.format(at)}</span>
+                    <span className="tabular">{dayFormat.format(at)}</span>
+                  </Link>
+                )
+              })}
+            </nav>
+
+            <form method="get" className="flex flex-wrap items-end gap-3">
+              {type && <input type="hidden" name="type" value={type} />}
+              <div>
+                <label htmlFor="date" className="block text-sm text-muted-foreground">
+                  Autre date
+                </label>
+                <input
+                  id="date"
+                  name="date"
+                  type="date"
+                  required
+                  min={minDate}
+                  max={maxDate}
+                  defaultValue={date}
+                  aria-invalid={outOfRange ? true : undefined}
+                  aria-describedby={outOfRange ? 'date-error' : undefined}
+                  className={fieldClass}
+                />
+              </div>
+              <button type="submit" className={secondaryClass}>
+                Afficher
+              </button>
+              {outOfRange && (
+                <p id="date-error" role="alert" className="w-full text-sm text-destructive">
+                  Cette date est hors de la période ouverte à la réservation : {requestPolicyMessage(tenant)}{' '}
+                  Disponibilités du {dateLabel}.
+                </p>
+              )}
+            </form>
+          </div>
 
           {selected && (
             <section
@@ -196,27 +224,13 @@ export default async function NouvelleReservationPage({
           <section aria-labelledby="disponibilites" className="flex flex-col gap-4">
             <div className="flex flex-wrap items-end justify-between gap-3">
               <h2 id="disponibilites" className="text-lg font-semibold">
-                Disponibilités du <span className="capitalize">{dateLabel}</span>
+                Disponibilités du {dateLabel}
               </h2>
-              <div className="flex gap-2">
-                {previous >= minDate && (
-                  <Link href={href({ date: previous })} className={secondaryClass}>
-                    <ArrowRightIcon size={20} className="rotate-180" />
-                    Jour précédent
-                  </Link>
-                )}
-                {next <= maxDate && (
-                  <Link href={href({ date: next })} className={secondaryClass}>
-                    Jour suivant
-                    <ArrowRightIcon size={20} />
-                  </Link>
-                )}
-              </div>
             </div>
 
             {shown.length === 0 ? (
               <p className="max-w-prose rounded-lg border border-dashed border-border px-6 py-8 text-center text-muted-foreground">
-                Aucun espace de ce type ne se réserve en ligne. Choisissez « Tous les types ».
+                Aucun espace de ce type ne se réserve en ligne. Choisissez « Tous les espaces ».
               </p>
             ) : (
               <ul className="grid gap-4 sm:grid-cols-2">
