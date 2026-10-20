@@ -53,6 +53,10 @@ jobs:
       - run: npm run lint
       # Règle de rétention et refus du script de sauvegarde du serveur (ADR 022).
       - run: bash infra/serveur/sauvegarde.test.sh
+      # Un service GitHub ne prend pas d'options de démarrage de MySQL : le
+      # réglage que compose.yml passe en ligne de commande est posé ici. Sans
+      # lui, le journal binaire refuse les fonctions des règles métier.
+      - run: docker exec ${{ job.services.mysql.id }} mysql -uroot -pci -e "SET GLOBAL log_bin_trust_function_creators = 1"
       # Structure, règles métier, utilisateur applicatif (DB_USER) et ses droits
       # (ADR 042) : ce que fait le serveur de production à chaque mise à jour.
       - run: npm run db:migrer
