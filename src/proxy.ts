@@ -33,11 +33,16 @@ export const config = {
   // d'authentification, le relais `/api/auth` et les fichiers statiques doivent
   // rester joignables sans session — sinon la page de connexion elle-même ne
   // peut pas se charger.
+  //
+  // Littérale, comme l'exige Next. Chaque écran de `app/(admin)` y figure
+  // (`proxy.test.ts`) : un oubli perd la page demandée à la connexion.
   matcher: [
+    '/aujourdhui/:path*',
     '/reservations/:path*',
     '/ressources/:path*',
     '/disponibilites/:path*',
     '/demandes/:path*',
+    '/devis/:path*',
     '/clients/:path*',
     '/contrats/:path*',
     '/tarifs/:path*',
@@ -51,6 +56,7 @@ export const config = {
     '/equipe/:path*',
     '/comptes/:path*',
     '/configuration/:path*',
+    '/reglages/:path*',
     '/paiements/:path*',
     '/comptabilite/:path*',
     '/acces-reserve/:path*',
