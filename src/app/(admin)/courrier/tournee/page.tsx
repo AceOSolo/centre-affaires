@@ -78,9 +78,14 @@ export default async function TourneePage({
                 <span className="font-normal text-muted-foreground"> — ouverte par {open.openedByName}</span>
               )}
             </h2>
-            <Link href="/courrier/nouveau" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
-              Enregistrer un autre courrier
-            </Link>
+            <div className="flex flex-wrap gap-4">
+              <Link href="/courrier/tournee/saisie" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
+                Saisie groupée
+              </Link>
+              <Link href="/courrier/nouveau" className="text-sm font-medium text-primary underline-offset-2 hover:underline">
+                Enregistrer un autre courrier
+              </Link>
+            </div>
           </div>
 
           {open.items.length === 0 ? (
@@ -128,9 +133,13 @@ export default async function TourneePage({
             Aucune tournée en cours
           </h2>
           <p className="max-w-[70ch] text-sm text-muted-foreground">
-            Le premier courrier enregistré ouvre la tournée.{' '}
+            Le premier courrier enregistré ouvre la tournée :{' '}
+            <Link href="/courrier/tournee/saisie" className="font-medium text-primary underline-offset-2 hover:underline">
+              saisie groupée
+            </Link>{' '}
+            ou{' '}
             <Link href="/courrier/nouveau" className="font-medium text-primary underline-offset-2 hover:underline">
-              Enregistrer un courrier
+              pli par pli
             </Link>
             . Si rien n’est arrivé aujourd’hui, signalez-le : les domiciliés en sont prévenus.
           </p>
