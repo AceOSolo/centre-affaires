@@ -87,6 +87,7 @@ export type TemplateOverview = {
 }
 
 async function loadTemplateOverviews(tx: Transaction): Promise<TemplateOverview[]> {
+  const tenantId = currentTenantId()
   const [templates, versions] = await Promise.all([
     tx
       .select({
@@ -95,7 +96,7 @@ async function loadTemplateOverviews(tx: Transaction): Promise<TemplateOverview[
         resourceType: inspectionTemplates.resourceType,
       })
       .from(inspectionTemplates)
-      .where(isNull(inspectionTemplates.deletedAt)),
+      .where(and(eq(inspectionTemplates.tenantId, tenantId), isNull(inspectionTemplates.deletedAt))),
     tx
       .select({
         id: inspectionTemplateVersions.id,
@@ -107,6 +108,7 @@ async function loadTemplateOverviews(tx: Transaction): Promise<TemplateOverview[
       })
       .from(inspectionTemplateVersions)
       .leftJoin(publisher, eq(publisher.id, inspectionTemplateVersions.createdBy))
+      .where(eq(inspectionTemplateVersions.tenantId, tenantId))
       .orderBy(desc(inspectionTemplateVersions.version)),
   ])
 
@@ -165,11 +167,13 @@ export async function publishInTransaction(
   input: { resourceType: ResourceType; name: string; fields: InspectionField[] },
   staffMemberId: string | null,
 ): Promise<PublishOutcome> {
+  const tenantId = currentTenantId()
   const [template] = await tx
     .select({ id: inspectionTemplates.id, name: inspectionTemplates.name })
     .from(inspectionTemplates)
     .where(
       and(
+        eq(inspectionTemplates.tenantId, tenantId),
         eq(inspectionTemplates.resourceType, input.resourceType),
         isNull(inspectionTemplates.deletedAt),
       ),
@@ -183,7 +187,7 @@ export async function publishInTransaction(
       await tx
         .update(inspectionTemplates)
         .set({ name: input.name })
-        .where(eq(inspectionTemplates.id, template.id))
+        .where(and(eq(inspectionTemplates.tenantId, tenantId), eq(inspectionTemplates.id, template.id)))
     }
   } else {
     const created = await insertReturning(tx, inspectionTemplates, {
@@ -200,7 +204,7 @@ export async function publishInTransaction(
       fields: inspectionTemplateVersions.fields,
     })
     .from(inspectionTemplateVersions)
-    .where(eq(inspectionTemplateVersions.templateId, templateId))
+    .where(and(eq(inspectionTemplateVersions.tenantId, tenantId), eq(inspectionTemplateVersions.templateId, templateId)))
     .orderBy(desc(inspectionTemplateVersions.version))
     .limit(1)
   // Le nom est figé avec la version (ADR 041) : le renommer en publie une,
@@ -230,6 +234,7 @@ export async function currentVersionFor(
   resourceType: ResourceType,
   staffMemberId: string | null,
 ): Promise<{ id: string; fields: InspectionField[] }> {
+  const tenantId = currentTenantId()
   const latest = () =>
     tx
       .select({ id: inspectionTemplateVersions.id, fields: inspectionTemplateVersions.fields })
@@ -243,6 +248,7 @@ export async function currentVersionFor(
       )
       .where(
         and(
+          eq(inspectionTemplateVersions.tenantId, tenantId),
           eq(inspectionTemplates.resourceType, resourceType),
           isNull(inspectionTemplates.deletedAt),
         ),
@@ -344,9 +350,13 @@ export type InspectionFilter = {
   resourceTypes?: readonly ResourceType[]
 }
 
-/** États des lieux du centre, les plus récents d'abord ; brouillons retirés exclus. */
+/**
+ * États des lieux du centre, les plus récents d'abord ; brouillons retirés
+ * exclus. La lecture porte son filtre `tenant_id` (décision 1).
+ */
 export async function listInspections(filter: InspectionFilter = {}, limit = 200): Promise<InspectionListRow[]> {
-  const conditions = [isNull(inspections.deletedAt)]
+  const tenantId = currentTenantId()
+  const conditions = [eq(inspections.tenantId, tenantId), isNull(inspections.deletedAt)]
   if (filter.resourceId) conditions.push(eq(inspections.resourceId, filter.resourceId))
   if (filter.bookingId) conditions.push(eq(inspections.bookingId, filter.bookingId))
   if (filter.contractId) conditions.push(eq(inspections.contractId, filter.contractId))
@@ -357,7 +367,7 @@ export async function listInspections(filter: InspectionFilter = {}, limit = 200
   if (filter.stage === 'signed') conditions.push(isNotNull(inspections.signedAt))
   if (filter.resourceTypes) conditions.push(inArray(resources.resourceType, [...filter.resourceTypes]))
 
-  const rows = await withTenant(currentTenantId(), (tx) =>
+  const rows = await withTenant(tenantId, (tx) =>
     selectInspectionRows(tx)
       .where(and(...conditions))
       .orderBy(desc(inspections.performedAt), desc(inspections.id))

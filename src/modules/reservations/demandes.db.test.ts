@@ -7,6 +7,8 @@ import { DB_EXCLUSION_VIOLATION, dbErrorCode } from '../../db/errors.ts'
 import { withTenant } from '../../db/index.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
+import { listPendingRequests } from './demandes-queries.ts'
+import { listPendingBookings } from './queries.ts'
 
 /**
  * Cycle de vie d'une demande publique, éprouvé contre la base (ADR 005).
@@ -259,6 +261,41 @@ describe('demandes de réservation publiques', { skip: raisonDeSaut }, () => {
         const [ligne] = await lire()
         assert.equal(ligne.requester_email, null)
         assert.equal(ligne.status, 'confirmed')
+      })
+    })
+
+    describe('file des demandes', () => {
+      it('ne lit que les demandes du centre (décision 1)', async () => {
+        const AUTRE_CENTRE = '01999f00-0000-7000-8000-0000000000d7'
+        const AILLEURS = '01999f00-0000-7000-8000-0000000000d8'
+        await bases.owner.client.query(
+          "insert ignore into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-demandes')",
+          [AUTRE_CENTRE],
+        )
+        await withTenant(
+          AUTRE_CENTRE,
+          async (tx) => {
+            await tx.execute(sql`
+              insert into resources (id, tenant_id, resource_type, code, name)
+              values (${AILLEURS}, ${AUTRE_CENTRE}, 'salle', 'S-AILLEURS', 'Salle d’un autre centre')`)
+            await tx.execute(sql`
+              insert into bookings (tenant_id, resource_id, channel, starts_at, ends_at, title, status, requester_email)
+              values (${AUTRE_CENTRE}, ${AILLEURS}, 'public', '2026-10-07 09:00:00', '2026-10-07 10:00:00',
+                      'Ailleurs', 'pending', 'ailleurs@exemple.fr')`)
+          },
+          bases.app.db,
+        )
+        await demander('2026-10-08 09:00:00', '2026-10-08 10:00:00', 'ici@exemple.fr', 'Ici')
+
+        // Les lectures du module passent par la base globale.
+        ;(globalThis as { database?: unknown }).database = bases.app
+        try {
+          assert.deepEqual((await listPendingRequests()).map((request) => request.title), ['Ici'])
+          assert.deepEqual((await listPendingRequests(['salle'])).map((request) => request.title), ['Ici'])
+          assert.deepEqual((await listPendingBookings()).map((booking) => booking.title), ['Ici'])
+        } finally {
+          delete (globalThis as { database?: unknown }).database
+        }
       })
     })
   }

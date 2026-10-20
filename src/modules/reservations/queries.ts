@@ -616,14 +616,18 @@ export async function createBookingRequest(
   }
 }
 
-/** Demandes en attente de validation, la plus proche d'abord. */
+/**
+ * Demandes en attente de validation, la plus proche d'abord. La lecture porte
+ * son filtre `tenant_id` (décision 1 : la base ne garde que les écritures).
+ */
 export async function listPendingBookings(): Promise<BookingWithResource[]> {
-  const rows = await withTenant(currentTenantId(), (tx) =>
+  const tenantId = currentTenantId()
+  const rows = await withTenant(tenantId, (tx) =>
     tx
       .select({ booking: bookings, resource: resources })
       .from(bookings)
-      .innerJoin(resources, eq(resources.id, bookings.resourceId))
-      .where(and(eq(bookings.status, 'pending'), isNull(resources.deletedAt)))
+      .innerJoin(resources, and(eq(resources.tenantId, bookings.tenantId), eq(resources.id, bookings.resourceId)))
+      .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, 'pending'), isNull(resources.deletedAt)))
       .orderBy(asc(bookings.startsAt)),
   )
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))

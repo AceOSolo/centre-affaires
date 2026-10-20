@@ -22,10 +22,12 @@ export type PendingRequest = BookingWithResource & {
 
 /**
  * Demandes en attente de validation, la plus proche d'abord ; limitées aux
- * types de ressource d'un produit quand `types` est donné (ADR 046).
+ * types de ressource d'un produit quand `types` est donné (ADR 046). La
+ * lecture porte son filtre `tenant_id` (décision 1).
  */
 export async function listPendingRequests(types?: readonly ResourceType[]): Promise<PendingRequest[]> {
-  const rows = await withTenant(currentTenantId(), (tx) =>
+  const tenantId = currentTenantId()
+  const rows = await withTenant(tenantId, (tx) =>
     tx
       .select({
         booking: bookings,
@@ -35,14 +37,19 @@ export async function listPendingRequests(types?: readonly ResourceType[]): Prom
         memberEmail: clientMembers.email,
       })
       .from(bookings)
-      .innerJoin(resources, eq(resources.id, bookings.resourceId))
-      .leftJoin(clients, eq(clients.id, bookings.clientId))
+      .innerJoin(resources, and(eq(resources.tenantId, bookings.tenantId), eq(resources.id, bookings.resourceId)))
+      .leftJoin(clients, and(eq(clients.tenantId, bookings.tenantId), eq(clients.id, bookings.clientId)))
       .leftJoin(
         clientMembers,
-        and(eq(clientMembers.clientId, bookings.clientId), eq(clientMembers.id, bookings.bookedByMemberId)),
+        and(
+          eq(clientMembers.tenantId, bookings.tenantId),
+          eq(clientMembers.clientId, bookings.clientId),
+          eq(clientMembers.id, bookings.bookedByMemberId),
+        ),
       )
       .where(
         and(
+          eq(bookings.tenantId, tenantId),
           eq(bookings.status, 'pending'),
           isNull(resources.deletedAt),
           types ? inArray(resources.resourceType, [...types]) : undefined,

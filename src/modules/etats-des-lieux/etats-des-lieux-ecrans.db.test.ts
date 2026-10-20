@@ -442,6 +442,43 @@ describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, (
       await clore(clos)
       assert.match((await refus(() => withdrawInspection(clos))) ?? '', /Seul un brouillon se retire/)
     })
+
+    it('ne liste pas les états des lieux d’un autre centre (décision 1)', async () => {
+      const AUTRE_CENTRE = '01999f00-0000-7000-8000-0000000000e7'
+      const [ressource, client, modele, version, location, ailleurs] = Array.from({ length: 6 }, () => uuidv7())
+      await bases.owner.client.query(
+        "insert ignore into tenants (id, name, slug) values (?, 'Autre centre', 'autre-centre-edl')",
+        [AUTRE_CENTRE],
+      )
+      await withTenant(
+        AUTRE_CENTRE,
+        async (tx) => {
+          await tx.execute(sql`
+            insert into resources (id, tenant_id, resource_type, code, name)
+            values (${ressource}, ${AUTRE_CENTRE}, 'vehicule', 'V-AILLEURS', 'Utilitaire d’un autre centre')`)
+          await tx.execute(sql`
+            insert into clients (id, tenant_id, name, status) values (${client}, ${AUTRE_CENTRE}, 'Ailleurs SARL', 'active')`)
+          await tx.execute(sql`
+            insert into inspection_templates (id, tenant_id, resource_type, name)
+            values (${modele}, ${AUTRE_CENTRE}, 'vehicule', ${defaultTemplates.vehicule.name})`)
+          await tx.execute(sql`
+            insert into inspection_template_versions (id, tenant_id, template_id, version, name, fields)
+            values (${version}, ${AUTRE_CENTRE}, ${modele}, 1, ${defaultTemplates.vehicule.name},
+                    ${JSON.stringify(defaultTemplates.vehicule.fields)})`)
+          await tx.execute(sql`
+            insert into bookings (id, tenant_id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at)
+            values (${location}, ${AUTRE_CENTRE}, ${ressource}, ${client}, 'booking', 'staff', 'confirmed', 'Ailleurs',
+                    date_add(CURRENT_TIMESTAMP(3), interval 1 hour), date_add(CURRENT_TIMESTAMP(3), interval 5 hour))`)
+          await tx.execute(sql`
+            insert into inspections (id, tenant_id, kind, resource_id, client_id, booking_id, template_version_id, created_by)
+            values (${ailleurs}, ${AUTRE_CENTRE}, 'entry', ${ressource}, ${client}, ${location}, ${version}, ${CAMILLE})`)
+        },
+        bases.app.db,
+      )
+      const ici = await ouvrir()
+      assert.deepEqual((await listInspections()).map((row) => row.id), [ici])
+      assert.deepEqual((await listInspections({ stage: 'draft' })).map((row) => row.id), [ici])
+    })
   })
 
   describe('espace client', () => {
