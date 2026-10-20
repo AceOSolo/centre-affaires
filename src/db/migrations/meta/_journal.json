@@ -22,6 +22,13 @@
       "when": 1792488151125,
       "tag": "0002_courrier_tournee_pages_classement",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1792488364086,
+      "tag": "0003_comptes_bannissements_inscription",
+      "breakpoints": true
     }
   ]
 }

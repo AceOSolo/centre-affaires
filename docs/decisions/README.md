@@ -20,7 +20,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 005 | [Demandes de réservation publiques](005-demandes-de-reservation-publiques.md) | 2026-09-18 | accepté |
 | 006 | [Clients, grilles tarifaires et contrats](006-clients-tarifs-contrats.md) | 2026-09-18 | accepté ; prorata et unité entamée paramétrés par l'ADR 023, échéancier versionné par l'ADR 025 |
 | 007 | *absent* : numéro jamais attribué | — | — |
-| 008 | [Authentification et accès au back-office](008-authentification-et-acces-au-back-office.md) | 2026-09-18 | accepté ; Neon Auth remplacé par Better Auth auto-hébergé (ADR 042) |
+| 008 | [Authentification et accès au back-office](008-authentification-et-acces-au-back-office.md) | 2026-09-18 | accepté ; Neon Auth remplacé par Better Auth auto-hébergé (ADR 042) ; inscription libre à l'espace client par l'ADR 045 |
 | 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté ; durée de la demi-journée paramétrée par l'ADR 023 |
 | 010 | [Calendrier de sélection d'un créneau](010-calendrier-de-selection.md) | 2026-09-18 | accepté — **numéro en double** |
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
@@ -29,7 +29,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** |
 | 013 | [Séries et délais de réservation](013-series-et-delais-de-reservation.md) | 2026-09-21 | accepté — **numéro en double** |
 | 014 | [Un agenda Google par ressource](014-agendas-google-par-ressource.md) | 2026-09-30 | **proposé** : le compromis RGPD est à valider |
-| 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté |
+| 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté ; inscription libre par l'ADR 045 (fiche client créée à l'inscription) |
 | 016 | [Tout le cahier des charges DOMOTOP entre dans le périmètre](016-perimetre-du-cahier-des-charges.md) | 2026-10-01 | accepté |
 | 017 | [Planning : semaine toutes ressources, vue mois et filtres](017-planning-toutes-ressources-et-vue-mois.md) | 2026-10-01 | accepté ; amende l'ADR 011 |
 | 018 | [Occupation des ressources sous contrat, canal et contrat des réservations](018-occupation-sous-contrat-et-canal.md) | 2026-10-01 | accepté ; occupation par segments et changement de ressource par avenant : ADR 025 |
@@ -57,6 +57,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; compte auxiliaire figé, anonymisation tracée et tâche de nuit isolée par l'ADR 041 ; durées à valider par le centre |
 | 041 | [Correctifs de la dernière vague : export comptable après anonymisation, rattrapage du courrier, tâche de nuit, et manques de schéma tranchés](041-correctifs-de-la-derniere-vague-et-manques-ecartes.md) | 2026-10-02 | accepté ; corrige les ADR 037 et 040, précise les ADR 030, 036, 038 et 039 ; choix à valider par le centre |
 | 042 | [MySQL sur le VPS, Better Auth auto-hébergé, fin de la RLS](042-mysql-sur-le-vps.md) | 2026-10-15 | accepté ; remplace l'ADR 003 |
+| 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix à valider par le centre |
 
 ## Numéros en double et numéro manquant
 

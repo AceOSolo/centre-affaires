@@ -1,0 +1,90 @@
+import { and, eq, or } from 'drizzle-orm'
+
+import { tenantContext } from '../../db/contexte.ts'
+import type { Transaction } from '../../db/index.ts'
+import { insertReturning } from '../../db/returning.ts'
+import { staffMembers } from '../../db/staff.ts'
+import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
+import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
+import { authUsers } from '../../lib/auth/schema.ts'
+import { clientMembers, clients } from '../clients/schema.ts'
+
+/**
+ * Inscription libre sur le site (ADR 045) : une personne qui crée son compte
+ * sans avoir été inscrite par le centre reçoit sa propre fiche client, un
+ * prospect « inscrit en ligne », et entre dans l'espace client de cette fiche.
+ * Elle n'y voit que ce qui lui appartient : la portée client (ADR 019) ne
+ * change pas.
+ *
+ * Appelée par `clientAccess` quand le compte n'a accès à aucune entreprise,
+ * **après** le rattachement des inscriptions faites à son adresse : une
+ * personne invitée par le centre retrouve son entreprise, pas une fiche vide.
+ */
+
+const currentTenant = () => tenantContext.getStore() ?? DEFAULT_TENANT_ID
+
+/** Raison sociale par défaut : la personne qui loue en son nom propre. */
+export function signupClientName(input: { companyName: string | null; name: string | null; email: string }): string {
+  return (input.companyName?.trim() || input.name?.trim() || input.email).slice(0, 255)
+}
+
+/**
+ * Crée la fiche et l'accès du compte, une seule fois par compte et par centre.
+ * Rend `true` quand elle a créé quelque chose.
+ *
+ * Rien n'est créé quand le compte a déjà eu un lien avec ce centre, même
+ * retiré :
+ *
+ * - un accès à une entreprise, en cours ou retiré — retiré par l'équipe, il ne
+ *   doit pas renaître sous une fiche neuve à la connexion suivante ;
+ * - une place dans l'équipe, en cours ou passée.
+ *
+ * Le compte est verrouillé le temps de la vérification : deux requêtes
+ * simultanées de la première connexion ne créent pas deux fiches.
+ */
+export async function ensureSignupClient(tx: Transaction, user: AuthenticatedUser): Promise<boolean> {
+  const [account] = await tx
+    .select({ id: authUsers.id, companyName: authUsers.companyName })
+    .from(authUsers)
+    .where(eq(authUsers.id, user.id))
+    .for('update')
+  if (!account) return false
+
+  const [member] = await tx
+    .select({ id: clientMembers.id })
+    .from(clientMembers)
+    .where(
+      and(
+        eq(clientMembers.tenantId, currentTenant()),
+        or(eq(clientMembers.authUserId, user.id), eq(clientMembers.email, user.email)),
+      ),
+    )
+    .limit(1)
+  if (member) return false
+
+  const [staff] = await tx
+    .select({ id: staffMembers.id })
+    .from(staffMembers)
+    .where(
+      and(
+        eq(staffMembers.tenantId, currentTenant()),
+        or(eq(staffMembers.authUserId, user.id), eq(staffMembers.email, user.email)),
+      ),
+    )
+    .limit(1)
+  if (staff) return false
+
+  const client = await insertReturning(tx, clients, {
+    name: signupClientName({ companyName: account.companyName, name: user.name, email: user.email }),
+    email: user.email,
+    status: 'prospect',
+    origin: 'inscription',
+  })
+  await tx.insert(clientMembers).values({
+    clientId: client.id,
+    email: user.email,
+    authUserId: user.id,
+    fullName: user.name || null,
+  })
+  return true
+}

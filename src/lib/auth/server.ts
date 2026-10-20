@@ -1,9 +1,12 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
+import { APIError } from 'better-auth/api'
 import { nextCookies } from 'better-auth/next-js'
 
-import { createDatabase, databaseOptionsFromEnv } from '../../db/index.ts'
+import { createDatabase, databaseOptionsFromEnv, withTenant } from '../../db/index.ts'
+import { activeBan } from '../../modules/comptes/comptes.ts'
 import { sendMessage } from '../courriel.ts'
+import { currentTenantId } from '../tenant.ts'
 import {
   authAccounts,
   authSessions,
@@ -87,6 +90,31 @@ function createAuth() {
             `Bonjour,\n\nConfirmez votre adresse pour accéder à votre espace :\n${url}\n\n` +
             'Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.',
         })
+      },
+    },
+    // Raison sociale saisie à l'inscription libre (ADR 045) : la fiche client
+    // n'est créée qu'une fois l'adresse confirmée (`modules/comptes/inscription.ts`).
+    user: {
+      additionalFields: {
+        companyName: { type: 'string', required: false, input: true },
+      },
+    },
+    databaseHooks: {
+      session: {
+        create: {
+          // Un compte banni par l'équipe n'ouvre plus de session (ADR 045). Les
+          // sessions en cours sont supprimées au bannissement
+          // (`banAccounts`) ; ce refus couvre les suivantes.
+          async before(session) {
+            const ban = await withTenant(currentTenantId(), (tx) => activeBan(tx, session.userId))
+            if (ban) {
+              throw APIError.from('FORBIDDEN', {
+                message: 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.',
+                code: 'BANNED_USER',
+              })
+            }
+          },
+        },
       },
     },
     advanced: {

@@ -27,6 +27,14 @@ export const clientStatuses = ['prospect', 'active', 'inactive'] as const
 export type ClientStatus = (typeof clientStatuses)[number]
 export const clientStatusEnum = (name: string) => mysqlEnum(name, clientStatuses)
 
+/**
+ * Qui a créé la fiche (ADR 045) : l'équipe depuis le back-office, ou une
+ * personne qui s'est inscrite seule sur le site. Une fiche « inscription »
+ * est un prospect à qualifier, pas une entreprise vérifiée.
+ */
+export const clientOrigins = ['back_office', 'inscription'] as const
+export type ClientOrigin = (typeof clientOrigins)[number]
+
 export const clients = mysqlTable(
   'clients',
   {
@@ -49,6 +57,7 @@ export const clients = mysqlTable(
     /** ISO 3166-1 alpha-2. */
     country: char('country', { length: 2 }).notNull().default('FR'),
     status: clientStatusEnum('status').notNull().default('prospect'),
+    origin: mysqlEnum('origin', clientOrigins).notNull().default('back_office'),
     notes: text('notes'),
     /**
      * Compte auxiliaire du client dans l'export comptable (ADR 027), sous le

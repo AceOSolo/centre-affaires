@@ -16,10 +16,11 @@ type Mode = 'connexion' | 'creation'
  * Connexion de l'équipe du centre et des clients : un seul écran, un seul
  * compte Better Auth, et `/auth/suite` oriente chacun vers son espace.
  *
- * Créer un compte ne donne aucun droit : l'accès dépend de `staff_members`
- * (ADR 008) ou de `client_members` (ADR 015). Un compte inconnu est renvoyé
- * vers `/auth/acces-refuse`, ce qui est volontaire — l'écran de connexion ne
- * doit pas révéler quelles adresses sont inscrites.
+ * Créer un compte est libre (ADR 045). Une adresse inscrite par le centre
+ * retrouve son entreprise (`client_members`, ADR 015) ou le back-office
+ * (`staff_members`, ADR 008) ; toute autre reçoit, une fois confirmée, sa
+ * propre fiche client « inscrite en ligne ». L'écran ne dit pas laquelle des
+ * deux s'applique : il ne doit pas révéler quelles adresses sont inscrites.
  */
 export function SignInForm() {
   const router = useRouter()
@@ -44,6 +45,7 @@ export function SignInForm() {
     const email = String(form.get('email') ?? '').trim()
     const password = String(form.get('password') ?? '')
     const name = String(form.get('name') ?? '').trim()
+    const companyName = String(form.get('companyName') ?? '').trim()
 
     const repli =
       mode === 'creation'
@@ -56,7 +58,12 @@ export function SignInForm() {
     // l'overlay d'erreur.
     try {
       if (mode === 'creation') {
-        const { data, error: authError } = await authClient.signUp.email({ email, password, name })
+        const { data, error: authError } = await authClient.signUp.email({
+          email,
+          password,
+          name,
+          companyName: companyName || undefined,
+        })
         if (authError) {
           setError(authError.message ?? repli)
           return
@@ -76,7 +83,9 @@ export function SignInForm() {
           setError(
             authError.code === 'EMAIL_NOT_VERIFIED'
               ? 'Adresse non confirmée : ouvrez le message de confirmation reçu, puis réessayez.'
-              : (authError.message ?? repli),
+              : authError.code === 'BANNED_USER'
+                ? 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.'
+                : (authError.message ?? repli),
           )
           return
         }
@@ -102,7 +111,7 @@ export function SignInForm() {
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {mode === 'creation'
-            ? 'Utilisez l’adresse professionnelle avec laquelle le centre vous a inscrit.'
+            ? 'Si le centre vous a déjà inscrit, utilisez cette adresse : vous retrouverez l’espace de votre entreprise.'
             : 'Espace client et équipe du centre.'}
         </p>
       </div>
@@ -138,6 +147,25 @@ export function SignInForm() {
               autoComplete="name"
               className={`${fieldClass} mt-1.5`}
             />
+          </div>
+        )}
+
+        {mode === 'creation' && (
+          <div>
+            <label className={labelClass} htmlFor="companyName">
+              Entreprise <span className="font-normal text-muted-foreground">(facultatif)</span>
+            </label>
+            <input
+              id="companyName"
+              name="companyName"
+              maxLength={255}
+              autoComplete="organization"
+              aria-describedby="companyName-hint"
+              className={`${fieldClass} mt-1.5`}
+            />
+            <p id="companyName-hint" className="mt-1 text-xs text-muted-foreground">
+              Laissez vide si vous louez en votre nom propre.
+            </p>
           </div>
         )}
 

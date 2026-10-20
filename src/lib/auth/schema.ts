@@ -20,6 +20,13 @@ export const authUsers = mysqlTable('auth_users', {
   email: varchar('email', { length: 255 }).notNull().unique(),
   emailVerified: boolean('email_verified').notNull().default(false),
   image: text('image'),
+  /**
+   * Raison sociale saisie à l'inscription libre (ADR 045), gardée jusqu'à ce
+   * que l'adresse soit confirmée : c'est alors seulement que la fiche client
+   * est créée (`modules/comptes/inscription.ts`). Champ additionnel de Better
+   * Auth (`server.ts`).
+   */
+  companyName: varchar('company_name', { length: 255 }),
   createdAt: instant('created_at').notNull(),
   updatedAt: instant('updated_at').notNull(),
 })

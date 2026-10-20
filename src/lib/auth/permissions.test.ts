@@ -54,6 +54,8 @@ describe('matrice des droits', () => {
     'notifications.gerer',
     'etats-des-lieux.modeles',
     'rgpd.anonymiser',
+    // Bannir ferme l'accès d'une personne au centre (ADR 045).
+    'comptes.gerer',
   ]
 
   it('couvre chaque rôle de l’équipe', () => {

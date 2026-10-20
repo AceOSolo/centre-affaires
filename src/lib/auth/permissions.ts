@@ -51,6 +51,8 @@ export const permissions = [
   'etats-des-lieux.gerer',
   'etats-des-lieux.modeles',
   'rgpd.anonymiser',
+  // Inscription libre (ADR 045) : ajouté à la fin, la matrice n'est pas réordonnée.
+  'comptes.gerer',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -88,6 +90,7 @@ export const permissionLabels: Record<Permission, string> = {
   'etats-des-lieux.gerer': 'Saisir, photographier et clore les états des lieux',
   'etats-des-lieux.modeles': 'Modèles de formulaire des états des lieux',
   'rgpd.anonymiser': 'Anonymiser un client, un accès ou un membre retiré (RGPD)',
+  'comptes.gerer': 'Comptes du site : bannir, réactiver, rattacher à une entreprise',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */

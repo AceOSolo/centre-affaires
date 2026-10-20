@@ -42,6 +42,7 @@ export const config = {
     '/etats-des-lieux/:path*',
     '/indicateurs/:path*',
     '/equipe/:path*',
+    '/comptes/:path*',
     '/configuration/:path*',
     '/paiements/:path*',
     '/comptabilite/:path*',
