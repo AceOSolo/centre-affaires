@@ -88,7 +88,7 @@ export function BanForm({
             />
             Jusqu’à ce qu’un membre de l’équipe le lève
           </label>
-          <div className="flex flex-wrap items-center gap-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
             <label className="flex min-h-6 items-center gap-2">
               <input
                 type="radio"
@@ -97,11 +97,9 @@ export function BanForm({
                 checked={duration === 'temporaire'}
                 onChange={() => setDuration('temporaire')}
               />
-              Jusqu’au (inclus)
+              Jusqu’à une date
             </label>
-            <label className="sr-only" htmlFor="until">
-              Dernier jour du bannissement
-            </label>
+            <label htmlFor="until">Dernier jour (inclus)</label>
             <input
               id="until"
               name="until"
