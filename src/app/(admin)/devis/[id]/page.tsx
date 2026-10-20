@@ -170,6 +170,17 @@ export default async function ProposalPage({
             {proposal.cancellationReason ?? '—'}
           </p>
         )}
+        {/* La réservation tient toujours : son devis se refait (ADR 043). */}
+        {proposal.status === 'cancelled' && proposal.booking && proposal.booking.status !== 'cancelled' && (
+          <p className="text-sm">
+            <Link
+              href={`/devis/nouveau?produit=${proposal.product}&reservation=${proposal.booking.id}`}
+              className="font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Refaire le devis de cette réservation
+            </Link>
+          </p>
+        )}
         {(actions.validate || actions.reopen || actions.cancel) && (
           <div className="flex flex-wrap items-start gap-3">
             {actions.validate && (
@@ -279,6 +290,7 @@ export default async function ProposalPage({
                 <p role="note" className="rounded-md border border-warning/40 bg-warning/15 px-3 py-2 text-warning-foreground">
                   <strong className="font-medium">Attention :</strong> la réservation a été modifiée après l’envoi du devis :
                   vérifiez dans Dolibarr.
+                  {actions.cancel && ' Si le prix change, annulez ce devis : un nouveau se refait ensuite pour la réservation.'}
                 </p>
               )}
             </div>

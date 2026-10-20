@@ -144,14 +144,20 @@ export async function bookingLineInTransaction(
   return lineFromBooking({ ...row.booking, resource: row.resource }, timeZone)
 }
 
-/** Le devis d'une réservation, s'il existe. */
+/**
+ * Le devis d'une réservation : le vivant (non annulé, un seul par réservation,
+ * `proposals_tenant_booking_live_key`), sinon le dernier annulé — la fiche
+ * propose alors de le refaire (ADR 043).
+ */
 export async function findProposalForBooking(bookingId: string): Promise<Pick<Proposal, 'id' | 'number' | 'status'> | undefined> {
   const tenantId = currentTenantId()
   const [row] = await withTenant(tenantId, (tx) =>
     tx
       .select({ id: proposals.id, number: proposals.number, status: proposals.status })
       .from(proposals)
-      .where(and(eq(proposals.tenantId, tenantId), eq(proposals.bookingId, bookingId))),
+      .where(and(eq(proposals.tenantId, tenantId), eq(proposals.bookingId, bookingId)))
+      .orderBy(sql`${proposals.status} = 'cancelled'`, desc(proposals.createdAt), desc(proposals.id))
+      .limit(1),
   )
   return row
 }

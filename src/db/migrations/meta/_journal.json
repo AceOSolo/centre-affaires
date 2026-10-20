@@ -29,6 +29,13 @@
       "when": 1792488364086,
       "tag": "0003_comptes_bannissements_inscription",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1792502821196,
+      "tag": "0004_devis_refait_apres_annulation",
+      "breakpoints": true
     }
   ]
 }

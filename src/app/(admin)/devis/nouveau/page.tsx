@@ -48,6 +48,10 @@ export default async function NewProposalPage({
   const clientQuery = presetClientId ? `&client=${presetClientId}` : ''
   const booking = reservationId && isUuid(reservationId) ? await findBooking(reservationId) : undefined
   const existing = booking ? await findProposalForBooking(booking.id) : undefined
+  // Un devis annulé se refait (ADR 043 : réservation déplacée après la
+  // transmission) ; seul un devis vivant renvoie vers lui-même.
+  const liveProposal = existing && existing.status !== 'cancelled' ? existing : undefined
+  const replacedProposal = existing?.status === 'cancelled' ? existing : undefined
 
   // La réservation impose son produit ; sinon, celui choisi.
   const requested = first(params.produit)
@@ -70,18 +74,18 @@ export default async function NewProposalPage({
     </div>
   )
 
-  if (reservationId && (!booking || booking.kind !== 'booking' || booking.status === 'cancelled' || !product || existing)) {
+  if (reservationId && (!booking || booking.kind !== 'booking' || booking.status === 'cancelled' || !product || liveProposal)) {
     return (
       <div className="flex max-w-3xl flex-col gap-6">
         {header}
         <div className="rounded-lg border border-border bg-white px-5 py-4 text-sm">
-          {existing ? (
+          {liveProposal ? (
             <p>
               Cette réservation a déjà son devis :{' '}
-              <Link href={`/devis/${existing.id}`} className="font-medium text-primary underline-offset-2 hover:underline">
-                {existing.number} — {proposalStatusLabels[existing.status]}
+              <Link href={`/devis/${liveProposal.id}`} className="font-medium text-primary underline-offset-2 hover:underline">
+                {liveProposal.number} — {proposalStatusLabels[liveProposal.status]}
               </Link>
-              .
+              . Pour le refaire, annulez-le d’abord depuis sa fiche.
             </p>
           ) : !booking ? (
             <p>Cette réservation est introuvable. Choisissez-la dans le formulaire du devis.</p>
@@ -169,6 +173,15 @@ export default async function NewProposalPage({
           </>
         )}
       </p>
+      {replacedProposal && (
+        <p className="rounded-lg border border-border bg-white px-5 py-3 text-sm">
+          Le devis{' '}
+          <Link href={`/devis/${replacedProposal.id}`} className="font-medium text-primary underline-offset-2 hover:underline tabular">
+            {replacedProposal.number}
+          </Link>{' '}
+          de cette réservation est annulé : celui-ci le remplace.
+        </p>
+      )}
       <NewProposalForm
         product={product}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}

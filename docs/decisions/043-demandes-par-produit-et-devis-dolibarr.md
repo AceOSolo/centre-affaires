@@ -103,6 +103,12 @@ draft ──► ready ──► sent ──► accepted | refused
   que Dolibarr a repris est ce que le centre a validé. Un devis prêt et pas
   encore repris peut revenir en brouillon ; transmis, il ne revient plus
   (on l'annule et on en refait un) ;
+- une réservation a **au plus un devis vivant** (non annulé) : index unique
+  `proposals_tenant_booking_live_key` sur `(tenant_id, booking_id, live)`,
+  `live` valant 1 tant que le devis n'est pas annulé (migration 0004, MySQL
+  n'ayant pas d'index partiel). Un devis annulé reste consultable et ne
+  bloque plus la réservation : l'accueil la rechiffre d'un nouveau devis
+  (« Refaire le devis », fiche de la réservation ou du devis annulé) ;
 - numéro, produit, canal et réservation ne changent jamais ; ni devis ni
   ligne ne se suppriment (décision 6) ;
 - **une réservation annulée annule son devis encore ouvert**, transmis
@@ -244,5 +250,6 @@ qu'aucun contrat n'est envisagé (minimisation).
 camion en brouillon, numérotation, cycle et lignes figées, montant par la
 règle commune, ni suppression, reprise Dolibarr rejouable et format, issue,
 annulation qui suit la réservation, portée client, atomicité réservation et
-devis), `lot.db.test.ts` (une réservation au devis vivant n'est pas facturée
-par le lot).
+devis, devis refait après annulation et deux devis vivants refusés),
+`lot.db.test.ts` (une réservation au devis vivant n'est pas facturée par le
+lot).

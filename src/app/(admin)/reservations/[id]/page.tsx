@@ -265,16 +265,18 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
           <h2 id="devis-titre" className="font-medium text-foreground">
             Devis
           </h2>
-          {proposal ? (
+          {proposal && (
             <Link href={`/devis/${proposal.id}`} className="mt-1 inline-block text-primary underline-offset-2 hover:underline">
               Devis {proposal.number} — {proposalStatusLabels[proposal.status]}
             </Link>
-          ) : (
+          )}
+          {/* Un devis annulé se refait (ADR 043) : réservation déplacée après la transmission. */}
+          {(!proposal || proposal.status === 'cancelled') && booking.kind === 'booking' && !cancelled && quoteProduct && (
             <Link
               href={`/devis/nouveau?produit=${quoteProduct}&reservation=${booking.id}`}
-              className="mt-1 inline-block text-primary underline-offset-2 hover:underline"
+              className="mt-1 block text-primary underline-offset-2 hover:underline"
             >
-              Établir le devis
+              {proposal ? 'Refaire le devis' : 'Établir le devis'}
             </Link>
           )}
         </section>

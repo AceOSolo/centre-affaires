@@ -9,6 +9,7 @@ import {
   mysqlEnum,
   mysqlTable,
   text,
+  tinyint,
   unique,
   uniqueIndex,
   varchar,
@@ -107,12 +108,22 @@ export const proposals = mysqlTable(
     cancelledAt: instant('cancelled_at'),
     cancellationReason: text('cancellation_reason'),
     ...timestamps(),
+    /**
+     * Colonne générée : `1` tant que le devis n'est pas annulé, `NULL`
+     * ensuite. MySQL n'a pas d'index unique partiel : l'unicité « un devis
+     * vivant par réservation » se fait en l'incluant dans l'index (un index
+     * unique ignore les `NULL`, `docs/migration-mysql/conventions.md` §3.1).
+     * Jamais écrite.
+     */
+    live: tinyint('live').generatedAlwaysAs(sql`if(status <> 'cancelled', 1, null)`, { mode: 'virtual' }),
   },
   (table) => [
     unique('proposals_tenant_id_id_key').on(table.tenantId, table.id),
     uniqueIndex('proposals_tenant_number_key').on(table.tenantId, table.number),
-    // Un créneau, un devis : la réservation et son devis se suivent.
-    uniqueIndex('proposals_tenant_booking_key').on(table.tenantId, table.bookingId),
+    // Un créneau, un devis vivant : la réservation et son devis se suivent.
+    // Un devis annulé ne compte plus — la réservation déplacée après la
+    // transmission se refait ainsi d'un nouveau devis (ADR 043).
+    uniqueIndex('proposals_tenant_booking_live_key').on(table.tenantId, table.bookingId, table.live),
     foreignKey({
       name: 'proposals_client_fk',
       columns: [table.tenantId, table.clientId],

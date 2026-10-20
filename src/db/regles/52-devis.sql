@@ -15,7 +15,11 @@
 --   les dates de chaque étape sont posées par la base ;
 -- - ne se supprime pas, une ligne non plus (`deleted_at`, décision 6) ;
 -- - une réservation annulée annule son devis encore ouvert
---   (`bookings_cancel_proposal`).
+--   (`bookings_cancel_proposal`) ;
+-- - une réservation a au plus un devis vivant (non annulé) : index unique
+--   `proposals_tenant_booking_live_key`, dans la structure (migration 0004).
+--   Un devis annulé ne compte plus : la réservation se rechiffre d'un nouveau
+--   devis (réservation déplacée après la transmission, ADR 043).
 --
 -- Sous portée client (`@app_client_ids`, ADR 019), seul le dépôt d'un
 -- brouillon de l'entreprise passe, avec ses lignes (`CA015`).

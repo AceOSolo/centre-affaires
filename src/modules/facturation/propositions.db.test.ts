@@ -3,19 +3,27 @@ import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { and, eq, sql } from 'drizzle-orm'
 
-import { DB_CLIENT_SCOPE_REFUSED, DB_PROPOSAL_REFUSED, dbErrorCode } from '../../db/errors.ts'
+import {
+  DB_CLIENT_SCOPE_REFUSED,
+  DB_PROPOSAL_REFUSED,
+  DB_UNIQUE_VIOLATION,
+  dbConstraintName,
+  dbErrorCode,
+} from '../../db/errors.ts'
 import { withClientScope, withTenant, type Transaction } from '../../db/index.ts'
 import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { cancelBooking, createBookingRequest } from '../reservations/queries.ts'
 import { bookings } from '../reservations/schema.ts'
+import { StaffProposalError, createStaffProposal, listBookingsForNewProposal } from './propositions-accueil-queries.ts'
 import {
   ProposalRefusedError,
   addProposalLine,
   cancelProposal,
   createProposalInTransaction,
   findProposal,
+  findProposalForBooking,
   listProposalsForDolibarr,
   markProposalSent,
   recordProposalOutcome,
@@ -315,6 +323,94 @@ describe('devis transmis à Dolibarr', { skip: raisonDeSaut }, () => {
       const proposal = await domiciliation()
       assert.equal(await cancelProposal(proposal.id, 'Doublon'), true)
       assert.equal(await code(() => asTenant((tx) => tx.update(proposals).set({ status: 'draft' }).where(eq(proposals.id, proposal.id)))), DB_PROPOSAL_REFUSED)
+    })
+  })
+
+  describe('devis refait (ADR 043)', () => {
+    const demande = (jour: string) =>
+      createBookingRequest({
+        resourceId: SALLE,
+        ...creneau(`${jour}T09:00`, `${jour}T13:00`),
+        ...demandeur,
+        proposal: { product: 'espace', answers: { participants: 6, usage: 'reunion' }, timeZone: 'Europe/Paris' },
+      })
+
+    /** Un second devis posé directement en base : seul l'index unique l'arrête. */
+    const devisEnBase = (bookingId: string) =>
+      asTenant((tx) =>
+        createProposalInTransaction(tx, { product: 'espace', channel: 'staff', clientId: CLIENT, bookingId, answers: {}, lines: [] }),
+      )
+
+    const devisAccueil = (bookingId: string) =>
+      createStaffProposal({
+        product: 'espace',
+        bookingId,
+        clientId: CLIENT,
+        requesterName: null,
+        requesterEmail: null,
+        requesterPhone: null,
+        requesterCompany: null,
+        answers: {},
+        message: null,
+        staffNote: null,
+        currency: 'EUR',
+        timeZone: 'Europe/Paris',
+      })
+
+    const refusDoublon = async (run: () => Promise<unknown>) => {
+      try {
+        await run()
+      } catch (error) {
+        return [dbErrorCode(error), dbConstraintName(error)]
+      }
+      return undefined
+    }
+
+    it('refuse deux devis vivants pour une même réservation, en base comme à l’accueil', async () => {
+      const created = await demande('2026-11-06')
+      assert.deepEqual(await refusDoublon(() => devisEnBase(created.id)), [
+        DB_UNIQUE_VIOLATION,
+        'proposals_tenant_booking_live_key',
+      ])
+      await assert.rejects(devisAccueil(created.id), (error: unknown) => {
+        assert.ok(error instanceof StaffProposalError)
+        assert.match(error.message, /déjà son devis : DV-/)
+        return true
+      })
+      const candidates = await listBookingsForNewProposal('espace', new Date('2026-10-01T00:00:00Z'))
+      assert.equal(candidates.some((booking) => booking.id === created.id), false)
+    })
+
+    it('refait le devis d’une réservation dont le devis transmis est annulé', async () => {
+      const created = await demande('2026-11-09')
+      const premier = created.proposal!
+      await markProposalSent(premier.id, { id: '415', ref: 'PR2611-0009' })
+      assert.equal(await cancelProposal(premier.id, 'Réservation déplacée : nouveau prix.'), true)
+
+      // La réservation redevient chiffrable : elle est proposée, et le devis se refait.
+      const candidates = await listBookingsForNewProposal('espace', new Date('2026-10-01T00:00:00Z'))
+      assert.ok(candidates.some((booking) => booking.id === created.id))
+      const second = await devisAccueil(created.id)
+      assert.notEqual(second.number, premier.number)
+      const refait = await findProposal(second.id)
+      assert.equal(refait?.status, 'draft')
+      assert.equal(refait?.bookingId, created.id)
+      assert.equal(refait?.lines[0]?.source, 'booking')
+
+      // La fiche de la réservation mène au devis vivant, pas à l'annulé.
+      assert.equal((await findProposalForBooking(created.id))?.id, second.id)
+
+      // Le nouveau est le seul vivant : un troisième est refusé.
+      assert.deepEqual(await refusDoublon(() => devisEnBase(created.id)), [
+        DB_UNIQUE_VIOLATION,
+        'proposals_tenant_booking_live_key',
+      ])
+
+      // Annuler la réservation annule le devis vivant, et laisse l'ancien tel quel.
+      await cancelBooking(created.id, 'Demande refusée.')
+      assert.equal((await lire(second.id)).status, 'cancelled')
+      assert.equal((await lire(premier.id)).cancellationReason, 'Réservation déplacée : nouveau prix.')
+      assert.equal((await findProposalForBooking(created.id))?.status, 'cancelled')
     })
   })
 

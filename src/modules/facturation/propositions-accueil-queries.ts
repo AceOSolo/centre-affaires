@@ -55,6 +55,8 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
       if (input.bookingId) {
         // Verrou de la réservation : deux devis lancés en même temps ne se
         // rattachent pas au même créneau (l'index unique le refuserait aussi).
+        // Un devis annulé ne compte plus : la réservation se rechiffre d'un
+        // nouveau devis (ADR 043).
         const [row] = await tx
           .select({
             kind: bookings.kind,
@@ -75,7 +77,13 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
         const [existing] = await tx
           .select({ number: proposals.number })
           .from(proposals)
-          .where(and(eq(proposals.tenantId, tenantId), eq(proposals.bookingId, input.bookingId)))
+          .where(
+            and(
+              eq(proposals.tenantId, tenantId),
+              eq(proposals.bookingId, input.bookingId),
+              ne(proposals.status, 'cancelled'),
+            ),
+          )
         if (existing) throw new StaffProposalError(`Cette réservation a déjà son devis : ${existing.number}.`)
         currency = row.quoteCurrency ?? currency
         lines = [await bookingLineInTransaction(tx, input.bookingId, input.timeZone)]
@@ -118,8 +126,9 @@ export type BookingForProposal = {
 }
 
 /**
- * Réservations à venir d'un produit, pas annulées et encore sans devis : celles
- * auxquelles l'accueil peut rattacher un nouveau devis. Les plus proches d'abord.
+ * Réservations à venir d'un produit, pas annulées et sans devis vivant (un
+ * devis annulé se refait) : celles auxquelles l'accueil peut rattacher un
+ * nouveau devis. Les plus proches d'abord.
  */
 export async function listBookingsForNewProposal(product: ProposalProduct, from: Date): Promise<BookingForProposal[]> {
   const types = questionnaires[product].resourceTypes
@@ -139,7 +148,14 @@ export async function listBookingsForNewProposal(product: ProposalProduct, from:
       .from(bookings)
       .innerJoin(resources, and(eq(resources.tenantId, bookings.tenantId), eq(resources.id, bookings.resourceId)))
       .leftJoin(clients, and(eq(clients.tenantId, bookings.tenantId), eq(clients.id, bookings.clientId)))
-      .leftJoin(proposals, and(eq(proposals.tenantId, bookings.tenantId), eq(proposals.bookingId, bookings.id)))
+      .leftJoin(
+        proposals,
+        and(
+          eq(proposals.tenantId, bookings.tenantId),
+          eq(proposals.bookingId, bookings.id),
+          ne(proposals.status, 'cancelled'),
+        ),
+      )
       .where(
         and(
           eq(bookings.tenantId, tenantId),
