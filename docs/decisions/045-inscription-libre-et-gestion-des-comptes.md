@@ -3,7 +3,8 @@
 **Date** : 2026-10-20
 **Statut** : accepté — revient sur la règle « avoir un compte ne donne accès à
 rien » des ADR 008 et 015 pour l'espace client ; le back-office n'est pas
-concerné ; les choix marqués « à valider » attendent le centre
+concerné ; choix tranchés par le centre le 20/10/2026 (droits de l'accueil,
+fiche d'inscription gardée, filtre des clients)
 
 ## Contexte
 
@@ -84,16 +85,25 @@ listés, les autres sont bannis.
 
 ### L'écran « Comptes »
 
-`/comptes`, dans la catégorie Administration du back-office, sous un nouveau
-droit `comptes.gerer`, **réservé à l'exploitant** (*à valider* : l'accueil
-pourrait rattacher sans pouvoir bannir).
+`/comptes`, dans la catégorie Administration du back-office. Deux droits,
+tranchés par le centre :
+
+| Droit | Rôles | Permet |
+|---|---|---|
+| `comptes.rattacher` | accueil, exploitant | ouvrir l'écran et les fiches, rattacher un compte à une entreprise |
+| `comptes.gerer` | exploitant | bannir, réactiver, sélection multiple |
+
+Sans `comptes.gerer`, l'écran n'affiche ni cases à cocher ni actions
+groupées, et la fiche dit que le bannissement revient à l'exploitant. Les
+actions serveur revérifient chacune leur droit.
 
 - Liste des comptes du centre — et de ceux qui ne relèvent encore d'aucun
   centre : adresse pas encore confirmée —, avec date d'inscription, adresse
   confirmée ou non, équipe ou entreprises, état (texte et icône, jamais la
   seule couleur). Filtre par état, recherche par nom ou adresse, plafond de 200
   lignes.
-- Sélection multiple : bannir ou réactiver plusieurs comptes d'un coup.
+- Sélection multiple (exploitant) : bannir ou réactiver plusieurs comptes
+  d'un coup.
 - Fiche d'un compte (`/comptes/[id]`) : bannir ou réactiver, rattacher à une
   entreprise existante, historique des bannissements (qui, quand, motif,
   durée, levée).
@@ -101,7 +111,8 @@ pourrait rattacher sans pouvoir bannir).
 **Rattacher** ajoute une personne sur la fiche choisie (`client_members`), déjà
 reliée au compte. La fiche créée à l'inscription **reste** : elle porte
 peut-être des demandes. L'équipe l'archive depuis la fiche client si elle n'a
-plus lieu d'être (*à valider* : l'archiver d'office quand elle est vide).
+plus lieu d'être. Le centre a écarté l'archivage d'office, même d'une fiche
+vide : l'équipe garde la décision.
 
 ### Correctif lié
 
@@ -141,9 +152,10 @@ serveur n'exige pas la vérification, ce qui n'arrive jamais en production.
 - Migration de structure 0003 : `account_bans`, `clients.origin`,
   `auth_users.company_name`. Les gardes d'écriture par centre (`CA014`) et
   `updated_at` sont générées par le migrateur. Aucun nouveau code d'erreur.
-- La liste des clients se remplit de prospects inscrits en ligne : la fiche le
-  dit (« inscrit en ligne » dans l'écran Comptes). *À valider* : un filtre par
-  origine dans la liste des clients.
+- La liste des clients se remplit de prospects inscrits en ligne. Demandé par
+  le centre : la ligne porte « Inscrit en ligne », et une bascule « Inscrits en
+  ligne » (`/clients?origine=inscription`) les isole, combinable avec le statut
+  et la recherche.
 - Les prospects inscrits en ligne entrent dans l'anonymisation RGPD comme les
   autres (ADR 040) : sans contrat ni échange, ils s'anonymisent au terme de la
   durée des prospects (36 mois par défaut). L'anonymisation détache le compte

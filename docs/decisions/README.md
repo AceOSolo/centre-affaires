@@ -57,7 +57,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 040 | [Anonymisation RGPD des clients, contacts, accès et membres retirés](040-anonymisation-rgpd.md) | 2026-10-02 | accepté ; mise en œuvre de la tâche de nuit, des durées à l'écran et de l'effacement à la demande ajoutée ; compte auxiliaire figé, anonymisation tracée et tâche de nuit isolée par l'ADR 041 ; durées à valider par le centre |
 | 041 | [Correctifs de la dernière vague : export comptable après anonymisation, rattrapage du courrier, tâche de nuit, et manques de schéma tranchés](041-correctifs-de-la-derniere-vague-et-manques-ecartes.md) | 2026-10-02 | accepté ; corrige les ADR 037 et 040, précise les ADR 030, 036, 038 et 039 ; choix à valider par le centre |
 | 042 | [MySQL sur le VPS, Better Auth auto-hébergé, fin de la RLS](042-mysql-sur-le-vps.md) | 2026-10-15 | accepté ; remplace l'ADR 003 |
-| 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix à valider par le centre |
+| 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix tranchés par le centre (accueil : rattacher ; filtre des clients) |
 
 ## Numéros en double et numéro manquant
 
