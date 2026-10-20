@@ -74,14 +74,6 @@ const TABLES_METIER = [
   'resources',
   'services',
 ]
-/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
-const TABLES_AVEC_EQUIPE = [
-  ...TABLES_METIER,
-  'accounting_exports',
-  'google_calendar_connections',
-  'notification_preferences',
-  'staff_members',
-]
 
 /**
  * Moteur de devis contre la base (R08, R10, R11, ADR 023) : la grille par

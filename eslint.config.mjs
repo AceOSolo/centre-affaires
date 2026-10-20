@@ -16,6 +16,13 @@ const eslintConfig = defineConfig([
     // (.claude/worktrees/*) portent leur propre .next/ et leur propre code.
     ".claude/**",
   ]),
+  // Retirer un champ par déstructuration (`const { updated_at: _x, ...reste } = row`)
+  // est l'idiome des tests pour comparer une ligne hors horodatage.
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": ["warn", { ignoreRestSiblings: true }],
+    },
+  },
 ]);
 
 export default eslintConfig;

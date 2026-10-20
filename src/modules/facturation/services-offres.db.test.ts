@@ -77,14 +77,6 @@ const TABLES_METIER = [
   'resources',
   'services',
 ]
-/** Comme `TABLES_METIER`, plus ce qui référence l'équipe (`truncate staff_members cascade`). */
-const TABLES_AVEC_EQUIPE = [
-  ...TABLES_METIER,
-  'accounting_exports',
-  'google_calendar_connections',
-  'notification_preferences',
-  'staff_members',
-]
 
 /**
  * Catalogue de services et offres groupées (R18, R09, ADR 024), par les

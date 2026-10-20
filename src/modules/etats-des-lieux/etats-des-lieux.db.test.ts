@@ -35,7 +35,6 @@ import { inspectionConditionLevels, type InspectionField } from './schema.ts'
  */
 describe('états des lieux', { skip: raisonDeSaut }, () => {
   let bases: TestDatabases
-  const owner = { get client() { return bases.owner.client } }
 
   /** Refus de portée client : écriture hors de la vue de l'entreprise. */
   const DB_SCOPE_VIOLATION = DB_INSUFFICIENT_PRIVILEGE
