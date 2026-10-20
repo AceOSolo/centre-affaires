@@ -3,7 +3,7 @@ import { cache } from 'react'
 import { headers } from 'next/headers'
 
 import type { AuthenticatedUser } from './membre.ts'
-import { getAuth } from './server.ts'
+import { getAuth, requireEmailVerification } from './server.ts'
 
 /**
  * Compte connecté, lu une fois par requête HTTP.
@@ -30,7 +30,12 @@ export const sessionUser = cache(
         email: raw.email.trim().toLowerCase(),
         name: raw.name ?? null,
       },
-      emailVerified: raw.emailVerified,
+      // En développement, la vérification est désactivée
+      // (`AUTH_SKIP_EMAIL_VERIFICATION`) et aucune adresse n'est jamais
+      // confirmée : la transmettre telle quelle fermerait tout rattachement, y
+      // compris celui des comptes de démonstration. Elle n'est donc rendue
+      // que lorsque le serveur l'exige — toujours en production.
+      emailVerified: requireEmailVerification() ? raw.emailVerified : undefined,
     }
   },
 )

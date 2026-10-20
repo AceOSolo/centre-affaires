@@ -38,7 +38,7 @@ function required(name: string): string {
  * où aucun courriel ne part (`AUTH_SKIP_EMAIL_VERIFICATION=true`). Cette
  * dérogation est refusée en production.
  */
-function requireEmailVerification(): boolean {
+export function requireEmailVerification(): boolean {
   if (process.env.AUTH_SKIP_EMAIL_VERIFICATION !== 'true') return true
   if (process.env.NODE_ENV === 'production') {
     throw new Error(
