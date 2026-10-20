@@ -13,6 +13,15 @@ export const resourceTypeLabels: Record<ResourceType, string> = {
   boite_aux_lettres: 'Boîte aux lettres',
 }
 
+/** Le type comme famille de produits, sur le site public : « Nos bureaux ». */
+export const resourceTypePluralLabels: Record<ResourceType, string> = {
+  salle: 'Salles de réunion',
+  bureau: 'Bureaux',
+  casier: 'Casiers',
+  vehicule: 'Véhicules',
+  boite_aux_lettres: 'Domiciliation',
+}
+
 export const resourceStatusLabels: Record<ResourceStatus, string> = {
   active: 'En service',
   maintenance: 'En maintenance',

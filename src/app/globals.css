@@ -135,38 +135,40 @@ h4 {
   }
 }
 
-/*
-  Apparition au défilement.
-  -------------------------------------------------------------------------
-  La charte veut des animations sobres : 150–250 ms, `ease-out`, aucun rebond.
-  Un déplacement de 12 px suffit à donner le rythme sans faire bouger la page.
-
-  L'état masqué est posé en CSS, pas par le script : sinon le contenu serait
-  peint puis caché, ce qui clignote. En contrepartie il faut le relever quand
-  JavaScript ne tourne pas — d'où la règle `<noscript>` de la coque publique.
-*/
-.reveal {
-  opacity: 0;
-  transform: translateY(12px);
-  transition:
-    opacity 240ms ease-out,
-    transform 240ms ease-out;
-  transition-delay: var(--reveal-delay, 0ms);
-}
-
-.reveal[data-visible='true'] {
-  opacity: 1;
-  transform: none;
-}
-
 /* Défilement doux pour les ancres de navigation. */
 html {
   scroll-behavior: smooth;
 }
 
-/* Le parcours possède ses propres actions une fois la salle choisie. */
-body:has([data-booking-active='true']) .booking-mobile-cta {
-  display: none;
+/*
+  Dialogue de réservation : il monte du bas sur téléphone, apparaît en place
+  au-delà. 200 ms, `ease-out`, aucun rebond ; le bloc `prefers-reduced-motion`
+  plus haut ramène la durée à zéro. La page derrière ne défile plus tant qu'il
+  est ouvert.
+*/
+.booking-dialog[open] {
+  animation: dialogue-entree 200ms ease-out;
+}
+
+.booking-dialog[open]::backdrop {
+  animation: voile-entree 200ms ease-out;
+}
+
+@keyframes dialogue-entree {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+@keyframes voile-entree {
+  from {
+    opacity: 0;
+  }
+}
+
+html:has(dialog[open]) {
+  overflow: hidden;
 }
 
 /*
@@ -175,17 +177,6 @@ body:has([data-booking-active='true']) .booking-mobile-cta {
 */
 html[data-scrolled='true'] header {
   box-shadow: 0 1px 3px rgb(0 0 0 / 0.08);
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /*
-    Le bloc générique plus haut ramène les durées à zéro, ce qui ne suffit pas
-    ici : sans cette règle, un contenu resterait à `opacity: 0` pour toujours.
-  */
-  .reveal {
-    opacity: 1;
-    transform: none;
-  }
 }
 
 /*

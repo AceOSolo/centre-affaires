@@ -1,18 +1,19 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
-import { ArrowRightIcon, ClockIcon, MapPinIcon, PhoneIcon } from '../../components/ui/icons.tsx'
+import { ArrowRightIcon, MapPinIcon, PhoneIcon } from '../../components/ui/icons.tsx'
 import { ScrollState } from '../../components/ui/scroll-state.tsx'
 import { currentTenant } from '../../lib/tenant.ts'
+import { ReserveLink } from '../../modules/reservations/booking-dialog.tsx'
 import { formatOpeningSummary } from '../../modules/ressources/ouverture.ts'
 import { listOpeningHours } from '../../modules/ressources/ouverture-queries.ts'
 import { SectionNav } from './section-nav.tsx'
 
 /** Ancres de la page d'accueil. Absolues : elles valent depuis n'importe où. */
 const sections = [
-  { href: '/#espaces', label: 'Nos espaces' },
-  { href: '/#disponibilites', label: 'Disponibilités' },
-  { href: '/#services', label: 'Services' },
+  { href: '/#offres', label: 'Nos offres' },
+  { href: '/#centre', label: 'Le centre' },
+  { href: '/#acces', label: 'Accès' },
   // Pas une ancre : l'accès des entreprises clientes à leur courrier (ADR 015).
   { href: '/compte', label: 'Espace client' },
 ]
@@ -53,41 +54,6 @@ export default async function PortailLayout({ children }: { children: React.Reac
     <div className="portail flex min-h-screen flex-col bg-background text-foreground">
       <a href="#contenu" className="sr-only z-50 rounded-md bg-primary px-5 py-3 text-white focus:not-sr-only focus:inline-flex focus:min-h-11 focus:items-center focus:fixed focus:left-4 focus:top-4">Aller au contenu</a>
       <ScrollState />
-      {/* Sans JavaScript, rien ne viendra révéler les blocs : ils doivent
-          s'afficher d'emblée plutôt que rester invisibles. */}
-      <noscript>
-        <style>{'.reveal{opacity:1;transform:none}'}</style>
-      </noscript>
-      {/* Bandeau de service : ce qu'on cherche avant même de lire la page. */}
-      <div className="hidden border-b border-white/10 bg-primary text-white/90 lg:block">
-        <div className="mx-auto flex max-w-[1200px] items-center gap-6 px-8 py-2 text-xs">
-          <a
-            href={planUrl}
-            target="_blank"
-            rel="noreferrer"
-            className="flex min-h-6 items-center gap-1.5 transition-colors hover:text-white"
-          >
-            <MapPinIcon size={16} />
-            {[adresse, ville].filter(Boolean).join(' — ')}
-          </a>
-          {ouverture && (
-            <span className="flex items-center gap-1.5">
-              <ClockIcon size={16} />
-              {ouverture}
-            </span>
-          )}
-          {tenant.phone && telHref && (
-            <a
-              href={telHref}
-              className="ml-auto flex min-h-6 items-center gap-1.5 font-medium transition-colors hover:text-white"
-            >
-              <PhoneIcon size={16} />
-              {tenant.phone}
-            </a>
-          )}
-        </div>
-      </div>
-
       <header className="sticky top-0 z-20 border-b border-border bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-[1200px] items-center gap-6 px-5 py-3 sm:px-8">
           {/* Le logo garde son air autour de lui : la charte demande au moins la
@@ -126,12 +92,16 @@ export default async function PortailLayout({ children }: { children: React.Reac
                 <PhoneIcon size={20} />
               </a>
             )}
-            <Link
-              href="/#demande"
-              className="press inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-            >
+            {/* Le numéro reste à portée sur grand écran, sans bandeau au-dessus de l'en-tête. */}
+            {tenant.phone && telHref && (
+              <a href={telHref} className="hidden min-h-11 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary transition-colors hover:bg-muted lg:inline-flex">
+                <PhoneIcon size={18} />
+                <span className="tabular">{tenant.phone}</span>
+              </a>
+            )}
+            <ReserveLink className="press inline-flex min-h-11 items-center rounded-md bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover">
               Réserver
-            </Link>
+            </ReserveLink>
           </div>
         </div>
 
@@ -171,13 +141,10 @@ export default async function PortailLayout({ children }: { children: React.Reac
                   {tenant.phone}
                 </a>
               )}
-              <Link
-                href="/#demande"
-                className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-white/40 px-6 py-3.5 font-medium transition-colors hover:bg-white/10"
-              >
-                Demander un créneau
+              <ReserveLink className="press inline-flex min-h-12 items-center justify-center gap-2 rounded-md border border-white/40 px-6 py-3.5 font-medium transition-colors hover:bg-white/10">
+                Demander un devis
                 <ArrowRightIcon size={20} />
-              </Link>
+              </ReserveLink>
             </div>
           </div>
         </div>

@@ -171,3 +171,21 @@ export function BanIcon(props: IconProps) {
     </Svg>
   )
 }
+
+/** Lucide « x » : fermer un dialogue. */
+export function XIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M18 6 6 18M6 6l12 12" />
+    </Svg>
+  )
+}
+
+/** Lucide « arrow-left » : revenir à l'étape précédente. */
+export function ArrowLeftIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M19.5 12h-15M11 5.5 4.5 12l6.5 6.5" />
+    </Svg>
+  )
+}
