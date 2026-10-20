@@ -18,7 +18,15 @@ import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
 import { inOpenBatch } from './tournees.ts'
-import { billablePages, canCorrectPages, scanReportedAt, type OpeningLine } from './regles.ts'
+import {
+  billablePages,
+  billedRequestKinds,
+  canCorrectPages,
+  scanReportedAt,
+  type BilledRequestKind,
+  type OpeningLine,
+  type RequestLine,
+} from './regles.ts'
 import {
   mailItems,
   mailRequests,
@@ -34,6 +42,8 @@ import {
 
 const opener = alias(staffMembers, 'opener')
 const registrar = alias(staffMembers, 'registrar')
+const requester = alias(staffMembers, 'requester')
+const completer = alias(staffMembers, 'completer')
 
 /** Nom affiché d'une personne : son nom s'il est connu, son adresse sinon. */
 const displayName = (table: { fullName: AnyMySqlColumn; email: AnyMySqlColumn }) =>
@@ -462,6 +472,70 @@ export async function listOpenings(range: { startsAt: Date; endsAt: Date }): Pro
       billablePages: billablePages(pageCount, includedPages),
     }
   })
+}
+
+/**
+ * Numérisations demandées et réexpéditions faites dans une période, pour le
+ * relevé (ADR 037, 046) : facturées par leur demande, depuis Dolibarr. Les
+ * demandes d'ouverture n'y sont pas — l'ouverture est relevée par le pli
+ * (`listOpenings`), jamais deux fois. Un pli retiré sort du relevé avec ses
+ * demandes.
+ */
+export async function listDoneRequests(range: { startsAt: Date; endsAt: Date }): Promise<RequestLine[]> {
+  const rows = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .select({
+        mailRequestId: mailRequests.id,
+        mailItemId: mailItems.id,
+        clientId: clients.id,
+        clientName: clients.name,
+        clientSiret: clients.siret,
+        kind: mailRequests.kind,
+        mailKind: mailItems.kind,
+        sender: mailItems.sender,
+        receivedAt: mailItems.receivedAt,
+        requestedAt: mailRequests.requestedAt,
+        requestedByMemberId: mailRequests.requestedByMemberId,
+        requestedByMember: displayName(clientMembers),
+        requestedByStaff: displayName(requester),
+        completedAt: mailRequests.completedAt,
+        completedBy: displayName(completer),
+        // Pages du contenu produit par la demande (ADR 044) : il survit à la
+        // purge du fichier.
+        pageCount: sql<number | null>`(
+          select s.page_count from mail_scans as s
+           where s.tenant_id = ${mailRequests.tenantId} and s.mail_request_id = ${mailRequests.id}
+             and s.side = 'content'
+           order by s.created_at
+           limit 1)`,
+        postageCents: mailRequests.postageCents,
+        postageCurrency: mailRequests.postageCurrency,
+      })
+      .from(mailRequests)
+      .innerJoin(mailItems, eq(mailItems.id, mailRequests.mailItemId))
+      .innerJoin(clients, eq(clients.id, mailRequests.clientId))
+      .leftJoin(clientMembers, eq(clientMembers.id, mailRequests.requestedByMemberId))
+      .leftJoin(requester, eq(requester.id, mailRequests.requestedByStaffId))
+      .leftJoin(completer, eq(completer.id, mailRequests.completedByStaffId))
+      .where(
+        and(
+          eq(mailRequests.status, 'done'),
+          inArray(mailRequests.kind, [...billedRequestKinds]),
+          isNull(mailItems.deletedAt),
+          gte(mailRequests.completedAt, range.startsAt),
+          lt(mailRequests.completedAt, range.endsAt),
+        ),
+      ),
+  )
+  return rows.map(({ requestedByMemberId, requestedByMember, requestedByStaff, ...row }) => ({
+    ...row,
+    // Les bornes sur `completed_at` excluent les demandes en cours : la date est là.
+    kind: row.kind as BilledRequestKind,
+    completedAt: row.completedAt as Date,
+    requestedBy: requestedByMember ?? requestedByStaff,
+    requestedByClient: requestedByMemberId !== null,
+    pageCount: row.pageCount === null ? null : Number(row.pageCount),
+  }))
 }
 
 /* -------------------------------------------------------------------------- */

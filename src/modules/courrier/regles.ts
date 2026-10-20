@@ -58,6 +58,39 @@ export type OpeningLine = {
   billablePages: number
 }
 
+/**
+ * Prestations facturées par leur demande (ADR 037) : la numérisation demandée
+ * d'un pli déjà ouvert et la réexpédition. L'ouverture demandée ne l'est
+ * jamais : elle est relevée par le pli, une fois (`OpeningLine`).
+ */
+export type BilledRequestKind = Exclude<MailRequestKind, 'open_and_scan'>
+
+export const billedRequestKinds: readonly BilledRequestKind[] = ['scan', 'forward']
+
+/** Une demande faite telle qu'elle figure au relevé (ADR 037, 046). */
+export type RequestLine = {
+  mailRequestId: string
+  mailItemId: string
+  clientId: string
+  clientName: string
+  clientSiret: string | null
+  kind: BilledRequestKind
+  mailKind: MailKind
+  sender: string | null
+  receivedAt: Date
+  requestedAt: Date
+  /** La personne de l'entreprise, ou l'accueil qui a noté une consigne. */
+  requestedBy: string | null
+  requestedByClient: boolean
+  completedAt: Date
+  completedBy: string | null
+  /** Pages du contenu d'une numérisation demandée ; nul s'il n'est pas compté, ou pour une réexpédition. */
+  pageCount: number | null
+  /** Frais d'affranchissement relevés d'une réexpédition, en centimes ; nuls tant qu'ils ne le sont pas. */
+  postageCents: number | null
+  postageCurrency: string | null
+}
+
 export type ClientOpenings = {
   clientId: string
   clientName: string
@@ -69,19 +102,23 @@ export type ClientOpenings = {
   pages: number
   billablePages: number
   lines: OpeningLine[]
+  /** Numérisations demandées et réexpéditions faites dans la période. */
+  scans: number
+  forwards: number
+  requests: RequestLine[]
 }
 
 /**
- * Relevé des ouvertures, regroupé par client : ce que le centre reporte sur la
- * facture de chacun.
+ * Relevé du courrier, regroupé par client : ce que le centre reporte sur la
+ * facture de chacun — les ouvertures, puis les numérisations demandées et les
+ * réexpéditions faites (ADR 037, 046).
  *
- * Clients par ordre alphabétique, ouvertures par ordre chronologique — l'ordre
- * dans lequel on vérifie une facture ligne à ligne.
+ * Clients par ordre alphabétique, prestations par ordre chronologique —
+ * l'ordre dans lequel on vérifie une facture ligne à ligne.
  */
-export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
+export function groupOpeningsByClient(lines: OpeningLine[], requests: RequestLine[] = []): ClientOpenings[] {
   const groups = new Map<string, ClientOpenings>()
-
-  for (const line of lines) {
+  const groupOf = (line: { clientId: string; clientName: string; clientSiret: string | null }) => {
     let group = groups.get(line.clientId)
     if (!group) {
       group = {
@@ -93,14 +130,28 @@ export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
         pages: 0,
         billablePages: 0,
         lines: [],
+        scans: 0,
+        forwards: 0,
+        requests: [],
       }
       groups.set(line.clientId, group)
     }
+    return group
+  }
+
+  for (const line of lines) {
+    const group = groupOf(line)
     group.total += 1
     group.pages += line.pageCount ?? 0
     group.billablePages += line.billablePages
     if (openingOrigin(line) === 'client') group.requestedByClient += 1
     group.lines.push(line)
+  }
+  for (const request of requests) {
+    const group = groupOf(request)
+    if (request.kind === 'scan') group.scans += 1
+    else group.forwards += 1
+    group.requests.push(request)
   }
 
   const sorted = [...groups.values()].sort((a, b) =>
@@ -108,6 +159,7 @@ export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
   )
   for (const group of sorted) {
     group.lines.sort((a, b) => a.openedAt.getTime() - b.openedAt.getTime())
+    group.requests.sort((a, b) => a.completedAt.getTime() - b.completedAt.getTime())
   }
   return sorted
 }

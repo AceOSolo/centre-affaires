@@ -9,15 +9,32 @@ import { ouvrirBasesDeTest, raisonDeSaut, viderTables, type TestDatabases } from
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
-import { recordScanRequestDone, requestScan } from './demandes-queries.ts'
-import { correctScanPageCount, PagesLockedError, recordOpening, type StoredScan } from './queries.ts'
+import {
+  completeForwardRequest,
+  recordScanRequestDone,
+  refuseMailRequest,
+  requestForward,
+  requestScan,
+} from './demandes-queries.ts'
+import {
+  correctScanPageCount,
+  listDoneRequests,
+  listOpenings,
+  PagesLockedError,
+  recordOpening,
+  requestOpening,
+  withdrawMail,
+  type StoredScan,
+} from './queries.ts'
 
 /**
  * Le relevé mensuel du courrier, ce que le centre reporte dans Dolibarr
  * (ADR 044, 046), éprouvé contre la base sous l'identité applicative :
  *
  * - le nombre de pages d'un contenu se corrige pendant le mois où il figure au
- *   relevé, plus ensuite — ni par le code, ni par une écriture directe.
+ *   relevé, plus ensuite — ni par le code, ni par une écriture directe ;
+ * - les numérisations demandées et les réexpéditions faites y figurent, une
+ *   fois chacune, sans l'ouverture demandée, déjà relevée par son pli.
  */
 describe('relevé du courrier', { skip: raisonDeSaut }, () => {
   let bases: TestDatabases
@@ -150,6 +167,82 @@ describe('relevé du courrier', { skip: raisonDeSaut }, () => {
       const scanId = await contenuDe(id, demande.requestId)
       assert.equal(await correctScanPageCount(scanId, 3), true)
       assert.equal(await pages(scanId), 3)
+    })
+  })
+
+  describe('numérisations demandées et réexpéditions', () => {
+    const ADRESSE = {
+      recipient: 'Jeanne Durand',
+      line1: '12 rue des Lilas',
+      line2: null,
+      postalCode: '38000',
+      city: 'Grenoble',
+      country: 'FR',
+    }
+    const autour = () => ({ startsAt: new Date(Date.now() - 86_400_000), endsAt: new Date(Date.now() + 86_400_000) })
+
+    /** Une numérisation demandée par Jeanne, faite par l'accueil avec un contenu de `pages` pages. */
+    const numerisee = async (mailItemId: string, pages: number) => {
+      const demande = await requestScan(mailItemId, durand, 'Pages oubliées')
+      assert.ok(demande.ok)
+      await recordScanRequestDone(demande.requestId, CAMILLE, contenu(demande.requestId, pages))
+      return demande.requestId
+    }
+
+    it('relève chaque demande faite une fois, sans l’ouverture demandée', async () => {
+      // Ouverture demandée par Jeanne puis faite : relevée par le pli seulement.
+      const id = await pli()
+      assert.equal(await requestOpening(id, durand), true)
+      await recordOpening(id, CAMILLE, contenu(id, 3))
+      const scan = await numerisee(id, 4)
+      const reexpedition = await requestForward(id, durand, ADRESSE, null)
+      assert.ok(reexpedition.ok)
+      await completeForwardRequest(reexpedition.requestId, CAMILLE, { trackingNumber: null, postageCents: 450 })
+
+      const ouvertures = await listOpenings(autour())
+      assert.deepEqual(
+        ouvertures.map((ligne) => [ligne.mailItemId, ligne.pageCount, ligne.requestedBy]),
+        [[id, 3, 'Jeanne Durand']],
+      )
+      const demandes = await listDoneRequests(autour())
+      assert.deepEqual(
+        demandes
+          .map((ligne) => [
+            ligne.mailRequestId,
+            ligne.kind,
+            ligne.clientName,
+            ligne.pageCount,
+            ligne.postageCents,
+            ligne.requestedBy,
+            ligne.requestedByClient,
+            ligne.completedBy,
+          ])
+          .sort((a, b) => String(a[1]).localeCompare(String(b[1]))),
+        [
+          [reexpedition.requestId, 'forward', 'Atelier Durand', null, 450, 'Jeanne Durand', true, 'Camille'],
+          [scan, 'scan', 'Atelier Durand', 4, null, 'Jeanne Durand', true, 'Camille'],
+        ],
+      )
+      assert.ok(demandes.every((ligne) => ligne.mailItemId === id && ligne.completedAt instanceof Date))
+    })
+
+    it('ignore les demandes en cours, refusées, d’une autre période et celles d’un pli retiré', async () => {
+      const { id } = await ouvert(1)
+      const enCours = await requestScan(id, durand, null)
+      assert.ok(enCours.ok)
+      const autre = await ouvert(1)
+      const refusee = await requestScan(autre.id, durand, null)
+      assert.ok(refusee.ok)
+      await refuseMailRequest(refusee.requestId, CAMILLE, 'Pli illisible.')
+      const retire = await ouvert(1)
+      await numerisee(retire.id, 2)
+      await withdrawMail(retire.id)
+      assert.deepEqual(await listDoneRequests(autour()), [])
+
+      const faite = await numerisee((await ouvert(1)).id, 2)
+      assert.deepEqual((await listDoneRequests(autour())).map((ligne) => ligne.mailRequestId), [faite])
+      const lendemain = { startsAt: new Date(Date.now() + 86_400_000), endsAt: new Date(Date.now() + 2 * 86_400_000) }
+      assert.deepEqual(await listDoneRequests(lendemain), [])
     })
   })
 })
