@@ -59,6 +59,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 042 | [MySQL sur le VPS, Better Auth auto-hébergé, fin de la RLS](042-mysql-sur-le-vps.md) | 2026-10-15 | accepté ; remplace l'ADR 003 |
 | 043 | [Demandes par produit, devis structuré repris par Dolibarr](043-demandes-par-produit-et-devis-dolibarr.md) | 2026-10-20 | accepté ; amende l'ADR 016 (Dolibarr fait devis et factures, bascule de la facturation renvoyée à un ADR suivant) ; précise les ADR 005 et 036 ; questionnaires à valider par le centre |
 | 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix tranchés par le centre (accueil : rattacher ; filtre des clients) |
+| 046 | [Dolibarr tient le commercial et la facturation ; le back-office est rangé par produit](046-dolibarr-commercial-et-facturation-admin-par-produit.md) | 2026-10-20 | accepté ; amende l'ADR 016, met en sommeil les ADR 026 à 034, tranche l'ADR 043 § 6 ; première tranche faite (facturation coupée, menu par produit), passerelle entrante à construire avec le développeur Dolibarr |
 
 ## Numéros en double et numéro manquant
 

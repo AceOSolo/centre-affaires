@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { staffRoleLabels } from '../../../db/staff.ts'
 import {
+  inDolibarr,
   isPermission,
   permissionLabels,
   rolesAllowed,
@@ -33,7 +34,13 @@ export default async function AccesReservePage({
     <div className="flex max-w-2xl flex-col gap-4">
       <h1 className="text-2xl font-semibold tracking-tight">Accès réservé</h1>
       <div className="rounded-lg border border-border bg-white px-5 py-4 text-sm">
-        {permission ? (
+        {permission && inDolibarr(permission) ? (
+          // Pas une question de rôle : l'écran a quitté le site (ADR 046).
+          <p>
+            Les factures, les règlements, les prélèvements et l’export comptable se gèrent
+            désormais dans Dolibarr. Le site ne facture plus : ouvrez Dolibarr pour cette opération.
+          </p>
+        ) : permission ? (
           <p>
             Cette page ou cette action relève du droit «&nbsp;{permissionLabels[permission]}&nbsp;»,
             réservé {roles.length > 1 ? 'aux rôles' : 'au rôle'} {roles.join(', ')}.
@@ -41,10 +48,12 @@ export default async function AccesReservePage({
         ) : (
           <p>Cette page ou cette action n’est pas ouverte à votre rôle.</p>
         )}
-        <p className="mt-2 text-muted-foreground">
-          Votre rôle : {staffRoleLabels[member.role]}. Si vous en avez besoin, demandez à un
-          exploitant du centre de s’en charger ou de changer votre rôle depuis l’écran Équipe.
-        </p>
+        {!(permission && inDolibarr(permission)) && (
+          <p className="mt-2 text-muted-foreground">
+            Votre rôle : {staffRoleLabels[member.role]}. Si vous en avez besoin, demandez à un
+            exploitant du centre de s’en charger ou de changer votre rôle depuis l’écran Équipe.
+          </p>
+        )}
       </div>
       <div>
         <Link

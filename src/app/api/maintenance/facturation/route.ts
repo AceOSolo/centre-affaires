@@ -1,51 +1,18 @@
-import { eq } from 'drizzle-orm'
-
-import { withTenant } from '../../../../db/index.ts'
-import { tenants } from '../../../../db/tenants.ts'
-import { isIsoMonth, todayIsoDate } from '../../../../lib/dates.ts'
 import { isMaintenanceRequest, maintenanceNotFound } from '../../../../lib/maintenance.ts'
-import { currentTenantId } from '../../../../lib/tenant.ts'
-import { InvoiceRunInProgressError, runInvoicing } from '../../../../modules/facturation/lot-queries.ts'
 
 /**
- * Lot de facturation planifié (R13, ADR 029, ADR 033) : prépare les factures
- * brouillons du mois du centre, comme le bouton de `/factures/preparer`, sans
- * membre de l'équipe (`invoice_runs.created_by` nul). Le lot n'émet rien :
- * l'équipe relit, puis émet.
+ * Ancien lot de facturation planifié (R13, ADR 029, ADR 033), arrêté : la
+ * facturation est tenue dans Dolibarr (ADR 046). Le site n'en prépare plus
+ * aucune, pour qu'un client ne soit jamais facturé deux fois.
  *
- * Appelée le 1er de chaque mois par une tâche du serveur
- * (infra/serveur/README.md), avec le jeton `MAINTENANCE_TOKEN`. `?mois=AAAA-MM`
- * rejoue un autre mois, à la main. Rejouable : un lot ne refacture rien.
- *
- * Réponses : 200 et le bilan ; 409 si un lot tourne déjà ; 400 pour un mois
- * illisible ; 404 sans jeton.
+ * La route répond encore, en 410, tant que la tâche du 1er du mois n'est pas
+ * retirée de la crontab du serveur (infra/serveur/README.md) : son échec dans
+ * le journal le rappelle. Sans jeton, 404, comme toute route de maintenance.
  */
 export async function POST(request: Request) {
   if (!isMaintenanceRequest(request)) return maintenanceNotFound()
-
-  const requested = new URL(request.url).searchParams.get('mois')
-  if (requested !== null && !isIsoMonth(requested)) {
-    return Response.json({ error: `Mois illisible : « ${requested} » (attendu : AAAA-MM).` }, { status: 400 })
-  }
-  const tenantId = currentTenantId()
-  const month =
-    requested ??
-    (await withTenant(tenantId, async (tx) => {
-      const [tenant] = await tx
-        .select({ timezone: tenants.timezone })
-        .from(tenants)
-        .where(eq(tenants.id, tenantId))
-      // Le mois du centre, pas celui du serveur (décision 4).
-      return todayIsoDate(tenant.timezone).slice(0, 7)
-    }))
-
-  try {
-    const { runId, report } = await runInvoicing(month, null)
-    return Response.json({ runId, month, ...report })
-  } catch (error) {
-    if (error instanceof InvoiceRunInProgressError) {
-      return Response.json({ month, error: error.message }, { status: 409 })
-    }
-    throw error
-  }
+  return Response.json(
+    { error: 'Facturation tenue dans Dolibarr (ADR 046) : retirer cette tâche de la crontab.' },
+    { status: 410 },
+  )
 }

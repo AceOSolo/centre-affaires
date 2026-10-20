@@ -10,10 +10,10 @@ import { staffRoleLabels, type StaffRole } from '../../db/staff.ts'
  * serveur du back-office, qui refuse ce que le rôle ne permet pas.
  *
  * Répartition : l'accueil tient l'opérationnel du quotidien — planning,
- * demandes, courrier, fiches clients, lecture des contrats et des factures ;
- * l'exploitant fait tout, dont les tarifs, les services, les contrats et
- * leurs avenants, la facturation, les paiements, l'export comptable, les
- * indicateurs, l'équipe et la configuration du centre (ADR 026, 027).
+ * demandes, courrier, fiches clients, lecture des contrats ; l'exploitant
+ * fait tout, dont les tarifs, les services, les contrats et leurs avenants,
+ * les indicateurs, l'équipe et la configuration du centre. La facturation,
+ * les paiements et l'export comptable sont dans Dolibarr (ADR 046).
  *
  * Module pur, sans Next ni accès à la base : il s'éprouve seul
  * (`permissions.test.ts`). La coque du back-office en tire la liste des droits
@@ -106,9 +106,6 @@ const accueil: readonly Permission[] = [
   'clients.gerer',
   'courrier.gerer',
   'contrats.consulter',
-  // Répondre à un client sur sa facture fait partie de l'accueil ; facturer,
-  // pointer un paiement ou un mandat, exporter vers la comptabilité, non.
-  'facturation.consulter',
   // Dire à un client si un message est parti ; faire l'état des lieux d'une
   // entrée ou d'une sortie. Les modèles et l'anonymisation engagent le centre.
   'notifications.consulter',
@@ -119,12 +116,30 @@ const accueil: readonly Permission[] = [
 ]
 
 /**
+ * Droits de la facturation, tenue dans Dolibarr (ADR 046) : factures,
+ * règlements, prélèvements, export comptable. Ils restent dans la liste — un
+ * identifiant de droit ne se recycle pas —, mais aucun rôle ne les a plus :
+ * les écrans du site renvoient à « Accès réservé », qui dit où aller.
+ */
+export const dolibarrPermissions: readonly Permission[] = [
+  'facturation.consulter',
+  'facturation.gerer',
+  'paiements.gerer',
+  'comptabilite.exporter',
+]
+
+/** Le droit est-il passé dans Dolibarr ? */
+export function inDolibarr(permission: Permission): boolean {
+  return dolibarrPermissions.includes(permission)
+}
+
+/**
  * La matrice : `admin` est l'exploitant, `staff` l'accueil (ADR 019). Toute
  * valeur de `staff_role` y figure — le `Record` le fait vérifier par le
  * compilateur le jour où un rôle s'ajoute.
  */
 export const rolePermissions: Record<StaffRole, readonly Permission[]> = {
-  admin: permissions,
+  admin: permissions.filter((permission) => !inDolibarr(permission)),
   staff: accueil,
 }
 

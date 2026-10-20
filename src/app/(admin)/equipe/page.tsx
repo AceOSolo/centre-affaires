@@ -1,7 +1,7 @@
 import { CheckIcon } from '../../../components/ui/icons.tsx'
 import { staffRoleLabels, staffRoles, type StaffRole } from '../../../db/staff.ts'
 import { findTeamMember, listTeamMembers } from '../../../lib/auth/equipe.ts'
-import { can, permissionLabels, permissions } from '../../../lib/auth/permissions.ts'
+import { can, inDolibarr, permissionLabels, permissions } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { RemovedStaffSection } from '../../../modules/rgpd/staff-section.tsx'
@@ -162,7 +162,8 @@ export default async function EquipePage({
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
-              {permissions.map((permission) => (
+              {/* La facturation, dans Dolibarr, n'est plus un droit du site (ADR 046). */}
+              {permissions.filter((permission) => !inDolibarr(permission)).map((permission) => (
                 <tr key={permission}>
                   <td className="px-4 py-2">{permissionLabels[permission]}</td>
                   {staffRoles.map((role) => (

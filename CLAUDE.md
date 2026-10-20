@@ -122,12 +122,15 @@ Conséquence sur les choix dès maintenant : les factures sont stockées en
 de vérité. L'émission passera par une plateforme agréée, jamais par du code
 maison.
 
-**Dolibarr fait les devis et les factures (ADR 043).** L'application recueille
-les demandes par produit (salle ou bureau, camion, domiciliation) et en fait
-des devis structurés que Dolibarr vient chercher (`/api/dolibarr/devis`,
-`docs/integrations/dolibarr.md`). La bascule de la facturation interne vers
-Dolibarr reste à trancher dans un ADR ; d'ici là, une réservation qui a un
-devis vivant n'est jamais facturée par le lot de l'application.
+**Dolibarr tient le commercial et la facturation (ADR 043, ADR 046).** Tiers,
+devis, contrats, offres, services, tarifs, factures, règlements,
+prélèvements, relances et export comptable sont dans Dolibarr ; le site garde
+l'opérationnel et fait la passerelle, par une API à lui que le connecteur
+Dolibarr appelle (`/api/dolibarr/*`, `docs/integrations/dolibarr.md`) :
+devis et consommations facturables vers Dolibarr, tiers, contrats et tarifs
+depuis Dolibarr. Les droits de facturation ne sont accordés à aucun rôle et
+le lot planifié est arrêté : **ne pas rouvrir d'écran ni de tâche qui facture
+depuis le site**. Le code et les tables de facturation restent en sommeil.
 
 ## RGPD
 
@@ -193,6 +196,14 @@ travail quotidien :
 - Sélection multiple et actions groupées dès qu'une action se répète ligne par
   ligne.
 - Un état vide dit quoi faire ensuite, il ne laisse pas un écran blanc.
+
+### Back-office rangé par produit
+
+Le menu a un rayon par produit (ADR 046) : Salles, Bureaux (et casiers),
+Domiciliation (courrier, boîtes aux lettres), Camion. Le regroupement des
+types de ressource vit dans `src/modules/ressources/produits.ts`, jamais en
+base. Un nouvel écran lié à un type de ressource se range dans le rayon de
+son produit et se filtre par `?type=` ou `?produit=`.
 
 ### Mise en page
 

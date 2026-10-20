@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import { staffRoles } from '../../db/staff.ts'
 import {
   can,
+  dolibarrPermissions,
   isPermission,
   permissionLabels,
   permissions,
@@ -26,7 +27,6 @@ describe('matrice des droits', () => {
     'clients.gerer',
     'courrier.gerer',
     'contrats.consulter',
-    'facturation.consulter',
     'notifications.consulter',
     'etats-des-lieux.gerer',
     'comptes.rattacher',
@@ -45,9 +45,6 @@ describe('matrice des droits', () => {
     'contrats.avenants',
     'services.gerer',
     'souscriptions.gerer',
-    'facturation.gerer',
-    'paiements.gerer',
-    'comptabilite.exporter',
     'indicateurs.consulter',
     'clients.archiver',
     'courrier.releve',
@@ -64,8 +61,23 @@ describe('matrice des droits', () => {
     assert.deepEqual(Object.keys(rolePermissions).sort(), [...staffRoles].sort())
   })
 
-  it('donne tout à l’exploitant', () => {
-    for (const permission of permissions) assert.equal(can('admin', permission), true, permission)
+  /** Tenu dans Dolibarr (ADR 046) : personne, sur le site. */
+  const dolibarr: Permission[] = [
+    'facturation.consulter',
+    'facturation.gerer',
+    'paiements.gerer',
+    'comptabilite.exporter',
+  ]
+
+  it('donne tout à l’exploitant, sauf ce qui est dans Dolibarr', () => {
+    for (const permission of permissions) {
+      assert.equal(can('admin', permission), !dolibarr.includes(permission), permission)
+    }
+  })
+
+  it('ne donne la facturation à aucun rôle : elle est dans Dolibarr', () => {
+    assert.deepEqual([...dolibarrPermissions].sort(), [...dolibarr].sort())
+    for (const permission of dolibarr) assert.deepEqual(rolesAllowed(permission), [], permission)
   })
 
   it('donne à l’accueil l’opérationnel du quotidien', () => {
@@ -82,7 +94,7 @@ describe('matrice des droits', () => {
   it('classe chaque droit : aucun n’échappe à la répartition', () => {
     // Un droit ajouté sans décision explicite sur l'accueil fait échouer ce
     // test : la répartition se tranche, elle ne s'hérite pas par défaut.
-    assert.deepEqual([...quotidien, ...reserve].sort(), [...permissions].sort())
+    assert.deepEqual([...quotidien, ...reserve, ...dolibarr].sort(), [...permissions].sort())
   })
 
   it('ne permet rien sans rôle', () => {
@@ -99,7 +111,10 @@ describe('matrice des droits', () => {
   })
 
   it('rend les droits d’un rôle dans l’ordre de la liste', () => {
-    assert.deepEqual(permissionsOf('admin'), [...permissions])
+    assert.deepEqual(
+      permissionsOf('admin'),
+      permissions.filter((permission) => !dolibarr.includes(permission)),
+    )
     assert.deepEqual(permissionsOf('staff'), quotidien)
   })
 

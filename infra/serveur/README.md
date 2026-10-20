@@ -383,38 +383,32 @@ Le journal de l'application (`docker compose logs app`) en garde une ligne
 « Conservation (RGPD) : … » par nuit, et une ligne « Conservation : l'étape
 « … » a échoué » par étape à reprendre.
 
-## Reconduction tacite et lot de facturation planifiés
+## Reconduction tacite des contrats
 
-Deux tâches de la facturation (R10, R13,
+Tâche de la facturation (R10,
 [ADR 033](../../docs/decisions/033-taches-planifiees-de-la-facturation.md)),
-appelées comme la purge, avec le même `MAINTENANCE_TOKEN` :
+appelée comme la purge, avec le même `MAINTENANCE_TOKEN` : **chaque nuit**,
+la reconduction tacite des contrats. Un contrat dont le préavis ne peut plus
+mettre fin au contrat à son terme est prolongé d'une période, et la
+prolongation est inscrite à son journal (fiche du contrat). Avant la
+sauvegarde de 3 h 45, pour qu'elle contienne les nouveaux termes.
 
-- **Chaque nuit**, la reconduction tacite des contrats : un contrat dont le
-  préavis ne peut plus mettre fin au contrat à son terme est prolongé d'une
-  période, et la prolongation est inscrite à son journal (fiche du contrat).
-  Avant la sauvegarde de 3 h 45, pour qu'elle contienne les nouveaux termes.
-- **Le 1er de chaque mois**, le lot de facturation du mois : les factures
-  brouillons de chaque client, comme le bouton « Préparer » de
-  `/factures/preparer`, au journal des lots sous « Tâche planifiée ». Rien
-  n'est émis : l'équipe relit, puis émet. Après la reconduction de la nuit,
-  pour que les contrats reconduits soient facturés.
+**Le lot de facturation du 1er du mois est arrêté** : la facturation est
+tenue dans Dolibarr ([ADR 046](../../docs/decisions/046-dolibarr-commercial-et-facturation-admin-par-produit.md)).
+Si la crontab porte encore sa ligne (`…/api/maintenance/facturation`),
+la retirer : la route répond `410` et ne prépare plus rien.
 
 Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 
 ```cron
 # Reconduction tacite des contrats, chaque nuit à 3 h 05 (ADR 033).
 5 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/contrats',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
-# Lot de facturation du mois, le 1er à 6 h 00 (ADR 033).
-0 6 1 * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/facturation',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
 La reconduction répond `{"renewed":[…],"failures":[…]}` : un contrat dont la
 ressource est déjà prise après le terme n'est pas prolongé, et figure dans
 `failures` avec la cause, chaque nuit, jusqu'à ce que l'équipe libère la
-ressource ou résilie le contrat. Le lot répond son bilan (brouillons créés,
-complétés, lignes, avertissements), ou `409` si un lot tourne déjà : le
-relancer à la main une fois l'autre terminé. Pour rejouer un autre mois :
-`…/api/maintenance/facturation?mois=2026-10`.
+ressource ou résilie le contrat.
 
 ## Chiffrement des documents
 
