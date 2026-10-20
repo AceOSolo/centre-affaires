@@ -49,7 +49,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const logo = (
     <Link
-      href="/reservations"
+      href="/aujourdhui"
       className="flex items-center rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
     >
       {tenant.logoPath ? (

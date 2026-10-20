@@ -42,7 +42,7 @@ export default async function CompteLayout({ children }: { children: React.React
           <Link href="/compte/historique" className={secondaryLink}>Historique</Link>
           <Link href="/compte/preferences" className={secondaryLink}>Préférences</Link>
           {staff.status === 'membre' && (
-            <Link href="/reservations" className={secondaryLink}>Back-office</Link>
+            <Link href="/aujourdhui" className={secondaryLink}>Back-office</Link>
           )}
           <SignOutButton className="inline-flex min-h-11 items-center rounded-md border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60" />
         </div>

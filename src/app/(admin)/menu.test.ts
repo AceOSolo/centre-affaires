@@ -20,10 +20,10 @@ const pageExists = (href: string) => {
 const entries = menuGroups.flatMap((group) => group.entries)
 
 describe('menu du back-office', () => {
-  it('suit le parcours : ce qui arrive, commande, administratif, gestion, retour client, réglages', () => {
+  it('ouvre sur la journée, puis suit le parcours : ce qui arrive, commande, administratif, gestion, retour client, réglages', () => {
     assert.deepEqual(
       menuGroups.map((group) => group.label),
-      ['Ce qui arrive', 'Commande', 'Administratif', 'Gestion', 'Retour client', 'Réglages'],
+      ['Aujourd’hui', 'Ce qui arrive', 'Commande', 'Administratif', 'Gestion', 'Retour client', 'Réglages'],
     )
   })
 

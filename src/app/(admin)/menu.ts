@@ -1,4 +1,5 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
+import { todayPermissions } from './aujourdhui/journee.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -29,6 +30,11 @@ export type MenuEntry = {
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
 export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
+  // Page d'arrivée de l'équipe (ADR 050) : ce qui attend, puis la journée.
+  {
+    label: 'Aujourd’hui',
+    entries: [{ href: '/aujourdhui', label: 'Aujourd’hui', permission: todayPermissions }],
+  },
   {
     label: 'Ce qui arrive',
     entries: [

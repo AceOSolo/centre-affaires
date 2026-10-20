@@ -14,7 +14,7 @@ import { clientAccess } from '../../../../modules/clients/session.ts'
 export default async function SuitePage() {
   const staff = await staffAccess()
   if (staff.status === 'anonyme') redirect('/auth/connexion')
-  if (staff.status === 'membre') redirect('/reservations')
+  if (staff.status === 'membre') redirect('/aujourdhui')
 
   const client = await clientAccess()
   redirect(client.status === 'client' ? '/compte' : '/auth/acces-refuse')

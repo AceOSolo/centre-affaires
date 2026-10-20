@@ -58,7 +58,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
   // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
-  const redirectTo = safeRedirect(searchParams.get('redirect')) ?? (equipe ? '/reservations' : '/auth/suite')
+  const redirectTo = safeRedirect(searchParams.get('redirect')) ?? (equipe ? '/aujourdhui' : '/auth/suite')
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()

@@ -55,6 +55,8 @@ export function Nav({
       {visibles.map((group, index) => {
         const titleId = `${prefix}-${group.label.replace(/\s+/g, '-')}`
         const last = index === visibles.length - 1 && group.label === 'Réglages'
+        // Un groupe d'une seule entrée du même nom (« Aujourd’hui ») n'a pas besoin de titre visible.
+        const solo = group.entries.length === 1 && group.entries[0].label === group.label
         return (
           <div
             key={group.label}
@@ -67,7 +69,7 @@ export function Nav({
               // Le dernier groupe n'a qu'une entrée du même nom : son titre
               // reste lu par les lecteurs d'écran, sans répéter le libellé à l'œil.
               className={
-                last ? 'sr-only' : 'px-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground'
+                last || solo ? 'sr-only' : 'px-3 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground'
               }
             >
               {group.label}
