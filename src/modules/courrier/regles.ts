@@ -1,4 +1,5 @@
-import type { MailKind, MailStatus } from './schema.ts'
+import { toIsoDate } from '../../lib/dates.ts'
+import type { MailKind, MailRequestKind, MailStatus } from './schema.ts'
 
 /**
  * Règles du courrier (ADR 015). Sans base ni framework, pour être éprouvées
@@ -120,4 +121,28 @@ export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
 export function billablePages(pageCount: number | null, includedPages: number): number {
   if (pageCount === null || pageCount <= 0) return 0
   return Math.max(0, pageCount - Math.max(0, includedPages))
+}
+
+/**
+ * L'instant qui place un contenu numérisé au relevé du mois : la fin de la
+ * numérisation demandée qui l'a produit (ADR 037), sinon l'ouverture du pli —
+ * d'office ou sur demande d'ouverture. Nul si rien ne le date.
+ */
+export function scanReportedAt(
+  request: { kind: MailRequestKind; completedAt: Date | null } | null | undefined,
+  openedAt: Date | null,
+): Date | null {
+  return request?.kind === 'scan' ? request.completedAt : openedAt
+}
+
+/**
+ * Le nombre de pages d'un contenu se corrige tant que le mois où il figure au
+ * relevé n'est pas terminé, en mois civil du centre. Ensuite, le relevé a pu
+ * être reporté dans Dolibarr (ADR 046) : la correction se fait là-bas, et le
+ * relevé du site ne change plus en silence. La base tient la même règle
+ * (`mail_scans_before_update`, `CA017`).
+ */
+export function canCorrectPages(reportedAt: Date | null, now: Date, timeZone: string): boolean {
+  if (!reportedAt) return true
+  return toIsoDate(reportedAt, timeZone).slice(0, 7) >= toIsoDate(now, timeZone).slice(0, 7)
 }

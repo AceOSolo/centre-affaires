@@ -11,13 +11,14 @@ import { staffMembers } from '../../db/staff.ts'
 import { tenants } from '../../db/tenants.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
+import { formatIsoMonth, toIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
 import { inOpenBatch } from './tournees.ts'
-import { billablePages, type OpeningLine } from './regles.ts'
+import { billablePages, canCorrectPages, scanReportedAt, type OpeningLine } from './regles.ts'
 import {
   mailItems,
   mailRequests,
@@ -263,13 +264,48 @@ export async function registerMail(
 }
 
 /**
+ * Levée quand le relevé du mois d'un contenu est clos : ses pages ont pu être
+ * reportées dans Dolibarr (ADR 046), c'est là qu'elles se corrigent.
+ */
+export class PagesLockedError extends Error {
+  constructor(month: string) {
+    super(
+      `Le relevé de ${formatIsoMonth(month)} est clos : ces pages ont pu être reportées dans Dolibarr. Corrigez-les dans Dolibarr.`,
+    )
+    this.name = 'PagesLockedError'
+  }
+}
+
+/**
  * Correction du nombre de pages d'un contenu par l'accueil (ADR 044). Faux :
- * pas de contenu compté sous cet identifiant. La base refuse une correction
- * de pages déjà facturées (`CA017`).
+ * pas de contenu compté sous cet identifiant. Refusée une fois terminé le mois
+ * où le contenu figure au relevé (`canCorrectPages`, `PagesLockedError`) ; la
+ * base tient la même règle, et refuse aussi des pages facturées (`CA017`).
  */
 export async function correctScanPageCount(scanId: string, pages: number): Promise<boolean> {
   if (!isUuid(scanId)) return false
   return withTenant(currentTenantId(), async (tx) => {
+    const [scan] = await tx
+      .select({
+        requestKind: mailRequests.kind,
+        requestCompletedAt: mailRequests.completedAt,
+        openedAt: mailItems.openedAt,
+        timeZone: tenants.timezone,
+      })
+      .from(mailScans)
+      .innerJoin(mailItems, eq(mailItems.id, mailScans.mailItemId))
+      .innerJoin(tenants, eq(tenants.id, mailScans.tenantId))
+      .leftJoin(mailRequests, eq(mailRequests.id, mailScans.mailRequestId))
+      .where(and(eq(mailScans.id, scanId), eq(mailScans.side, 'content'), isNotNull(mailScans.pageCount)))
+      .limit(1)
+    if (!scan) return false
+    const reportedAt = scanReportedAt(
+      scan.requestKind ? { kind: scan.requestKind, completedAt: scan.requestCompletedAt } : null,
+      scan.openedAt,
+    )
+    if (reportedAt && !canCorrectPages(reportedAt, new Date(), scan.timeZone)) {
+      throw new PagesLockedError(toIsoDate(reportedAt, scan.timeZone).slice(0, 7))
+    }
     const rows = await updateReturning(
       tx,
       mailScans,

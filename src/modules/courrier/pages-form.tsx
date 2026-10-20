@@ -9,8 +9,8 @@ const fieldClass =
 
 /**
  * Correction du nombre de pages d'un contenu (ADR 044) : un compte faux se
- * reprend tant que la facture qui le tient n'est pas faite. Repliée : c'est
- * l'exception, pas le geste courant.
+ * reprend tant que le relevé de son mois n'est pas clos ; ensuite, dans
+ * Dolibarr (ADR 046). Repliée : c'est l'exception, pas le geste courant.
  */
 export function CorrectPagesForm({
   mailItemId,

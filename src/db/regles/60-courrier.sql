@@ -128,6 +128,10 @@ BEFORE UPDATE ON mail_scans
 FOR EACH ROW
 BEGIN
   DECLARE v_client CHAR(36);
+  DECLARE v_reported_at DATETIME(3);
+  DECLARE v_time_zone VARCHAR(64);
+  DECLARE v_reported_month CHAR(7);
+  DECLARE v_current_month CHAR(7);
   IF @app_client_ids IS NOT NULL THEN
     SELECT client_id INTO v_client FROM mail_items
      WHERE tenant_id = NEW.tenant_id AND id = NEW.mail_item_id;
@@ -136,9 +140,10 @@ BEGIN
         MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
     END IF;
   END IF;
-  -- Pages (ADR 044) : l'accueil corrige un compte faux tant qu'aucune facture
-  -- ne tient la numérisation. Jamais posées ni effacées après le dépôt, jamais
-  -- touchées depuis l'espace client.
+  -- Pages (ADR 044) : l'accueil corrige un compte faux tant que le relevé de
+  -- son mois n'est pas clos (ADR 046) et qu'aucune facture ne tient la
+  -- numérisation. Jamais posées ni effacées après le dépôt, jamais touchées
+  -- depuis l'espace client.
   IF NOT (NEW.page_count <=> OLD.page_count) THEN
     IF @app_client_ids IS NOT NULL THEN
       SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
@@ -154,6 +159,28 @@ BEGIN
     ) THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA017: Ces pages sont déjà facturées : un avoir doit d''abord libérer la ligne.';
+    END IF;
+    -- Le relevé du mois est ce que le centre reporte dans Dolibarr : une fois
+    -- le mois terminé (mois civil du centre), il ne change plus en silence.
+    -- Le contenu y figure à la fin de sa numérisation demandée, sinon à
+    -- l'ouverture du pli (`scanReportedAt`, courrier/regles.ts).
+    SELECT CASE WHEN r.kind = 'scan' THEN r.completed_at ELSE i.opened_at END, t.timezone
+      INTO v_reported_at, v_time_zone
+      FROM mail_items AS i
+      JOIN tenants AS t ON t.id = i.tenant_id
+      LEFT JOIN mail_requests AS r ON r.tenant_id = i.tenant_id AND r.id = NEW.mail_request_id
+     WHERE i.tenant_id = NEW.tenant_id AND i.id = NEW.mail_item_id;
+    IF v_reported_at IS NOT NULL THEN
+      SET v_reported_month = DATE_FORMAT(CONVERT_TZ(v_reported_at, '+00:00', v_time_zone), '%Y-%m');
+      SET v_current_month = DATE_FORMAT(CONVERT_TZ(UTC_TIMESTAMP(3), '+00:00', v_time_zone), '%Y-%m');
+      IF v_reported_month IS NULL OR v_current_month IS NULL THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+          'Fuseaux horaires MySQL non chargés (mysql_tzinfo_to_sql) : pages non corrigées.';
+      END IF;
+      IF v_reported_month < v_current_month THEN
+        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+          'CA017: Le relevé de ce mois est clos : le nombre de pages se corrige dans Dolibarr.';
+      END IF;
     END IF;
   END IF;
 END;

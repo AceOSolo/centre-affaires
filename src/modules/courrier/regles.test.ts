@@ -3,10 +3,12 @@ import { describe, it } from 'node:test'
 
 import {
   canCancelOpeningRequest,
+  canCorrectPages,
   canOpen,
   canRequestOpening,
   groupOpeningsByClient,
   openingOrigin,
+  scanReportedAt,
   type OpeningLine,
 } from './regles.ts'
 
@@ -104,5 +106,37 @@ describe('relevé des ouvertures', () => {
 
   it('rend un relevé vide sans ouverture', () => {
     assert.deepEqual(groupOpeningsByClient([]), [])
+  })
+})
+
+describe('correction du nombre de pages (ADR 044, 046)', () => {
+  const paris = 'Europe/Paris'
+  // 1er octobre 0h30 à Paris, encore le 30 septembre en UTC.
+  const ouvertLe = new Date('2026-09-30T22:30:00Z')
+
+  it('se corrige pendant le mois du relevé, à l’heure du centre', () => {
+    // 31 octobre 23h59 à Paris (heure d'hiver) : octobre n'est pas fini.
+    assert.equal(canCorrectPages(ouvertLe, new Date('2026-10-31T22:59:00Z'), paris), true)
+  })
+
+  it('ne se corrige plus ici une fois le mois terminé : il a pu être reporté dans Dolibarr', () => {
+    // 1er novembre 0h00 à Paris.
+    assert.equal(canCorrectPages(ouvertLe, new Date('2026-10-31T23:00:00Z'), paris), false)
+    assert.equal(canCorrectPages(ouvertLe, new Date('2027-01-15T10:00:00Z'), paris), false)
+  })
+
+  it('compte le mois du centre, pas celui du serveur', () => {
+    // 30 septembre 23h30 UTC : déjà octobre à Paris, encore septembre à New York.
+    const fin = new Date('2026-09-30T23:30:00Z')
+    assert.equal(canCorrectPages(new Date('2026-09-30T20:00:00Z'), fin, paris), false)
+    assert.equal(canCorrectPages(new Date('2026-09-30T20:00:00Z'), fin, 'America/New_York'), true)
+  })
+
+  it('date un contenu par sa numérisation demandée, sinon par l’ouverture du pli', () => {
+    const faite = new Date('2026-11-03T09:00:00Z')
+    assert.equal(scanReportedAt({ kind: 'scan', completedAt: faite }, ouvertLe), faite)
+    // Le contenu d'une ouverture demandée est celui de l'ouverture.
+    assert.equal(scanReportedAt({ kind: 'open_and_scan', completedAt: faite }, ouvertLe), ouvertLe)
+    assert.equal(scanReportedAt(null, ouvertLe), ouvertLe)
   })
 })

@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
-import { formatDateTime } from '../../../../lib/dates.ts'
+import { formatDateTime, formatIsoMonth, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
 import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
@@ -18,7 +18,7 @@ import {
 import { OpenForm } from '../../../../modules/courrier/open-form.tsx'
 import { CorrectPagesForm } from '../../../../modules/courrier/pages-form.tsx'
 import { findMail } from '../../../../modules/courrier/queries.ts'
-import { canOpen, openingOrigin } from '../../../../modules/courrier/regles.ts'
+import { canCorrectPages, canOpen, openingOrigin, scanReportedAt } from '../../../../modules/courrier/regles.ts'
 
 export const metadata = { title: 'Courrier' }
 
@@ -62,6 +62,7 @@ export default async function CourrierDetailPage({
   const withdrawn = Boolean(mail.deletedAt)
   const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
   const scanOrigin = new Map(requests.map((request) => [request.id, request]))
+  const now = new Date()
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -99,7 +100,7 @@ export default async function CourrierDetailPage({
 
       {fait && notices[fait] && <FlashNotice key={fait}>{notices[fait]}</FlashNotice>}
       {pages === 'corrigees' && (
-        <FlashNotice key="pages">Nombre de pages corrigé. Le prochain lot de facturation en tient compte.</FlashNotice>
+        <FlashNotice key="pages">Nombre de pages corrigé. Le relevé du mois en tient compte.</FlashNotice>
       )}
 
       <dl className="grid grid-cols-[11rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
@@ -179,15 +180,29 @@ export default async function CourrierDetailPage({
         )}
         {mail.scans
           .filter((scan) => scan.side === 'content' && scan.pageCount !== null)
-          .map((scan) => (
-            <CorrectPagesForm
-              key={scan.id}
-              mailItemId={mail.id}
-              scanId={scan.id}
-              pages={scan.pageCount as number}
-              label={`contenu du ${formatDateTime(scan.createdAt, timeZone)}`}
-            />
-          ))}
+          .map((scan) => {
+            const label = `contenu du ${formatDateTime(scan.createdAt, timeZone)}`
+            const reportedAt = scanReportedAt(
+              scan.mailRequestId ? scanOrigin.get(scan.mailRequestId) : null,
+              mail.openedAt,
+            )
+            // Mois du relevé terminé : il a pu être reporté dans Dolibarr (ADR 046).
+            return reportedAt && !canCorrectPages(reportedAt, now, timeZone) ? (
+              <p key={scan.id} className="text-sm text-muted-foreground">
+                Nombre de pages — {label} : le relevé de{' '}
+                {formatIsoMonth(toIsoDate(reportedAt, timeZone).slice(0, 7))} est clos, une erreur se
+                corrige dans Dolibarr.
+              </p>
+            ) : (
+              <CorrectPagesForm
+                key={scan.id}
+                mailItemId={mail.id}
+                scanId={scan.id}
+                pages={scan.pageCount as number}
+                label={label}
+              />
+            )
+          })}
         <p className="text-xs text-muted-foreground">
           Chaque consultation, par le centre comme par le client, est inscrite au journal ci-dessous.
         </p>

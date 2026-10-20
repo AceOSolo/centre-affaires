@@ -12,7 +12,14 @@ import { DB_MAIL_REFUSED, dbErrorCode } from '../../db/errors.ts'
 import { readScan, type ScanFile } from './fichiers.ts'
 import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
 import { readPageCount, withPageCount } from './pages.ts'
-import { correctScanPageCount, MailStateError, openMail, registerMail, withdrawMail } from './queries.ts'
+import {
+  correctScanPageCount,
+  MailStateError,
+  openMail,
+  PagesLockedError,
+  registerMail,
+  withdrawMail,
+} from './queries.ts'
 import { mailKinds, type MailKind } from './schema.ts'
 import { closeOpenBatch, MailBatchClosedError, MailBatchOpenedError } from './tournees.ts'
 import { expectedBatch } from './tournees-regles.ts'
@@ -183,7 +190,8 @@ export async function closeMailBatchAction(
 
 /**
  * Correction du nombre de pages d'un contenu par l'accueil (ADR 044), tant
- * qu'aucune facture ne le tient : la base refuse ensuite (`CA017`).
+ * que le relevé de son mois n'est pas clos : ensuite, elle se fait dans
+ * Dolibarr (ADR 046). La base a le dernier mot (`CA017`).
  */
 export async function correctScanPagesAction(
   _previous: MailFormState,
@@ -198,8 +206,13 @@ export async function correctScanPagesAction(
     const done = await correctScanPageCount(scanId, pages.pages)
     if (!done) return { error: 'Numérisation introuvable, ou sans compte de pages à corriger.' }
   } catch (error) {
+    if (error instanceof PagesLockedError) return { error: error.message }
+    // Le mois s'est terminé entre la lecture et l'écriture, ou une facture du
+    // site tient ces pages : dans les deux cas, la correction se fait ailleurs.
     if (dbErrorCode(error) === DB_MAIL_REFUSED) {
-      return { error: 'Ces pages sont déjà facturées : la correction passe par un avoir sur la facture.' }
+      return {
+        error: 'Ces pages ne se corrigent plus ici : leur relevé est clos ou facturé. Corrigez-les dans Dolibarr.',
+      }
     }
     throw error
   }
