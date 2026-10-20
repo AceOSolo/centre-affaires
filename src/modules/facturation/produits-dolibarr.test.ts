@@ -47,6 +47,12 @@ describe('prix et TVA de Dolibarr', () => {
     assert.equal(dolibarrPriceToCents(null), undefined)
   })
 
+  it('refuse un prix que la base ne tiendrait pas, plutôt que d’échouer à l’écriture', () => {
+    assert.equal(dolibarrPriceToCents('21474836.47'), 2_147_483_647)
+    assert.equal(dolibarrPriceToCents('21474836.48'), undefined)
+    assert.equal(dolibarrPriceToCents('50000000.00000000'), undefined)
+  })
+
   it('lit la TVA en points de base, zéros de queue compris', () => {
     assert.equal(dolibarrVatToBasisPoints('20.000'), 2_000)
     assert.equal(dolibarrVatToBasisPoints('5.500'), 550)
@@ -58,7 +64,14 @@ describe('prix et TVA de Dolibarr', () => {
   it('met la description HTML en texte simple', () => {
     assert.equal(dolibarrTextToPlain('<p>Un&nbsp;pli &amp; sa copie</p><p>Deux</p>'), 'Un pli & sa copie\nDeux')
     assert.equal(dolibarrTextToPlain('Ligne<br />suivante'), 'Ligne\nsuivante')
+    assert.equal(dolibarrTextToPlain('Caf&#233; &#39;noir&#39;'), 'Café \'noir\'')
     assert.equal(dolibarrTextToPlain(null), '')
+  })
+
+  it('remplace une entité numérique qui ne désigne aucun caractère, sans échouer', () => {
+    assert.equal(dolibarrTextToPlain('a&#99999999;b'), 'a�b')
+    assert.equal(dolibarrTextToPlain('a&#99999999999999999999;b'), 'a�b')
+    assert.equal(dolibarrTextToPlain('a&#0;b&#55296;c'), 'a�b�c')
   })
 })
 
@@ -120,9 +133,28 @@ describe('service du catalogue', () => {
     assert.equal(decision.kind, 'invalid')
   })
 
+  it('refuse une référence de plus de 64 caractères, comme l’écran Services', () => {
+    const accepte = readDolibarrProductEvent(envoi({ ...ouverture, ref: 'a'.repeat(64) }))
+    assert.equal(accepte.kind, 'service')
+    const refuse = readDolibarrProductEvent(envoi({ ...ouverture, ref: 'a'.repeat(101) }))
+    assert.equal(refuse.kind, 'invalid')
+    if (refuse.kind !== 'invalid') return
+    assert.match(refuse.message, /64 caractères au plus/)
+    // Le message cite le début de la référence, pas les 101 caractères.
+    assert.match(refuse.message, /a{80}…/)
+    assert.doesNotMatch(refuse.message, /a{81}/)
+  })
+
   it('refuse un prix ou une TVA illisible', () => {
     assert.equal(readDolibarrProductEvent(envoi({ ...ouverture, price: '' })).kind, 'invalid')
     assert.equal(readDolibarrProductEvent(envoi({ ...ouverture, tva_tx: 'x' })).kind, 'invalid')
+  })
+
+  it('refuse un prix trop grand en disant pourquoi', () => {
+    const decision = readDolibarrProductEvent(envoi({ ...ouverture, price: '99999999' }))
+    assert.equal(decision.kind, 'invalid')
+    if (decision.kind !== 'invalid') return
+    assert.match(decision.message, /21 474 836,47 € au plus/)
   })
 
   it('ignore un produit physique et les autres déclencheurs', () => {
