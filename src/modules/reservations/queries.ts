@@ -16,6 +16,8 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { contracts, type Contract } from '../contrats/schema.ts'
 import { NO_BOOKING_QUOTE, bookingQuoteColumns, type QuoteDiscount } from '../facturation/devis.ts'
 import { quoteInTransaction, type QuoteRequest } from '../facturation/devis-queries.ts'
+import { bookingLineInTransaction, createProposalInTransaction, type NewProposalInput } from '../facturation/propositions-queries.ts'
+import type { Proposal } from '../facturation/schema-devis.ts'
 import { invoiceLines } from '../facturation/schema-factures.ts'
 import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
@@ -538,6 +540,11 @@ export type BookingRequestInput = CreateBookingInput & {
   requesterName: string
   requesterEmail: string
   requesterPhone: string
+  /**
+   * Le devis de la demande (ADR 043) : produit, réponses au questionnaire,
+   * écrit dans la même transaction que la réservation.
+   */
+  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'message' | 'requesterCompany'> & { timeZone: string }
 }
 
 /**
@@ -548,7 +555,9 @@ export type BookingRequestInput = CreateBookingInput & {
  * d'exclusion : deux demandes simultanées sur le même créneau ne peuvent pas
  * être acceptées toutes les deux.
  */
-export async function createBookingRequest(input: BookingRequestInput): Promise<Booking> {
+export async function createBookingRequest(
+  input: BookingRequestInput,
+): Promise<Booking & { proposal?: Pick<Proposal, 'id' | 'number' | 'status'> }> {
   if (!isValidRange(input)) throw new InvalidRangeError()
 
   try {
@@ -565,7 +574,7 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
         },
         input.pricing,
       )
-      return insertReturning(tx, bookings, {
+      const booking: Booking & { proposal?: Pick<Proposal, 'id' | 'number' | 'status'> } = await insertReturning(tx, bookings, {
         resourceId: input.resourceId,
         startsAt: input.startsAt,
         endsAt: input.endsAt,
@@ -581,6 +590,23 @@ export async function createBookingRequest(input: BookingRequestInput): Promise<
         channel: input.clientId ? 'client' : 'public',
         ...quote,
       })
+      if (!input.proposal) return booking
+      const line = await bookingLineInTransaction(tx, booking.id, input.proposal.timeZone)
+      const proposal = await createProposalInTransaction(tx, {
+        product: input.proposal.product,
+        channel: booking.channel,
+        clientId: booking.clientId,
+        requesterName: booking.requesterName,
+        requesterEmail: booking.requesterEmail,
+        requesterPhone: booking.requesterPhone,
+        requesterCompany: input.proposal.requesterCompany,
+        bookingId: booking.id,
+        answers: input.proposal.answers,
+        message: input.proposal.message,
+        currency: booking.quoteCurrency ?? 'EUR',
+        lines: line ? [line] : [],
+      })
+      return { ...booking, proposal: { id: proposal.id, number: proposal.number, status: proposal.status } }
     })
     return created
   } catch (error) {

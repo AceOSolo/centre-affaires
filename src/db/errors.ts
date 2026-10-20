@@ -161,3 +161,5 @@ export const DB_OFFER_REQUEST_REFUSED = 'CA013'
 export const DB_TENANT_MISMATCH = 'CA014'
 /** Écriture hors de la portée client du contexte (`withClientScope()`), refusée par les triggers de garde de facturation. */
 export const DB_CLIENT_SCOPE_REFUSED = 'CA015'
+/** Devis refusé (ADR 043) : passage d'état impossible, devis validé à modifier, ligne sur un devis figé. */
+export const DB_PROPOSAL_REFUSED = 'CA016'

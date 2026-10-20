@@ -71,8 +71,18 @@ BEGIN
   -- L'effacement RGPD (ADR 040) vide le demandeur et les réponses, rien d'autre.
   IF COALESCE(@app_anonymization, '') <> 'on' THEN
     -- Sous portée client, rien ne se modifie : le devis se traite au centre.
-    -- Seule l'annulation qui suit celle de la réservation passe.
-    IF @app_client_ids IS NOT NULL AND COALESCE(@app_proposal_sync, '') <> 'on' THEN
+    -- Passent seulement l'annulation qui suit celle de la réservation, et la
+    -- validation d'office d'un espace chiffré (`validatesOnCreation`), à
+    -- contenu inchangé et sans membre de l'équipe.
+    IF @app_client_ids IS NOT NULL AND COALESCE(@app_proposal_sync, '') <> 'on'
+       AND NOT (OLD.status = 'draft' AND NEW.status = 'ready' AND NEW.product = 'espace'
+                AND NEW.validated_by_staff_id IS NULL
+                AND NEW.client_id <=> OLD.client_id AND NEW.requester_name <=> OLD.requester_name
+                AND NEW.requester_email <=> OLD.requester_email AND NEW.requester_phone <=> OLD.requester_phone
+                AND NEW.requester_company <=> OLD.requester_company AND NEW.answers <=> OLD.answers
+                AND NEW.message <=> OLD.message AND NEW.staff_note <=> OLD.staff_note
+                AND NEW.currency <=> OLD.currency AND NEW.dolibarr_id <=> OLD.dolibarr_id
+                AND NEW.dolibarr_ref <=> OLD.dolibarr_ref AND NEW.cancellation_reason <=> OLD.cancellation_reason) THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CA015: Un devis se traite au centre.';
     END IF;
 

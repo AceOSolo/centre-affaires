@@ -7,7 +7,15 @@ import { timingSafeEqual } from 'node:crypto'
  * doivent jamais être joignables sans secret.
  */
 export function isMaintenanceRequest(request: Request): boolean {
-  const expected = process.env.MAINTENANCE_TOKEN
+  return hasBearerToken(request, process.env.MAINTENANCE_TOKEN)
+}
+
+/**
+ * Vrai si la requête porte `Authorization: Bearer <expected>`. Sans jeton
+ * configuré, toujours faux : une route protégée ne s'ouvre jamais par oubli.
+ * Sert aussi l'API de Dolibarr (`DOLIBARR_API_TOKEN`, ADR 043).
+ */
+export function hasBearerToken(request: Request, expected: string | undefined): boolean {
   if (!expected) return false
   const given = request.headers.get('authorization')?.replace(/^Bearer /, '') ?? ''
   const a = Buffer.from(given)

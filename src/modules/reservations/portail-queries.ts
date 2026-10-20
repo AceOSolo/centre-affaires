@@ -19,6 +19,7 @@ import {
   type QuoteDisplay,
 } from '../facturation/devis.ts'
 import { quoteInTransaction } from '../facturation/devis-queries.ts'
+import { bookingLineInTransaction, createProposalInTransaction, type NewProposalInput } from '../facturation/propositions-queries.ts'
 import { guardMessage } from '../facturation/erreurs-base.ts'
 import { closures, openingHours, resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange } from './availability.ts'
@@ -178,6 +179,8 @@ export type PortalBookingInput = {
   endsAt: Date
   title: string
   notes: string | null
+  /** Le devis de la réservation (ADR 043), écrit avec elle. */
+  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'requesterName' | 'requesterEmail'> & { timeZone: string }
 }
 
 export type CreatedPortalBooking = {
@@ -215,7 +218,7 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
         endsAt: input.endsAt,
         clientId: account.clientId,
       })
-      return insertReturning(tx, bookings, {
+      const booking = await insertReturning(tx, bookings, {
         resourceId: input.resourceId,
         clientId: account.clientId,
         kind: 'booking',
@@ -229,6 +232,23 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
         status: 'pending',
         ...(quote.ok ? bookingQuoteColumns(quote.quote, new Date()) : NO_BOOKING_QUOTE),
       })
+      if (input.proposal) {
+        const line = await bookingLineInTransaction(tx, booking.id, input.proposal.timeZone)
+        await createProposalInTransaction(tx, {
+          product: input.proposal.product,
+          channel: 'client',
+          clientId: account.clientId,
+          requesterName: input.proposal.requesterName,
+          requesterEmail: input.proposal.requesterEmail,
+          requesterCompany: account.clientName,
+          bookingId: booking.id,
+          answers: input.proposal.answers,
+          message: input.notes,
+          currency: booking.quoteCurrency ?? 'EUR',
+          lines: line ? [line] : [],
+        })
+      }
+      return booking
     })
     return {
       id: created.id,
