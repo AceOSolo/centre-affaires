@@ -10,6 +10,7 @@ import {
   clientRequestOptions,
   forwardAddressLines,
   isPendingRequest,
+  openingAnnouncementText,
   pageCount,
   readClientMailFilters,
   readClientNote,
@@ -340,5 +341,20 @@ describe('prix des pages annoncé avant l’ouverture (ADR 044)', () => {
 
   it('ne dit rien sans prix des pages au catalogue', () => {
     assert.equal(pagePricingText(null), '')
+  })
+})
+
+describe('prix d’une ouverture annoncé sur la boîte aux lettres et la fiche du pli', () => {
+  it('annonce l’acte puis les pages au-delà de celles comprises', () => {
+    const text = openingAnnouncementText(
+      { source: 'catalogue', netCents: 300, currency: 'EUR' },
+      { includedPages: 5, netCentsPerPage: 20, currency: 'EUR' },
+    ).replace(/\s/g, ' ')
+    assert.equal(text, '3,00 € HT, au tarif du centre. Comprend 5 pages numérisées ; au-delà, 0,20 € HT la page.')
+  })
+
+  it('annonce l’acte seul sans prix des pages, sans rien inventer sans prix du tout', () => {
+    assert.match(openingAnnouncementText({ source: 'included', remainingAfter: 2 }, null), /^Inclus dans votre forfait \(encore 2/)
+    assert.match(openingAnnouncementText(undefined, null), /communiqué sur demande\.$/)
   })
 })

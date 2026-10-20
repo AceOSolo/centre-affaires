@@ -585,3 +585,14 @@ export function announcementText(announcement: ActAnnouncement): string {
       return 'Prestation facturée selon le tarif du centre, communiqué sur demande.'
   }
 }
+
+/**
+ * Prix d'une ouverture annoncé avant la demande (ADR 037, 044) : l'acte, puis
+ * les pages au-delà de celles comprises. Le même texte sur la boîte aux
+ * lettres et sur la fiche du pli.
+ */
+export function openingAnnouncementText(announcement: ActAnnouncement | undefined, pagePricing: PagePricing): string {
+  const act = announcementText(announcement ?? { source: 'unpriced' })
+  const pages = pagePricingText(pagePricing)
+  return pages ? `${act} ${pages}` : act
+}

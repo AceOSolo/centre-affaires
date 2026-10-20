@@ -6,6 +6,8 @@ import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../modules/clients/session.ts'
 import {
+  announceMailActs,
+  announcePagePricing,
   listRequestsForAccounts,
   searchMailForAccounts,
   type ClientMailCard,
@@ -17,6 +19,7 @@ import {
   clientMailStates,
   type ClientMailFilters,
   clientRequestOptions,
+  openingAnnouncementText,
   pageCount,
   pendingRequestStatuses,
   readClientMailFilters,
@@ -76,6 +79,16 @@ export default async function BoiteAuxLettresPage({
     listRequestsForAccounts(accounts, { statuses: pendingRequestStatuses }, { number: 1, size: 1 }),
     mailFolderCounts(accounts),
   ])
+  // Prix d'une ouverture, annoncé sur chaque pli qui peut en recevoir la
+  // demande : la même source que la fiche du pli (ADR 037, 044).
+  const openable = mail.rows.some(
+    (item) => clientRequestOptions({ ...item, forwarded: item.forwardedAt !== null }).open_and_scan,
+  )
+  const [announcements, pagePricing] = openable
+    ? await Promise.all([announceMailActs(accounts, timeZone), announcePagePricing(accounts, timeZone)])
+    : [new Map(), new Map()]
+  const openingAnnouncement = (clientId: string) =>
+    openingAnnouncementText(announcements.get(clientId)?.open_and_scan, pagePricing.get(clientId) ?? null)
   const params = await searchParams
   const done = typeof params.classe === 'string' ? /^([a-z-]+)-(\d+)$/.exec(params.classe) : null
   const retention = tenant.mailScanRetentionMonths
@@ -209,7 +222,12 @@ export default async function BoiteAuxLettresPage({
           <ul className="flex max-w-3xl flex-col gap-4">
             {mail.rows.map((item) => (
               <li key={item.id}>
-                <MailCard item={item} timeZone={timeZone} showClient={several} />
+                <MailCard
+                  item={item}
+                  timeZone={timeZone}
+                  showClient={several}
+                  openingAnnouncement={openingAnnouncement(item.clientId)}
+                />
               </li>
             ))}
           </ul>
@@ -352,7 +370,17 @@ function FolderLink({
   )
 }
 
-function MailCard({ item, timeZone, showClient }: { item: ClientMailCard; timeZone: string; showClient: boolean }) {
+function MailCard({
+  item,
+  timeZone,
+  showClient,
+  openingAnnouncement,
+}: {
+  item: ClientMailCard
+  timeZone: string
+  showClient: boolean
+  openingAnnouncement: string
+}) {
   const StatusIcon = statusIcons[item.status]
   const KindIcon = mailKindIcons[item.kind]
   const options = clientRequestOptions({ ...item, forwarded: item.forwardedAt !== null })
@@ -470,7 +498,11 @@ function MailCard({ item, timeZone, showClient }: { item: ClientMailCard; timeZo
             passage de l'un à l'autre, et son message de confirmation reste
             annoncé. */}
         {(options.open_and_scan || pendingOpening?.status === 'requested') && (
-          <MailboxRequest mailItemId={item.id} mode={options.open_and_scan ? 'request' : 'cancel'} />
+          <MailboxRequest
+            mailItemId={item.id}
+            mode={options.open_and_scan ? 'request' : 'cancel'}
+            announcement={openingAnnouncement}
+          />
         )}
         <Link
           href={`/compte/courrier/${item.id}`}

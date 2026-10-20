@@ -17,7 +17,7 @@ import {
 import {
   announcementText,
   clientRequestOptions,
-  pagePricingText,
+  openingAnnouncementText,
   countryName,
   forwardAddressLines,
   forwardCountries,
@@ -83,10 +83,13 @@ export default async function PliPage({
     options.forward ? previousForwardAddresses(accounts, mail.clientId) : Promise.resolve([]),
     options.open_and_scan ? announcePagePricing(own, timeZone) : Promise.resolve(new Map()),
   ])
-  const pagesText = pagePricingText(pagePricing.get(mail.clientId) ?? null)
   const prices = announcements.get(mail.clientId)
-  const announce = (kind: 'open_and_scan' | 'scan' | 'forward') =>
+  const announce = (kind: 'scan' | 'forward') =>
     prices ? announcementText(prices[kind]) : announcementText({ source: 'unpriced' })
+  const openingAnnouncement = openingAnnouncementText(
+    prices?.open_and_scan,
+    pagePricing.get(mail.clientId) ?? null,
+  )
   const contents = mail.scans.filter((scan) => scan.side === 'content')
   const KindIcon = mailKindIcons[mail.kind]
   const pendingOpening = mail.pendingRequests.find((request) => request.kind === 'open_and_scan')
@@ -206,13 +209,11 @@ export default async function PliPage({
           {(options.open_and_scan || pendingOpening?.status === 'requested') && (
             <div className="flex flex-col gap-2 rounded-lg border border-border bg-white p-4">
               <p className="text-base font-semibold text-primary">Ouverture et numérisation</p>
-              {options.open_and_scan && (
-                <p className="text-sm text-muted-foreground">
-                  {announce('open_and_scan')}
-                  {pagesText && ` ${pagesText}`}
-                </p>
-              )}
-              <MailboxRequest mailItemId={mail.id} mode={options.open_and_scan ? 'request' : 'cancel'} />
+              <MailboxRequest
+                mailItemId={mail.id}
+                mode={options.open_and_scan ? 'request' : 'cancel'}
+                announcement={openingAnnouncement}
+              />
             </div>
           )}
           {options.scan && (
