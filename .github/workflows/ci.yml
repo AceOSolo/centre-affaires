@@ -2,7 +2,10 @@ name: ci
 on:
   push:
   pull_request:
-  # Relancer un déploiement à la main (onglet Actions), sur main uniquement.
+  # Relancer la CI à la main (onglet Actions). Elle ne déploie plus : le job
+  # `deploy` a été retiré le 15/10/2026 (e469801) et la mise en ligne se fait
+  # à la main (infra/serveur/README.md, section 4). Le rétablir est une
+  # décision en attente.
   workflow_dispatch:
 jobs:
   ci:
@@ -42,8 +45,8 @@ jobs:
       TEST_DB_USER: centre_affaires
       TEST_DB_PASSWORD: ci
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
