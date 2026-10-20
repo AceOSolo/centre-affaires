@@ -11,12 +11,17 @@ import { getIP } from 'better-auth/api'
  */
 
 /**
- * Lecture de l'adresse IP derrière l'Apache du VPS (`infra/serveur`), qui
- * ajoute l'adresse du visiteur à droite de `X-Forwarded-For`. Ce qui est à sa
- * gauche vient du visiteur et peut être inventé : seule la dernière entrée
- * fait foi. La boucle locale, d'où Apache appelle l'application, est le seul
- * relais de confiance. Partagée avec Better Auth (`lib/auth/server.ts`) : le
- * site et la connexion comptent les mêmes adresses.
+ * Lecture de l'adresse IP derrière le nginx du VPS, qui relaie vers
+ * l'application sur `127.0.0.1:3100` et ajoute l'adresse du visiteur à droite
+ * de `X-Forwarded-For` (`proxy_set_header X-Forwarded-For
+ * $proxy_add_x_forwarded_for`). Ce qui est à sa gauche vient du visiteur et
+ * peut être inventé : seule la dernière entrée fait foi. La boucle locale,
+ * d'où nginx appelle l'application, est le seul relais de confiance. Partagée
+ * avec Better Auth (`lib/auth/server.ts`) : le site et la connexion comptent
+ * les mêmes adresses.
+ *
+ * Le nom vient d'Apache, prévu d'abord (`infra/serveur/apache-handfield.conf`) ;
+ * nginx tient ce rôle en production, la règle est la même pour les deux.
  */
 export const adresseIpDerriereApache = { trustedProxies: ['127.0.0.1', '::1'] }
 
