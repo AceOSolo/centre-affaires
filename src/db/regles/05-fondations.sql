@@ -19,7 +19,8 @@ DROP FUNCTION IF EXISTS next_document_number;
 --> statement-breakpoint
 
 -- Numéro suivant d'un type de document pour le centre du contexte :
--- `CT-2026-0001` (contrat), `FA-2026-0001` (facture), `AV-2026-0001` (avoir).
+-- `CT-2026-0001` (contrat), `FA-2026-0001` (facture), `AV-2026-0001` (avoir),
+-- `DV-2026-0001` (devis transmis à Dolibarr, ADR 043).
 --
 -- Une série par centre, par type et par année civile du centre ; l'année est
 -- dans le numéro. Quatre chiffres au moins, davantage au-delà de 9999.
@@ -47,6 +48,7 @@ BEGIN
     WHEN 'contract' THEN 'CT'
     WHEN 'invoice' THEN 'FA'
     WHEN 'credit_note' THEN 'AV'
+    WHEN 'proposal' THEN 'DV'
     ELSE NULL
   END;
   IF v_prefix IS NULL THEN

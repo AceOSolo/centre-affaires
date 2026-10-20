@@ -18,7 +18,7 @@ import { DEFAULT_TENANT_ID, tenants } from './tenants.ts'
  * droits de son créateur (`SQL SECURITY DEFINER`). Un compteur que l'application peut remettre à zéro ne garantit plus
  * une numérotation sans trou ni doublon.
  */
-export const documentTypes = ['contract', 'invoice', 'credit_note'] as const
+export const documentTypes = ['contract', 'invoice', 'credit_note', 'proposal'] as const
 export type DocumentType = (typeof documentTypes)[number]
 export const documentTypeEnum = (name: string) => mysqlEnum(name, documentTypes)
 
@@ -27,6 +27,8 @@ export const documentPrefixes: Record<DocumentType, string> = {
   contract: 'CT',
   invoice: 'FA',
   credit_note: 'AV',
+  /** Devis transmis à Dolibarr (ADR 043). */
+  proposal: 'DV',
 }
 
 export const documentSequences = mysqlTable(
