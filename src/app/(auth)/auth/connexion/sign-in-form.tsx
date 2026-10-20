@@ -4,22 +4,30 @@ import { useState, useTransition } from 'react'
 
 import { useRouter, useSearchParams } from 'next/navigation'
 
+import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
 import { PreuveHumaine, preuveEnCours, reponsePreuve } from '../../../../components/ui/preuve-humaine.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
+import {
+  MOT_DE_PASSE_MIN,
+  messageRefusAuth,
+  serveurInjoignable,
+  type MessageAuth,
+} from '../../../../lib/auth/messages.ts'
 import { EN_TETE_PREUVE } from '../../../../lib/champs-anti-robot.ts'
 import { safeRedirect } from '../../../../lib/redirection.ts'
 
 const fieldClass =
-  'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30'
+  'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive'
 const labelClass = 'block text-sm font-medium text-foreground'
+const errorClass = 'mt-1 text-sm text-destructive'
 
 type Mode = 'connexion' | 'creation'
 
-/**
- * Plafond de tentatives atteint (`rateLimit`, `lib/auth/server.ts`) : Better
- * Auth répond 429 avec un message en anglais.
- */
-const tropDeTentatives = 'Trop de tentatives depuis votre connexion. Patientez quelques minutes, puis réessayez.'
+/** Échec d'un envoi : une erreur rattachée à un champ, ou au formulaire entier. */
+type Echec = { message?: string; champs?: Record<string, string> }
+
+const echecDe = ({ message, champ }: MessageAuth): Echec =>
+  champ ? { champs: { [champ]: message } } : { message }
 
 /**
  * `client` : la page des clients (`/auth/connexion`), avec l'inscription libre.
@@ -47,7 +55,13 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const [mode, setMode] = useState<Mode>('connexion')
-  const [error, setError] = useState<string | null>(null)
+  const [echec, setEchec] = useState<Echec | null>(null)
+  // Chaque envoi remonte le résumé des erreurs : le même refus deux fois de
+  // suite est de nouveau annoncé, et le focus y revient.
+  const [tentative, setTentative] = useState(0)
+  // L'appel au service d'authentification lui-même ; `pending` ne couvre
+  // que la navigation qui suit.
+  const [envoi, setEnvoi] = useState(false)
   // Inscription sur un serveur qui exige la vérification de l'adresse : aucune
   // session n'est ouverte, l'écran dit où est le message au lieu de rediriger.
   const [confirmation, setConfirmation] = useState<string | null>(null)
@@ -55,6 +69,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
   // Une réponse anti-robot ne sert qu'une fois : après chaque essai
   // d'inscription, la case repart d'un défi neuf.
   const [essai, setEssai] = useState(0)
+  const occupe = envoi || pending
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
   // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
@@ -62,70 +77,21 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setError(null)
+    setEchec(null)
     setConfirmation(null)
+    setTentative((value) => value + 1)
 
     const form = new FormData(event.currentTarget)
-    const email = String(form.get('email') ?? '').trim()
-    const password = String(form.get('password') ?? '')
-    const name = String(form.get('name') ?? '').trim()
-    const companyName = String(form.get('companyName') ?? '').trim()
-
-    const repli =
-      mode === 'creation'
-        ? 'La création du compte a échoué.'
-        : 'Adresse ou mot de passe incorrect.'
-
-    // Le client d'authentification signale ses refus de deux façons selon le
-    // cas : un `error` dans la réponse, ou une exception réseau. Les deux
-    // doivent finir dans le `role="alert"` du formulaire, jamais dans
-    // l'overlay d'erreur.
     const preuve = reponsePreuve(event.currentTarget)
     if (mode === 'creation' && !preuve) {
-      setError(preuveEnCours)
+      setEchec({ message: preuveEnCours })
       return
     }
 
-    try {
-      if (mode === 'creation') {
-        setEssai((value) => value + 1)
-        const { data, error: authError } = await authClient.signUp.email({
-          email,
-          password,
-          name,
-          companyName: companyName || undefined,
-          fetchOptions: { headers: { [EN_TETE_PREUVE]: preuve } },
-        })
-        if (authError) {
-          setError(authError.status === 429 ? tropDeTentatives : (authError.message ?? repli))
-          return
-        }
-        // Sans session (adresse à confirmer), le jeton est nul : on ne
-        // redirige pas vers une page qui renverrait à la connexion.
-        if (!data?.token) {
-          setConfirmation(
-            `Un message de confirmation a été envoyé à ${email}. Confirmez-la puis connectez-vous.`,
-          )
-          setMode('connexion')
-          return
-        }
-      } else {
-        const { error: authError } = await authClient.signIn.email({ email, password })
-        if (authError) {
-          setError(
-            authError.status === 429
-              ? tropDeTentatives
-              : authError.code === 'EMAIL_NOT_VERIFIED'
-                ? 'Adresse non confirmée : ouvrez le message de confirmation reçu, puis réessayez.'
-                : authError.code === 'BANNED_USER'
-                  ? 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.'
-                  : (authError.message ?? repli),
-          )
-          return
-        }
-      }
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : repli)
+    setEnvoi(true)
+    const connecte = await envoyer(form, preuve)
+    if (!connecte) {
+      setEnvoi(false)
       return
     }
 
@@ -136,6 +102,63 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
       router.refresh()
     })
   }
+
+  /** Appelle le service d'authentification ; vrai quand une session est ouverte. */
+  async function envoyer(form: FormData, preuve: string): Promise<boolean> {
+    const email = String(form.get('email') ?? '').trim()
+    const password = String(form.get('password') ?? '')
+    const name = String(form.get('name') ?? '').trim()
+    const companyName = String(form.get('companyName') ?? '').trim()
+
+    const repli = mode === 'creation' ? 'La création du compte a échoué.' : 'La connexion a échoué.'
+
+    // Le client d'authentification signale ses refus de deux façons selon le
+    // cas : un `error` dans la réponse, ou une exception réseau. Les deux
+    // doivent finir dans le résumé d'erreurs du formulaire, jamais dans
+    // l'overlay d'erreur ; et en français (`lib/auth/messages.ts`).
+    try {
+      if (mode === 'creation') {
+        setEssai((value) => value + 1)
+        const { data, error: authError } = await authClient.signUp.email({
+          email,
+          password,
+          name,
+          companyName: companyName || undefined,
+          // Le lien du message de confirmation ouvre la session puis mène ici :
+          // à l'espace attendu, pas à l'accueil du site.
+          callbackURL: redirectTo,
+          fetchOptions: { headers: { [EN_TETE_PREUVE]: preuve } },
+        })
+        if (authError) {
+          setEchec(echecDe(messageRefusAuth(authError, repli)))
+          return false
+        }
+        // Sans session (adresse à confirmer), le jeton est nul : on ne
+        // redirige pas vers une page qui renverrait à la connexion.
+        if (!data?.token) {
+          setConfirmation(
+            `Un message de confirmation a été envoyé à ${email}. Confirmez-la puis connectez-vous.`,
+          )
+          setMode('connexion')
+          return false
+        }
+        return true
+      }
+
+      const { error: authError } = await authClient.signIn.email({ email, password })
+      if (authError) {
+        setEchec(echecDe(messageRefusAuth(authError, repli)))
+        return false
+      }
+      return true
+    } catch {
+      setEchec({ message: serveurInjoignable })
+      return false
+    }
+  }
+
+  const emailError = echec?.champs?.email
+  const passwordError = echec?.champs?.password
 
   return (
     <div className="flex flex-col gap-6">
@@ -170,14 +193,12 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
           </p>
         )}
 
-        {error && (
-          <p
-            role="alert"
-            className="rounded-sm border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-          >
-            {error}
-          </p>
-        )}
+        <ErrorSummary
+          key={tentative}
+          errors={echec?.champs}
+          labels={{ email: 'Adresse professionnelle', password: 'Mot de passe' }}
+          message={echec?.message}
+        />
 
         {mode === 'creation' && (
           <div>
@@ -223,8 +244,15 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
             type="email"
             required
             autoComplete="email"
+            aria-invalid={emailError ? true : undefined}
+            aria-describedby={emailError ? 'email-error' : undefined}
             className={`${fieldClass} mt-1.5`}
           />
+          {emailError && (
+            <p id="email-error" role="alert" className={errorClass}>
+              {emailError}
+            </p>
+          )}
         </div>
 
         <div>
@@ -236,12 +264,25 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
             name="password"
             type="password"
             required
-            minLength={10}
+            minLength={MOT_DE_PASSE_MIN}
             autoComplete={mode === 'creation' ? 'new-password' : 'current-password'}
+            aria-invalid={passwordError ? true : undefined}
+            aria-describedby={
+              [passwordError && 'password-error', mode === 'creation' && 'password-hint']
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
             className={`${fieldClass} mt-1.5`}
           />
           {mode === 'creation' && (
-            <p className="mt-1 text-xs text-muted-foreground">10 caractères au minimum.</p>
+            <p id="password-hint" className="mt-1 text-xs text-muted-foreground">
+              {MOT_DE_PASSE_MIN} caractères au minimum.
+            </p>
+          )}
+          {passwordError && (
+            <p id="password-error" role="alert" className={errorClass}>
+              {passwordError}
+            </p>
           )}
         </div>
 
@@ -249,10 +290,10 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
 
         <button
           type="submit"
-          disabled={pending}
+          disabled={occupe}
           className="mt-1 rounded-md bg-primary px-4 py-2.5 font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
         >
-          {pending
+          {occupe
             ? 'Un instant…'
             : mode === 'creation'
               ? 'Créer le compte'
@@ -270,7 +311,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
           type="button"
           onClick={() => {
             setMode(mode === 'creation' ? 'connexion' : 'creation')
-            setError(null)
+            setEchec(null)
             setConfirmation(null)
           }}
           className="font-medium text-primary underline-offset-2 hover:underline"
