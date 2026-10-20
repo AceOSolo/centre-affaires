@@ -12,6 +12,8 @@ import {
 } from '../../../modules/etats-des-lieux/labels.ts'
 import { listInspections, type InspectionFilter } from '../../../modules/etats-des-lieux/queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
+import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
+import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
 
 export const metadata = { title: 'États des lieux' }
 
@@ -30,19 +32,34 @@ const filters: { value: NonNullable<InspectionFilter['stage']> | 'tous'; label: 
 export default async function InspectionsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ etape?: string; fait?: string }>
+  searchParams: Promise<{ etape?: string; fait?: string; produit?: string }>
 }) {
   const { member } = await requirePermission('etats-des-lieux.gerer')
-  const { etape, fait } = await searchParams
+  const { etape, fait, produit } = await searchParams
   const stage = filters.find((filter) => filter.value === etape && filter.value !== 'tous')
     ?.value as InspectionFilter['stage']
-  const [rows, timeZone] = await Promise.all([listInspections({ stage }), currentTimeZone()])
+  // Les rayons Bureaux et Camion du menu ouvrent les leurs (ADR 046).
+  const product = parseProduct(produit)
+  const [rows, timeZone] = await Promise.all([
+    listInspections({ stage, ...(product && { resourceTypes: typesOf(product) }) }),
+    currentTimeZone(),
+  ])
+  // Les deux filtres se combinent : chaque lien garde l'autre.
+  const listHref = (next: { etape?: string; produit?: string }) => {
+    const query = new URLSearchParams()
+    if (next.etape) query.set('etape', next.etape)
+    if (next.produit) query.set('produit', next.produit)
+    const search = query.toString()
+    return search ? `/etats-des-lieux?${search}` : '/etats-des-lieux'
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-end gap-4">
         <div className="mr-auto">
-          <h1 className="text-2xl font-semibold tracking-tight">États des lieux</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            États des lieux{product && ` · ${product.label}`}
+          </h1>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
             Entrées et sorties des ressources occupées. Un état des lieux s’ouvre depuis la fiche de la
             ressource, de la réservation ou du contrat ; une fois clos, le client le valide dans son
@@ -63,13 +80,22 @@ export default async function InspectionsPage({
         <FlashNotice key={fait}>Brouillon retiré : il n’apparaît plus dans la liste.</FlashNotice>
       )}
 
+      <ProductFilter
+        active={product}
+        only={['salles', 'bureaux', 'vehicules']}
+        href={(key) => listHref({ etape: stage, produit: key })}
+      />
+
       <nav aria-label="Filtrer par étape" className="flex flex-wrap gap-2">
         {filters.map((filter) => {
           const active = (stage ?? 'tous') === filter.value
           return (
             <Link
               key={filter.value}
-              href={filter.value === 'tous' ? '/etats-des-lieux' : `/etats-des-lieux?etape=${filter.value}`}
+              href={listHref({
+                etape: filter.value === 'tous' ? undefined : filter.value,
+                produit: product?.key,
+              })}
               aria-current={active ? 'page' : undefined}
               className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors duration-150 ease-out ${
                 active

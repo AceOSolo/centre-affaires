@@ -376,6 +376,12 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
       assert.deepEqual(demande.bookedBy, { name: null, email: 'paul@petit.test' })
     })
 
+    it('range la demande dans le rayon de son produit (ADR 046)', async () => {
+      const created = await reserver(petit, SALLE)
+      assert.deepEqual((await listPendingRequests(['salle'])).map((row) => row.id), [created.id])
+      assert.deepEqual(await listPendingRequests(['vehicule']), [])
+    })
+
     it('prévient l’accueil d’une demande, et pas d’une réservation confirmée d’emblée', async () => {
       const demande = await reserver(durand, SALLE)
       const confirmee = await reserver(durand, VEHICULE)

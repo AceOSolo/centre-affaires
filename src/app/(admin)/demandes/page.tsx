@@ -25,6 +25,8 @@ import {
 import { ChannelLabel } from '../../../modules/reservations/canal.tsx'
 import { listPendingRequests } from '../../../modules/reservations/demandes-queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
+import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
+import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
 
 export const metadata = { title: 'Demandes' }
 
@@ -38,10 +40,20 @@ export const metadata = { title: 'Demandes' }
  * n'est pas une question de confort, c'est ce qui libère les salles que
  * personne ne prendra.
  */
-export default async function DemandesPage() {
+export default async function DemandesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ produit?: string | string[] }>
+}) {
   const { member } = await requirePermission('demandes.traiter')
+  // Chaque rayon produit du menu ouvre la file de son produit (ADR 046).
+  const product = parseProduct((await searchParams).produit)
   const timeZone = await currentTimeZone()
-  const [pending, offerRequests] = await Promise.all([listPendingRequests(), listOfferRequests()])
+  const [pending, offerRequests] = await Promise.all([
+    listPendingRequests(product && typesOf(product)),
+    // Les offres groupées ne relèvent d'aucun produit : file complète seulement.
+    product ? [] : listOfferRequests(),
+  ])
   const canDrawContract = can(member.role, 'contrats.creer')
   const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
 
@@ -50,7 +62,7 @@ export default async function DemandesPage() {
       <section aria-labelledby="reservations-titre" className="flex flex-col gap-6">
         <div>
           <h1 id="reservations-titre" className="text-2xl font-semibold tracking-tight">
-            Demandes à valider
+            Demandes à valider{product && ` · ${product.label}`}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Déposées depuis le site public ou depuis l’espace client. Chaque demande occupe déjà son
@@ -58,9 +70,19 @@ export default async function DemandesPage() {
           </p>
         </div>
 
+        <ProductFilter
+          active={product}
+          only={['salles', 'bureaux', 'vehicules']}
+          href={(key) => (key ? `/demandes?produit=${key}` : '/demandes')}
+        />
+
         {pending.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
-            <p className="text-sm text-muted-foreground">Aucune demande de réservation en attente.</p>
+            <p className="text-sm text-muted-foreground">
+              {product
+                ? `Aucune demande en attente pour ce produit (${product.label}).`
+                : 'Aucune demande de réservation en attente.'}
+            </p>
             <Link
               href="/reservations"
               className="mt-4 inline-block text-sm text-muted-foreground underline-offset-2 hover:underline"
@@ -208,6 +230,7 @@ export default async function DemandesPage() {
         )}
       </section>
 
+      {!product && (
       <section aria-labelledby="offres-titre" className="flex flex-col gap-4">
         <div>
           <h2 id="offres-titre" className="text-lg font-semibold tracking-tight">
@@ -304,6 +327,7 @@ export default async function DemandesPage() {
           </div>
         )}
       </section>
+      )}
     </div>
   )
 }

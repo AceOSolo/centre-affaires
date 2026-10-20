@@ -10,6 +10,7 @@ import { staffHasClientSpace } from '../../modules/comptes/espace-equipe.ts'
 import { openStaffClientSpaceAction } from '../../modules/comptes/espace-equipe-actions.ts'
 import { countPendingMailRequests } from '../../modules/courrier/demandes-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
+import { productOf, type ProductKey } from '../../modules/ressources/produits.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { MobileMenu } from './mobile-menu.tsx'
 import { Nav } from './nav.tsx'
@@ -63,8 +64,20 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     </Link>
   )
 
+  // Chaque rayon produit du menu compte ses propres demandes (ADR 046).
+  const pendingByProduct: Partial<Record<ProductKey, number>> = {}
+  for (const booking of pending) {
+    const { key } = productOf(booking.resource.resourceType)
+    pendingByProduct[key] = (pendingByProduct[key] ?? 0) + 1
+  }
+
   const nav = (
-    <Nav pendingCount={pending.length} mailRequestCount={mailRequests} allowed={permissionsOf(member.role)} />
+    <Nav
+      pendingCount={pending.length}
+      pendingByProduct={pendingByProduct}
+      mailRequestCount={mailRequests}
+      allowed={permissionsOf(member.role)}
+    />
   )
 
   const account = (

@@ -169,8 +169,13 @@ export type ProposalListItem = Pick<
   lineCount: number
 }
 
-/** Devis du centre, les plus récents d'abord ; `statuses` vide : tous. */
-export async function listProposals(filters: { statuses?: readonly ProposalStatus[]; limit?: number } = {}): Promise<ProposalListItem[]> {
+/**
+ * Devis du centre, les plus récents d'abord ; `statuses` vide : tous ;
+ * `product` : ceux d'un seul produit (le rayon Domiciliation, ADR 046).
+ */
+export async function listProposals(
+  filters: { statuses?: readonly ProposalStatus[]; product?: ProposalProduct; limit?: number } = {},
+): Promise<ProposalListItem[]> {
   const tenantId = currentTenantId()
   return withTenant(tenantId, async (tx) => {
     const totals = tx
@@ -212,6 +217,7 @@ export async function listProposals(filters: { statuses?: readonly ProposalStatu
         and(
           eq(proposals.tenantId, tenantId),
           filters.statuses?.length ? inArray(proposals.status, [...filters.statuses]) : undefined,
+          filters.product ? eq(proposals.product, filters.product) : undefined,
         ),
       )
       .orderBy(desc(proposals.createdAt))

@@ -340,6 +340,8 @@ export type InspectionFilter = {
   bookingId?: string
   contractId?: string
   stage?: Exclude<InspectionStage, 'withdrawn'>
+  /** Types de ressource d'un produit (ADR 046). */
+  resourceTypes?: readonly ResourceType[]
 }
 
 /** États des lieux du centre, les plus récents d'abord ; brouillons retirés exclus. */
@@ -353,6 +355,7 @@ export async function listInspections(filter: InspectionFilter = {}, limit = 200
     conditions.push(eq(inspections.status, 'closed'), isNull(inspections.signedAt))
   }
   if (filter.stage === 'signed') conditions.push(isNotNull(inspections.signedAt))
+  if (filter.resourceTypes) conditions.push(inArray(resources.resourceType, [...filter.resourceTypes]))
 
   const rows = await withTenant(currentTenantId(), (tx) =>
     selectInspectionRows(tx)

@@ -1,10 +1,12 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { useId } from 'react'
 
 import type { Permission } from '../../lib/auth/permissions.ts'
+import type { ProductKey } from '../../modules/ressources/produits.ts'
+import { activeEntry } from './nav-actif.ts'
 
 type Entry = {
   href: string
@@ -12,30 +14,98 @@ type Entry = {
   permission: Permission
   /** Compteur de file d'attente affiché à côté du libellé. */
   counter?: 'pending' | 'mail'
+  /** File d'un seul produit : le compteur `pending` est alors le sien. */
+  product?: ProductKey
+  /**
+   * Adresse qui allume l'entrée quand elle diffère du lien : le planning du
+   * camion s'ouvre sur la semaine et reste allumé sur la vue du jour.
+   */
+  match?: string
 }
 
-// Les entrées sont rangées par usage, pas par ordre d'arrivée des tranches :
-// ce qui se traite tous les jours en haut, les réglages en bas.
+/** Demandes d'un produit, avec le compteur de sa file. */
+const requests = (product: ProductKey): Entry => ({
+  href: `/demandes?produit=${product}`,
+  label: 'Demandes',
+  permission: 'demandes.traiter',
+  counter: 'pending',
+  product,
+})
+
+// Le menu est rangé par produit, tel que l'accueil les vend (ADR 046) : chaque
+// rayon réunit le planning, les demandes, le parc et les états des lieux de son
+// produit. « Au quotidien » garde les vues d'ensemble, les réglages sont en bas.
+// La facturation est partie dans Dolibarr (ADR 046) : elle n'a plus d'entrée.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
 const groups: { label: string; entries: Entry[] }[] = [
   {
     label: 'Au quotidien',
     entries: [
-      { href: '/reservations', label: 'Planning', permission: 'reservations.gerer' },
+      { href: '/reservations', label: 'Planning général', permission: 'reservations.gerer' },
       // Les demandes du site public bloquent un créneau tant qu'elles ne sont
       // pas traitées (ADR 005) : leur nombre est affiché en permanence.
-      { href: '/demandes', label: 'Demandes', permission: 'demandes.traiter', counter: 'pending' },
+      { href: '/demandes', label: 'Toutes les demandes', permission: 'demandes.traiter', counter: 'pending' },
+      // Devis que Dolibarr vient chercher (ADR 043).
       { href: '/devis', label: 'Devis', permission: 'demandes.traiter' },
-      // Les demandes de courrier à traiter (ouverture, numérisation,
-      // réexpédition) sont comptées : c'est une file d'attente (ADR 037).
-      { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
       // Entrées et sorties des ressources occupées ; les modèles s'y rejoignent (ADR 039).
       { href: '/etats-des-lieux', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
     ],
   },
   {
-    label: 'Commercial',
+    label: 'Salles',
+    entries: [
+      { href: '/reservations?type=salle', label: 'Planning des salles', permission: 'reservations.gerer' },
+      requests('salles'),
+      { href: '/ressources?type=salle', label: 'Salles', permission: 'ressources.gerer' },
+    ],
+  },
+  {
+    label: 'Bureaux',
+    entries: [
+      // Un bureau se loue au mois : la vue du mois montre son occupation.
+      {
+        href: '/reservations/mois?type=bureau',
+        match: '/reservations?type=bureau',
+        label: 'Occupation des bureaux',
+        permission: 'reservations.gerer',
+      },
+      requests('bureaux'),
+      { href: '/ressources?type=bureau', label: 'Bureaux', permission: 'ressources.gerer' },
+      { href: '/ressources?type=casier', label: 'Casiers', permission: 'ressources.gerer' },
+      { href: '/etats-des-lieux?produit=bureaux', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+    ],
+  },
+  {
+    label: 'Domiciliation',
+    entries: [
+      // Les demandes de courrier à traiter (ouverture, numérisation,
+      // réexpédition) sont comptées : c'est une file d'attente (ADR 037).
+      { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
+      // Une domiciliation ne réserve pas de créneau : sa demande est un devis (ADR 043).
+      { href: '/devis?produit=domiciliation', label: 'Demandes', permission: 'demandes.traiter' },
+      { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
+    ],
+  },
+  {
+    label: 'Camion',
+    entries: [
+      // Le camion se loue à la demi-journée ou à la journée : la semaine d'abord.
+      {
+        href: '/reservations/semaine?type=vehicule',
+        match: '/reservations?type=vehicule',
+        label: 'Planning du camion',
+        permission: 'reservations.gerer',
+      },
+      requests('vehicules'),
+      { href: '/ressources?type=vehicule', label: 'Véhicules', permission: 'ressources.gerer' },
+      { href: '/etats-des-lieux?produit=vehicules', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+    ],
+  },
+  {
+    // Consultables ici tant que la passerelle Dolibarr ne les fournit pas
+    // (ADR 046, deuxième tranche).
+    label: 'Clients',
     entries: [
       { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
       { href: '/contrats', label: 'Contrats', permission: 'contrats.consulter' },
@@ -45,18 +115,9 @@ const groups: { label: string; entries: Entry[] }[] = [
     ],
   },
   {
-    label: 'Facturation',
+    label: 'Le centre',
     entries: [
-      { href: '/factures', label: 'Factures', permission: 'facturation.consulter' },
-      // Règlements et export comptable (R16, ADR 030) : l'accueil consulte, l'exploitant pointe.
-      { href: '/paiements', label: 'Règlements', permission: 'facturation.consulter' },
-      { href: '/comptabilite', label: 'Comptabilité', permission: 'comptabilite.exporter' },
-    ],
-  },
-  {
-    label: 'Ressources',
-    entries: [
-      { href: '/ressources', label: 'Ressources', permission: 'ressources.gerer' },
+      { href: '/ressources', label: 'Toutes les ressources', permission: 'ressources.gerer' },
       { href: '/disponibilites', label: 'Disponibilités', permission: 'horaires.gerer' },
       { href: '/ressources/annonces', label: 'Annonces du site', permission: 'ressources.gerer' },
       { href: '/ressources/agendas', label: 'Agendas Google', permission: 'agenda-google.gerer' },
@@ -89,15 +150,19 @@ const groups: { label: string; entries: Entry[] }[] = [
  */
 export function Nav({
   pendingCount = 0,
+  pendingByProduct = {},
   mailRequestCount = 0,
   allowed,
 }: {
   pendingCount?: number
+  /** Demandes en attente par produit, pour le compteur de chaque rayon. */
+  pendingByProduct?: Partial<Record<ProductKey, number>>
   mailRequestCount?: number
   /** Droits du membre connecté (`permissionsOf`). */
   allowed: readonly Permission[]
 }) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   // La navigation est rendue deux fois (barre latérale, menu des écrans
   // étroits) : les identifiants des titres doivent rester uniques.
   const prefix = useId()
@@ -110,12 +175,12 @@ export function Nav({
     }))
     .filter((group) => group.entries.length > 0)
 
-  // Le plus long chemin qui correspond l'emporte : `/ressources/annonces` ne
-  // doit pas allumer aussi l'entrée `/ressources`.
-  const actif = visibles
-    .flatMap((group) => group.entries)
-    .filter((entry) => pathname === entry.href || pathname.startsWith(`${entry.href}/`))
-    .sort((a, b) => b.href.length - a.href.length)[0]?.href
+  const pattern = (entry: Entry) => entry.match ?? entry.href
+  const actif = activeEntry(
+    visibles.flatMap((group) => group.entries.map(pattern)),
+    pathname,
+    new URLSearchParams(searchParams.toString()),
+  )
 
   const counts = { pending: pendingCount, mail: mailRequestCount }
 
@@ -133,8 +198,13 @@ export function Nav({
             </p>
             <ul className="flex flex-col gap-0.5">
               {group.entries.map((entry) => {
-                const active = entry.href === actif
-                const count = entry.counter ? counts[entry.counter] : 0
+                const active = pattern(entry) === actif
+                const count =
+                  entry.counter === 'pending' && entry.product
+                    ? (pendingByProduct[entry.product] ?? 0)
+                    : entry.counter
+                      ? counts[entry.counter]
+                      : 0
                 return (
                   <li key={entry.href}>
                     <Link

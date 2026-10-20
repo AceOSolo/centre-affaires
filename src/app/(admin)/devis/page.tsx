@@ -13,6 +13,7 @@ import {
 } from '../../../modules/facturation/propositions-ecran.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
 import { proposalProductLabels } from '../../../modules/facturation/propositions.ts'
+import { proposalProducts, type ProposalProduct } from '../../../modules/facturation/schema-devis.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 
 export const metadata = { title: 'Devis' }
@@ -25,18 +26,30 @@ export const metadata = { title: 'Devis' }
 export default async function ProposalsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ statut?: string | string[] }>
+  searchParams: Promise<{ statut?: string | string[]; produit?: string | string[] }>
 }) {
   await requirePermission('demandes.traiter')
-  const [{ statut }, timeZone] = await Promise.all([searchParams, currentTimeZone()])
+  const [{ statut, produit }, timeZone] = await Promise.all([searchParams, currentTimeZone()])
   const group = parseStatusGroup(statut)
-  const proposals = await listProposals({ statuses: proposalStatusGroupStatuses[group] })
+  // Le rayon Domiciliation du menu ouvre ses seuls devis (ADR 046).
+  const rawProduct = Array.isArray(produit) ? produit[0] : produit
+  const product = proposalProducts.find((candidate): candidate is ProposalProduct => candidate === rawProduct)
+  const proposals = await listProposals({ statuses: proposalStatusGroupStatuses[group], product })
+  const groupHref = (candidate: typeof group) => {
+    const query = new URLSearchParams()
+    if (candidate !== 'a-completer') query.set('statut', candidate)
+    if (product) query.set('produit', product)
+    const search = query.toString()
+    return search ? `/devis?${search}` : '/devis'
+  }
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Devis</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">
+            Devis{product && ` · ${proposalProductLabels[product]}`}
+          </h1>
           <p className="mt-1 max-w-prose text-sm text-muted-foreground">
             Chaque demande du site ou de l’espace client dépose son devis. L’accueil le complète et le
             valide ; Dolibarr reprend les devis validés, les envoie et en fait la facture.
@@ -54,7 +67,7 @@ export default async function ProposalsPage({
         {proposalStatusGroups.map((candidate) => (
           <Link
             key={candidate}
-            href={candidate === 'a-completer' ? '/devis' : `/devis?statut=${candidate}`}
+            href={groupHref(candidate)}
             aria-current={candidate === group ? 'page' : undefined}
             className="rounded-sm border-b-2 border-transparent pb-0.5 underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent aria-[current=page]:border-primary aria-[current=page]:font-semibold aria-[current=page]:text-primary"
           >
@@ -74,7 +87,7 @@ export default async function ProposalsPage({
               Établir un devis
             </Link>
             {group !== 'tous' && (
-              <Link href="/devis?statut=tous" className="self-center text-sm text-primary underline-offset-2 hover:underline">
+              <Link href={groupHref('tous')} className="self-center text-sm text-primary underline-offset-2 hover:underline">
                 Voir tous les devis
               </Link>
             )}

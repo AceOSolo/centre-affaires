@@ -1,11 +1,11 @@
-import { and, asc, eq, isNull, sql } from 'drizzle-orm'
+import { and, asc, eq, inArray, isNull, sql } from 'drizzle-orm'
 import { alias } from 'drizzle-orm/mysql-core'
 
 import { withTenant } from '../../db/index.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
-import { resources } from '../ressources/schema.ts'
+import { resources, type ResourceType } from '../ressources/schema.ts'
 import type { BookingWithResource } from './queries.ts'
 import { bookings } from './schema.ts'
 
@@ -20,8 +20,11 @@ export type PendingRequest = BookingWithResource & {
   bookedBy: { name: string | null; email: string } | null
 }
 
-/** Demandes en attente de validation, la plus proche d'abord. */
-export async function listPendingRequests(): Promise<PendingRequest[]> {
+/**
+ * Demandes en attente de validation, la plus proche d'abord ; limitées aux
+ * types de ressource d'un produit quand `types` est donné (ADR 046).
+ */
+export async function listPendingRequests(types?: readonly ResourceType[]): Promise<PendingRequest[]> {
   const rows = await withTenant(currentTenantId(), (tx) =>
     tx
       .select({
@@ -38,7 +41,13 @@ export async function listPendingRequests(): Promise<PendingRequest[]> {
         clientMembers,
         and(eq(clientMembers.clientId, bookings.clientId), eq(clientMembers.id, bookings.bookedByMemberId)),
       )
-      .where(and(eq(bookings.status, 'pending'), isNull(resources.deletedAt)))
+      .where(
+        and(
+          eq(bookings.status, 'pending'),
+          isNull(resources.deletedAt),
+          types ? inArray(resources.resourceType, [...types]) : undefined,
+        ),
+      )
       .orderBy(asc(bookings.startsAt)),
   )
   return rows.map(({ booking, resource, clientName, memberName, memberEmail }) => ({
