@@ -297,6 +297,49 @@ describe('occupation des ressources sous contrat', { skip: raisonDeSaut }, () =>
       assert.equal(await count(sql`select count(*) as n from bookings where kind = 'contract'`), 1)
     })
 
+    /**
+     * Le cas que le test précédent ne provoque qu'au hasard du calendrier : une
+     * activation attend le verrou de la ressource pendant qu'une autre écriture,
+     * non validée, le tient. Elle doit voir ce que l'autre a validé entre-temps.
+     */
+    const pendantUneEcritureTenue = async (ecrire: string, parametres: unknown[], attendre: () => Promise<unknown>) => {
+      const tenue = await bases.app.client.getConnection()
+      try {
+        await tenue.query('begin')
+        await tenue.query('set @app_tenant_id = ?', [DEFAULT_TENANT_ID])
+        await tenue.query(ecrire, parametres)
+        const issue = errorCode(attendre)
+        // Le temps que la seconde écriture bute sur le verrou de la ressource.
+        await new Promise((resolve) => setTimeout(resolve, 300))
+        await tenue.query('set @app_tenant_id = null')
+        await tenue.query('commit')
+        return await issue
+      } finally {
+        tenue.release()
+      }
+    }
+
+    it('refuse une activation qui attendait une autre activation sur la même ressource', async () => {
+      const premier = await contrat()
+      const second = await contrat({ reference: 'BUR-2026-002', clientId: AUTRE_CLIENT })
+      const issue = await pendantUneEcritureTenue(
+        "update contracts set status = 'active' where id = ?", [premier], () => activer(second),
+      )
+      assert.equal(issue, DB_EXCLUSION_VIOLATION)
+      assert.equal(await count(sql`select count(*) as n from bookings where kind = 'contract' and status <> 'cancelled'`), 1)
+    })
+
+    it('refuse une activation qui attendait une réservation horaire sur la même ressource', async () => {
+      const id = await contrat()
+      const issue = await pendantUneEcritureTenue(
+        "insert into bookings (resource_id, channel, starts_at, ends_at, title) values (?, 'staff', '2026-04-10 07:00:00', '2026-04-10 08:00:00', 'Rendez-vous')",
+        [BUREAU],
+        () => activer(id),
+      )
+      assert.equal(issue, DB_EXCLUSION_VIOLATION)
+      assert.equal(await occupation(id), undefined)
+    })
+
     it('laisse deux contrats successifs sur la même ressource', async () => {
       await activer(await contrat())
       await activer(

@@ -145,13 +145,29 @@ BEGIN
       FROM resources
      WHERE tenant_id = NEW.tenant_id AND id = NEW.resource_id
        FOR UPDATE;
-    SELECT COUNT(*) INTO v_count
-      FROM bookings
-     WHERE resource_id = NEW.resource_id
-       AND status <> 'cancelled'
-       AND starts_at < NEW.ends_at
-       AND ends_at > NEW.starts_at
-       AND id <> NEW.id;
+    -- Une occupation de contrat s'écrit dans une instruction qui a déjà lu
+    -- (`INSERT … SELECT` de `apply_contract_occupation`) : la lecture simple
+    -- y reprendrait l'instantané pris avant l'attente du verrou, et manquerait
+    -- ce qu'un autre contrat vient de valider sur la ressource. La lecture
+    -- verrouillante lit toujours la dernière version validée.
+    IF NEW.kind = 'contract' THEN
+      SELECT COUNT(*) INTO v_count
+        FROM bookings
+       WHERE resource_id = NEW.resource_id
+         AND status <> 'cancelled'
+         AND starts_at < NEW.ends_at
+         AND ends_at > NEW.starts_at
+         AND id <> NEW.id
+         FOR SHARE;
+    ELSE
+      SELECT COUNT(*) INTO v_count
+        FROM bookings
+       WHERE resource_id = NEW.resource_id
+         AND status <> 'cancelled'
+         AND starts_at < NEW.ends_at
+         AND ends_at > NEW.starts_at
+         AND id <> NEW.id;
+    END IF;
     IF v_count > 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA000: Ce créneau est déjà occupé sur cette ressource.';
@@ -282,13 +298,29 @@ BEGIN
       FROM resources
      WHERE tenant_id = NEW.tenant_id AND id = NEW.resource_id
        FOR UPDATE;
-    SELECT COUNT(*) INTO v_count
-      FROM bookings
-     WHERE resource_id = NEW.resource_id
-       AND status <> 'cancelled'
-       AND starts_at < NEW.ends_at
-       AND ends_at > NEW.starts_at
-       AND id <> NEW.id;
+    -- Une occupation de contrat s'écrit dans une instruction qui a déjà lu
+    -- (`INSERT … SELECT` de `apply_contract_occupation`) : la lecture simple
+    -- y reprendrait l'instantané pris avant l'attente du verrou, et manquerait
+    -- ce qu'un autre contrat vient de valider sur la ressource. La lecture
+    -- verrouillante lit toujours la dernière version validée.
+    IF NEW.kind = 'contract' THEN
+      SELECT COUNT(*) INTO v_count
+        FROM bookings
+       WHERE resource_id = NEW.resource_id
+         AND status <> 'cancelled'
+         AND starts_at < NEW.ends_at
+         AND ends_at > NEW.starts_at
+         AND id <> NEW.id
+         FOR SHARE;
+    ELSE
+      SELECT COUNT(*) INTO v_count
+        FROM bookings
+       WHERE resource_id = NEW.resource_id
+         AND status <> 'cancelled'
+         AND starts_at < NEW.ends_at
+         AND ends_at > NEW.starts_at
+         AND id <> NEW.id;
+    END IF;
     IF v_count > 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA000: Ce créneau est déjà occupé sur cette ressource.';

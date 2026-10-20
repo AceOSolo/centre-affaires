@@ -120,6 +120,33 @@ Migration 0005 : l'événement entre dans les énumérations
 `proposal` dans `notification_deliveries.related_type`, pour que le journal
 des envois mène au devis.
 
+### 10. Anti-double-location : l'occupation d'un contrat relit la dernière version validée
+
+Trouvé par la suite de tests de la vérification (`départage deux activations
+concurrentes`, échec intermittent sous charge), puis reproduit à coup sûr.
+Une activation de contrat qui attend le verrou de la ressource, tenu par une
+autre activation ou par une réservation horaire non encore validée, passait
+quand même : la ressource se retrouvait louée deux fois, contre la
+décision 3 de `CLAUDE.md`. Le chemin des réservations ordinaires n'était pas
+touché.
+
+Cause : `apply_contract_occupation` écrit l'occupation par un
+`INSERT … SELECT`. La partie `SELECT` prend l'instantané de lecture de
+l'instruction avant que le trigger de `bookings` n'obtienne le verrou de la
+ressource ; le contrôle de chevauchement, en lecture simple, relisait cet
+instantané et ne voyait pas ce qui avait été validé pendant l'attente.
+
+Correction : pour une ligne `kind = 'contract'`, le contrôle de chevauchement
+des triggers `bookings_before_insert` et `bookings_before_update` est une
+lecture verrouillante (`FOR SHARE`), qui lit toujours la dernière version
+validée. Les autres réservations gardent la lecture simple, sans verrou de
+ligne, pour la raison donnée dans `20-reservations.sql` (ordre des verrous
+d'un `UPDATE`). Contrepartie : une activation de contrat concurrente d'un
+déplacement de réservation sur la même ressource peut finir en interblocage
+(erreur 1213) au lieu d'un refus `CA000` ; jamais en double location. Deux
+tests dans `occupation.db.test.ts` tiennent une écriture ouverte pendant
+qu'une activation attend, et échouent sur l'ancienne règle.
+
 ## Laissé en attente, à trancher
 
 - **Rétablir le déploiement automatique** : décision de l'exploitant et du
