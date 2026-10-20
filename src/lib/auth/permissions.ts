@@ -55,6 +55,8 @@ export const permissions = [
   'comptes.gerer',
   // L'accueil rattache un compte à son entreprise ; bannir reste à l'exploitant.
   'comptes.rattacher',
+  // Tout membre peut ouvrir son propre espace client (ADR 045, révision).
+  'espace-client.personnel',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -94,6 +96,7 @@ export const permissionLabels: Record<Permission, string> = {
   'rgpd.anonymiser': 'Anonymiser un client, un accès ou un membre retiré (RGPD)',
   'comptes.gerer': 'Comptes du site : bannir et réactiver',
   'comptes.rattacher': 'Comptes du site : consulter, rattacher à une entreprise',
+  'espace-client.personnel': 'Ouvrir son propre espace client depuis le back-office',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */
@@ -112,6 +115,7 @@ const accueil: readonly Permission[] = [
   'etats-des-lieux.gerer',
   // Relier un compte inscrit en ligne à l'entreprise dont il relève (ADR 045).
   'comptes.rattacher',
+  'espace-client.personnel',
 ]
 
 /**

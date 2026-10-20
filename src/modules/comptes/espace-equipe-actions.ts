@@ -3,7 +3,7 @@
 import { redirect } from 'next/navigation'
 
 import { withTenant } from '../../db/index.ts'
-import { requireStaff } from '../../lib/auth/staff.ts'
+import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { staffHasClientSpace } from './espace-equipe.ts'
 import { ensureSignupClient } from './inscription.ts'
@@ -17,7 +17,9 @@ import { ensureSignupClient } from './inscription.ts'
  * (ADR 045) — mais seulement parce qu'il l'a demandée ici.
  */
 export async function openStaffClientSpaceAction(): Promise<void> {
-  const { user } = await requireStaff()
+  // Garde par un droit, comme toute action du back-office (ADR 019) : les
+  // deux rôles l'ont.
+  const { user } = await requirePermission('espace-client.personnel')
   await withTenant(currentTenantId(), async (tx) => {
     if (!(await staffHasClientSpace(tx, user))) await ensureSignupClient(tx, user, { forStaff: true })
   })
