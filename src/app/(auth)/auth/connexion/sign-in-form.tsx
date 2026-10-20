@@ -13,8 +13,19 @@ const labelClass = 'block text-sm font-medium text-foreground'
 type Mode = 'connexion' | 'creation'
 
 /**
- * Connexion de l'équipe du centre et des clients : un seul écran, un seul
- * compte Better Auth, et `/auth/suite` oriente chacun vers son espace.
+ * `client` : la page des clients (`/auth/connexion`), avec l'inscription libre.
+ * `equipe` : celle du back-office (`/auth/equipe`) ; pas d'entreprise à saisir,
+ * et la première connexion d'un membre inscrit dans l'écran Équipe y crée son
+ * mot de passe.
+ */
+export type Audience = 'client' | 'equipe'
+
+/**
+ * Formulaire de connexion des deux populations. Le compte Better Auth est le
+ * même ; seules les pages diffèrent, pour que l'équipe et les clients ne
+ * partagent pas un écran qui ne s'adresse vraiment à aucun des deux. Ce sont
+ * `staff_members` et `client_members` qui donnent les droits (ADR 008, 015),
+ * pas la page par laquelle on est entré.
  *
  * Créer un compte est libre (ADR 045). Une adresse inscrite par le centre
  * retrouve son entreprise (`client_members`, ADR 015) ou le back-office
@@ -22,7 +33,8 @@ type Mode = 'connexion' | 'creation'
  * propre fiche client « inscrite en ligne ». L'écran ne dit pas laquelle des
  * deux s'applique : il ne doit pas révéler quelles adresses sont inscrites.
  */
-export function SignInForm() {
+export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
+  const equipe = audience === 'equipe'
   const router = useRouter()
   const searchParams = useSearchParams()
   const [mode, setMode] = useState<Mode>('connexion')
@@ -33,8 +45,8 @@ export function SignInForm() {
   const [pending, startTransition] = useTransition()
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
-  // Sans chemin, l'aiguillage choisit entre back-office et espace client.
-  const redirectTo = searchParams.get('redirect') ?? '/auth/suite'
+  // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
+  const redirectTo = searchParams.get('redirect') ?? (equipe ? '/reservations' : '/auth/suite')
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -107,12 +119,22 @@ export function SignInForm() {
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-primary">
-          {mode === 'creation' ? 'Créer votre accès' : 'Connexion'}
+          {equipe
+            ? mode === 'creation'
+              ? 'Première connexion équipe'
+              : 'Connexion équipe'
+            : mode === 'creation'
+              ? 'Créer votre accès'
+              : 'Connexion'}
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          {mode === 'creation'
-            ? 'Si le centre vous a déjà inscrit, utilisez cette adresse : vous retrouverez l’espace de votre entreprise.'
-            : 'Espace client et équipe du centre.'}
+          {equipe
+            ? mode === 'creation'
+              ? 'Utilisez l’adresse sous laquelle l’exploitant vous a inscrit dans l’écran Équipe, et choisissez votre mot de passe.'
+              : 'Back-office du centre, réservé à l’équipe.'
+            : mode === 'creation'
+              ? 'Si le centre vous a déjà inscrit, utilisez cette adresse : vous retrouverez l’espace de votre entreprise.'
+              : 'Espace client.'}
         </p>
       </div>
 
@@ -150,7 +172,7 @@ export function SignInForm() {
           </div>
         )}
 
-        {mode === 'creation' && (
+        {mode === 'creation' && !equipe && (
           <div>
             <label className={labelClass} htmlFor="companyName">
               Entreprise <span className="font-normal text-muted-foreground">(facultatif)</span>
@@ -215,7 +237,11 @@ export function SignInForm() {
       </form>
 
       <p className="text-sm text-muted-foreground">
-        {mode === 'creation' ? 'Vous avez déjà un compte ? ' : 'Première connexion ? '}
+        {mode === 'creation'
+          ? 'Vous avez déjà un compte ? '
+          : equipe
+            ? 'Vous venez d’être ajouté à l’équipe ? '
+            : 'Première connexion ? '}
         <button
           type="button"
           onClick={() => {
@@ -225,7 +251,7 @@ export function SignInForm() {
           }}
           className="font-medium text-primary underline-offset-2 hover:underline"
         >
-          {mode === 'creation' ? 'Se connecter' : 'Créer votre accès'}
+          {mode === 'creation' ? 'Se connecter' : equipe ? 'Choisir votre mot de passe' : 'Créer votre accès'}
         </button>
       </p>
     </div>

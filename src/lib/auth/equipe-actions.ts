@@ -60,7 +60,7 @@ export async function addTeamMemberAction(
   return {
     ok:
       `${created.email} inscrit comme ${staffRoleLabels[created.role]}. ` +
-      'La personne crée son accès sur la page de connexion avec cette adresse ; le rattachement se fait à sa première connexion.',
+      'La personne choisit son mot de passe sur la page de connexion de l’équipe (/auth/equipe) avec cette adresse ; le rattachement se fait à sa première connexion.',
   }
 }
 

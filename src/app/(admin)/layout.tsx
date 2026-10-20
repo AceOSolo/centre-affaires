@@ -72,7 +72,9 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       {/* Le fuseau est affiché : toutes les heures de l'écran sont les
           siennes, alors que la base est en UTC (décision 4). */}
       <p>Heures affichées en {tenant.timezone}</p>
-      <SignOutButton className="self-start rounded-md border border-border bg-white px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-150 ease-out hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
+      <SignOutButton
+        redirectTo="/auth/equipe"
+        className="self-start rounded-md border border-border bg-white px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-150 ease-out hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
     </div>
   )
 

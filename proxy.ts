@@ -17,7 +17,12 @@ import { NextResponse, type NextRequest } from 'next/server'
 export default function proxy(request: NextRequest) {
   if (getSessionCookie(request)) return NextResponse.next()
 
-  const login = new URL('/auth/connexion', request.url)
+  // Deux pages de connexion : celle des clients pour leur espace, celle de
+  // l'équipe pour tout le reste, qui n'est que back-office. Le test est
+  // exact : `/comptes` est un écran du back-office.
+  const { pathname } = request.nextUrl
+  const espaceClient = pathname === '/compte' || pathname.startsWith('/compte/')
+  const login = new URL(espaceClient ? '/auth/connexion' : '/auth/equipe', request.url)
   login.searchParams.set('redirect', request.nextUrl.pathname + request.nextUrl.search)
   return NextResponse.redirect(login)
 }

@@ -9,8 +9,17 @@ import { authClient } from '../../lib/auth/client.ts'
 /**
  * Déconnexion. `refresh` après coup : la coque du back-office lit la session
  * côté serveur et doit être rejouée sans le cookie.
+ *
+ * `redirectTo` : la page de connexion à retrouver, celle de l'équipe depuis
+ * le back-office (`/auth/equipe`), celle des clients sinon.
  */
-export function SignOutButton({ className }: { className?: string }) {
+export function SignOutButton({
+  className,
+  redirectTo = '/auth/connexion',
+}: {
+  className?: string
+  redirectTo?: string
+}) {
   const router = useRouter()
   const [pending, startTransition] = useTransition()
 
@@ -21,7 +30,7 @@ export function SignOutButton({ className }: { className?: string }) {
       onClick={async () => {
         await authClient.signOut()
         startTransition(() => {
-          router.replace('/auth/connexion')
+          router.replace(redirectTo)
           router.refresh()
         })
       }}

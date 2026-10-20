@@ -136,8 +136,9 @@ export default async function EquipePage({
           Inscrire un membre
         </h2>
         <p className="max-w-3xl text-sm text-muted-foreground">
-          La personne crée ensuite son accès sur la page de connexion, avec cette adresse : son
-          compte lui est rattaché à la première connexion.
+          La personne choisit ensuite son mot de passe sur la page de connexion de l’équipe
+          (<span className="font-medium text-foreground">/auth/equipe</span>), avec cette
+          adresse : son compte lui est rattaché à la première connexion.
         </p>
         <div className="rounded-lg border border-border bg-white px-5 py-4">
           <TeamMemberForm roles={roles} />

@@ -55,7 +55,7 @@ export async function requireStaff(): Promise<{
 }> {
   const access = await staffAccess()
   if (access.status === 'membre') return access
-  redirect(access.status === 'refuse' ? '/auth/acces-refuse' : '/auth/connexion')
+  redirect(access.status === 'refuse' ? '/auth/acces-refuse' : '/auth/equipe')
 }
 
 /**
