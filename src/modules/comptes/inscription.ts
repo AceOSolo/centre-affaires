@@ -1,4 +1,4 @@
-import { and, eq, or } from 'drizzle-orm'
+import { and, eq, isNull, or } from 'drizzle-orm'
 
 import { tenantContext } from '../../db/contexte.ts'
 import type { Transaction } from '../../db/index.ts'
@@ -44,6 +44,11 @@ export function signupClientName(input: { companyName: string | null; name: stri
  *   demande de réservation connecté sur le site ne doit pas se retrouver avec
  *   une fiche qu'il n'a pas demandée.
  *
+ * Avec `forStaff`, seul un accès **en cours** empêche la création : c'est la
+ * règle du lien « Créer mon espace client » (`staffHasClientSpace`). Un membre
+ * dont l'accès client a été retiré, et qui le redemande, reçoit une fiche
+ * neuve au lieu de tomber sur « Accès refusé ».
+ *
  * Le compte est verrouillé le temps de la vérification : deux requêtes
  * simultanées de la première connexion ne créent pas deux fiches.
  */
@@ -66,6 +71,7 @@ export async function ensureSignupClient(
       and(
         eq(clientMembers.tenantId, currentTenant()),
         or(eq(clientMembers.authUserId, user.id), eq(clientMembers.email, user.email)),
+        options.forStaff ? isNull(clientMembers.deletedAt) : undefined,
       ),
     )
     .limit(1)

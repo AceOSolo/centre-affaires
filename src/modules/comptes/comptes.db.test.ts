@@ -10,6 +10,7 @@ import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { resolveClientAccounts } from '../clients/comptes.ts'
 import { lire, toutVider } from '../clients/test-support.ts'
 import { activeBan, attachAccountToClient, banAccounts, liftBans, listAccounts } from './comptes.ts'
+import { staffHasClientSpace } from './espace-equipe.ts'
 import { ensureSignupClient, resolveOrSignupClientAccounts } from './inscription.ts'
 
 /**
@@ -138,6 +139,22 @@ describe('comptes du site', { skip: raisonDeSaut }, () => {
         lire(tx, sql`select status, origin from clients where id = ${comptes[0].clientId}`),
       )
       assert.deepEqual(fiche, { status: 'prospect', origin: 'back_office' })
+    })
+
+    it('recrée l’espace client d’un membre de l’équipe qui le redemande après un retrait', async () => {
+      const exploitant = { id: U_EXPLOITANT, email: 'exploitant@exemple.test', name: 'Alex Exploitant' }
+      await asTenant((tx) => ensureSignupClient(tx, exploitant, { forStaff: true }))
+      await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = current_timestamp(3)`))
+
+      // Le back-office propose de nouveau « Créer mon espace client »…
+      assert.equal(await asTenant((tx) => staffHasClientSpace(tx, exploitant)), false)
+      // …et le clic le crée, au lieu de mener à « Accès refusé ».
+      assert.equal(await asTenant((tx) => ensureSignupClient(tx, exploitant, { forStaff: true })), true)
+      assert.equal((await asTenant((tx) => resolveClientAccounts(tx, exploitant))).length, 1)
+      assert.equal(await asTenant((tx) => staffHasClientSpace(tx, exploitant)), true)
+      // Sans la demande du membre, l'accès retiré ne renaît pas.
+      await asTenant((tx) => tx.execute(sql`update client_members set deleted_at = current_timestamp(3)`))
+      assert.equal(await asTenant((tx) => ensureSignupClient(tx, exploitant)), false)
     })
 
     it('ne crée rien pour une adresse invitée par le centre, pas encore réclamée', async () => {
