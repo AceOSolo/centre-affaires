@@ -129,20 +129,23 @@ export async function openMailAction(
   const { member } = await requirePermission('courrier.gerer')
   const id = text(formData, 'id')
   if (!id) return { error: 'Courrier introuvable.' }
+  // Le nombre de pages saisi est rendu après un échec ; le fichier, lui, se
+  // joint de nouveau.
+  const values = { contentPages: text(formData, 'contentPages') }
 
   const read = await readScan(formData.get('content'))
-  if (read.error) return { fieldErrors: { content: read.error } }
+  if (read.error) return { fieldErrors: { content: read.error }, values }
   if (!read.scan) {
-    return { fieldErrors: { content: 'Joignez la numérisation du contenu.' } }
+    return { fieldErrors: { content: 'Joignez la numérisation du contenu.' }, values }
   }
   const content = withPageCount(formData, 'content', read.scan)
-  if (content.error || !content.scan) return { fieldErrors: { contentPages: content.error ?? '' } }
+  if (content.error || !content.scan) return { fieldErrors: { contentPages: content.error ?? '' }, values }
 
   try {
     await openMail(id, member.id, content.scan satisfies ScanFile)
   } catch (error) {
-    if (error instanceof MailStateError) return { error: error.message }
-    return storageFailure(error)
+    if (error instanceof MailStateError) return { error: error.message, values }
+    return { ...storageFailure(error), values }
   }
 
   after(() => notifyMailScanned(id))

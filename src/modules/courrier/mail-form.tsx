@@ -171,7 +171,7 @@ export function MailForm({
           hint="Seulement si le pli est ouvert maintenant. L’ouverture sera comptée au relevé de facturation, à l’initiative du centre."
           error={errors.content}
         />
-        <PagesField name="contentPages" error={errors.contentPages} />
+        <PagesField name="contentPages" error={errors.contentPages} defaultValue={values?.contentPages} />
       </fieldset>
 
       <div className="flex items-center gap-3">
@@ -239,9 +239,10 @@ export function FileField({
 /**
  * Pages d'un contenu déposé (ADR 044). Facultatif : laissé vide, le compte est
  * lu dans le PDF ; une image compte pour une page. La facturation en dépend,
- * au-delà des pages comprises dans l'ouverture.
+ * au-delà des pages comprises dans l'ouverture. `defaultValue` : la saisie
+ * rendue après un échec, que React efface sinon avec le formulaire.
  */
-export function PagesField({ name, error }: { name: string; error?: string }) {
+export function PagesField({ name, error, defaultValue }: { name: string; error?: string; defaultValue?: string }) {
   return (
     <div className="max-w-xs">
       <label className={labelClass} htmlFor={name}>
@@ -252,6 +253,7 @@ export function PagesField({ name, error }: { name: string; error?: string }) {
         name={name}
         inputMode="numeric"
         autoComplete="off"
+        defaultValue={defaultValue}
         aria-invalid={error ? true : undefined}
         aria-describedby={`${name}-hint${error ? ` ${name}-error` : ''}`}
         className={`${fieldClass} mt-1 tabular`}

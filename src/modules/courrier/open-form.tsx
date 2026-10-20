@@ -19,6 +19,8 @@ export function OpenForm({ mailItemId, requested }: { mailItemId: string; reques
 
   return (
     <form
+      // Remonté avec la saisie rendue après un échec : React efface le formulaire.
+      key={JSON.stringify(state?.values ?? {})}
       action={formAction}
       className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4"
     >
@@ -45,7 +47,11 @@ export function OpenForm({ mailItemId, requested }: { mailItemId: string; reques
         error={state?.fieldErrors?.content}
         required
       />
-      <PagesField name="contentPages" error={state?.fieldErrors?.contentPages} />
+      <PagesField
+        name="contentPages"
+        error={state?.fieldErrors?.contentPages}
+        defaultValue={state?.values?.contentPages}
+      />
 
       <div>
         <button
