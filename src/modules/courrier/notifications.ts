@@ -1,7 +1,6 @@
 import {
   findPendingMailRequestId,
   notifyMailBatchClosed as notifyBatchClosed,
-  notifyMailReceived,
   notifyMailRequestDone as notifyRequestDone,
   notifyMailRequestRefused as notifyRequestRefused,
   notifyMailRequestSubmitted as notifyRequestSubmitted,
@@ -21,14 +20,6 @@ import {
  * `notifications/declencheurs-courrier.ts`. Ces fonctions gardent les noms
  * qu'appellent les actions du courrier ; aucune ne lève.
  */
-
-/**
- * Arrivée d'un pli seul, hors tournée : aux personnes de l'entreprise. Depuis
- * les tournées (ADR 044), l'enregistrement ne l'appelle plus.
- */
-export async function notifyMailRegistered(mailItemId: string): Promise<void> {
-  await notifyMailReceived(mailItemId)
-}
 
 /**
  * Fin de tournée (ADR 044) : « courrier du jour » à chaque entreprise qui en a

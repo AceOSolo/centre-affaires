@@ -145,22 +145,6 @@ export async function findOpenBatch(): Promise<OpenBatch | undefined> {
   })
 }
 
-/** Nombre de plis de la tournée ouverte : le repère de la navigation. */
-export async function countOpenBatchItems(): Promise<number | null> {
-  const [row] = await withTenant(currentTenantId(), (tx) =>
-    tx
-      .select({ count: sql<number>`count(${mailItems.id})` })
-      .from(mailBatches)
-      .leftJoin(
-        mailItems,
-        and(eq(mailItems.batchId, mailBatches.id), isNull(mailItems.deletedAt)),
-      )
-      .where(isNull(mailBatches.closedAt))
-      .groupBy(mailBatches.id),
-  )
-  return row ? Number(row.count) : null
-}
-
 /**
  * Domiciliés d'un jour du centre : entreprises vivantes qui ont un contrat de
  * domiciliation en cours ce jour-là.
