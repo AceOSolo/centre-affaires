@@ -153,10 +153,10 @@ export default async function ClientPage({
         <dd>{client.legalForm ?? '—'}</dd>
 
         <dt className="text-muted-foreground">SIRET</dt>
-        <dd className="font-mono text-xs">{formatSiret(client.siret)}</dd>
+        <dd className="tabular text-xs">{formatSiret(client.siret)}</dd>
 
         <dt className="text-muted-foreground">N° TVA</dt>
-        <dd className="font-mono text-xs">{client.vatNumber ?? '—'}</dd>
+        <dd className="tabular text-xs">{client.vatNumber ?? '—'}</dd>
 
         <dt className="text-muted-foreground">Adresse</dt>
         <dd>{address || '—'}</dd>

@@ -58,7 +58,7 @@ export default async function ResourcesPage({
       {resources.length === 0 ? (
         <EmptyState filtered={Boolean(filter)} />
       ) : (
-        <div className="overflow-hidden rounded-lg border border-border bg-white">
+        <div className="overflow-x-auto rounded-lg border border-border bg-white">
           <table className="w-full text-left text-sm">
             <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
               <tr>
@@ -75,7 +75,7 @@ export default async function ResourcesPage({
                 const details = describeAttributes(resource.attributes ?? {})
                 return (
                   <tr key={resource.id}>
-                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
+                    <td className="px-4 py-3 tabular text-xs text-muted-foreground">
                       {resource.code}
                     </td>
                     <td className="px-4 py-3">

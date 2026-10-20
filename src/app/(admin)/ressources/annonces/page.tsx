@@ -80,19 +80,19 @@ export default async function AnnoncesPage() {
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-muted-foreground">
-                      <span className="font-mono text-xs">{listing.resource.code}</span>{' '}
+                      <span className="tabular text-xs">{listing.resource.code}</span>{' '}
                       {resourceTypeLabels[listing.resource.resourceType]}
                     </td>
                     <td className="px-4 py-3">
                       {publiee ? (
                         <Link
                           href={`/annonces/${listing.slug}`}
-                          className="font-mono text-xs underline-offset-2 hover:underline"
+                          className="tabular text-xs underline-offset-2 hover:underline"
                         >
                           /annonces/{listing.slug}
                         </Link>
                       ) : (
-                        <span className="font-mono text-xs text-muted-foreground">
+                        <span className="tabular text-xs text-muted-foreground">
                           /annonces/{listing.slug}
                         </span>
                       )}

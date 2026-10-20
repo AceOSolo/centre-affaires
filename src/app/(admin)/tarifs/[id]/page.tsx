@@ -103,7 +103,7 @@ export default async function RatePlanPage({ params }: { params: Promise<{ id: s
                         {resource ? (
                           <>
                             <span className="font-medium">{resource.name}</span>{' '}
-                            <span className="font-mono text-xs text-muted-foreground">
+                            <span className="tabular text-xs text-muted-foreground">
                               {resource.code}
                             </span>
                             {/* Le tarif nominatif prime sur celui du type : le
