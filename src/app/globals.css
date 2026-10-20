@@ -197,3 +197,11 @@ html[data-scrolled='true'] header {
   outline: 2px solid var(--primary);
   outline-offset: 4px;
 }
+
+/*
+  Le pied de page est sur le bleu foncé : l'anneau bleu foncé y disparaîtrait.
+  Il passe en blanc, 9,49:1 sur `--primary`.
+*/
+.portail > footer :where(a, button):focus-visible {
+  outline-color: var(--primary-foreground);
+}

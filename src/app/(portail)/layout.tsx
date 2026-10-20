@@ -235,14 +235,14 @@ export default async function PortailLayout({ children }: { children: React.Reac
             <p className="mt-3 text-white/70">
               {ouverture ?? 'Nous contacter pour connaître les horaires.'}
             </p>
-            <p className="mt-3 text-xs text-white/50">
+            <p className="mt-3 text-xs text-white/75">
               Heures affichées en {tenant.timezone}.
             </p>
           </div>
         </div>
 
         <div className="border-t border-white/15">
-          <div className="mx-auto flex max-w-[1200px] flex-col gap-2 px-5 py-5 text-xs text-white/60 sm:flex-row sm:items-center sm:justify-between sm:px-8">
+          <div className="mx-auto flex max-w-[1200px] flex-col gap-2 px-5 py-5 text-xs text-white/75 sm:flex-row sm:items-center sm:justify-between sm:px-8">
             <p>
               {tenant.legalName
                 ? `${tenant.name} est exploité par ${tenant.legalName}.`
