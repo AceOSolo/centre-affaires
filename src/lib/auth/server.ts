@@ -3,13 +3,14 @@ import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { nextCookies } from 'better-auth/next-js'
 
-import { createDatabase, databaseOptionsFromEnv, withTenant } from '../../db/index.ts'
+import { createDatabase, databaseOptionsFromEnv, withTenant, type Database } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
 import { adresseIpDerriereApache } from '../anti-robot.ts'
 import { EN_TETE_PREUVE } from '../champs-anti-robot.ts'
 import { sendMessage } from '../courriel.ts'
 import { preuveHumaine } from '../preuve-humaine.ts'
 import { currentTenantId } from '../tenant.ts'
+import { MOT_DE_PASSE_MIN } from './messages.ts'
 import {
   authAccounts,
   authSessions,
@@ -38,6 +39,16 @@ function required(name: string): string {
 }
 
 /**
+ * Chemins qui font partir un courriel vers une adresse saisie par un
+ * inconnu : pas d'appel sans preuve ALTCHA (ADR 047). Un robot ne doit pas
+ * pouvoir en faire partir des milliers.
+ */
+const CHEMINS_SOUS_PREUVE = new Set(['/sign-up/email', '/request-password-reset'])
+
+/** Validité du lien de réinitialisation, annoncée dans le courriel. */
+const LIEN_REINITIALISATION_SECONDES = 3600
+
+/**
  * Le rattachement d'un compte à un membre se fait sur l'adresse : sans
  * vérification, quiconque s'inscrirait avec l'adresse d'un membre invité
  * prendrait sa place. La vérification est donc exigée, sauf en développement
@@ -57,11 +68,14 @@ export function requireEmailVerification(): boolean {
 // Création paresseuse, comme le pool de `src/db/index.ts` : `next build` évalue
 // ce module pour collecter la configuration des pages et ne doit pas exiger les
 // secrets d'exécution. Leur absence se signale à la première requête.
-function createAuth() {
+//
+// Exportée pour les tests, qui lui passent la base de test.
+export function createAuth(
   // Pool propre à l'authentification : `src/db/index.ts` n'expose volontairement
   // pas sa base (tout le métier passe par `withTenant()`), et Better Auth gère
   // des tables sans centre.
-  const { db } = createDatabase(databaseOptionsFromEnv(), { connectionLimit: 3 })
+  db: Database = createDatabase(databaseOptionsFromEnv(), { connectionLimit: 3 }).db,
+) {
   const verify = requireEmailVerification()
 
   return betterAuth({
@@ -78,8 +92,25 @@ function createAuth() {
     }),
     emailAndPassword: {
       enabled: true,
-      minPasswordLength: 10,
+      minPasswordLength: MOT_DE_PASSE_MIN,
       requireEmailVerification: verify,
+      // Mot de passe oublié (`app/(auth)/auth/mot-de-passe-oublie`). Better
+      // Auth répond de la même façon que l'adresse ait un compte ou non ;
+      // l'envoi n'est pas attendu, pour que la durée de la réponse ne le
+      // dise pas non plus. `sendMessage` ne lève jamais.
+      resetPasswordTokenExpiresIn: LIEN_REINITIALISATION_SECONDES,
+      async sendResetPassword({ user, url }) {
+        void sendMessage({
+          to: [user.email],
+          subject: 'Choisissez un nouveau mot de passe',
+          text:
+            `Bonjour,\n\nPour choisir un nouveau mot de passe, ouvrez ce lien dans l’heure :\n${url}\n\n` +
+            'Si vous n’êtes pas à l’origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.',
+        })
+      },
+      // Une réinitialisation suit souvent un doute sur le compte : les
+      // sessions ouvertes avec l'ancien mot de passe sont fermées.
+      revokeSessionsOnPasswordReset: true,
     },
     emailVerification: {
       sendOnSignUp: verify,
@@ -103,12 +134,11 @@ function createAuth() {
       },
     },
     hooks: {
-      // Pas d'inscription sans preuve ALTCHA (ADR 047) : la page de connexion
-      // joint la réponse du widget à la requête. Une inscription fait partir
-      // un courriel vers l'adresse saisie ; un robot ne doit pas pouvoir en
-      // faire partir des milliers.
+      // Pas d'inscription ni de demande de réinitialisation sans preuve
+      // ALTCHA (ADR 047) : le formulaire joint la réponse du widget à la
+      // requête (`CHEMINS_SOUS_PREUVE`).
       before: createAuthMiddleware(async (ctx) => {
-        if (ctx.path !== '/sign-up/email') return
+        if (!CHEMINS_SOUS_PREUVE.has(ctx.path)) return
         if (!(await preuveHumaine().verifier(ctx.headers?.get(EN_TETE_PREUVE)))) {
           throw APIError.from('BAD_REQUEST', {
             message: 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis réessayez.',
@@ -146,6 +176,7 @@ function createAuth() {
         '/sign-in/email': { window: 300, max: 10 },
         '/sign-up/email': { window: 3600, max: 5 },
         '/send-verification-email': { window: 900, max: 3 },
+        '/request-password-reset': { window: 900, max: 3 },
       },
     },
     advanced: {

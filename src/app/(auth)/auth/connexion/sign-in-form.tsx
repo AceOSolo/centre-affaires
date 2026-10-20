@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from 'react'
 
+import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
@@ -283,6 +284,14 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
             <p id="password-error" role="alert" className={errorClass}>
               {passwordError}
             </p>
+          )}
+          {mode === 'connexion' && (
+            <Link
+              href={equipe ? '/auth/mot-de-passe-oublie?espace=equipe' : '/auth/mot-de-passe-oublie'}
+              className="mt-1 inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Mot de passe oublié ?
+            </Link>
           )}
         </div>
 
