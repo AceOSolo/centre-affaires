@@ -79,6 +79,9 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
     }
   }
 
+  // À l'ouverture, le focus va au titre : le bouton qui a choisi le produit
+  // vient de disparaître, le lecteur d'écran annonce où l'on arrive.
+  useEffect(() => showStep(headingRef), [])
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
   useEffect(() => {
     if (state.status !== 'sent') return

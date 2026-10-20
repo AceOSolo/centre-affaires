@@ -45,7 +45,8 @@ export function StepHeader({ step, titles, headingRef, description }: {
       <div aria-hidden="true" className="mt-2 grid gap-1.5" style={{ gridTemplateColumns: `repeat(${titles.length}, minmax(0, 1fr))` }}>
         {titles.map((title, index) => <span key={title} className={`h-1 rounded-full transition-colors duration-200 ease-out ${index < step ? 'bg-primary' : 'bg-border'}`} />)}
       </div>
-      <h3 ref={headingRef} tabIndex={-1} className="mt-5 text-2xl font-semibold tracking-tight text-primary outline-none">{titles[step - 1]}</h3>
+      {/* Focalisable par programme (`showStep`), avec le même repère clavier que les actions. */}
+      <h3 ref={headingRef} tabIndex={-1} className={`mt-5 rounded-sm text-2xl font-semibold tracking-tight text-primary ${focusClass}`}>{titles[step - 1]}</h3>
       {description && <p className="mt-2 text-sm text-muted-foreground">{description}</p>}
     </div>
   )

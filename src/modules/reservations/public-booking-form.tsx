@@ -189,6 +189,9 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     return () => { cancelled = true }
   }, [quoteKey, resourceId, date, startTime, endTime])
 
+  // À l'ouverture, le focus va au titre : le bouton qui a choisi le produit
+  // vient de disparaître, le lecteur d'écran annonce où l'on arrive.
+  useEffect(() => showStep(headingRef), [])
   useEffect(() => { if (error) errorRef.current?.focus() }, [error])
   useEffect(() => {
     if (state.status !== 'sent') return
@@ -445,7 +448,7 @@ export function RequestSent({ headingRef, summary, proposal, email, onClose, chi
   return (
     <div className="p-6 sm:p-10" role="status">
       <span className="flex size-12 items-center justify-center rounded-full bg-primary text-white"><CheckIcon size={24} /></span>
-      <h3 ref={headingRef} tabIndex={-1} className="mt-5 text-2xl font-semibold tracking-tight text-primary outline-none">Votre demande de devis est envoyée</h3>
+      <h3 ref={headingRef} tabIndex={-1} className={`mt-5 rounded-sm text-2xl font-semibold tracking-tight text-primary ${focusClass}`}>Votre demande de devis est envoyée</h3>
       <p className="mt-3 font-medium">{summary}</p>
       {proposal ? (
         <p className="mt-4 max-w-prose text-muted-foreground">

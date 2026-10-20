@@ -6,7 +6,7 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, XIcon } from '../../components/ui/icons.tsx'
 import type { ProposalProduct } from '../facturation/schema-devis.ts'
 import type { ResourceType } from '../ressources/schema.ts'
-import { focusClass } from './etapes-demande.tsx'
+import { focusClass, showStep } from './etapes-demande.tsx'
 import { PublicBookingForm, type PublicBookingResource, type SlotProduct } from './public-booking-form.tsx'
 import { PublicDomiciliationForm } from './public-domiciliation-form.tsx'
 import type { RequestPolicy } from './request-policy.ts'
@@ -94,9 +94,16 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
   const offered = products.map((item) => item.product)
   // Un espace désigné dit son produit ; un seul produit proposé n'a pas à être choisi.
   const product = target?.product ?? productOf(target?.resourceId, resources) ?? (offered.length === 1 ? offered[0] : undefined)
+  const choosing = Boolean(target && !product)
+  const choiceHeadingRef = useRef<HTMLHeadingElement>(null)
 
   const close = useCallback(() => dialogRef.current?.close(), [])
   const markSent = useCallback(() => { sent.current = true }, [])
+
+  // « Changer » disparaît sous le doigt qui l'actionne : le focus va au titre
+  // du choix, annoncé par le lecteur d'écran, plutôt que retomber sur la page.
+  // Chaque formulaire fait de même avec le sien à l'ouverture.
+  useEffect(() => { if (choosing) showStep(choiceHeadingRef) }, [choosing])
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -149,7 +156,7 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
         <h2 id={titleId} className="text-base font-semibold text-primary">
           {product ? (products.find((item) => item.product === product)?.label ?? 'Réserver') : 'Réserver'}
         </h2>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-2">
           {/* Produit choisi dans la fenêtre même : on peut revenir sur ce choix. */}
           {target?.picked && (
             <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: undefined, picked: false })} className={`min-h-11 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted ${focusClass}`}>Changer</button>
@@ -160,9 +167,9 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
         </div>
       </div>
       <div data-defilement className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        {target && !product && (
+        {choosing && (
           <div className="px-5 pb-8 pt-6 sm:px-8">
-            <h3 className="text-2xl font-semibold tracking-tight text-primary">Que souhaitez-vous réserver&nbsp;?</h3>
+            <h3 ref={choiceHeadingRef} tabIndex={-1} className={`rounded-sm text-2xl font-semibold tracking-tight text-primary ${focusClass}`}>Que souhaitez-vous réserver&nbsp;?</h3>
             <ul className="mt-6 grid gap-3">
               {products.map((item) => {
                 const Icon = productIcons[item.product]
