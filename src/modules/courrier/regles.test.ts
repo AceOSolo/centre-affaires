@@ -50,6 +50,8 @@ describe('relevé des ouvertures', () => {
     requestedBy: null,
     openedAt: new Date('2026-09-02T08:00:00Z'),
     openedBy: 'Camille',
+    pageCount: null,
+    billablePages: 0,
     ...overrides,
   })
 

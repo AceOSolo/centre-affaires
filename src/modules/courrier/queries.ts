@@ -8,6 +8,7 @@ import { DB_MAIL_REQUEST_REFUSED, DB_UNIQUE_VIOLATION, dbErrorCode } from '../..
 import { withTenant } from '../../db/index.ts'
 import { updateReturning } from '../../db/returning.ts'
 import { staffMembers } from '../../db/staff.ts'
+import { tenants } from '../../db/tenants.ts'
 import { sealDocument } from '../../lib/chiffrement-documents.ts'
 import { deleteObject, putObject } from '../../lib/stockage.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
@@ -16,7 +17,7 @@ import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
 import { inOpenBatch } from './tournees.ts'
-import type { OpeningLine } from './regles.ts'
+import { billablePages, type OpeningLine } from './regles.ts'
 import {
   mailItems,
   mailRequests,
@@ -372,8 +373,9 @@ export async function withdrawMail(id: string): Promise<void> {
 
 /** Ouvertures d'une période, pour le relevé de facturation. */
 export async function listOpenings(range: { startsAt: Date; endsAt: Date }): Promise<OpeningLine[]> {
-  const rows = await withTenant(currentTenantId(), (tx) =>
-    tx
+  const tenantId = currentTenantId()
+  const [rows, includedPages] = await withTenant(tenantId, async (tx) => [
+    await tx
       .select({
         mailItemId: mailItems.id,
         clientId: clients.id,
@@ -386,6 +388,15 @@ export async function listOpenings(range: { startsAt: Date; endsAt: Date }): Pro
         requestedBy: displayName(clientMembers),
         openedAt: mailItems.openedAt,
         openedBy: displayName(opener),
+        // Pages du contenu de l'ouverture (ADR 044) : déposé d'office, ou sur
+        // demande d'ouverture — pas une numérisation demandée ensuite.
+        pageCount: sql<number | null>`(
+          select s.page_count from mail_scans as s
+            left join mail_requests as r on r.tenant_id = s.tenant_id and r.id = s.mail_request_id
+           where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
+             and s.side = 'content' and (s.mail_request_id is null or r.kind = 'open_and_scan')
+           order by s.created_at
+           limit 1)`,
       })
       .from(mailItems)
       .innerJoin(clients, eq(clients.id, mailItems.clientId))
@@ -398,9 +409,23 @@ export async function listOpenings(range: { startsAt: Date; endsAt: Date }): Pro
           lt(mailItems.openedAt, range.endsAt),
         ),
       ),
-  )
+    (
+      await tx
+        .select({ includedPages: tenants.mailOpeningIncludedPages })
+        .from(tenants)
+        .where(eq(tenants.id, tenantId))
+    )[0]?.includedPages ?? 0,
+  ] as const)
   // Les bornes sur `opened_at` excluent les plis fermés : la date est là.
-  return rows.map((row) => ({ ...row, openedAt: row.openedAt as Date }))
+  return rows.map((row) => {
+    const pageCount = row.pageCount === null ? null : Number(row.pageCount)
+    return {
+      ...row,
+      openedAt: row.openedAt as Date,
+      pageCount,
+      billablePages: billablePages(pageCount, includedPages),
+    }
+  })
 }
 
 /* -------------------------------------------------------------------------- */

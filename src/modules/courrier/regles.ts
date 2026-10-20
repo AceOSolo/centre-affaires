@@ -51,6 +51,10 @@ export type OpeningLine = {
   requestedBy: string | null
   openedAt: Date
   openedBy: string | null
+  /** Pages du contenu numérisé à l'ouverture (ADR 044) ; nul s'il n'est pas compté. */
+  pageCount: number | null
+  /** Pages à facturer : au-delà de celles comprises dans l'ouverture (`billablePages`). */
+  billablePages: number
 }
 
 export type ClientOpenings = {
@@ -60,6 +64,9 @@ export type ClientOpenings = {
   total: number
   /** Dont celles demandées depuis l'espace client. */
   requestedByClient: number
+  /** Pages numérisées, et celles à facturer au-delà des pages comprises (ADR 044). */
+  pages: number
+  billablePages: number
   lines: OpeningLine[]
 }
 
@@ -82,11 +89,15 @@ export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
         clientSiret: line.clientSiret,
         total: 0,
         requestedByClient: 0,
+        pages: 0,
+        billablePages: 0,
         lines: [],
       }
       groups.set(line.clientId, group)
     }
     group.total += 1
+    group.pages += line.pageCount ?? 0
+    group.billablePages += line.billablePages
     if (openingOrigin(line) === 'client') group.requestedByClient += 1
     group.lines.push(line)
   }

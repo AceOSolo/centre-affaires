@@ -9,7 +9,7 @@ import {
   monthRangeUtc,
   todayIsoDate,
 } from '../../../../lib/dates.ts'
-import { currentTimeZone } from '../../../../lib/tenant.ts'
+import { currentTenant } from '../../../../lib/tenant.ts'
 import { mailKindLabels, openingOriginLabels } from '../../../../modules/courrier/labels.ts'
 import { listOpenings } from '../../../../modules/courrier/queries.ts'
 import { groupOpeningsByClient, openingOrigin } from '../../../../modules/courrier/regles.ts'
@@ -17,10 +17,11 @@ import { groupOpeningsByClient, openingOrigin } from '../../../../modules/courri
 export const metadata = { title: 'Relevé des ouvertures' }
 
 /**
- * Relevé mensuel des ouvertures de courrier, par client. Depuis la facturation
- * intégrée (ADR 026, 028), ce n'est plus la source de facturation : chaque pli
- * ouvert devient une ligne de la facture du client, par le lot du mois. Le
- * relevé et son export restent un contrôle (ADR 015).
+ * Relevé mensuel des ouvertures de courrier, par client, avec les pages
+ * numérisées et celles à facturer au-delà des pages comprises (ADR 044).
+ * Depuis que la facturation se fait dans Dolibarr (ADR 046), le lot interne
+ * est arrêté : ce relevé et son export sont ce que le centre reporte sur les
+ * factures.
  */
 export default async function OuverturesPage({
   searchParams,
@@ -29,12 +30,16 @@ export default async function OuverturesPage({
 }) {
   await requirePermission('courrier.releve')
   const { mois } = await searchParams
-  const timeZone = await currentTimeZone()
+  const tenant = await currentTenant()
+  const timeZone = tenant.timezone
   const month = isIsoMonth(mois) ? mois : todayIsoDate(timeZone).slice(0, 7)
 
   const groups = groupOpeningsByClient(await listOpenings(monthRangeUtc(month, timeZone)))
   const total = groups.reduce((sum, group) => sum + group.total, 0)
   const byClient = groups.reduce((sum, group) => sum + group.requestedByClient, 0)
+  const pages = groups.reduce((sum, group) => sum + group.pages, 0)
+  const billable = groups.reduce((sum, group) => sum + group.billablePages, 0)
+  const included = tenant.mailOpeningIncludedPages
 
   return (
     <div className="flex flex-col gap-6">
@@ -48,9 +53,13 @@ export default async function OuverturesPage({
         <p className="mt-1 text-sm text-muted-foreground">
           Chaque pli ouvert et numérisé dans le mois, par client. Heures en {timeZone}.
         </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Un contrôle, pas la source de facturation : les plis ouverts sont facturés par le lot
-          mensuel, sur la facture de chaque client.
+        <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
+          À reporter sur la facture de chaque client dans Dolibarr : les ouvertures, et les pages
+          numérisées au-delà des{' '}
+          <Link href="/configuration#facturation-title" className="underline underline-offset-2">
+            {included} page{included > 1 ? 's' : ''} comprise{included > 1 ? 's' : ''}
+          </Link>{' '}
+          dans chaque ouverture.
         </p>
       </div>
 
@@ -121,6 +130,8 @@ export default async function OuverturesPage({
                   <th className="px-4 py-3 text-right font-medium">Ouvertures</th>
                   <th className="px-4 py-3 text-right font-medium">Demandées par le client</th>
                   <th className="px-4 py-3 text-right font-medium">À l’initiative du centre</th>
+                  <th className="px-4 py-3 text-right font-medium">Pages</th>
+                  <th className="px-4 py-3 text-right font-medium">Pages à facturer</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
@@ -136,6 +147,8 @@ export default async function OuverturesPage({
                     <td className="px-4 py-3 text-right tabular">
                       {group.total - group.requestedByClient}
                     </td>
+                    <td className="px-4 py-3 text-right tabular">{group.pages}</td>
+                    <td className="px-4 py-3 text-right font-medium tabular">{group.billablePages}</td>
                   </tr>
                 ))}
               </tbody>
@@ -147,6 +160,8 @@ export default async function OuverturesPage({
                   <td className="px-4 py-3 text-right tabular">{total}</td>
                   <td className="px-4 py-3 text-right tabular">{byClient}</td>
                   <td className="px-4 py-3 text-right tabular">{total - byClient}</td>
+                  <td className="px-4 py-3 text-right tabular">{pages}</td>
+                  <td className="px-4 py-3 text-right tabular">{billable}</td>
                 </tr>
               </tfoot>
             </table>
@@ -159,7 +174,8 @@ export default async function OuverturesPage({
                   {group.clientName}
                 </Link>{' '}
                 <span className="font-normal text-muted-foreground">
-                  ({group.total} ouverture{group.total > 1 ? 's' : ''})
+                  ({group.total} ouverture{group.total > 1 ? 's' : ''}, {group.billablePages} page
+                  {group.billablePages > 1 ? 's' : ''} à facturer)
                 </span>
               </h2>
               <div className="overflow-x-auto rounded-lg border border-border bg-white">
@@ -172,6 +188,8 @@ export default async function OuverturesPage({
                       <th className="px-4 py-3 font-medium">Ouvert par</th>
                       <th className="px-4 py-3 font-medium">Pli</th>
                       <th className="px-4 py-3 font-medium">Reçu le</th>
+                      <th className="px-4 py-3 text-right font-medium">Pages</th>
+                      <th className="px-4 py-3 text-right font-medium">À facturer</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border">
@@ -207,6 +225,10 @@ export default async function OuverturesPage({
                         <td className="whitespace-nowrap px-4 py-3 text-muted-foreground tabular">
                           {formatDateTime(line.receivedAt, timeZone)}
                         </td>
+                        <td className="px-4 py-3 text-right tabular">
+                          {line.pageCount ?? <span className="text-muted-foreground">non compté</span>}
+                        </td>
+                        <td className="px-4 py-3 text-right font-medium tabular">{line.billablePages}</td>
                       </tr>
                     ))}
                   </tbody>

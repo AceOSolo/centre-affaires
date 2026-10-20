@@ -12,7 +12,7 @@ import { uuidv7 } from '../../lib/uuid.ts'
 import { toutVider } from '../clients/test-support.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { recordScanRequestDone, requestScan } from '../courrier/demandes-queries.ts'
-import { correctScanPageCount, recordOpening, type StoredScan } from '../courrier/queries.ts'
+import { correctScanPageCount, listOpenings, recordOpening, type StoredScan } from '../courrier/queries.ts'
 import { findInvoice, listInvoices } from './factures-queries.ts'
 import { runInvoicing } from './lot-queries.ts'
 
@@ -138,6 +138,17 @@ describe('lot de facturation : pages numérisées', { skip: raisonDeSaut }, () =
     // Rejoué : rien de plus.
     const rejoue = await runInvoicing(MOIS, ACCUEIL)
     assert.equal(rejoue.report.linesCreated, 0)
+  })
+
+  it('porte au relevé des ouvertures les pages et celles à facturer', async () => {
+    // Le relevé est ce que le centre reporte dans Dolibarr (ADR 046).
+    const long = await ouvert(12)
+    const court = await ouvert(3)
+    const debut = new Date(Date.now() - 86_400_000)
+    const lignes = await listOpenings({ startsAt: debut, endsAt: new Date(Date.now() + 86_400_000) })
+    const parPli = new Map(lignes.map((line) => [line.mailItemId, [line.pageCount, line.billablePages]]))
+    assert.deepEqual(parPli.get(long.id), [12, 7])
+    assert.deepEqual(parPli.get(court.id), [3, 0])
   })
 
   it('ne facture pas à la page une numérisation demandée ensuite', async () => {

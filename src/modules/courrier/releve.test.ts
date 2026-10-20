@@ -19,6 +19,8 @@ describe('export du relevé', () => {
       // 1er octobre 0h30 à Paris : c'est l'heure du centre qui figure au relevé.
       openedAt: new Date('2026-09-30T22:30:00Z'),
       openedBy: 'Camille',
+      pageCount: 12,
+      billablePages: 7,
     },
   ])
 
@@ -31,6 +33,14 @@ describe('export du relevé', () => {
   it('écrit les dates à l’heure du centre', () => {
     const [, ligne] = openingsToCsv(releve, 'Europe/Paris').split('\r\n')
     assert.match(ligne, /;01\/10\/2026 00:30;Demande du client;Jeanne Durand;30\/09\/2026 23:00;/)
+  })
+
+  it('porte les pages numérisées et celles à facturer (ADR 044)', () => {
+    const [entete, ligne] = openingsToCsv(releve, 'Europe/Paris').split('\r\n')
+    assert.match(entete, /;Pages;Pages à facturer$/)
+    assert.match(ligne, /;12;7$/)
+    assert.equal(releve[0].pages, 12)
+    assert.equal(releve[0].billablePages, 7)
   })
 
   it('protège une valeur qui contient le séparateur', () => {

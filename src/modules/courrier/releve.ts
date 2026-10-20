@@ -20,6 +20,8 @@ const COLUMNS = [
   'Type',
   'Expéditeur',
   'Reçu le',
+  'Pages',
+  'Pages à facturer',
 ] as const
 
 /** « 30/09/2026 10:12 », heure du centre. */
@@ -57,6 +59,8 @@ export function openingsToCsv(groups: ClientOpenings[], timeZone: string): strin
           mailKindLabels[line.kind],
           line.sender,
           csvDateTime(line.receivedAt, timeZone),
+          line.pageCount === null ? '' : String(line.pageCount),
+          String(line.billablePages),
         ]
           .map(csvCell)
           .join(';'),
