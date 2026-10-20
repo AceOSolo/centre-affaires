@@ -1,4 +1,4 @@
-# ADR 052 — Correctifs de la vérification du 20/10/2026 : pages du courrier, relevé, devis refait, mot de passe oublié, adresse du centre, webhook Dolibarr
+# ADR 052 — Correctifs de la vérification du 20/10/2026 : pages du courrier, relevé, devis refait, mot de passe oublié, adresse du centre, webhook Dolibarr, alerte de domiciliation
 
 **Date** : 2026-10-20
 **Statut** : accepté — amende l'ADR 044 § 3 (correction des pages), l'ADR 037
@@ -109,6 +109,17 @@ suivi d'un renommage prévu par l'ADR 049 ne fonctionne pas, un produit
 renommé arrive comme un nouveau. La notice `docs/integrations/dolibarr-produits.md`
 le dit, avec une liste de vérification pour le développeur Dolibarr.
 
+### 9. Une demande de domiciliation prévient l'accueil
+
+Déposée sur le site public, elle ne prévenait personne, alors qu'une demande
+de réservation le fait. Nouvel événement `domiciliation_request_submitted`
+(destinataire : le centre), texte par défaut modifiable à l'écran
+Notifications, envoyé après la création de la demande et de son devis.
+Migration 0005 : l'événement entre dans les énumérations
+`notification_templates.event` et `notification_deliveries.event`, et le type
+`proposal` dans `notification_deliveries.related_type`, pour que le journal
+des envois mène au devis.
+
 ## Laissé en attente, à trancher
 
 - **Rétablir le déploiement automatique** : décision de l'exploitant et du
@@ -126,7 +137,7 @@ le dit, avec une liste de vérification pour le développeur Dolibarr.
 ## Conséquences
 
 À la prochaine mise en ligne : `docker compose run --rm migrer` applique les
-migrations 0001 à 0004 (et les suivantes) et rejoue les règles, dont la
+migrations 0001 à 0005 et rejoue les règles, dont la
 nouvelle garde de `60-courrier.sql`. L'adresse du centre se saisit dans
 Configuration du centre, faute de quoi les alertes à l'équipe restent
 « non envoyées » dans le journal.

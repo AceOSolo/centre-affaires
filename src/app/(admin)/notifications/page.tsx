@@ -50,6 +50,8 @@ function relatedLink(row: DeliveryRow): { href: string; permission: Permission }
       return { href: `/courrier/${row.relatedId}`, permission: 'courrier.gerer' }
     case 'offer':
       return { href: `/offres/${row.relatedId}`, permission: 'services.gerer' }
+    case 'proposal':
+      return { href: `/devis/${row.relatedId}`, permission: 'demandes.traiter' }
     case 'client_member':
       return row.clientId ? { href: `/clients/${row.clientId}`, permission: 'clients.gerer' } : undefined
     default:
