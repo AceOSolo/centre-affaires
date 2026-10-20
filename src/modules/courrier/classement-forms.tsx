@@ -61,7 +61,7 @@ export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; 
       <input type="hidden" name="retour" value={returnQuery} />
       <ErrorSummary
         errors={state?.fieldErrors}
-        labels={{ categorie: 'Catégorie', etiquette: 'Étiquette' }}
+        labels={{ 'selection-categorie': 'Catégorie', 'selection-etiquette': 'Étiquette' }}
         message={state?.error}
       />
       <div className="flex flex-wrap items-center gap-2">
@@ -97,8 +97,8 @@ export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; 
               id="selection-categorie"
               name="categorie"
               defaultValue=""
-              aria-invalid={errors.categorie ? true : undefined}
-              aria-describedby={errors.categorie ? 'selection-categorie-error' : undefined}
+              aria-invalid={errors['selection-categorie'] ? true : undefined}
+              aria-describedby={errors['selection-categorie'] ? 'selection-categorie-error' : undefined}
               className={fieldClass}
             >
               <option value="" disabled>
@@ -127,8 +127,8 @@ export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; 
               list="etiquettes-connues"
               maxLength={MAX_TAG_LENGTH}
               autoComplete="off"
-              aria-invalid={errors.etiquette ? true : undefined}
-              aria-describedby={errors.etiquette ? 'selection-etiquette-error' : undefined}
+              aria-invalid={errors['selection-etiquette'] ? true : undefined}
+              aria-describedby={errors['selection-etiquette'] ? 'selection-etiquette-error' : undefined}
               className={fieldClass}
             />
             <datalist id="etiquettes-connues">
@@ -141,8 +141,8 @@ export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; 
             Ajouter l’étiquette
           </button>
         </div>
-        <FieldError id="selection-categorie-error" error={errors.categorie} />
-        <FieldError id="selection-etiquette-error" error={errors.etiquette} />
+        <FieldError id="selection-categorie-error" error={errors['selection-categorie']} />
+        <FieldError id="selection-etiquette-error" error={errors['selection-etiquette']} />
       </div>
       {pending && (
         <p role="status" className="text-sm text-muted-foreground">

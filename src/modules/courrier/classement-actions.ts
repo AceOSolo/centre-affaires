@@ -45,7 +45,9 @@ export async function classifySelectionAction(
   if (ids.length === 0) return { error: 'Cochez d’abord les courriers à traiter.' }
   const read = readClassificationChange(action, value)
   if (read.error !== undefined) {
-    const field = action === 'classer' ? 'categorie' : action === 'etiqueter' ? 'etiquette' : undefined
+    // Clé de l'erreur = `id` du champ de la barre : le résumé d'erreurs y mène.
+    const field =
+      action === 'classer' ? 'selection-categorie' : action === 'etiqueter' ? 'selection-etiquette' : undefined
     return field ? { fieldErrors: { [field]: read.error } } : { error: read.error }
   }
 
