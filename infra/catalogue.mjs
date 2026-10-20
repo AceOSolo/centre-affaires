@@ -13,7 +13,8 @@
  * Le script est idempotent : il peut être relancé après une correction des
  * tableaux ci-dessous sans créer de doublon. Il ne supprime jamais une
  * ressource ; retirer un bureau du parc se fait à l'écran, avec le statut
- * `retired` qui préserve l'historique des réservations (décision 6).
+ * `retired` qui préserve l'historique des réservations (décision 6). Il ne
+ * touche jamais un prix déjà en grille : ceux-là viennent de Dolibarr.
  *
  * Il se connecte avec l'identité applicative (`DB_USER`), donc sous les gardes
  * d'écriture par centre.
@@ -157,6 +158,10 @@ const FERMETURE = '22:00'
  * Les deux salles sont au même prix, une ligne par unité suffit.
  */
 const GRILLE = 'Tarifs publics 2026'
+/**
+ * Prix de départ, posés seulement là où la grille n'en a jamais eu : ensuite,
+ * Dolibarr fait foi (ADR 049, `docs/integrations/dolibarr-produits.md`).
+ */
 const TARIFS = [
   { type: 'salle', unite: 'half_day', centimes: 9_000 },
   { type: 'salle', unite: 'day', centimes: 13_000 },
@@ -165,6 +170,10 @@ const TARIFS = [
   { type: 'bureau', unite: 'half_day', centimes: 700 },
   { type: 'boite_aux_lettres', unite: 'month', centimes: 3_000 },
 ]
+
+/** 13000 → « 130,00 € ». */
+const euros = (centimes) =>
+  new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR' }).format(centimes / 100)
 
 // ---------------------------------------------------------------------------
 
@@ -224,25 +233,37 @@ try {
       ])
     }
 
+    // Un prix n'est posé que là où la grille n'en a jamais eu. Les prix
+    // viennent de Dolibarr (ADR 049) : relancé après une synchronisation, le
+    // script ne doit ni écraser un prix reçu, ni remettre un prix que Dolibarr
+    // a retiré, ni effacer l'historique d'un prix (décision 6).
+    const prixGardes = []
+    let prixAjoutes = 0
     for (const { type, unite, centimes } of TARIFS) {
       const [[ligne]] = await cnx.query(
-        `select id from rate_plan_items
-          where rate_plan_id = ? and resource_type = ? and unit = ?
-            and resource_id is null and deleted_at is null`,
+        `select amount_cents, deleted_at is not null as retire from rate_plan_items
+          where rate_plan_id = ? and resource_type = ? and unit = ? and resource_id is null
+          order by deleted_at is null desc, created_at desc
+          limit 1`,
         [grille.id, type, unite],
       )
-      if (ligne) {
-        await cnx.query('update rate_plan_items set amount_cents = ? where id = ?', [centimes, ligne.id])
-      } else {
+      if (!ligne) {
         await cnx.query(
           `insert into rate_plan_items (id, rate_plan_id, resource_type, resource_id, unit, amount_cents)
            values (?, ?, ?, null, ?, ?)`,
           [uuidv7(), grille.id, type, unite, centimes],
         )
+        prixAjoutes += 1
+      } else if (Number(ligne.retire)) {
+        prixGardes.push(`${type} / ${unite} : retiré de la grille, pas remis`)
+      } else if (Number(ligne.amount_cents) !== centimes) {
+        prixGardes.push(
+          `${type} / ${unite} : ${euros(Number(ligne.amount_cents))} gardé (ce script en propose ${euros(centimes)})`,
+        )
       }
     }
 
-    return { creees, total: ressources.length }
+    return { creees, total: ressources.length, prixAjoutes, prixGardes }
   })
 
   console.log(
@@ -250,7 +271,14 @@ try {
       `${compteurs.total - compteurs.creees} mises à jour).`,
   )
   console.log(`Ouverture : ${JOURS_OUVERTS.length} jours par semaine, ${OUVERTURE}–${FERMETURE}.`)
-  console.log(`Grille « ${GRILLE} » : ${TARIFS.length} lignes.`)
+  console.log(`Grille tarifaire par défaut : ${compteurs.prixAjoutes} prix ajouté(s) sur ${TARIFS.length}.`)
+  if (compteurs.prixGardes.length > 0) {
+    console.log(
+      'Prix déjà en base, laissés tels quels (ils viennent de Dolibarr ou de l’écran Tarifs ; ' +
+        'pour les changer, modifier le produit « tarif.… » dans Dolibarr) :',
+    )
+    for (const ligne of compteurs.prixGardes) console.log(`  - ${ligne}`)
+  }
 } finally {
   await client.end()
 }
