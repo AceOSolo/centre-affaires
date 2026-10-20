@@ -1,9 +1,11 @@
 # Production sur le VPS de production (ADR 013, ADR 042, ADR 051).
 #
-# Ce fichier est recopié sur le serveur à chaque déploiement par la CI : la
-# configuration suit le dépôt. Les secrets, eux, vivent dans le `.env` posé à
-# côté, jamais dans le dépôt (modèle : `.env.example`). HTTPS et le domaine
-# sont l'affaire du nginx déjà en place (`nginx-handfield-*.conf`, ADR 051).
+# Ce fichier est recopié à la main sur le serveur à chaque mise en ligne
+# (infra/serveur/README.md, section 4 ; il n'y a plus de job de déploiement
+# dans la CI) : la configuration suit le dépôt. Les secrets, eux, vivent dans
+# le `.env` posé à côté, jamais dans le dépôt (modèle : `.env.example`). HTTPS
+# et le domaine sont l'affaire du nginx déjà en place
+# (`nginx-handfield-*.conf`, ADR 051).
 #
 # La base MySQL tourne ici, dans le même compose que l'application : elle n'est
 # publiée sur aucun port, seul le conteneur `app` (et `migrer`) l'atteint par
@@ -41,8 +43,11 @@ services:
       start_period: 30s
 
   app:
-    # La CI fixe IMAGE_TAG au commit déployé. Sans lui, la dernière image de main.
-    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
+    # IMAGE_TAG : la version à faire tourner (commit de main dont l'image a été
+    # publiée), posée dans le `.env` à chaque mise en ligne (README, section 4).
+    # Exigé : sans lui, `latest` désignerait la dernière image publiée par
+    # l'ancien job de déploiement, celle du 06/10/2026 (version Neon).
+    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:?IMAGE_TAG manquant dans .env}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -62,7 +67,7 @@ services:
     # Journaux bornés (registre RGPD, docs/rgpd/durees-de-conservation.md) :
     # sans limite, Docker les garde jusqu'à saturer le disque. Ils peuvent
     # citer une adresse électronique dans une erreur d'envoi. Cinq fichiers
-    # de 10 Mo au plus, effacés aussi à chaque déploiement, qui recrée le
+    # de 10 Mo au plus, effacés aussi à chaque mise en ligne, qui recrée le
     # conteneur.
     logging:
       driver: json-file
@@ -87,7 +92,8 @@ services:
   #   docker compose run --rm migrer
   migrer:
     profiles: ["outils"]
-    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:-latest}
+    # La même image que `app` : la structure et les règles de la version.
+    image: ghcr.io/aceosolo/centre-affaires:${IMAGE_TAG:?IMAGE_TAG manquant dans .env}
     env_file: .env
     environment:
       DB_HOST: db

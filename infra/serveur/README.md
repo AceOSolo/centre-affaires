@@ -11,10 +11,16 @@ et HTTPS. La base MySQL 8.4 tourne sur
 le même serveur, dans un conteneur du même compose, sans port publié : seuls
 l'application et l'outil de migration l'atteignent (ADR 042).
 
-Chaque push sur `main` dont la CI est verte déclenche le job `deploy` : l'image
-est construite par GitHub, puis lancée sur le serveur. Ce document décrit
-l'installation, à faire une fois. Tant qu'elle n'est pas terminée (variable
-`VPS_HOST` absente), le job `deploy` ne s'exécute pas.
+**Il n'y a plus de déploiement automatique.** Le job `deploy` de la CI, qui
+construisait l'image et la lançait sur le serveur à chaque push sur `main`, a
+été retiré le 15/10/2026 (commit `e469801`, passage à MySQL) et n'est pas
+rétabli. Il a tourné jusqu'au 06/10/2026 : c'est la version qui est en ligne,
+celle d'avant MySQL. Chaque version se met donc en ligne **à la main**
+(section 4). Rétablir le déploiement automatique est une décision en attente
+(dernière section).
+
+Ce document décrit l'installation, à faire une fois (sections 1 à 3 et 5 à
+9), et la mise en ligne d'une version, à refaire à chaque fois (section 4).
 
 ## 1. Docker sur le serveur
 
@@ -35,8 +41,17 @@ sudo usermod -aG docker deploy
 sudo -u deploy mkdir -p -m 700 /home/deploy/.ssh /home/deploy/centre-affaires
 ```
 
-Être membre du groupe `docker` équivaut à être root sur la machine : la clé de
-ce compte ne doit exister que dans les secrets GitHub.
+Être membre du groupe `docker` équivaut à être root sur la machine. Le compte
+n'a pas de mot de passe : on y passe depuis son propre compte par
+`sudo -iu deploy` (section 4). Il possède le dossier
+`/home/deploy/centre-affaires`, son `.env` et la crontab des tâches de nuit.
+
+**Clé SSH du déploiement automatique : seulement s'il est rétabli** (dernière
+section). Elle ne doit alors exister que dans les secrets GitHub. Tant que le
+déploiement automatique est suspendu, ne pas la créer ; si celle du 06/10
+existe encore (`/home/deploy/.ssh/authorized_keys`, secret `VPS_SSH_KEY` du
+dépôt), elle ne sert à rien et donne un accès équivalent à root : la retirer
+des deux est plus sûr.
 
 Sur votre poste, une clé réservée à GitHub :
 
@@ -84,36 +99,193 @@ serveur, et c'est lui qui configure aussi la base : il y a un seul fichier.
   `nginx-handfield-https.conf` (`proxy_pass`).
 - La clé de chiffrement des documents se crée et se sauvegarde hors du
   serveur comme indiqué à « Chiffrement des documents », plus bas.
+- `IMAGE_TAG` (la version en service) et `DOLIBARR_API_TOKEN` : section 4.3.
 
-## 4. Réglages du dépôt GitHub
+## 4. Mettre en ligne une version, à la main
 
-Settings → Secrets and variables → Actions :
+À faire pour chaque version, en reprenant ce que faisait l'ancien job
+`deploy` : construire l'image, la publier, déposer la configuration sur le
+serveur, lancer, migrer, vérifier. Ne mettre en ligne qu'un commit de `main`
+dont la CI est verte (onglet Actions du dépôt).
 
-| Type | Nom | Valeur |
-| --- | --- | --- |
-| Variable | `VPS_HOST` | adresse du serveur |
-| Variable | `VPS_USER` | `deploy` |
-| Variable | `VPS_PORT` | port SSH, seulement s'il n'est pas 22 |
-| Secret | `VPS_SSH_KEY` | contenu de `deploy_centre_affaires` (partie privée) |
-| Secret | `VPS_KNOWN_HOSTS` | ligne renvoyée par `ssh-keyscan` à l'étape 2 |
+### 4.1 Construire et publier l'image
 
-Settings → Pages : désactiver GitHub Pages.
+Sur un poste qui a Docker, **jamais sur le VPS** : `next build` demande plus
+de mémoire qu'il n'en a (`Dockerfile`). La construction n'exige aucun
+secret. Dans un terminal bash, à la racine d'un clone du dépôt :
 
-Puis Actions → ci → Run workflow sur `main` : premier déploiement. Il copie le
-compose, tire l'image et démarre `db` puis `app`. Sur le serveur, dans
-`/home/deploy/centre-affaires`, `docker compose ps` doit montrer `db` et
-`app` en `healthy`, et `curl -I http://127.0.0.1:3000/` répondre.
-L'application n'a pas encore de structure : l'étape suivante la crée.
+```bash
+git checkout main && git pull
+TAG=$(git rev-parse HEAD)
+docker build -t ghcr.io/aceosolo/centre-affaires:$TAG .
+docker login ghcr.io -u <compte GitHub>   # mot de passe : un jeton GitHub avec le droit write:packages
+docker push ghcr.io/aceosolo/centre-affaires:$TAG
+docker logout ghcr.io
+echo $TAG                                 # à reporter dans IMAGE_TAG (4.3)
+```
 
-## 5. Base de production
+Le nom de l'image est celui qu'attend `compose.yml` ; l'étiquette est le
+commit, qui dit quelle version tourne et permet d'y revenir. Si le poste n'a
+pas la même architecture que le serveur (`uname -m` sur le serveur répond
+`x86_64`, un Mac à puce Apple est en `arm64`), ajouter
+`--platform linux/amd64` à `docker build`.
 
-Sur le serveur, dans `/home/deploy/centre-affaires`, une fois l'image tirée par
-le premier déploiement (le service `migrer` utilise la même image que `app`,
-qui contient `infra/` et `src/db/`) :
+### 4.2 Déposer la configuration sur le serveur
+
+`compose.yml`, `sauvegarde.sh` et les deux fichiers nginx suivent le dépôt.
+Depuis le poste, à la racine du clone (`scp -P <port>` si SSH n'écoute pas
+sur 22) :
+
+```bash
+scp infra/serveur/compose.yml infra/serveur/sauvegarde.sh infra/serveur/nginx-handfield-*.conf <vous>@<serveur>:/tmp/
+```
+
+Puis sur le serveur, depuis son propre compte :
+
+```bash
+sudo install -o deploy -g deploy -m 644 /tmp/compose.yml /tmp/nginx-handfield-http.conf /tmp/nginx-handfield-https.conf /home/deploy/centre-affaires/
+sudo install -o deploy -g deploy -m 755 /tmp/sauvegarde.sh /home/deploy/centre-affaires/
+rm /tmp/compose.yml /tmp/sauvegarde.sh /tmp/nginx-handfield-*.conf
+```
+
+Un fichier nginx qui a changé se réinstalle ensuite comme en section 7
+(recopie dans `sites-available`, `nginx -t`, rechargement).
+
+### 4.3 Le `.env`
+
+`sudo -u deploy nano /home/deploy/centre-affaires/.env` (section 3), modèle
+[`.env.example`](.env.example) :
+
+- `IMAGE_TAG=<l'étiquette de 4.1>`. `compose.yml` refuse de démarrer sans
+  elle : sans étiquette, Docker prendrait `latest`, qui est sur GHCR l'image
+  publiée par l'ancien job le 06/10/2026, d'avant MySQL.
+- `DOLIBARR_API_TOKEN` : `openssl rand -base64 32`, remis au développeur
+  Dolibarr. Sans lui, l'API des devis et le webhook des produits n'existent
+  pas (ADR 043, ADR 049, `docs/integrations/dolibarr.md`).
+- Toute variable apparue dans le modèle depuis la mise en ligne précédente.
+
+**Première mise en ligne de la version MySQL.** Le `.env` de la version du
+06/10 est celui de Neon : il se refait d'après le modèle. Ses variables
+`APP_DATABASE_URL`, `NEON_AUTH_*` et `AWS_*` ne sont plus lues : les retirer.
+Reprendre telles quelles celles qui existent toujours (`APP_URL`,
+`DOCUMENTS_ENCRYPTION_KEY` et sa version, `SECRETS_ENCRYPTION_KEY`,
+`MAINTENANCE_TOKEN`, `GOOGLE_*`, `SMTP_*`, `MAIL_FROM`), créer les nouvelles
+(`DB_*`, `AUTH_SECRET`, `S3_*`) comme en section 3. `PORT_LOCAL=3100`, s'il y
+figure, peut rester : c'est la valeur par défaut. La base MySQL part vide,
+rien n'est repris de Neon (ADR 042) : si des données réelles ont été saisies
+dans la version du 06/10, les relever avant la bascule.
+
+### 4.4 Lancer la version et migrer la base
+
+Sur le serveur, sous le compte `deploy` :
+
+```bash
+sudo -iu deploy
+cd ~/centre-affaires
+docker login ghcr.io -u <compte GitHub>   # jeton avec le droit read:packages, si le paquet est privé
+docker compose pull app                   # l'image IMAGE_TAG ; `migrer` utilise la même
+docker logout ghcr.io                     # aucun identifiant ne reste sur le serveur
+docker compose run --rm migrer            # démarre `db` au besoin ; structure, règles, droits
+docker compose up -d --wait               # recrée `app` sur la nouvelle image, attend qu'il soit sain
+```
+
+**`docker compose run --rm migrer` est indispensable à chaque mise en
+ligne**, même quand aucune migration n'est annoncée. Il applique les
+migrations de structure que la base n'a pas encore (`src/db/migrations/` :
+`0000`, puis celles du 20/10/2026 — `0001` devis, `0002` courrier, `0003`
+comptes — et toute suivante) et rejoue les règles métier (`src/db/regles/`)
+quand elles ont changé. Il se rejoue sans risque. Lancé avant `up`, il fait
+démarrer la nouvelle version sur une base déjà à sa structure. Avant une
+migration risquée, une sauvegarde à la main (`bash sauvegarde.sh`,
+section 9) tient lieu de point de retour.
+
+À la première mise en service de la base, poursuivre par la section 5.
+
+### 4.5 Vérifier
+
+Sous le compte `deploy`, dans `~/centre-affaires` :
+
+```bash
+docker compose ps                   # `db` et `app` en healthy
+curl -I http://127.0.0.1:3100/      # l'application répond, sans nginx
+curl -I https://www.handfield.fr    # 200, par nginx
+```
+
+**nginx**, depuis son propre compte : les fichiers installés doivent être
+ceux du dépôt, et la configuration valide.
+
+```bash
+sudo grep -Rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
+sudo diff /home/deploy/centre-affaires/nginx-handfield-http.conf  /etc/nginx/sites-available/nginx-handfield-http.conf
+sudo diff /home/deploy/centre-affaires/nginx-handfield-https.conf /etc/nginx/sites-available/nginx-handfield-https.conf
+sudo nginx -t
+```
+
+La première commande doit citer les deux fichiers `nginx-handfield-*.conf`
+et eux seuls, les deux `diff` ne rien afficher. Sinon, réinstaller les
+fichiers du dépôt comme en section 7. Le fichier HTTPS doit en particulier
+contenir `proxy_pass http://127.0.0.1:3100` et
+`proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for`.
+
+**Adresse IP des visiteurs.** Se connecter une fois sur
+`https://www.handfield.fr/auth/connexion`, puis, sous le compte `deploy` :
+
+```bash
+docker compose logs app | grep -i "could not determine a client IP"
+```
+
+La commande ne doit rien afficher. Cet avertissement de Better Auth (écrit
+une fois par démarrage) signale qu'aucune adresse de visiteur n'est lue :
+tous partageraient le même compteur de tentatives de connexion et de
+demandes (ADR 047). Contrôle complémentaire, sur la session qui vient
+d'être ouverte (mot de passe : `DB_ADMIN_PASSWORD`) :
+
+```bash
+docker compose exec db mysql -uroot -p centre_affaires -e "SELECT ip_address, created_at FROM auth_sessions ORDER BY created_at DESC LIMIT 1"
+```
+
+(`centre_affaires` : la valeur de `DB_NAME`.)
+
+`ip_address` doit être l'adresse publique du poste qui s'est connecté, et non
+celle d'un réseau Docker (souvent en `172.`) ni `127.0.0.1`. Dans les deux
+cas d'échec, vérifier la ligne `X-Forwarded-For` du fichier nginx.
+
+**Tâches de nuit** : `sudo -u deploy crontab -l` montre la reconduction
+(3 h 05), la purge (3 h 15) et la sauvegarde (3 h 45), et **aucune ligne
+`…/api/maintenance/facturation`** : le lot de facturation est arrêté, la
+facturation est tenue dans Dolibarr (ADR 046). Si elle y est encore, la
+supprimer (`sudo -u deploy crontab -e`) ; la route répond `410`.
+
+### Revenir à la version précédente
+
+Remettre dans le `.env` l'`IMAGE_TAG` de la version précédente, puis, sous le
+compte `deploy`, refaire 4.4 sans `migrer`. Si la version fautive a modifié
+la base, restaurer d'abord celle-ci depuis le lot de la veille
+(`docs/exploitation/restauration.md`) : l'ancienne version ne connaît pas la
+nouvelle structure.
+
+### Si le paquet GitHub ne s'ouvre pas
+
+`docker push` et `docker compose pull` demandent un jeton GitHub (classique)
+d'un compte qui a accès au paquet `centre-affaires` du compte `aceosolo` sur
+GitHub Container Registry : `write:packages` pour publier, `read:packages`
+pour tirer. Le jeton se saisit au `docker login` ; `docker logout` l'efface
+du poste ou du serveur.
+
+Vérifier aussi, une fois, dans le dépôt GitHub : Settings → Pages, GitHub
+Pages désactivé (une première tentative y avait publié le site, ADR 013).
+
+## 5. Base de production : première mise en service
+
+Une seule fois, quand la base MySQL est neuve : à la première mise en ligne
+de la version MySQL, après la section 4.4. Sur le serveur, sous le compte
+`deploy` (le service `migrer` utilise la même image que `app`, qui contient
+`infra/` et `src/db/`) :
 
 ```bash
 cd /home/deploy/centre-affaires
-docker compose run --rm migrer     # crée la base et DB_USER, applique structure et règles, donne les droits
+# `docker compose run --rm migrer` a déjà créé la base et DB_USER, appliqué
+# structure et règles, donné les droits (4.4).
 docker compose run --rm migrer node infra/configurer-centre.mjs
 docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
 docker compose restart app
@@ -132,11 +304,10 @@ docker compose restart app
 Ce premier exploitant inscrit ensuite le reste de l'équipe depuis l'écran
 Équipe du back-office (`/equipe`).
 
-Par la suite, chaque version qui change la base se migre **sur le serveur,
-après le déploiement** de l'image qui la porte : `docker compose run --rm
-migrer`. Les migrations ne sont jamais jouées par la CI. Avant une migration
-risquée, une sauvegarde à la main (`bash sauvegarde.sh`, section 9) tient lieu
-de point de retour.
+Par la suite, chaque version se migre **sur le serveur**, une fois son image
+tirée : `docker compose run --rm migrer` (section 4.4). Les migrations ne
+sont jamais jouées par la CI. Avant une migration risquée, une sauvegarde à
+la main (`bash sauvegarde.sh`, section 9) tient lieu de point de retour.
 
 ## 6. DNS chez OVH
 
@@ -179,7 +350,7 @@ afficher. Si elle cite un fichier (ancien site), supprimer son lien dans
 `sites-enabled`.
 
 ```bash
-grep -rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
+grep -Rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
 
 mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
 cp /home/deploy/centre-affaires/nginx-handfield-*.conf /etc/nginx/sites-available/
@@ -268,8 +439,11 @@ Chaque nuit, `sauvegarde.sh` produit un lot : le dump de la base
 la copie du bucket `uploads` et les fichiers de configuration du serveur. Le lot est
 chiffré sur le serveur pour des clés publiques, envoyé hors du serveur, puis
 relu. Sont gardés le dernier lot de chacun des 7 derniers jours, des 4
-dernières semaines et des 12 derniers mois. Le script est déposé par chaque
-déploiement, comme `compose.yml`.
+dernières semaines et des 12 derniers mois. Le script se dépose à chaque
+mise en ligne, comme `compose.yml` (section 4.2). La version du 06/10 était
+celle de Neon (`pg_dump`) : si la sauvegarde était déjà installée, refaire
+`sauvegarde.env` d'après le modèle MySQL et créer l'utilisateur `sauvegarde`
+(étapes 3 et 5 ci-dessous).
 
 **1. Outils**, en root :
 
@@ -463,7 +637,7 @@ stocker en clair.
 
 ### Créer la clé
 
-Une fois, sur le serveur, avant le premier déploiement qui chiffre :
+Une fois, sur le serveur, avant la première mise en ligne qui chiffre :
 
 ```bash
 openssl rand -base64 32
@@ -558,6 +732,27 @@ ou à intervalle fixé par le centre :
    qu'avec elle (les IBAN des mandats y sont chiffrés avec elle). Après une
    fuite, ces sauvegardes sont à détruire.
 
-Revenir en arrière : `git revert` du commit fautif sur `main`, qui redéploie la
-version précédente. Si une migration de base a été jouée entre-temps, la
-restaurer d'abord depuis le lot de la veille (`docs/exploitation/restauration.md`).
+## Déploiement automatique (suspendu)
+
+Le job `deploy` de `.github/workflows/ci.yml` faisait, à chaque push sur
+`main` dont la CI était verte, ce que la section 4 fait à la main (dernière
+exécution le 06/10/2026) : construire l'image et la publier sur GHCR, étiquetée du commit et
+`latest` ; recopier `compose.yml`, le fichier du serveur web et
+`sauvegarde.sh` ; tirer l'image et relancer `app` (`docker compose up -d
+--wait`). Il ne jouait pas les migrations. Il a été retiré le 15/10/2026
+(commit `e469801`) ; son texte reste lisible dans l'historique
+(`git show e469801^:.github/workflows/ci.yml`).
+
+Le rétablir est **une décision en attente**. Il faudrait alors l'adapter à
+nginx (les deux fichiers `nginx-handfield-*.conf`) et à `IMAGE_TAG` exigé
+par `compose.yml`, trancher s'il joue `migrer`, recréer la clé SSH
+(section 2) et reposer ou vérifier les réglages du dépôt (Settings → Secrets
+and variables → Actions) :
+
+| Type | Nom | Valeur |
+| --- | --- | --- |
+| Variable | `VPS_HOST` | adresse du serveur |
+| Variable | `VPS_USER` | `deploy` |
+| Variable | `VPS_PORT` | port SSH, seulement s'il n'est pas 22 |
+| Secret | `VPS_SSH_KEY` | contenu de `deploy_centre_affaires` (partie privée) |
+| Secret | `VPS_KNOWN_HOSTS` | ligne renvoyée par `ssh-keyscan` à l'étape 2 |

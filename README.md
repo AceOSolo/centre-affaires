@@ -132,15 +132,29 @@ base sont ignorés. La CI fait la même chose sur un MySQL 8.4 jetable
 
 ## Déploiement
 
-Chaque push sur `main` dont la CI est verte est déployé sur le VPS de
-production : l'image est construite par GitHub, puis lancée sur le serveur.
-La base MySQL est un service du même compose, sur le même serveur. Les
-migrations se jouent à la main, sur le serveur, après le déploiement :
-`docker compose run --rm migrer`.
+**La mise en ligne est manuelle.** La CI vérifie chaque push (build, types,
+lint, migrations et tests sur base) mais ne déploie plus : son job de
+déploiement a été retiré le 15/10/2026 (commit `e469801`), et la version en
+ligne est celle du 06/10/2026, d'avant MySQL. Rétablir le déploiement
+automatique est une décision en attente.
 
-- Choix et raisons : [ADR 013](docs/decisions/013-hebergement-vps-de-production.md).
-- Installation et exploitation du serveur, sauvegardes comprises :
-  [`infra/serveur/README.md`](infra/serveur/README.md).
+Une version se met en ligne ainsi (détail : `infra/serveur/README.md`,
+section 4) : l'image est construite sur un poste à partir du `Dockerfile` et
+publiée sur GitHub Container Registry ; `compose.yml`, `sauvegarde.sh` et
+les fichiers nginx sont déposés sur le serveur ; `IMAGE_TAG` est changé dans
+le `.env` du serveur ; puis, sur le serveur, `docker compose pull app`,
+`docker compose run --rm migrer` (toujours) et `docker compose up -d --wait`.
+La base MySQL est un service du même compose, sur le même serveur ; nginx
+sert le domaine en HTTPS et transmet à l'application, publiée sur
+`127.0.0.1:3100`.
+
+- Choix et raisons : [ADR 013](docs/decisions/013-hebergement-vps-de-production.md),
+  amendé par l'[ADR 051](docs/decisions/051-nginx-devant-l-application.md)
+  (nginx).
+- Installation et exploitation du serveur, mise en ligne et sauvegardes
+  comprises : [`infra/serveur/README.md`](infra/serveur/README.md) ; ordre
+  des opérations pour l'installateur :
+  [`docs/exploitation/mise-en-ligne.md`](docs/exploitation/mise-en-ligne.md).
 
 ## Documentation
 
@@ -152,4 +166,5 @@ migrations se jouent à la main, sur le serveur, après le déploiement :
 | [`docs/rgpd/durees-de-conservation.md`](docs/rgpd/durees-de-conservation.md) | Durées de conservation, purges et réglages |
 | [`docs/exploitation/restauration.md`](docs/exploitation/restauration.md) | Procédure de restauration et exercices |
 | [`docs/exploitation/plan-de-reprise.md`](docs/exploitation/plan-de-reprise.md) | Plan de reprise : objectifs, rôles, secrets |
-| [`infra/serveur/README.md`](infra/serveur/README.md) | Mise en production, crontab, sauvegardes |
+| [`docs/exploitation/mise-en-ligne.md`](docs/exploitation/mise-en-ligne.md) | Fiche de l'installateur : état de départ, ordre des opérations |
+| [`infra/serveur/README.md`](infra/serveur/README.md) | Mise en production, mise en ligne manuelle d'une version, crontab, sauvegardes |
