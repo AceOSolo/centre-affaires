@@ -42,7 +42,8 @@ export function creerPreuveHumaine(reglages: ReglagesPreuve) {
   const cle = deriver(reglages.secret, 'cle')
   // Une réponse ne sert qu'une fois. En mémoire : un seul conteneur (ADR 013) ;
   // au-delà de 10 000, les plus anciennes sortent, déjà expirées en pratique.
-  const dejaServies = new CappedMap<string, boolean>({ maxSize: 10_000 })
+  // N'y entrent que des réponses justes : chacune a coûté son calcul.
+  const dejaServies = new CappedMap<string, true>({ maxSize: 10_000 })
 
   return {
     /** Un défi neuf, signé, à envoyer au widget. */
@@ -61,8 +62,21 @@ export function creerPreuveHumaine(reglages: ReglagesPreuve) {
     /** Vrai si la réponse est juste, signée par ce serveur, à temps et jamais servie. */
     async verifier(reponse: unknown): Promise<boolean> {
       if (typeof reponse !== 'string' || reponse === '') return false
-      const { error } = await verify(reponse, deriveKey, signature, cle, dejaServies)
-      return error === null
+      // Vérifiée d'abord sans mémoire : `verify()` d'altcha-lib inscrirait le
+      // défi avant d'en contrôler la signature, et des réponses forgées, qui ne
+      // coûtent rien, rempliraient la mémoire jusqu'à en chasser des réponses
+      // justes, alors réutilisables.
+      const { error, payload } = await verify(reponse, deriveKey, signature, cle)
+      // Seuls les défis de ce serveur (défi et solution) : pas les réponses
+      // d'un service ALTCHA hébergé, que le site n'emploie pas.
+      if (error !== null || !payload || !('challenge' in payload)) return false
+      // Le défi est signé : son aléa (`nonce`) ne peut pas être changé. Lu et
+      // inscrit sans attente entre les deux, deux envois simultanés de la même
+      // réponse ne passent pas tous les deux.
+      const defi = payload.challenge.parameters.nonce
+      if (dejaServies.has(defi)) return false
+      dejaServies.set(defi, true)
+      return true
     },
   }
 }
