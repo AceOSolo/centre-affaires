@@ -50,6 +50,8 @@ main). Un devis **à compléter** n'apparaît jamais dans l'API.
 | `limite` | 100 | 1 à 500 |
 
 Tri : du plus ancien au plus récent (par date de dernière modification).
+Un paramètre illisible (statut inconnu, date non ISO, limite hors de 1 à 500)
+répond **400** `{ "erreur": "…" }`.
 
 ```json
 {
@@ -178,6 +180,7 @@ Dès que la proposition existe dans Dolibarr :
 - **409** : le devis n'est plus prêt (annulé entre-temps, remis en brouillon
   par l'accueil, ou déjà transmis sous un autre identifiant). Le message dit
   pourquoi ; ne recréez rien.
+- **400** : `dolibarrId` absent, ou l'un des deux de plus de 64 caractères.
 - **404** : devis inconnu (ou jeton invalide).
 
 ## `POST /api/dolibarr/devis/{id}/issue`
@@ -189,7 +192,8 @@ Quand la proposition est signée ou refusée dans Dolibarr :
 ```
 
 `"signe"` ou `"refuse"`. Rejouable. **409** si le devis n'a pas été transmis,
-ou a déjà l'autre issue.
+ou a déjà l'autre issue ; **400** pour toute autre valeur d'`issue` ; **404**
+pour un devis inconnu.
 
 ## Les devis annulés
 
@@ -212,17 +216,29 @@ et fermez dans Dolibarr les propositions correspondantes (`annuleLe`,
 - Traitez les devis un par un, dans l'ordre reçu, et appelez `/transmis`
   après chaque création réussie.
 
-## La suite : les factures
+## Les factures : dans Dolibarr seulement
 
-L'exploitant a choisi de faire aussi **les factures** dans Dolibarr. Ce
-premier raccordement ne couvre que les devis. Dès aujourd'hui, la facturation
-interne de l'application **ne facture plus une réservation qui a un devis**
-(c'est Dolibarr qui la facture à partir du devis signé).
+Depuis l'[ADR 046](../decisions/046-dolibarr-commercial-et-facturation-admin-par-produit.md),
+**toute la facturation est dans Dolibarr** : factures et avoirs, règlements,
+prélèvements, relances, export comptable, et le raccordement à une plateforme
+agréée pour la facture électronique (réception obligatoire depuis septembre
+2026, émission au 1er septembre 2027). L'application ne facture plus rien :
+ses droits de facturation ne sont accordés à aucun rôle, et le lot mensuel
+planifié est arrêté (`/api/maintenance/facturation` répond `410`). Une
+réservation au devis signé se facture dans Dolibarr, à partir du devis.
 
-Restent à décider ensemble, avant d'arrêter la facturation de l'application
-(un ADR suivant) : qui facture les loyers et forfaits des contrats (bureaux,
-domiciliation) et les actes du courrier (ouvertures, numérisations,
-réexpéditions), et comment Dolibarr apprend ces consommations ; ce que
-deviennent les relances, les prélèvements SEPA et l'export comptable ; et le
-raccordement de Dolibarr à une plateforme agréée pour la facture électronique
-(réception obligatoire depuis septembre 2026, émission au 1er septembre 2027).
+## Ce qui existe, ce qui reste à faire
+
+| Sens | Échange | État |
+|---|---|---|
+| application → Dolibarr | devis (ci-dessus) | disponible |
+| Dolibarr → application | produits et tarifs, par le module Webhook ([dolibarr-produits.md](dolibarr-produits.md)) | disponible |
+| Dolibarr → application | tiers (entreprises, contacts) | **à venir** (seconde tranche, ADR 046 § 5) |
+| Dolibarr → application | contrats en cours (qui occupe quel bureau, qui est domicilié) | **à venir** (seconde tranche) |
+| application → Dolibarr | consommations facturables : réservations hors contrat, actes du courrier (ouvertures, numérisations, réexpéditions, pages en sus), services ponctuels | **à venir** (seconde tranche) |
+
+Les trois dernières n'existent pas encore dans l'application : aucune route
+`/api/dolibarr/*` ne les sert. Restent à trancher ensemble pour elles : le
+format des tiers et des contrats, la référence commune d'un tiers (SIREN ou
+identifiant Dolibarr), la fréquence des échanges, et qui envoie au client
+l'avis d'une facture.
