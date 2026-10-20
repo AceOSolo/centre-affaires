@@ -162,7 +162,7 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
             <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: undefined, picked: false })} className={`min-h-11 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted ${focusClass}`}>Changer</button>
           )}
           <button type="button" onClick={close} aria-label="Fermer" className={`-mr-2 inline-flex size-11 items-center justify-center rounded-full text-primary transition-colors hover:bg-muted ${focusClass}`}>
-            <XIcon size={22} />
+            <XIcon size={20} />
           </button>
         </div>
       </div>
@@ -176,7 +176,7 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
                 return (
                   <li key={item.product}>
                     <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: item.product, picked: true })} className={`flex min-h-11 w-full items-center gap-4 rounded-lg border-2 border-border p-4 text-left transition-colors hover:border-primary ${focusClass}`}>
-                      <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-primary"><Icon size={24} /></span>
+                      <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-primary"><Icon size={20} /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block font-medium text-primary">{item.label}</span>
                         <span className="mt-0.5 block text-sm text-muted-foreground">{item.description}</span>

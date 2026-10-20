@@ -66,11 +66,11 @@ export function StepActions({ onBack, pending, disabled, label, last, hint }: {
   return (
     <div className="sticky bottom-0 flex items-center justify-between gap-3 border-t border-border bg-background px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-8">
       {onBack
-        ? <button type="button" disabled={pending} onClick={onBack} className={`inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted disabled:opacity-50 ${focusClass}`}><ArrowLeftIcon size={18} />Retour</button>
+        ? <button type="button" disabled={pending} onClick={onBack} className={`inline-flex min-h-12 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted disabled:opacity-50 ${focusClass}`}><ArrowLeftIcon size={20} />Retour</button>
         : <span className="text-xs text-muted-foreground">{hint}</span>}
       <button type="submit" disabled={pending || disabled} className={primaryClass}>
         {pending ? 'Envoi…' : label}
-        {!last && !pending && <ArrowRightIcon size={18} />}
+        {!last && !pending && <ArrowRightIcon size={20} />}
       </button>
     </div>
   )

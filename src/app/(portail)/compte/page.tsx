@@ -70,7 +70,7 @@ export default async function CompteAccueilPage() {
             {aFaire.map(({ href, Icon, texte, detail }) => (
               <li key={href}>
                 <Link href={href} className="group flex min-h-11 items-center gap-4 rounded-lg border-2 border-primary/20 bg-accent/5 p-4 transition-colors hover:border-primary">
-                  <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground"><Icon size={22} /></span>
+                  <span className="flex size-11 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground"><Icon size={20} /></span>
                   <span className="min-w-0 flex-1">
                     <span className="block font-medium text-primary">{texte}</span>
                     {detail && <span className="mt-0.5 block text-sm text-muted-foreground">{detail}</span>}
@@ -91,7 +91,7 @@ export default async function CompteAccueilPage() {
               <p className="mt-1 text-lg font-semibold text-foreground first-letter:uppercase">{formatLongDate(toIsoDate(prochaine.startsAt, timeZone), timeZone)}</p>
               <p className="mt-0.5 tabular">{formatTime(prochaine.startsAt, timeZone)} – {formatTime(prochaine.endsAt, timeZone)} · {prochaine.resourceName}</p>
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-sm font-medium text-primary">
-                {prochaine.status === 'confirmed' ? <CheckIcon size={16} /> : <ClockIcon size={16} />}
+                {prochaine.status === 'confirmed' ? <CheckIcon size={20} /> : <ClockIcon size={20} />}
                 {prochaine.status === 'confirmed' ? 'Confirmée' : 'En attente de validation par le centre'}
               </p>
               {upcoming.length > 1 && <p className="mt-3 text-sm text-muted-foreground">Et {upcoming.length - 1} autre{upcoming.length > 2 ? 's' : ''} à venir.</p>}
@@ -101,7 +101,7 @@ export default async function CompteAccueilPage() {
           )}
           <Actions>
             <Link href="/compte/reservations/nouvelle" className={primaire}>Réserver un créneau</Link>
-            <Link href="/compte/reservations" className={lien}>Toutes mes réservations <ArrowRightIcon size={16} /></Link>
+            <Link href="/compte/reservations" className={lien}>Toutes mes réservations <ArrowRightIcon size={20} /></Link>
           </Actions>
         </Carte>
 
@@ -145,7 +145,7 @@ export default async function CompteAccueilPage() {
               ))}
             </ul>
             <Actions>
-              <Link href="/compte/contrats" className={lien}>Voir mes contrats <ArrowRightIcon size={16} /></Link>
+              <Link href="/compte/contrats" className={lien}>Voir mes contrats <ArrowRightIcon size={20} /></Link>
             </Actions>
           </Carte>
         )}
@@ -154,7 +154,7 @@ export default async function CompteAccueilPage() {
           <Carte titre="Besoin d’une formule au mois ?" Icon={CheckIcon}>
             <p className="text-muted-foreground">Bureau, domiciliation, services : nos formules à prix fixe, sans engagement avant la signature du contrat.</p>
             <Actions>
-              <Link href="/compte/offres" className={lien}>Voir les formules <ArrowRightIcon size={16} /></Link>
+              <Link href="/compte/offres" className={lien}>Voir les formules <ArrowRightIcon size={20} /></Link>
             </Actions>
           </Carte>
         )}

@@ -313,7 +313,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
                         <span className="mt-0.5 block text-sm text-muted-foreground">{item.capacity ? `${item.capacity} pers. · ` : ''}<FirstRate resource={item} currency={currency} /></span>
                       </span>
                       <span className={`mr-1 flex size-6 shrink-0 items-center justify-center rounded-full border ${checked ? 'border-primary bg-primary text-white' : 'border-border bg-white'}`}>
-                        {checked && <><CheckIcon size={16} /><span className="sr-only">Sélectionné</span></>}
+                        {checked && <><CheckIcon size={20} /><span className="sr-only">Sélectionné</span></>}
                       </span>
                     </span>
                   </label>
@@ -447,7 +447,7 @@ export function RequestSent({ headingRef, summary, proposal, email, onClose, chi
 }) {
   return (
     <div className="p-6 sm:p-10" role="status">
-      <span className="flex size-12 items-center justify-center rounded-full bg-primary text-white"><CheckIcon size={24} /></span>
+      <span className="flex size-12 items-center justify-center rounded-full bg-primary text-white"><CheckIcon size={20} /></span>
       <h3 ref={headingRef} tabIndex={-1} className={`mt-5 rounded-sm text-2xl font-semibold tracking-tight text-primary ${focusClass}`}>Votre demande de devis est envoyée</h3>
       <p className="mt-3 font-medium">{summary}</p>
       {proposal ? (

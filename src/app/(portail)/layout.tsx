@@ -95,7 +95,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
             {/* Le numéro reste à portée sur grand écran, sans bandeau au-dessus de l'en-tête. */}
             {tenant.phone && telHref && (
               <a href={telHref} className="hidden min-h-11 items-center gap-2 rounded-md px-3 text-sm font-medium text-primary transition-colors hover:bg-muted lg:inline-flex">
-                <PhoneIcon size={18} />
+                <PhoneIcon size={20} />
                 <span className="tabular">{tenant.phone}</span>
               </a>
             )}
@@ -196,7 +196,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
               rel="noreferrer"
               className="mt-1 inline-flex min-h-11 items-center gap-1.5 text-white/90 underline-offset-4 hover:underline"
             >
-              <MapPinIcon size={18} />
+              <MapPinIcon size={20} />
               Voir sur la carte
             </a>
           </div>

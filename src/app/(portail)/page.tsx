@@ -277,7 +277,7 @@ export default async function PortailPage({
                           {(espace.description || details) && <span className="mt-1 line-clamp-2 block text-sm text-muted-foreground">{espace.description ?? details}</span>}
                           <span className="mt-2 flex items-center justify-between gap-3 text-sm">
                             <span>{premier ? <><strong className="font-semibold tabular">{prix(premier.amountCents, currency)} HT</strong> {parUnite[premier.unit]}</> : 'Tarif sur devis'}</span>
-                            <span className="inline-flex items-center gap-1 font-medium text-primary group-hover:underline">Réserver <ArrowRightIcon size={16} /></span>
+                            <span className="inline-flex items-center gap-1 font-medium text-primary group-hover:underline">Réserver <ArrowRightIcon size={20} /></span>
                           </span>
                         </ReserveButton>
                       </li>
@@ -371,7 +371,7 @@ export default async function PortailPage({
             <a href={planUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-4 hover:underline">
               <MapPinIcon size={20} />
               Préparer mon itinéraire
-              <ArrowRightIcon size={18} />
+              <ArrowRightIcon size={20} />
             </a>
             <dl className="mt-8 space-y-4">
               {ouverture && (
@@ -408,7 +408,7 @@ export default async function PortailPage({
           </ReserveButton>
           {tenant.phone && telHref && (
             <a href={telHref} aria-label={`Appeler le ${tenant.phone}`} className="flex min-h-12 min-w-12 items-center justify-center rounded-md border border-primary px-4 text-primary">
-              <PhoneIcon size={22} />
+              <PhoneIcon size={20} />
             </a>
           )}
         </div>
