@@ -10,7 +10,6 @@ import { mailFolderCounts } from '../../../modules/courrier/classement.ts'
 import { searchMailForAccounts } from '../../../modules/courrier/demandes-queries.ts'
 import { countToSign, listInspectionsForAccounts } from '../../../modules/etats-des-lieux/queries.ts'
 import { listInvoicesForAccounts } from '../../../modules/facturation/compte-queries.ts'
-import { clientInvoiceState, outstandingByCurrency } from '../../../modules/facturation/compte-regles.ts'
 import { listPortalOffers } from '../../../modules/facturation/offres-portail.ts'
 import { splitClientBookings } from '../../../modules/reservations/compte-regles.ts'
 import { listBookingsForAccounts } from '../../../modules/reservations/compte-queries.ts'
@@ -28,6 +27,10 @@ const LATEST_MAIL = 3
  * même objet revient de cet appel dans toute la requête, d'où un seul
  * chargement. Chaque lecture passe par les requêtes de son domaine, qui
  * portent déjà la portée client (`inClientSpace`, ADR 019).
+ *
+ * Aucun montant de facture : Dolibarr facture (ADR 046). Les factures du site
+ * ne servent plus qu'à montrer, ou non, l'onglet de la page « Factures »,
+ * restée en place et vide jusqu'à la seconde tranche.
  */
 export const loadClientSpace = cache(async ({ user, accounts }: { user: AuthenticatedUser; accounts: ClientAccount[] }) => {
   const tenant = await currentTenant()
@@ -53,9 +56,6 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
     tenant,
     today,
     upcoming: splitClientBookings(bookings, now).upcoming,
-    outstanding: outstandingByCurrency(invoices, today),
-    overdueInvoices: invoices.filter((invoice) => clientInvoiceState(invoice, today).overdue).length,
-    invoiceCount: invoices.length,
     activeContracts,
     toSign: countToSign(inspections),
     domiciliated,

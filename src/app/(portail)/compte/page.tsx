@@ -5,14 +5,12 @@ import {
   CalendarIcon,
   CheckIcon,
   ClockIcon,
-  CreditCardIcon,
   FileTextIcon,
   MailIcon,
 } from '../../../components/ui/icons.tsx'
 import { formatCalendarDate, formatDateTime, formatLongDate, formatTime, toIsoDate } from '../../../lib/dates.ts'
 import { contractTypeLabels } from '../../../modules/contrats/labels.ts'
 import { mailKindLabels } from '../../../modules/courrier/labels.ts'
-import { formatCents } from '../../../modules/facturation/tarifs.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
 import { loadClientSpace } from './espace.ts'
 
@@ -25,25 +23,19 @@ const lien = 'inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text
  * Accueil de l'espace client : ce qui demande une action d'abord, puis une
  * carte par sujet que l'entreprise utilise. Chaque carte mène à sa rubrique ;
  * aucune n'apparaît vide — un nouveau client voit seulement de quoi réserver.
+ *
+ * Pas de factures ni de reste à régler : Dolibarr facture (ADR 046), les
+ * tables de facturation du site sont en sommeil. Ils reviendront, lus depuis
+ * Dolibarr, avec la seconde tranche.
  */
 export default async function CompteAccueilPage() {
   const space = await loadClientSpace(await requireClientAccount())
-  const { user, tenant, upcoming, outstanding, overdueInvoices, mail, latestMail, activeContracts, toSign, domiciliated } = space
+  const { user, tenant, upcoming, mail, latestMail, activeContracts, toSign, domiciliated } = space
   const timeZone = tenant.timezone
   const prenom = user.name?.trim().split(/\s+/)[0]
   const prochaine = upcoming[0]
-  const aRegler = outstanding.reduce((count, total) => count + total.count, 0)
 
   const aFaire = [
-    aRegler > 0 && {
-      href: '/compte/factures',
-      Icon: CreditCardIcon,
-      texte: `${aRegler} facture${aRegler > 1 ? 's' : ''} à régler`,
-      detail: [
-        outstanding.map((total) => formatCents(total.dueCents, total.currency)).join(' + '),
-        overdueInvoices > 0 ? `dont ${overdueInvoices} en retard` : '',
-      ].filter(Boolean).join(', '),
-    },
     toSign > 0 && {
       href: '/compte/etats-des-lieux',
       Icon: FileTextIcon,
@@ -136,25 +128,6 @@ export default async function CompteAccueilPage() {
             )}
             <Actions>
               <Link href="/compte/courrier" className={primaire}>Ouvrir ma boîte aux lettres</Link>
-            </Actions>
-          </Carte>
-        )}
-
-        {space.invoiceCount > 0 && (
-          <Carte titre="Factures" Icon={CreditCardIcon}>
-            {aRegler > 0 ? (
-              <>
-                <p className="text-sm text-muted-foreground">Reste à régler</p>
-                <p className="mt-1 text-2xl font-semibold tracking-tight text-primary tabular">
-                  {outstanding.map((total) => formatCents(total.dueCents, total.currency)).join(' + ')}
-                </p>
-                {overdueInvoices > 0 && <p className="mt-1 text-sm text-muted-foreground">Dont {overdueInvoices} facture{overdueInvoices > 1 ? 's' : ''} échue{overdueInvoices > 1 ? 's' : ''}.</p>}
-              </>
-            ) : (
-              <p className="flex items-center gap-2 text-foreground"><CheckIcon size={20} className="text-primary" />Tout est réglé.</p>
-            )}
-            <Actions>
-              <Link href="/compte/factures" className={lien}>Voir mes factures <ArrowRightIcon size={16} /></Link>
             </Actions>
           </Carte>
         )}
