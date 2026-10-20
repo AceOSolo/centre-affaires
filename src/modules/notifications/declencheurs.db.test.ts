@@ -24,6 +24,7 @@ import {
   notifyBookingRequestAccepted,
   notifyBookingRequestRefused,
   notifyBookingRequestSubmitted,
+  notifyDomiciliationRequestSubmitted,
 } from './declencheurs-reservations.ts'
 
 /**
@@ -88,6 +89,8 @@ describe('déclencheurs des notifications', { skip: raisonDeSaut }, () => {
     envoyes = []
     await viderTables(
       bases.owner,
+      'proposal_lines',
+      'proposals',
       'bookings',
       'contracts',
       'contract_lines',
@@ -353,6 +356,75 @@ describe('déclencheurs des notifications', { skip: raisonDeSaut }, () => {
         lignes.map((ligne) => ligne.event),
         ['booking_confirmed', 'booking_cancelled'],
       )
+    })
+  })
+
+  describe('domiciliation', () => {
+    let numero = 0
+    const devis = (colonnes: SQL, valeurs: SQL) => {
+      numero += 1
+      return creer((tx, id) =>
+        tx.execute(sql`
+          insert into proposals (id, number, product, ${colonnes}, answers)
+          values (${id}, ${`DV-NOTIF-${numero}`}, 'domiciliation', ${valeurs},
+                  '{"situation":"creation","raisonSociale":"Rousseau Conseil","forme":"sas","debut":"2026-11-02",
+                    "courrier":"numerisation","engagement":"12"}')`),
+      )
+    }
+
+    it('prévient le centre d’une demande de la page publique : qui, pour quelle société, quoi, et le devis', async () => {
+      const demande = await devis(
+        sql`channel, requester_name, requester_email, requester_phone, requester_company, message`,
+        sql`'public', 'Camille Rousseau', 'camille@exemple.fr', '06 12 34 56 78', 'Rousseau Conseil', 'Je passerai signer.'`,
+      )
+      const issue = await notifyDomiciliationRequestSubmitted(demande, options)
+      assert.equal(issue?.status, 'sent')
+      assert.deepEqual(envoyes[0].to, ['accueil@centre.exemple'])
+      assert.equal(envoyes[0].subject, 'Demande de domiciliation — Rousseau Conseil')
+      const texte = envoyes[0].text
+      assert.match(texte, /^Camille Rousseau demande une domiciliation pour Rousseau Conseil\./)
+      assert.match(texte, /Courriel : camille@exemple\.fr\nTéléphone : 06 12 34 56 78/)
+      assert.match(texte, /Votre société : Est en cours de création/)
+      assert.match(texte, /À partir de quand : 2 novembre 2026/)
+      assert.match(texte, /Que faire de votre courrier : Le numériser et me l’envoyer par courriel/)
+      assert.match(texte, /Durée envisagée : 12 mois/)
+      assert.match(texte, /Message : Je passerai signer\./)
+      assert.match(texte, /Devis à relire et valider : DV-NOTIF-1/)
+      // La raison sociale est dans la phrase d'ouverture, pas répétée dans les réponses.
+      assert.doesNotMatch(texte, /Raison sociale/)
+      // Pas d'entreprise cliente : la ligne qui la citerait n'est pas envoyée.
+      assert.doesNotMatch(texte, /Entreprise cliente/)
+      const [ligne] = await journal()
+      assert.deepEqual(
+        [ligne.event, ligne.audience, ligne.client_id, ligne.related_type, ligne.related_id],
+        ['domiciliation_request_submitted', 'centre', null, 'proposal', demande],
+      )
+    })
+
+    it('nomme l’entreprise cliente d’une personne connectée à son espace', async () => {
+      const demande = await devis(
+        sql`channel, client_id, requester_name, requester_email, requester_phone, requester_company`,
+        sql`'client', ${DURAND}, 'Jeanne Durand', 'jeanne@durand.fr', '0600000000', 'Durand Holding'`,
+      )
+      await notifyDomiciliationRequestSubmitted(demande, options)
+      assert.equal(envoyes[0].subject, 'Demande de domiciliation — Durand Holding')
+      assert.match(envoyes[0].text, /Entreprise cliente : Atelier Durand/)
+      assert.doesNotMatch(envoyes[0].text, /Message :/)
+      const [ligne] = await journal()
+      assert.equal(ligne.client_id, DURAND)
+    })
+
+    it('ne prévient pas pour un devis saisi par l’équipe, déjà traité, ou introuvable', async () => {
+      const equipe = await devis(sql`channel, requester_email`, sql`'staff', 'camille@exemple.fr'`)
+      assert.equal(await notifyDomiciliationRequestSubmitted(equipe, options), null)
+
+      const annulee = await devis(sql`channel, requester_email`, sql`'public', 'camille@exemple.fr'`)
+      await asTenant((tx) => tx.execute(sql`update proposals set status = 'cancelled' where id = ${annulee}`))
+      assert.equal(await notifyDomiciliationRequestSubmitted(annulee, options), null)
+
+      assert.equal(await notifyDomiciliationRequestSubmitted(uuidv7(), options), null)
+      assert.equal(envoyes.length, 0)
+      assert.equal((await journal()).length, 0)
     })
   })
 

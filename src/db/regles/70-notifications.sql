@@ -80,6 +80,7 @@ BEGIN
     WHEN 'offer_requested' THEN 'centre'
     WHEN 'mail_batch_received' THEN 'client'
     WHEN 'mail_none' THEN 'client'
+    WHEN 'domiciliation_request_submitted' THEN 'centre'
     ELSE notification_event_unknown(p_event)
   END;
 END
@@ -110,6 +111,7 @@ BEGIN
     WHEN 'inspection_signed' THEN NULL
     WHEN 'member_invited' THEN NULL
     WHEN 'offer_requested' THEN NULL
+    WHEN 'domiciliation_request_submitted' THEN NULL
     ELSE notification_event_unknown(p_event)
   END;
 END

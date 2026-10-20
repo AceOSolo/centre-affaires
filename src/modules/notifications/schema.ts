@@ -57,6 +57,8 @@ export const notificationEvents = [
   // Fin de tournée (ADR 044) : un message par entreprise.
   'mail_batch_received',
   'mail_none',
+  // Demande de domiciliation de la page publique (ADR 043) : à l'accueil.
+  'domiciliation_request_submitted',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
@@ -104,6 +106,7 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   offer_requested: 'centre',
   mail_batch_received: 'client',
   mail_none: 'client',
+  domiciliation_request_submitted: 'centre',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -127,6 +130,7 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   offer_requested: null,
   mail_batch_received: 'mail',
   mail_none: 'mail_none',
+  domiciliation_request_submitted: null,
 }
 
 /**
@@ -155,6 +159,8 @@ export const notificationRelatedTypes = [
   'client_member',
   'offer',
   'mail_batch',
+  // Devis né d'une demande (ADR 043) : la domiciliation n'a pas de réservation.
+  'proposal',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
 export const notificationRelatedTypeEnum = (name: string) =>

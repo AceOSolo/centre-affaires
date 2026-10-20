@@ -5,7 +5,9 @@ import { appUrl } from '../../lib/courriel.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { frozenQuoteDisplay } from '../facturation/devis.ts'
+import { proposals } from '../facturation/schema-devis.ts'
 import { formatCents } from '../facturation/tarifs.ts'
+import { describeAnswers } from '../reservations/questionnaires.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { centreTimeZone, formatSlot, personName } from './faits.ts'
@@ -152,6 +154,55 @@ export function notifyBookingRequestSubmitted(bookingId: string, options: Notify
             'Un visiteur',
           motif: null,
           lien: appUrl('/demandes'),
+        },
+      },
+      options,
+    )
+  })
+}
+
+/**
+ * Demande de domiciliation déposée sur la page publique (ADR 043) : pas de
+ * réservation, un devis brouillon que l'accueil relit. À l'adresse du centre,
+ * tant que le devis attend : un devis déjà validé ou annulé, ou saisi par
+ * l'équipe elle-même, ne prévient pas.
+ */
+export function notifyDomiciliationRequestSubmitted(proposalId: string, options: NotifyOptions = {}) {
+  return guarded('demande de domiciliation déposée', async () => {
+    const tenantId = options.tenantId ?? currentTenantId()
+    const [row] = await withTenant(
+      tenantId,
+      (tx) =>
+        tx
+          .select({ proposal: proposals, clientName: clients.name })
+          .from(proposals)
+          .leftJoin(clients, and(eq(clients.tenantId, proposals.tenantId), eq(clients.id, proposals.clientId)))
+          .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, proposalId))),
+      options.database,
+    )
+    if (!row) return null
+    const { proposal } = row
+    if (proposal.product !== 'domiciliation' || proposal.status !== 'draft' || proposal.channel === 'staff') return null
+    // La raison sociale a sa variable : elle n'est pas répétée dans les réponses.
+    const answers = Object.fromEntries(Object.entries(proposal.answers).filter(([name]) => name !== 'raisonSociale'))
+    const reponses = describeAnswers('domiciliation', answers)
+      .map(({ label, value }) => `${label.replace(/\s*\?$/, '')} : ${value}`)
+      .join('\n')
+    return notify(
+      {
+        event: 'domiciliation_request_submitted',
+        clientId: proposal.clientId,
+        related: { type: 'proposal', id: proposal.id },
+        values: {
+          client: row.clientName,
+          demandeur: personName(proposal.requesterName, proposal.requesterEmail) ?? row.clientName ?? 'Un visiteur',
+          societe: proposal.requesterCompany ?? row.clientName,
+          courriel: proposal.requesterEmail,
+          telephone: proposal.requesterPhone,
+          reponses,
+          message: proposal.message,
+          numero: proposal.number,
+          lien: appUrl(`/devis/${proposal.id}`),
         },
       },
       options,

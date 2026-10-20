@@ -252,6 +252,24 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
     { name: 'message', label: 'Message du client', example: 'Disponible à partir de novembre ?', optional: true },
     lienCentre('la fiche du client'),
   ],
+  domiciliation_request_submitted: [
+    centre,
+    { ...client, optional: true, label: 'Entreprise cliente, quand la demande vient de son espace client' },
+    demandeur,
+    { name: 'societe', label: 'Raison sociale ou nom du projet à domicilier', example: 'Atelier Exemple' },
+    { name: 'courriel', label: 'Adresse électronique du demandeur', example: 'camille@exemple.fr' },
+    { name: 'telephone', label: 'Téléphone du demandeur', example: '06 12 34 56 78' },
+    {
+      name: 'reponses',
+      label: 'Réponses au questionnaire, une par ligne : situation, forme juridique, début, courrier, services, durée',
+      example:
+        'Votre société : Est en cours de création\nForme juridique : SAS ou SASU\nÀ partir de quand : 2 novembre 2026\n' +
+        'Que faire de votre courrier : Le numériser et me l’envoyer par courriel\nDurée envisagée : 12 mois',
+    },
+    { name: 'message', label: 'Message du demandeur', example: 'Je peux passer signer la semaine prochaine.', optional: true },
+    { name: 'numero', label: 'Numéro du devis né de la demande', example: 'DV-2026-0012' },
+    { ...lienCentre('le devis à relire'), example: 'https://centre.exemple/devis' },
+  ],
 }
 
 export type DefaultTemplate = { subject: string; body: string }
@@ -420,6 +438,19 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       '\n\nFiche du client : {{lien}}' +
       signature,
   },
+  domiciliation_request_submitted: {
+    subject: 'Demande de domiciliation — {{societe}}',
+    body:
+      '{{demandeur}} demande une domiciliation pour {{societe}}.' +
+      '\n\nEntreprise cliente : {{client}}' +
+      '\nCourriel : {{courriel}}' +
+      '\nTéléphone : {{telephone}}' +
+      '\n\n{{reponses}}' +
+      '\n\nMessage : {{message}}' +
+      '\n\nDevis à relire et valider : {{numero}}' +
+      '\n{{lien}}' +
+      signature,
+  },
 }
 
 /** Nom de l'événement à l'écran. */
@@ -443,6 +474,7 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   inspection_signed: 'État des lieux validé par le client',
   member_invited: 'Accès à l’espace client ouvert',
   offer_requested: 'Offre demandée depuis l’espace client',
+  domiciliation_request_submitted: 'Demande de domiciliation déposée',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -469,6 +501,8 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
   inspection_signed: 'Quand le client valide un état des lieux depuis son espace.',
   member_invited: 'Quand l’équipe ouvre un accès à l’espace client.',
   offer_requested: 'Quand un client demande une offre depuis son espace.',
+  domiciliation_request_submitted:
+    'Quand une demande de domiciliation est déposée sur la page publique : son devis attend la relecture de l’accueil.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {
@@ -513,4 +547,5 @@ export const notificationRelatedTypeLabels: Record<NotificationRelatedType, stri
   client_member: 'Accès à l’espace client',
   offer: 'Offre',
   mail_batch: 'Tournée du courrier',
+  proposal: 'Devis',
 }

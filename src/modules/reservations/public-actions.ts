@@ -15,7 +15,10 @@ import { quote } from '../facturation/devis-queries.ts'
 import { toQuoteDisplay, type QuoteDisplay } from '../facturation/devis.ts'
 import { createProposalInTransaction } from '../facturation/propositions-queries.ts'
 import type { ProposalProduct, ProposalStatus } from '../facturation/schema-devis.ts'
-import { notifyBookingRequestSubmitted } from '../notifications/declencheurs-reservations.ts'
+import {
+  notifyBookingRequestSubmitted,
+  notifyDomiciliationRequestSubmitted,
+} from '../notifications/declencheurs-reservations.ts'
 import { findResource } from '../ressources/queries.ts'
 import {
   BookingConflictError,
@@ -363,7 +366,8 @@ export async function requestDomiciliationAction(
     }),
   )
 
-  // Pas encore d'avis à l'accueil pour une domiciliation : la liste des devis la montre.
+  // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
+  after(() => notifyDomiciliationRequestSubmitted(proposal.id))
   revalidatePath('/devis')
 
   return {
