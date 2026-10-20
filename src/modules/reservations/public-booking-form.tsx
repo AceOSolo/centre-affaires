@@ -4,6 +4,7 @@ import Image from 'next/image'
 import { useActionState, useEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
+import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
 import { BuildingIcon, CarIcon, CheckIcon } from '../../components/ui/icons.tsx'
 import { addDaysToIsoDate, formatLongDate, formatMinutes, formatTime } from '../../lib/dates.ts'
 import { QuoteSummary } from '../facturation/devis-resume.tsx'
@@ -127,6 +128,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const [localError, setLocalError] = useState('')
   const [showServerError, setShowServerError] = useState(true)
   const [revision, setRevision] = useState(0)
+  // Change à chaque réponse du serveur : la case anti-robot repart d'un défi neuf.
+  const [essai, setEssai] = useState(0)
   const [loaded, setLoaded] = useState<{ key: string; result: PublicDayAvailability; now: Date }>()
   const [seenState, setSeenState] = useState(state)
   const headingRef = useRef<HTMLHeadingElement>(null)
@@ -156,6 +159,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   // Réponses refusées par le serveur : retour à l'étape concernée, erreurs en ligne et en résumé.
   if (state !== seenState) {
     setSeenState(state)
+    // La réponse anti-robot envoyée est consommée : un calcul neuf pour le prochain envoi.
+    setEssai((value) => value + 1)
     if (state.status === 'error' && state.fieldErrors) {
       const at = fromServerStep(state.step) ?? QUESTIONS_STEP
       setStep(at)
@@ -246,6 +251,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     if (!contact.title.trim()) rejections[contactId('title')] = rejectionMessages['objet-manquant']
     if (Object.keys(rejections).length > 0) { event.preventDefault(); setContactErrors(rejections); return }
     setContactErrors(undefined)
+    if (!preuvePrete(event.currentTarget)) { event.preventDefault(); setLocalError(preuveEnCours); return }
     setShowServerError(true)
   }
 
@@ -403,6 +409,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
               <textarea id="booking-notes" rows={3} maxLength={2000} value={contact.notes} onChange={(event) => setContact({ ...contact, notes: event.target.value })} className={`${fieldClass} mt-2`} />
             </div>
           </div>
+
+          <PreuveHumaine key={essai} />
 
           <p className="text-sm text-muted-foreground">Nous vous envoyons un devis par e-mail, sans engagement. Aucun paiement maintenant : le créneau vous est réservé le temps de traiter votre demande.</p>
         </div>}

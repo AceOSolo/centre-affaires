@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { creerCompteur, ipDuVisiteur } from './anti-robot.ts'
-import { CHAMP_PIEGE, champPiegeRempli } from './champ-piege.ts'
+import { CHAMP_PIEGE, champPiegeRempli } from './champs-anti-robot.ts'
 
 const enTetes = (forwardedFor: string) => new Headers({ 'x-forwarded-for': forwardedFor })
 

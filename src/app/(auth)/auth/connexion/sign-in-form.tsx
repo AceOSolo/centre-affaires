@@ -4,7 +4,9 @@ import { useState, useTransition } from 'react'
 
 import { useRouter, useSearchParams } from 'next/navigation'
 
+import { PreuveHumaine, preuveEnCours, reponsePreuve } from '../../../../components/ui/preuve-humaine.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
+import { EN_TETE_PREUVE } from '../../../../lib/champs-anti-robot.ts'
 import { safeRedirect } from '../../../../lib/redirection.ts'
 
 const fieldClass =
@@ -50,6 +52,9 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
   // session n'est ouverte, l'écran dit où est le message au lieu de rediriger.
   const [confirmation, setConfirmation] = useState<string | null>(null)
   const [pending, startTransition] = useTransition()
+  // Une réponse anti-robot ne sert qu'une fois : après chaque essai
+  // d'inscription, la case repart d'un défi neuf.
+  const [essai, setEssai] = useState(0)
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
   // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
@@ -75,13 +80,21 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
     // cas : un `error` dans la réponse, ou une exception réseau. Les deux
     // doivent finir dans le `role="alert"` du formulaire, jamais dans
     // l'overlay d'erreur.
+    const preuve = reponsePreuve(event.currentTarget)
+    if (mode === 'creation' && !preuve) {
+      setError(preuveEnCours)
+      return
+    }
+
     try {
       if (mode === 'creation') {
+        setEssai((value) => value + 1)
         const { data, error: authError } = await authClient.signUp.email({
           email,
           password,
           name,
           companyName: companyName || undefined,
+          fetchOptions: { headers: { [EN_TETE_PREUVE]: preuve } },
         })
         if (authError) {
           setError(authError.status === 429 ? tropDeTentatives : (authError.message ?? repli))
@@ -231,6 +244,8 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
             <p className="mt-1 text-xs text-muted-foreground">10 caractères au minimum.</p>
           )}
         </div>
+
+        {mode === 'creation' && <PreuveHumaine key={essai} />}
 
         <button
           type="submit"

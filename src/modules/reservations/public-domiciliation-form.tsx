@@ -3,6 +3,7 @@
 import { useActionState, useEffect, useRef, useState, type FormEvent } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
+import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
 import { FileTextIcon } from '../../components/ui/icons.tsx'
 import { ChampPiege, fieldClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
 import { requestDomiciliationAction, type PublicFormState } from './public-actions.ts'
@@ -54,15 +55,19 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
   const [contactErrors, setContactErrors] = useState<Record<string, string>>()
   const [showServerError, setShowServerError] = useState(true)
   const [seenState, setSeenState] = useState(state)
+  const [localError, setLocalError] = useState('')
+  const [essai, setEssai] = useState(0)
   const headingRef = useRef<HTMLHeadingElement>(null)
   const errorRef = useRef<HTMLDivElement>(null)
-  const error = showServerError && state.status === 'error' && !state.fieldErrors ? state.message : ''
+  const error = localError || (showServerError && state.status === 'error' && !state.fieldErrors ? state.message : '')
   const describedAnswers = describeAnswers('domiciliation', answers)
 
   // Refus du serveur champ par champ : retour à l'étape concernée. Le serveur
   // numérote encore trois étapes ; la deuxième et la troisième n'en font plus qu'une.
   if (state !== seenState) {
     setSeenState(state)
+    // La réponse anti-robot envoyée est consommée : un calcul neuf pour le prochain envoi.
+    setEssai((value) => value + 1)
     if (state.status === 'error' && state.fieldErrors) {
       if (state.step && state.step >= 2) {
         setStep(2)
@@ -89,6 +94,7 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     if (pending) { event.preventDefault(); return }
+    setLocalError('')
     if (step === 1) {
       event.preventDefault()
       // Les mêmes règles que le serveur, avant de passer à la suite.
@@ -106,6 +112,7 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
       return
     }
     setContactErrors(undefined)
+    if (!preuvePrete(event.currentTarget)) { event.preventDefault(); setLocalError(preuveEnCours); return }
     setShowServerError(true)
   }
 
@@ -179,6 +186,7 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
               <textarea id="domiciliation-notes" name="notes" rows={3} maxLength={2000} value={contact.notes} onChange={(event) => setContact({ ...contact, notes: event.target.value })} className={`${fieldClass} mt-2`} />
             </div>
           </div>
+          <PreuveHumaine key={essai} />
           <p className="text-sm text-muted-foreground">Notre équipe vérifie chaque demande de domiciliation, puis vous envoie votre devis par e-mail. Sans engagement, aucun paiement maintenant.</p>
         </div></div>
       </div>

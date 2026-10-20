@@ -3,7 +3,7 @@
 import type { ReactNode, RefObject } from 'react'
 
 import { ArrowLeftIcon, ArrowRightIcon } from '../../components/ui/icons.tsx'
-import { CHAMP_PIEGE } from '../../lib/champ-piege.ts'
+import { CHAMP_PIEGE } from '../../lib/champs-anti-robot.ts'
 
 /**
  * Pièces communes aux demandes du site public (créneau, domiciliation), qui

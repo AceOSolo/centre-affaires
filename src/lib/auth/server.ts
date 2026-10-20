@@ -1,12 +1,14 @@
 import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
-import { APIError } from 'better-auth/api'
+import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { nextCookies } from 'better-auth/next-js'
 
 import { createDatabase, databaseOptionsFromEnv, withTenant } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
 import { adresseIpDerriereApache } from '../anti-robot.ts'
+import { EN_TETE_PREUVE } from '../champs-anti-robot.ts'
 import { sendMessage } from '../courriel.ts'
+import { preuveHumaine } from '../preuve-humaine.ts'
 import { currentTenantId } from '../tenant.ts'
 import {
   authAccounts,
@@ -99,6 +101,21 @@ function createAuth() {
       additionalFields: {
         companyName: { type: 'string', required: false, input: true },
       },
+    },
+    hooks: {
+      // Pas d'inscription sans preuve ALTCHA (ADR 047) : la page de connexion
+      // joint la réponse du widget à la requête. Une inscription fait partir
+      // un courriel vers l'adresse saisie ; un robot ne doit pas pouvoir en
+      // faire partir des milliers.
+      before: createAuthMiddleware(async (ctx) => {
+        if (ctx.path !== '/sign-up/email') return
+        if (!(await preuveHumaine().verifier(ctx.headers?.get(EN_TETE_PREUVE)))) {
+          throw APIError.from('BAD_REQUEST', {
+            message: 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis réessayez.',
+            code: 'PREUVE_HUMAINE',
+          })
+        }
+      }),
     },
     databaseHooks: {
       session: {

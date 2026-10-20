@@ -6,7 +6,8 @@ import { after } from 'next/server'
 
 import { withTenant } from '../../db/index.ts'
 import { creerCompteur, ipDuVisiteur, type Plafond } from '../../lib/anti-robot.ts'
-import { champPiegeRempli } from '../../lib/champ-piege.ts'
+import { CHAMP_PREUVE, champPiegeRempli } from '../../lib/champs-anti-robot.ts'
+import { preuveHumaine } from '../../lib/preuve-humaine.ts'
 import { formatLongDate, formatTime, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
@@ -141,11 +142,14 @@ const compteur = creerCompteur()
 const refusRobot = 'Votre demande n’a pas pu être envoyée. Contactez-nous directement.'
 
 /**
- * Compte une demande prête à être écrite : appelé après la validation, pour
- * qu'une personne qui corrige ses réponses ne s'épuise pas. Rend le message
- * du refus, ou null.
+ * Dernier contrôle avant l'écriture, après la validation : une personne qui
+ * corrige ses réponses n'use ni sa preuve ALTCHA (`lib/preuve-humaine.ts`),
+ * qui ne sert qu'une fois, ni son plafond. Rend le message du refus, ou null.
  */
-async function plafondAtteint(): Promise<string | null> {
+async function refusAntiRobot(formData: FormData): Promise<string | null> {
+  if (!(await preuveHumaine().verifier(formData.get(CHAMP_PREUVE)))) {
+    return 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis renvoyez.'
+  }
   const ip = ipDuVisiteur(await headers()) ?? 'inconnue'
   const depasse = compteur.passer([
     [`demande|${ip}`, PAR_ADRESSE_IP],
@@ -243,8 +247,8 @@ export async function requestBookingAction(
   if (!fitsFreeRange(selection, availability.free)) {
     return { status: 'error', step: 2, message: 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.' }
   }
-  const plafond = await plafondAtteint()
-  if (plafond) return { status: 'error', message: plafond }
+  const refus = await refusAntiRobot(formData)
+  if (refus) return { status: 'error', message: refus }
 
   let requestId: string
   let proposal: { number: string; status: ProposalStatus } | undefined
@@ -337,8 +341,8 @@ export async function requestDomiciliationAction(
   if ((await countRecentRequestsByEmail(contact.email, RATE_WINDOW_HOURS)) >= MAX_REQUESTS_PER_EMAIL) {
     return { status: 'error', step: 3, message: rejectionMessages['trop-de-demandes'] }
   }
-  const plafond = await plafondAtteint()
-  if (plafond) return { status: 'error', message: plafond }
+  const refus = await refusAntiRobot(formData)
+  if (refus) return { status: 'error', message: refus }
 
   const clientId = await requesterClientId()
   const raisonSociale = String(answers.raisonSociale ?? '')
