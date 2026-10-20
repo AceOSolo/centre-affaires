@@ -5,7 +5,7 @@ import { nextCookies } from 'better-auth/next-js'
 
 import { createDatabase, databaseOptionsFromEnv, withTenant, type Database } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
-import { adresseIpDerriereApache } from '../anti-robot.ts'
+import { adresseIpDerriereLeRelais } from '../anti-robot.ts'
 import { EN_TETE_PREUVE } from '../champs-anti-robot.ts'
 import { sendMessage } from '../courriel.ts'
 import { preuveHumaine } from '../preuve-humaine.ts'
@@ -181,7 +181,7 @@ export function createAuth(
     },
     advanced: {
       database: { generateId: () => crypto.randomUUID() },
-      ipAddress: adresseIpDerriereApache,
+      ipAddress: adresseIpDerriereLeRelais,
     },
     plugins: [nextCookies()],
   })

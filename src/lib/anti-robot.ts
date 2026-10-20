@@ -19,18 +19,15 @@ import { getIP } from 'better-auth/api'
  * d'où nginx appelle l'application, est le seul relais de confiance. Partagée
  * avec Better Auth (`lib/auth/server.ts`) : le site et la connexion comptent
  * les mêmes adresses.
- *
- * Le nom vient d'Apache, prévu d'abord (`infra/serveur/apache-handfield.conf`) ;
- * nginx tient ce rôle en production, la règle est la même pour les deux.
  */
-export const adresseIpDerriereApache = { trustedProxies: ['127.0.0.1', '::1'] }
+export const adresseIpDerriereLeRelais = { trustedProxies: ['127.0.0.1', '::1'] }
 
 /**
  * Adresse IP du visiteur, ramenée à son réseau /64 en IPv6 (un abonné en
  * reçoit des milliers d'un coup). Null si aucune adresse fiable.
  */
 export function ipDuVisiteur(enTetes: Headers): string | null {
-  return getIP(enTetes, { advanced: { ipAddress: adresseIpDerriereApache } })
+  return getIP(enTetes, { advanced: { ipAddress: adresseIpDerriereLeRelais } })
 }
 
 export type Plafond = { fenetreSecondes: number; max: number }

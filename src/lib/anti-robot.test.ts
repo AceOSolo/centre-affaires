@@ -7,7 +7,7 @@ import { CHAMP_PIEGE, champPiegeRempli } from './champs-anti-robot.ts'
 const enTetes = (forwardedFor: string) => new Headers({ 'x-forwarded-for': forwardedFor })
 
 describe('ipDuVisiteur', () => {
-  it('lit l’adresse ajoutée par Apache', () => {
+  it('lit l’adresse ajoutée par nginx', () => {
     assert.equal(ipDuVisiteur(enTetes('203.0.113.5')), '203.0.113.5')
   })
 

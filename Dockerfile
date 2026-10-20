@@ -1,7 +1,7 @@
 # Image de production, servie sur le VPS de production (ADR 013).
 #
-# Construite par la CI, jamais sur le serveur : `next build` demande plus de
-# mémoire qu'un petit VPS n'en a. Le build n'exige aucun secret ; les
+# Construite sur un poste, jamais sur le serveur (`infra/serveur/README.md`,
+# section 4) : `next build` demande plus de mémoire qu'un petit VPS n'en a. Le build n'exige aucun secret ; les
 # variables d'environnement sont lues à l'exécution, depuis le `.env` du
 # serveur.
 
