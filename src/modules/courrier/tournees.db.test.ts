@@ -18,6 +18,7 @@ import {
   inOpenBatch,
   listRecentBatches,
   MailBatchClosedError,
+  MailBatchOpenedError,
 } from './tournees.ts'
 
 /**
@@ -189,6 +190,16 @@ describe('tournées du courrier', { skip: raisonDeSaut }, () => {
       await enregistre(PETIT)
       await assert.rejects(() => closeOpenBatch(ACCUEIL, batchId), MailBatchClosedError)
     })
+
+    it('« aucun courrier » ne termine pas la tournée qu’un collègue vient d’ouvrir', async () => {
+      // L'écran ne montrait aucune tournée ; entre-temps, une saisie a commencé.
+      const { batchId } = await enregistre(DURAND)
+      await assert.rejects(() => closeOpenBatch(ACCUEIL, null), MailBatchOpenedError)
+      const ouverte = await findOpenBatch()
+      assert.equal(ouverte?.id, batchId)
+      assert.equal(ouverte?.items.length, 1)
+      assert.deepEqual(await lire('select id from mail_batches where closed_at is not null'), [])
+    })
   })
 
   describe('fin de tournée : les messages', () => {
@@ -233,7 +244,7 @@ describe('tournées du courrier', { skip: raisonDeSaut }, () => {
     })
 
     it('sans courrier, une tournée terminée vide prévient tous les domiciliés', async () => {
-      const batchId = await closeOpenBatch(ACCUEIL)
+      const batchId = await closeOpenBatch(ACCUEIL, null)
       const recipients = await batchRecipients(batchId)
       assert.deepEqual(recipients.received, [])
       assert.deepEqual([...recipients.none].sort(), [DURAND, PETIT].sort())
@@ -257,7 +268,7 @@ describe('tournées du courrier', { skip: raisonDeSaut }, () => {
           insert into notification_preferences (client_id, client_member_id, category, enabled)
           values (${PETIT}, ${PAUL}, 'mail_none', 0)`),
       )
-      const batchId = await closeOpenBatch(ACCUEIL)
+      const batchId = await closeOpenBatch(ACCUEIL, null)
       await notifyMailBatchClosed(batchId, options)
       assert.deepEqual(envoyes.map((message) => message.to[0]), ['jeanne@durand.fr'])
     })

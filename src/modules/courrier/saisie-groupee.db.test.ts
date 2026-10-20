@@ -109,7 +109,8 @@ describe('saisie groupée du courrier', { skip: raisonDeSaut }, () => {
     const open = await findOpenBatch()
     assert.equal(open?.items.length, 3)
 
-    await closeOpenBatch(ACCUEIL, open?.id)
+    assert.ok(open)
+    await closeOpenBatch(ACCUEIL, open.id)
     await registerMailCounts([{ clientId: PETIT, kind: 'lettre', count: 1 }], at, ACCUEIL, bases.app.db)
     const next = await findOpenBatch()
     assert.notEqual(next?.id, open?.id)

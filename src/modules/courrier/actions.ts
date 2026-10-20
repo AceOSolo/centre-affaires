@@ -14,7 +14,8 @@ import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
 import { readPageCount, withPageCount } from './pages.ts'
 import { correctScanPageCount, MailStateError, openMail, registerMail, withdrawMail } from './queries.ts'
 import { mailKinds, type MailKind } from './schema.ts'
-import { closeOpenBatch, MailBatchClosedError } from './tournees.ts'
+import { closeOpenBatch, MailBatchClosedError, MailBatchOpenedError } from './tournees.ts'
+import { expectedBatch } from './tournees-regles.ts'
 
 /**
  * Champs en erreur, par nom de champ : le formulaire affiche un résumé en tête
@@ -162,12 +163,17 @@ export async function closeMailBatchAction(
   formData: FormData,
 ): Promise<MailFormState> {
   const { member } = await requirePermission('courrier.gerer')
-  const expected = text(formData, 'batchId') || undefined
+  // La tournée que l'écran montrait, ou « aucune » : jamais une valeur vide
+  // qui terminerait celle qu'un collègue vient d'ouvrir.
+  const expected = expectedBatch(text(formData, 'batchId'))
+  if (expected === undefined) return { error: 'Tournée introuvable. Rechargez la page.' }
   let batchId: string
   try {
     batchId = await closeOpenBatch(member.id, expected)
   } catch (error) {
-    if (error instanceof MailBatchClosedError) return { error: error.message }
+    if (error instanceof MailBatchClosedError || error instanceof MailBatchOpenedError) {
+      return { error: error.message }
+    }
     throw error
   }
   after(() => notifyMailBatchClosed(batchId))

@@ -3,7 +3,9 @@ import { describe, it } from 'node:test'
 
 import {
   batchMessages,
+  expectedBatch,
   mailCountPhrase,
+  NO_BATCH,
   mailKindsPhrase,
   scannedPhrase,
   type BatchItem,
@@ -53,6 +55,24 @@ describe('fin de tournée : qui reçoit quel message (ADR 044)', () => {
     const { received, none } = batchMessages([pli('bureau')], ['a'], true)
     assert.deepEqual(received.map((entry) => entry.clientId), ['bureau'])
     assert.deepEqual(none, ['a'])
+  })
+})
+
+describe('fin de tournée : la tournée que l’écran montrait', () => {
+  it('lit l’identifiant de la tournée affichée', () => {
+    const id = '01a00000-0000-7000-8000-0000000f4a01'
+    assert.equal(expectedBatch(id), id)
+  })
+
+  it('« aucune tournée » se dit explicitement', () => {
+    assert.equal(expectedBatch(NO_BATCH), null)
+  })
+
+  it('une valeur vide ou illisible ne termine rien', () => {
+    // Vide, elle valait « aucune tournée » : la tournée d'un collègue était
+    // terminée à sa place.
+    assert.equal(expectedBatch(''), undefined)
+    assert.equal(expectedBatch('n’importe quoi'), undefined)
   })
 })
 

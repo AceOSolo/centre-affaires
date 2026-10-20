@@ -1,3 +1,4 @@
+import { isUuid } from '../../lib/uuid.ts'
 import { mailKinds, type MailKind } from './schema.ts'
 
 /**
@@ -11,6 +12,23 @@ import { mailKinds, type MailKind } from './schema.ts'
  *   distribution l'après-midi ne le lui redit pas ;
  * - un pli retiré (enregistré par erreur) ne compte pas.
  */
+
+/**
+ * Valeur envoyée par l'écran qui ne montrait aucune tournée ouverte :
+ * « Signaler qu'aucun courrier n'est arrivé ». Explicite, pour qu'une valeur
+ * vide ou perdue ne termine jamais la tournée qu'un collègue vient d'ouvrir.
+ */
+export const NO_BATCH = 'aucune'
+
+/**
+ * La tournée que l'écran montrait, lue dans le formulaire de fin de tournée :
+ * son identifiant, `null` pour « aucune tournée », `undefined` pour une valeur
+ * illisible — rien n'est alors terminé.
+ */
+export function expectedBatch(value: string): string | null | undefined {
+  if (value === NO_BATCH) return null
+  return isUuid(value) ? value : undefined
+}
 
 export type BatchItem = { clientId: string; kind: MailKind; opened: boolean }
 

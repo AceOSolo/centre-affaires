@@ -27,6 +27,20 @@ export class MailBatchClosedError extends Error {
   }
 }
 
+/**
+ * Levée quand l'accueil signale qu'aucun courrier n'est arrivé alors qu'un
+ * collègue vient d'ouvrir une tournée : du courrier est en cours
+ * d'enregistrement, elle ne se termine pas à sa place.
+ */
+export class MailBatchOpenedError extends Error {
+  constructor() {
+    super(
+      'Une tournée vient d’être ouverte par un collègue : du courrier est en cours d’enregistrement. Rechargez la page pour la voir ; elle se termine depuis son récapitulatif.',
+    )
+    this.name = 'MailBatchOpenedError'
+  }
+}
+
 /** La tournée ouverte, en la créant au besoin. Dans la transaction appelante. */
 export async function ensureOpenBatch(tx: Transaction, staffMemberId: string): Promise<string> {
   const open = async () => {
@@ -248,14 +262,17 @@ export async function batchRecipients(batchId: string | null, database?: Databas
 }
 
 /**
- * Termine la tournée ouverte et rend son identifiant. Sans tournée ouverte,
- * en ouvre et en termine une vide : l'accueil signale ainsi qu'aucun
- * courrier n'est arrivé, et les domiciliés en sont prévenus.
+ * Termine la tournée que l'écran montrait et rend son identifiant.
+ *
+ * `expectedBatchId` nul : l'écran ne montrait aucune tournée, l'accueil
+ * signale qu'aucun courrier n'est arrivé. Une tournée vide est ouverte et
+ * terminée, et les domiciliés en sont prévenus — sauf si un collègue a ouvert
+ * une tournée entre-temps : rien n'est alors terminé (`MailBatchOpenedError`).
  *
  * La ligne de la tournée est verrouillée : un pli en cours d'enregistrement
  * finit d'entrer avant, ou entre dans la tournée suivante (`CA017`).
  */
-export async function closeOpenBatch(staffMemberId: string, expectedBatchId?: string): Promise<string> {
+export async function closeOpenBatch(staffMemberId: string, expectedBatchId: string | null): Promise<string> {
   return withTenant(currentTenantId(), async (tx) => {
     const [open] = await tx
       .select({ id: mailBatches.id })
@@ -263,10 +280,27 @@ export async function closeOpenBatch(staffMemberId: string, expectedBatchId?: st
       .where(isNull(mailBatches.closedAt))
       .limit(1)
       .for('update')
-    // L'écran montrait une tournée qu'un collègue a déjà terminée : ne pas
-    // terminer à sa place la suivante, qu'il n'a pas vue.
-    if (expectedBatchId && open?.id !== expectedBatchId) throw new MailBatchClosedError()
-    const batchId = open?.id ?? (await ensureOpenBatch(tx, staffMemberId))
+    let batchId: string
+    if (expectedBatchId === null) {
+      // Une tournée ouverte depuis l'affichage : du courrier est en cours
+      // d'enregistrement, « pas de courrier » serait faux pour ses domiciliés.
+      if (open) throw new MailBatchOpenedError()
+      batchId = uuidv7()
+      // Un pli enregistré au même instant ouvre la sienne : l'index unique
+      // `mail_batches_open_key` la garde, cette insertion ne fait rien et la
+      // tournée vide n'existe pas.
+      await tx
+        .insert(mailBatches)
+        .values({ id: batchId, openedBy: staffMemberId })
+        .onDuplicateKeyUpdate({ set: { id: sql`id` } })
+      const [created] = await tx.select({ id: mailBatches.id }).from(mailBatches).where(eq(mailBatches.id, batchId))
+      if (!created) throw new MailBatchOpenedError()
+    } else {
+      // L'écran montrait une tournée qu'un collègue a déjà terminée : ne pas
+      // terminer à sa place la suivante, qu'il n'a pas vue.
+      if (open?.id !== expectedBatchId) throw new MailBatchClosedError()
+      batchId = open.id
+    }
     // La date de fin est posée par la base (`mail_batches_before_update`).
     await tx
       .update(mailBatches)
