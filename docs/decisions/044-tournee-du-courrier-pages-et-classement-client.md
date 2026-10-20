@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-20
 **Statut** : accepté — précise les ADR 015, 037 et 038 ; choix tranchés par le
-centre le 20/10/2026 ; prix et nombre de pages comprises à fixer par le centre
+centre le 20/10/2026 ; prix et nombre de pages comprises à fixer par le centre ;
+facturation passée dans Dolibarr par l'ADR 046 (le compte des pages reste, la
+ligne du lot interne est en sommeil avec lui)
 
 ## Contexte
 
@@ -219,9 +221,12 @@ ferait deux prix pour un même geste.
   (écran Services ou `infra/configurer-centre.mjs`) et le nombre de pages
   comprises (Configuration) ; relire les textes par défaut des deux nouveaux
   messages (Notifications).
-- **Si la facturation passe à Dolibarr** (ADR suivant l'ADR 043) : l'export
-  lit `mail_scans.page_count` et `tenants.mail_opening_included_pages`
-  (`billablePages`), comme le lot aujourd'hui.
+- **Facturation dans Dolibarr** (ADR 046, arrivé le même jour) : le lot
+  interne est arrêté, avec sa ligne de pages. La passerelle reprend les pages
+  comme consommations facturables : `mail_scans.page_count`,
+  `tenants.mail_opening_included_pages`, `billablePages()`. Le prix d'une page
+  vit alors dans Dolibarr ; l'annonce au client lit encore le catalogue du
+  site tant que la seconde tranche de l'ADR 046 n'est pas faite.
 - Pas de constat à l'écran à 375 px dans cette tranche (aucun navigateur dans
   la CI) : la boîte aux lettres à rubriques est à vérifier au téléphone
   (R25).

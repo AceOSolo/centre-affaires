@@ -58,6 +58,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 041 | [Correctifs de la dernière vague : export comptable après anonymisation, rattrapage du courrier, tâche de nuit, et manques de schéma tranchés](041-correctifs-de-la-derniere-vague-et-manques-ecartes.md) | 2026-10-02 | accepté ; corrige les ADR 037 et 040, précise les ADR 030, 036, 038 et 039 ; choix à valider par le centre |
 | 042 | [MySQL sur le VPS, Better Auth auto-hébergé, fin de la RLS](042-mysql-sur-le-vps.md) | 2026-10-15 | accepté ; remplace l'ADR 003 |
 | 043 | [Demandes par produit, devis structuré repris par Dolibarr](043-demandes-par-produit-et-devis-dolibarr.md) | 2026-10-20 | accepté ; amende l'ADR 016 (Dolibarr fait devis et factures, bascule de la facturation renvoyée à un ADR suivant) ; précise les ADR 005 et 036 ; questionnaires à valider par le centre |
+| 044 | [Tournée du courrier, pages numérisées facturées, classement côté client](044-tournee-du-courrier-pages-et-classement-client.md) | 2026-10-20 | accepté ; précise les ADR 015, 037 et 038 ; facturation des pages reprise par Dolibarr (ADR 046) ; prix des pages et pages comprises à fixer par le centre |
 | 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix tranchés par le centre (accueil : rattacher ; filtre des clients) |
 | 046 | [Dolibarr tient le commercial et la facturation ; le back-office est rangé par produit](046-dolibarr-commercial-et-facturation-admin-par-produit.md) | 2026-10-20 | accepté ; amende l'ADR 016, met en sommeil les ADR 026 à 034, tranche l'ADR 043 § 6 ; première tranche faite (facturation coupée, menu par produit), passerelle entrante à construire avec le développeur Dolibarr |
 
@@ -107,7 +108,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **042**.
+   `ListAgents`. Le prochain numéro libre est **047**.
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).
