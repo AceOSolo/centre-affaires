@@ -29,6 +29,7 @@ describe('matrice des droits', () => {
     'facturation.consulter',
     'notifications.consulter',
     'etats-des-lieux.gerer',
+    'comptes.rattacher',
   ]
   /** Ce qui engage le centre : l'exploitant seul. */
   const reserve: Permission[] = [

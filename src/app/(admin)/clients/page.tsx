@@ -10,20 +10,23 @@ export const metadata = { title: 'Clients' }
 export default async function ClientsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ statut?: string; q?: string }>
+  searchParams: Promise<{ statut?: string; origine?: string; q?: string }>
 }) {
   await requirePermission('clients.gerer')
-  const { statut, q } = await searchParams
+  const { statut, origine, q } = await searchParams
   const status = clientStatuses.includes(statut as ClientStatus)
     ? (statut as ClientStatus)
     : undefined
+  // Fiches créées par l'inscription libre sur le site (ADR 045).
+  const online = origine === 'inscription'
   const search = q?.trim() ?? ''
-  const clients = await searchClients({ status, search })
+  const clients = await searchClients({ status, origin: online ? 'inscription' : undefined, search })
 
   /** Lien de filtre qui garde la recherche en cours : les deux se combinent. */
-  const filterHref = (value?: ClientStatus) => {
+  const filterHref = (value?: ClientStatus, onlineOnly = online) => {
     const query = new URLSearchParams()
     if (value) query.set('statut', value)
+    if (onlineOnly) query.set('origine', 'inscription')
     if (search) query.set('q', search)
     const encoded = query.toString()
     return encoded ? `/clients?${encoded}` : '/clients'
@@ -58,10 +61,20 @@ export default async function ClientsPage({
             />
           ))}
         </nav>
+        {/* Bascule indépendante du statut : un prospect inscrit en ligne se
+            cherche parmi les prospects comme parmi toutes les fiches. */}
+        <nav aria-label="Filtrer par origine" className="flex flex-wrap items-center gap-2">
+          <FilterLink
+            href={filterHref(status, !online)}
+            label="Inscrits en ligne"
+            active={online}
+          />
+        </nav>
         {/* Formulaire GET : la recherche marche sans JavaScript et reste dans
             l'URL. Le statut choisi y est repris, pour que chercher ne le perde pas. */}
         <form role="search" className="ml-auto flex flex-wrap items-end gap-2">
           {status && <input type="hidden" name="statut" value={status} />}
+          {online && <input type="hidden" name="origine" value="inscription" />}
           <div>
             <label htmlFor="q" className="block text-xs font-medium text-foreground">
               Rechercher
@@ -89,13 +102,14 @@ export default async function ClientsPage({
 
       {/* Annoncé après une recherche ou un filtre : la page se recharge, le
           nombre de résultats dit ce qu'elle a trouvé. */}
-      {(search || status) && (
+      {(search || status || online) && (
         <p role="status" className="-mt-2 text-sm text-muted-foreground">
           {clients.length === 0
             ? 'Aucun client trouvé'
             : `${clients.length} client${clients.length > 1 ? 's' : ''} trouvé${clients.length > 1 ? 's' : ''}`}
           {search && <> pour « {search} »</>}
-          {status && <> parmi les fiches « {clientStatusLabels[status]} »</>}.{' '}
+          {status && <> parmi les fiches « {clientStatusLabels[status]} »</>}
+          {online && <> parmi les inscrits en ligne</>}.{' '}
           <Link href="/clients" className="text-primary underline underline-offset-2">
             Tout afficher
           </Link>
@@ -105,7 +119,9 @@ export default async function ClientsPage({
       {clients.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            {search || status
+            {online && !search && !status
+              ? 'Personne ne s’est encore inscrit seul sur le site. Les fiches créées par une inscription en ligne apparaîtront ici.'
+              : search || status || online
               ? 'Aucun client ne correspond à cette recherche. Vérifiez l’orthographe, cherchez le SIRET ou le nom d’un contact, ou créez la fiche.'
               : 'Aucun client pour l’instant. Les contrats s’appuient sur cette liste.'}
           </p>
@@ -142,6 +158,9 @@ export default async function ClientsPage({
                       <span className="ml-2 text-xs text-muted-foreground">
                         {client.legalForm}
                       </span>
+                    )}
+                    {client.origin === 'inscription' && (
+                      <span className="ml-2 text-xs text-muted-foreground">Inscrit en ligne</span>
                     )}
                   </td>
                   <td className="whitespace-nowrap px-4 py-3 tabular text-muted-foreground">

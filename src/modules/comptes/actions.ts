@@ -17,8 +17,9 @@ import {
 import { readBanForm, type BanFormErrors, type BanFormValues } from './regles.ts'
 
 /**
- * Actions de l'écran Comptes (ADR 045), réservées au droit `comptes.gerer`.
- * Chacune revérifie le droit : une action serveur s'invoque par son
+ * Actions de l'écran Comptes (ADR 045) : bannir et réactiver sous le droit
+ * `comptes.gerer` (exploitant), rattacher sous `comptes.rattacher` (accueil
+ * compris). Chacune revérifie le droit : une action serveur s'invoque par son
  * identifiant, depuis n'importe quelle page (ADR 008).
  */
 
@@ -104,7 +105,7 @@ export async function attachAccountAction(
   _previous: AttachFormState,
   formData: FormData,
 ): Promise<AttachFormState> {
-  await requirePermission('comptes.gerer')
+  await requirePermission('comptes.rattacher')
   const authUserId = String(formData.get('id') ?? '')
   const clientId = String(formData.get('clientId') ?? '')
   if (!isUuid(clientId)) return { fieldErrors: { clientId: 'Choisissez une entreprise.' } }

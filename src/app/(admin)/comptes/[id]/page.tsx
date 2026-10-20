@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { withTenant } from '../../../../db/index.ts'
 import { staffRoleLabels } from '../../../../db/staff.ts'
 import { formatCalendarDate, formatDateTime, toIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
@@ -19,7 +20,8 @@ export const metadata = { title: 'Compte' }
 
 /** Un compte du site : ce qui le relie au centre, son état, ses bannissements (ADR 045). */
 export default async function ComptePage({ params }: { params: Promise<{ id: string }> }) {
-  const { user } = await requirePermission('comptes.gerer')
+  const { user, member } = await requirePermission('comptes.rattacher')
+  const canBan = can(member.role, 'comptes.gerer')
   const { id } = await params
   if (!isUuid(id)) notFound()
 
@@ -83,7 +85,13 @@ export default async function ComptePage({ params }: { params: Promise<{ id: str
           {banned ? 'Réactiver le compte' : 'Bannir le compte'}
         </h2>
         <div className="rounded-lg border border-border bg-white px-5 py-4">
-          {self ? (
+          {!canBan ? (
+            <p className="text-sm text-muted-foreground">
+              {banned
+                ? 'Seul l’exploitant peut réactiver un compte banni.'
+                : 'Seul l’exploitant peut bannir un compte. S’il le faut, signalez-le-lui.'}
+            </p>
+          ) : self ? (
             <p className="text-sm text-muted-foreground">C’est votre compte : vous ne pouvez pas le bannir.</p>
           ) : account.staffRole ? (
             <p className="text-sm text-muted-foreground">

@@ -53,6 +53,8 @@ export const permissions = [
   'rgpd.anonymiser',
   // Inscription libre (ADR 045) : ajouté à la fin, la matrice n'est pas réordonnée.
   'comptes.gerer',
+  // L'accueil rattache un compte à son entreprise ; bannir reste à l'exploitant.
+  'comptes.rattacher',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -90,7 +92,8 @@ export const permissionLabels: Record<Permission, string> = {
   'etats-des-lieux.gerer': 'Saisir, photographier et clore les états des lieux',
   'etats-des-lieux.modeles': 'Modèles de formulaire des états des lieux',
   'rgpd.anonymiser': 'Anonymiser un client, un accès ou un membre retiré (RGPD)',
-  'comptes.gerer': 'Comptes du site : bannir, réactiver, rattacher à une entreprise',
+  'comptes.gerer': 'Comptes du site : bannir et réactiver',
+  'comptes.rattacher': 'Comptes du site : consulter, rattacher à une entreprise',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */
@@ -107,6 +110,8 @@ const accueil: readonly Permission[] = [
   // entrée ou d'une sortie. Les modèles et l'anonymisation engagent le centre.
   'notifications.consulter',
   'etats-des-lieux.gerer',
+  // Relier un compte inscrit en ligne à l'entreprise dont il relève (ADR 045).
+  'comptes.rattacher',
 ]
 
 /**

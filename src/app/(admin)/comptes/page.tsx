@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { withTenant } from '../../../db/index.ts'
 import { staffRoleLabels } from '../../../db/staff.ts'
 import { formatCalendarDate, toIsoDate, todayIsoDate } from '../../../lib/dates.ts'
+import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../../lib/tenant.ts'
 import { AccountsTable, type AccountTableRow } from '../../../modules/comptes/accounts-table.tsx'
@@ -30,7 +31,9 @@ export default async function ComptesPage({
 }: {
   searchParams: Promise<{ etat?: string; q?: string }>
 }) {
-  const { user } = await requirePermission('comptes.gerer')
+  const { user, member } = await requirePermission('comptes.rattacher')
+  // Bannir et réactiver : l'exploitant seul ; l'accueil consulte et rattache.
+  const canBan = can(member.role, 'comptes.gerer')
   const { etat, q } = await searchParams
   const state = stateFilters.some((filter) => filter.value === etat)
     ? (etat as AccountStateFilter)
@@ -78,7 +81,9 @@ export default async function ComptesPage({
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Toute personne peut créer son compte sur le site. Une fois son adresse confirmée, elle
           reçoit sa propre fiche client, « inscrite en ligne », et n’y voit que ce qui la concerne.
-          Ici, vous bannissez un compte, le réactivez, ou le rattachez à une entreprise existante.
+          {canBan
+            ? 'Ici, vous bannissez un compte, le réactivez, ou le rattachez à une entreprise existante.'
+            : 'Ouvrez un compte pour le rattacher à une entreprise existante. Bannir un compte est réservé à l’exploitant.'}
         </p>
       </div>
 
@@ -143,7 +148,7 @@ export default async function ComptesPage({
         </div>
       ) : (
         <>
-          <AccountsTable rows={tableRows} today={todayIsoDate(timeZone)} />
+          <AccountsTable rows={tableRows} today={todayIsoDate(timeZone)} canBan={canBan} />
           {truncated && (
             <p className="text-sm text-muted-foreground">
               Seuls les {ACCOUNT_LIST_LIMIT} comptes les plus récents sont affichés : affinez avec la

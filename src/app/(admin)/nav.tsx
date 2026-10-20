@@ -74,7 +74,8 @@ const groups: { label: string; entries: Entry[] }[] = [
     entries: [
       { href: '/equipe', label: 'Équipe', permission: 'equipe.gerer' },
       // Comptes créés sur le site, dont les inscriptions libres (ADR 045).
-      { href: '/comptes', label: 'Comptes', permission: 'comptes.gerer' },
+      // L'accueil y rattache ; bannir est réservé à l'exploitant (`comptes.gerer`).
+      { href: '/comptes', label: 'Comptes', permission: 'comptes.rattacher' },
       { href: '/configuration', label: 'Configuration', permission: 'centre.configurer' },
     ],
   },

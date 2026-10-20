@@ -3,7 +3,7 @@ import { alias } from 'drizzle-orm/mysql-core'
 
 import { withTenant } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { clientContacts, clients, type Client, type ClientStatus } from './schema.ts'
+import { clientContacts, clients, type Client, type ClientOrigin, type ClientStatus } from './schema.ts'
 
 /**
  * Recherche dans la liste des clients (R07) : par raison sociale, SIRET, nom
@@ -75,7 +75,7 @@ export type ClientDirectoryRow = Client & {
 
 /** Clients vivants du centre, filtrés par statut et par recherche, par raison sociale. */
 export async function searchClients(
-  filters: { status?: ClientStatus; search?: string } = {},
+  filters: { status?: ClientStatus; origin?: ClientOrigin; search?: string } = {},
 ): Promise<ClientDirectoryRow[]> {
   const terms = clientSearchTerms(filters.search)
   const primary = alias(clientContacts, 'primary_contact')
@@ -116,6 +116,8 @@ export async function searchClients(
         and(
           isNull(clients.deletedAt),
           filters.status ? eq(clients.status, filters.status) : undefined,
+          // Fiches créées par l'inscription libre (ADR 045).
+          filters.origin ? eq(clients.origin, filters.origin) : undefined,
           terms ? clientSearchCondition(terms) : undefined,
         ),
       )
