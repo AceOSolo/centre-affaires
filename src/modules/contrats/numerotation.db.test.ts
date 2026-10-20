@@ -248,7 +248,9 @@ describe('numérotation des documents', { skip: raisonDeSaut }, () => {
       }
       await numero('invoice')
       for (const ecriture of [
-        sql`update document_sequences set last_value = 0`,
+        // `last_value` est un mot réservé de MySQL 8 : sans guillemets, la requête
+        // échoue à l'analyse, avant tout contrôle de droit.
+        sql`update document_sequences set \`last_value\` = 0`,
         sql`delete from document_sequences`,
         sql`insert into document_sequences (id, document_type, year) values (uuid(), 'invoice', 2099)`,
       ]) {
