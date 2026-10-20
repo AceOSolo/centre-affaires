@@ -24,7 +24,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { DEFAULT_TENANT_ID, paymentMethodEnum, tenantId, tenants } from '../../db/tenants.ts'
 import { clients } from '../clients/schema.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
-import { mailItems, mailRequests } from '../courrier/schema.ts'
+import { mailItems, mailRequests, mailScans } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { lineNetAmountSql, rateUnitEnum, services } from './schema.ts'
@@ -679,6 +679,13 @@ export const invoiceLines = mysqlTable(
      * facture par le pli (`mail_item_id`), jamais par sa demande.
      */
     mailRequestId: char('mail_request_id', { length: 36 }),
+    /**
+     * Numérisation dont les pages au-delà de celles comprises dans l'ouverture
+     * sont facturées (ADR 044) : une ligne `act` du service `courrier.page`,
+     * en quantité de pages. Au plus une par numérisation, hors avoir
+     * (`invoice_lines_mail_scan_key`).
+     */
+    mailScanId: char('mail_scan_id', { length: 36 }),
     /** Service du catalogue facturé (forfait, acte) : rentabilité des services (R31). */
     serviceId: char('service_id', { length: 36 }),
     /** Ressource facturée : revenu par ressource (R31). */
@@ -742,6 +749,11 @@ export const invoiceLines = mysqlTable(
       foreignColumns: [mailRequests.tenantId, mailRequests.id],
     }).onDelete('restrict'),
     foreignKey({
+      name: 'invoice_lines_mail_scan_fk',
+      columns: [table.tenantId, table.mailScanId],
+      foreignColumns: [mailScans.tenantId, mailScans.id],
+    }).onDelete('restrict'),
+    foreignKey({
       name: 'invoice_lines_service_fk',
       columns: [table.tenantId, table.serviceId],
       foreignColumns: [services.tenantId, services.id],
@@ -760,6 +772,8 @@ export const invoiceLines = mysqlTable(
     // La source nulle ne se heurte jamais (plusieurs `NULL` permis).
     uniqueIndex('invoice_lines_booking_key').on(table.tenantId, table.bookingId, table.heldLive),
     uniqueIndex('invoice_lines_mail_item_key').on(table.tenantId, table.mailItemId, table.heldLive),
+    // Les pages d'une numérisation : une seule ligne qui les tient (ADR 044).
+    uniqueIndex('invoice_lines_mail_scan_key').on(table.tenantId, table.mailScanId, table.heldLive),
     // Une demande faite : un acte, et des frais d'affranchissement au plus.
     uniqueIndex('invoice_lines_mail_request_key').on(
       table.tenantId,
@@ -775,7 +789,7 @@ export const invoiceLines = mysqlTable(
     // est la source du pli, chaque demande la sienne.
     check(
       'invoice_lines_one_mail_source',
-      sql`(${table.mailItemId} is not null) + (${table.mailRequestId} is not null) <= 1`,
+      sql`(${table.mailItemId} is not null) + (${table.mailRequestId} is not null) + (${table.mailScanId} is not null) <= 1`,
     ),
     check('invoice_lines_description_not_blank', sql`trim(${table.description}) <> ''`),
     check('invoice_lines_quantity_positive', sql`${table.quantity} > 0`),

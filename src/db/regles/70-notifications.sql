@@ -78,6 +78,8 @@ BEGIN
     WHEN 'inspection_signed' THEN 'centre'
     WHEN 'member_invited' THEN 'client'
     WHEN 'offer_requested' THEN 'centre'
+    WHEN 'mail_batch_received' THEN 'client'
+    WHEN 'mail_none' THEN 'client'
     ELSE notification_event_unknown(p_event)
   END;
 END
@@ -101,6 +103,8 @@ BEGIN
     WHEN 'invoice_reminder' THEN 'invoices'
     WHEN 'contract_activated' THEN 'contracts'
     WHEN 'inspection_to_sign' THEN 'inspections'
+    WHEN 'mail_batch_received' THEN 'mail'
+    WHEN 'mail_none' THEN 'mail_none'
     WHEN 'mail_request_submitted' THEN NULL
     WHEN 'booking_request_submitted' THEN NULL
     WHEN 'inspection_signed' THEN NULL

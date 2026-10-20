@@ -15,6 +15,13 @@
       "when": 1792487879211,
       "tag": "0001_devis",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1792488151125,
+      "tag": "0002_courrier_tournee_pages_classement",
+      "breakpoints": true
     }
   ]
 }

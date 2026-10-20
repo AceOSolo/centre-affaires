@@ -54,6 +54,9 @@ export const notificationEvents = [
   'inspection_signed',
   'member_invited',
   'offer_requested',
+  // Fin de tournée (ADR 044) : un message par entreprise.
+  'mail_batch_received',
+  'mail_none',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
@@ -68,7 +71,15 @@ export const notificationAudienceEnum = (name: string) => mysqlEnum(name, notifi
  * (`notification_preferences`). Un événement sans catégorie (accès ouvert,
  * messages au centre) part toujours.
  */
-export const notificationCategories = ['mail', 'bookings', 'invoices', 'contracts', 'inspections'] as const
+export const notificationCategories = [
+  'mail',
+  'bookings',
+  'invoices',
+  'contracts',
+  'inspections',
+  // « Pas de courrier aujourd'hui » (ADR 044) : se refuse sans renoncer au courrier reçu.
+  'mail_none',
+] as const
 export type NotificationCategory = (typeof notificationCategories)[number]
 export const notificationCategoryEnum = (name: string) => mysqlEnum(name, notificationCategories)
 
@@ -91,6 +102,8 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   inspection_signed: 'centre',
   member_invited: 'client',
   offer_requested: 'centre',
+  mail_batch_received: 'client',
+  mail_none: 'client',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -112,6 +125,8 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   inspection_signed: null,
   member_invited: null,
   offer_requested: null,
+  mail_batch_received: 'mail',
+  mail_none: 'mail_none',
 }
 
 /**
@@ -139,6 +154,7 @@ export const notificationRelatedTypes = [
   'inspection',
   'client_member',
   'offer',
+  'mail_batch',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
 export const notificationRelatedTypeEnum = (name: string) =>

@@ -64,6 +64,11 @@ const dateCourrier: TemplateVariable = {
   label: 'Date et heure de réception du pli, à l’heure du centre',
   example: '1 oct. 2026 à 09:30',
 }
+const jourTournee: TemplateVariable = {
+  name: 'jour',
+  label: 'Jour de la tournée du courrier, à l’heure du centre',
+  example: 'mardi 20 octobre 2026',
+}
 const demandeCourrier: TemplateVariable = {
   name: 'demande',
   label: 'Nature de la demande : ouverture et numérisation, numérisation, réexpédition',
@@ -114,6 +119,21 @@ const sansDocument = '\n\nPar confidentialité, ce message ne contient pas le do
 export const eventVariables: Record<NotificationEvent, readonly TemplateVariable[]> = {
   mail_received: [centre, client, natureCourrier, dateCourrier, lienEspace('la boîte aux lettres de l’espace client')],
   mail_scanned: [centre, client, natureCourrier, dateCourrier, lienEspace('la boîte aux lettres de l’espace client')],
+  mail_batch_received: [
+    centre,
+    client,
+    jourTournee,
+    { name: 'nombre', label: 'Nombre de plis reçus, avec leur unité', example: '3 courriers' },
+    { name: 'detail', label: 'Plis par nature', example: '2 lettres et 1 recommandé' },
+    {
+      name: 'numerises',
+      label: 'Plis déjà ouverts et numérisés par l’accueil',
+      example: 'dont 1 déjà ouvert et numérisé',
+      optional: true,
+    },
+    lienEspace('la boîte aux lettres de l’espace client'),
+  ],
+  mail_none: [centre, client, jourTournee, lienEspace('la boîte aux lettres de l’espace client')],
   mail_request_submitted: [
     centre,
     client,
@@ -259,6 +279,24 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       sansDocument +
       signature,
   },
+  mail_batch_received: {
+    subject: 'Courrier du {{jour}} pour {{client}} : {{nombre}}',
+    body:
+      'Bonjour,\n\nLa tournée du courrier du {{jour}} est terminée : {{nombre}} pour {{client}} ({{detail}}).' +
+      '\n\n{{numerises}}' +
+      '\n\nDans votre espace client, demandez pour chaque pli son ouverture et sa numérisation, ou sa réexpédition.' +
+      '\n\nVotre boîte aux lettres : {{lien}}' +
+      sansDocument +
+      signature,
+  },
+  mail_none: {
+    subject: 'Pas de courrier le {{jour}} pour {{client}}',
+    body:
+      'Bonjour,\n\nLa tournée du courrier du {{jour}} est terminée : aucun courrier n’est arrivé pour {{client}}.' +
+      '\n\nVotre boîte aux lettres : {{lien}}' +
+      '\n\nVous pouvez ne plus recevoir cet avis depuis les préférences de votre espace client.' +
+      signature,
+  },
   mail_request_submitted: {
     subject: 'Demande de courrier ({{demande}}) — {{client}}',
     body:
@@ -388,6 +426,8 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
 export const notificationEventLabels: Record<NotificationEvent, string> = {
   mail_received: 'Arrivée d’un courrier',
   mail_scanned: 'Courrier numérisé',
+  mail_batch_received: 'Courrier du jour reçu',
+  mail_none: 'Pas de courrier aujourd’hui',
   mail_request_submitted: 'Demande de courrier déposée',
   mail_request_done: 'Demande de courrier traitée',
   mail_request_refused: 'Demande de courrier refusée',
@@ -407,8 +447,13 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
 export const notificationEventDescriptions: Record<NotificationEvent, string> = {
-  mail_received: 'À l’enregistrement d’un pli fermé, aux personnes de l’espace client.',
-  mail_scanned: 'À l’ouverture d’un pli, ou à l’enregistrement d’un pli déjà numérisé.',
+  mail_received:
+    'Plus envoyé depuis les tournées (ADR 044) : l’arrivée du courrier est annoncée en fin de tournée.',
+  mail_scanned: 'À l’ouverture d’un pli demandée par le client.',
+  mail_batch_received:
+    'À la fin de la tournée du courrier, une fois par entreprise qui a reçu au moins un pli : leur nombre et leur nature.',
+  mail_none:
+    'À la fin de la première tournée de la journée, aux domiciliés (contrat de domiciliation en cours) qui n’ont reçu aucun pli.',
   mail_request_submitted: 'Quand un client demande l’ouverture, la numérisation ou la réexpédition d’un pli.',
   mail_request_done: 'Quand l’accueil a traité une demande de numérisation ou de réexpédition.',
   mail_request_refused: 'Quand l’accueil refuse une demande de courrier, ou que le pli est retiré.',
@@ -438,15 +483,17 @@ export const notificationCategoryLabels: Record<NotificationCategory, string> = 
   invoices: 'Factures',
   contracts: 'Contrats',
   inspections: 'États des lieux',
+  mail_none: 'Avis « pas de courrier »',
 }
 
 /** Ce que chaque catégorie couvre, dit à la personne qui règle ses préférences. */
 export const notificationCategoryDescriptions: Record<NotificationCategory, string> = {
-  mail: 'Arrivée d’un pli, numérisation, suite donnée à vos demandes de courrier.',
+  mail: 'Courrier reçu en fin de tournée, numérisation, suite donnée à vos demandes de courrier.',
   bookings: 'Réservations confirmées ou annulées, réponse à vos demandes de réservation.',
   invoices: 'Facture ou avoir disponible dans votre espace.',
   contracts: 'Activation d’un contrat.',
   inspections: 'État des lieux à valider.',
+  mail_none: 'Un avis les jours où aucun courrier n’est arrivé pour vous.',
 }
 
 export const notificationDeliveryStatusLabels: Record<NotificationDeliveryStatus, string> = {
@@ -465,4 +512,5 @@ export const notificationRelatedTypeLabels: Record<NotificationRelatedType, stri
   inspection: 'État des lieux',
   client_member: 'Accès à l’espace client',
   offer: 'Offre',
+  mail_batch: 'Tournée du courrier',
 }

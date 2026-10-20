@@ -5,6 +5,7 @@ import {
   foreignKey,
   index,
   int,
+  json,
   mysqlEnum,
   mysqlTable,
   smallint,
@@ -47,12 +48,62 @@ export const mailStatuses = ['received', 'opening_requested', 'opened'] as const
 export type MailStatus = (typeof mailStatuses)[number]
 export const mailStatusEnum = (name: string) => mysqlEnum(name, mailStatuses)
 
+/**
+ * Tournées du courrier (ADR 044). L'accueil enregistre le courrier du jour
+ * pli par pli dans la tournée ouverte ; rien ne part vers les domiciliés tant
+ * qu'elle n'est pas terminée. À la fin, un seul message par entreprise :
+ * « N courriers reçus », ou « pas de courrier aujourd'hui » pour les
+ * domiciliés sans pli.
+ *
+ * Au plus une tournée ouverte par centre (`mail_batches_open_key`). Une
+ * tournée terminée ne se rouvre pas, ne se supprime pas, et ne reçoit plus de
+ * pli (`60-courrier.sql`, `CA015`). Elle peut être terminée vide : c'est
+ * ainsi que l'accueil signale qu'aucun courrier n'est arrivé.
+ */
+export const mailBatches = mysqlTable(
+  'mail_batches',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    openedAt: instant('opened_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),
+    openedBy: char('opened_by', { length: 36 })
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: 'restrict' }),
+    closedAt: instant('closed_at'),
+    closedBy: char('closed_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /**
+     * Colonne générée : 1 tant que la tournée est ouverte, NULL ensuite. Porte
+     * l'unicité « une tournée ouverte par centre ». Jamais écrite.
+     */
+    openLive: tinyint('open_live').generatedAlwaysAs(sql`if(closed_at is null, 1, null)`, {
+      mode: 'virtual',
+    }),
+    ...timestamps(),
+  },
+  (table) => [
+    unique('mail_batches_tenant_id_id_key').on(table.tenantId, table.id),
+    uniqueIndex('mail_batches_open_key').on(table.tenantId, table.openLive),
+    check('mail_batches_closing_complete', sql`(${table.closedAt} is null) = (${table.closedBy} is null)`),
+    check('mail_batches_closed_after_opened', sql`${table.closedAt} is null or ${table.closedAt} >= ${table.openedAt}`),
+    // Tournées terminées d'une journée : la première prévient les domiciliés sans courrier.
+    index('mail_batches_closed_idx').on(table.tenantId, table.closedAt),
+  ],
+)
+
+export type MailBatch = typeof mailBatches.$inferSelect
+
 export const mailItems = mysqlTable(
   'mail_items',
   {
     id: primaryKeyId(),
     tenantId: tenantId(),
     clientId: char('client_id', { length: 36 }).notNull(),
+    /**
+     * Tournée où le pli a été enregistré (ADR 044). Nulle pour les plis
+     * enregistrés avant les tournées, prévenus un par un à leur arrivée.
+     * Posée à l'insertion, dans une tournée ouverte, et jamais changée.
+     */
+    batchId: char('batch_id', { length: 36 }),
     kind: mailKindEnum('kind').notNull().default('lettre'),
     /** Expéditeur lu sur l'enveloppe. Nul quand il n'y figure pas. */
     sender: text('sender'),
@@ -95,6 +146,11 @@ export const mailItems = mysqlTable(
       foreignColumns: [clients.tenantId, clients.id],
     }).onDelete('restrict'),
     foreignKey({
+      name: 'mail_items_batch_fk',
+      columns: [table.tenantId, table.batchId],
+      foreignColumns: [mailBatches.tenantId, mailBatches.id],
+    }).onDelete('restrict'),
+    foreignKey({
       name: 'mail_items_requested_by_fk',
       columns: [table.tenantId, table.openingRequestedBy],
       foreignColumns: [clientMembers.tenantId, clientMembers.id],
@@ -133,6 +189,8 @@ export const mailItems = mysqlTable(
     index('mail_items_requested_idx').on(table.tenantId, table.status, table.openingRequestedAt),
     // Relevé mensuel des ouvertures (les plis fermés ont `opened_at` nul).
     index('mail_items_opened_idx').on(table.tenantId, table.openedAt),
+    // Plis d'une tournée, par entreprise : le message de fin de tournée.
+    index('mail_items_batch_idx').on(table.tenantId, table.batchId, table.clientId),
   ],
 )
 
@@ -390,6 +448,15 @@ export const mailScans = mysqlTable(
      * pour un contenu numérisé d'office par le centre.
      */
     mailRequestId: char('mail_request_id', { length: 36 }),
+    /**
+     * Pages du contenu numérisé (ADR 044), lues dans le PDF au dépôt ou
+     * saisies par l'accueil ; une image compte pour une page. Donnée neutre :
+     * le lot de facturation la lit pour les pages au-delà de celles comprises
+     * dans l'ouverture, un export vers un autre outil peut la lire aussi.
+     * Nulle pour l'enveloppe, et pour les contenus déposés avant le compteur.
+     * Elle survit à la purge du fichier : la facture reste justifiée.
+     */
+    pageCount: smallint('page_count'),
     ...timestamps(),
     /** Purge au terme de la durée de conservation : le fichier part, la ligne reste. */
     deletedAt: deletedAt(),
@@ -430,6 +497,10 @@ export const mailScans = mysqlTable(
       sql`${table.contentType} in ('application/pdf', 'image/jpeg', 'image/png')`,
     ),
     check('mail_scans_byte_size_positive', sql`${table.byteSize} > 0`),
+    check(
+      'mail_scans_page_count_valid',
+      sql`${table.pageCount} is null or (${table.side} = 'content' and ${table.pageCount} between 1 and 1000)`,
+    ),
     check(
       'mail_scans_encryption_key_version_positive',
       sql`${table.encryptionKeyVersion} is null or ${table.encryptionKeyVersion} > 0`,
@@ -491,3 +562,88 @@ export const mailScanViews = mysqlTable(
 )
 
 export type MailScanView = typeof mailScanViews.$inferSelect
+
+/**
+ * Catégories du classement côté client (ADR 044), comme les rubriques d'un
+ * espace bancaire. Liste fixe : c'est le client qui range, le centre ne
+ * propose rien. Nulle : non classé.
+ */
+export const mailCategories = [
+  'impots',
+  'social',
+  'banque',
+  'assurances',
+  'fournisseurs',
+  'clients',
+  'juridique',
+  'administration',
+  'publicite',
+  'autre',
+] as const
+export type MailCategory = (typeof mailCategories)[number]
+export const mailCategoryEnum = (name: string) => mysqlEnum(name, mailCategories)
+
+/**
+ * Classement personnel d'un pli par une personne de l'espace client
+ * (ADR 044) : lu ou non, traité ou non, catégorie, étiquettes. Propre à
+ * chaque personne — deux associés rangent le même pli chacun à sa façon — et
+ * jamais montré au centre.
+ *
+ * Sans ligne : non lu, non traité, non classé, sans étiquette. La ligne naît
+ * à la première consultation (« lu ») ou au premier geste de classement.
+ *
+ * Écrite sous portée client : les triggers (`60-courrier.sql`) refusent une
+ * entreprise hors de la portée. Les étiquettes sont du texte libre : elles
+ * s'effacent avec la personne ou l'entreprise anonymisée (`90-rgpd.sql`).
+ */
+export const mailItemMemberStates = mysqlTable(
+  'mail_item_member_states',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    /** Entreprise du pli, recopiée pour la portée client ; la clé étrangère la tient égale. */
+    clientId: char('client_id', { length: 36 }).notNull(),
+    mailItemId: char('mail_item_id', { length: 36 }).notNull(),
+    clientMemberId: char('client_member_id', { length: 36 }).notNull(),
+    /** Première consultation, ou marqué lu. Nulle : non lu. */
+    readAt: instant('read_at'),
+    /** Marqué traité. Nulle : à traiter. */
+    handledAt: instant('handled_at'),
+    category: mailCategoryEnum('category'),
+    /** Étiquettes libres de la personne, sans doublon. Dix au plus, de 30 caractères. */
+    tags: json('tags').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
+    ...timestamps(),
+  },
+  (table) => [
+    unique('mail_item_member_states_tenant_id_id_key').on(table.tenantId, table.id),
+    uniqueIndex('mail_item_member_states_member_key').on(
+      table.tenantId,
+      table.mailItemId,
+      table.clientMemberId,
+    ),
+    // Le pli, et son entreprise.
+    foreignKey({
+      name: 'mail_item_member_states_mail_item_fk',
+      columns: [table.tenantId, table.mailItemId, table.clientId],
+      foreignColumns: [mailItems.tenantId, mailItems.id, mailItems.clientId],
+    }).onDelete('restrict'),
+    // La personne relève de l'entreprise du pli.
+    foreignKey({
+      name: 'mail_item_member_states_member_fk',
+      columns: [table.tenantId, table.clientId, table.clientMemberId],
+      foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
+    }).onDelete('restrict'),
+    check(
+      'mail_item_member_states_tags_valid',
+      sql`json_type(${table.tags}) = 'ARRAY' and json_length(${table.tags}) <= 10`,
+    ),
+    // Rubriques et compteurs de la boîte d'une personne.
+    index('mail_item_member_states_member_idx').on(
+      table.tenantId,
+      table.clientMemberId,
+      table.category,
+    ),
+  ],
+)
+
+export type MailItemMemberState = typeof mailItemMemberStates.$inferSelect

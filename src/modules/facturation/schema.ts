@@ -233,6 +233,11 @@ export const serviceCodes = {
   mailForwarding: 'courrier.reexpedition',
   /** Numérisation seule d'un pli déjà ouvert, sur demande (R21, ADR 037). */
   mailScan: 'courrier.numerisation',
+  /**
+   * Page numérisée au-delà de celles comprises dans l'ouverture d'un pli
+   * (ADR 044, `tenants.mail_opening_included_pages`).
+   */
+  mailPage: 'courrier.page',
 } as const
 
 /**

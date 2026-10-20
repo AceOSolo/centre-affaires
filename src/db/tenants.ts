@@ -130,6 +130,12 @@ export const tenants = mysqlTable('tenants', {
   /** Journal des consultations. */
   mailAccessLogRetentionMonths: int('mail_access_log_retention_months').notNull().default(12),
   /**
+   * Pages comprises dans l'ouverture d'un pli (ADR 044) : au-delà, chaque page
+   * numérisée se facture au service `courrier.page`. Zéro : toutes les pages
+   * se facturent, en plus de l'ouverture.
+   */
+  mailOpeningIncludedPages: int('mail_opening_included_pages').notNull().default(0),
+  /**
    * Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
    * comptés depuis la fin du créneau demandé — ou son annulation, si elle est
    * antérieure. Au terme, `anonymize_expired_public_requests()` les efface ; la
@@ -242,6 +248,10 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_mail_retention_valid',
     sql`${table.mailScanRetentionMonths} between 1 and 120 and ${table.mailAccessLogRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_mail_included_pages_valid',
+    sql`${table.mailOpeningIncludedPages} between 0 and 1000`,
   ),
   check(
     'tenants_public_request_retention_valid',
