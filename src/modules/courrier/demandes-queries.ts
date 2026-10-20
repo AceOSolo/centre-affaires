@@ -27,13 +27,17 @@ import {
   type ActAnnouncement,
   type ClientMailFilters,
   type ForwardAddress,
+  type PagePricing,
 } from './demandes-regles.ts'
+import type { MailClassification } from './classement-regles.ts'
 import type { ScanFile } from './fichiers.ts'
 import { discard, scanRows, store, type StoredScan } from './queries.ts'
 import {
+  mailItemMemberStates,
   mailItems,
   mailRequests,
   mailScans,
+  type MailCategory,
   type MailKind,
   type MailRequestKind,
   type MailRequestStatus,
@@ -193,6 +197,8 @@ export type ClientMailCard = {
   /** Demandes en cours sur le pli, une au plus par nature. */
   pendingRequests: { id: string; kind: MailRequestKind; status: MailRequestStatus }[]
   pendingKinds: MailRequestKind[]
+  /** Classement de la personne connectée (ADR 044) : lu, traité, catégorie, étiquettes. */
+  classification: MailClassification
 }
 
 const cardColumns = {
@@ -208,9 +214,26 @@ const cardColumns = {
   clientName: clients.name,
 }
 
+/**
+ * Le classement de la personne connectée, joint au pli : une personne a au
+ * plus un accès par entreprise, et un pli n'a qu'une entreprise — la jointure
+ * rend au plus une ligne.
+ */
+function joinClassification(memberIds: string[]) {
+  return and(
+    eq(mailItemMemberStates.tenantId, mailItems.tenantId),
+    eq(mailItemMemberStates.mailItemId, mailItems.id),
+    inArray(mailItemMemberStates.clientMemberId, memberIds),
+  )
+}
+
 function cardSelection() {
   return {
     ...cardColumns,
+    stateReadAt: mailItemMemberStates.readAt,
+    stateHandledAt: mailItemMemberStates.handledAt,
+    stateCategory: mailItemMemberStates.category,
+    stateTags: mailItemMemberStates.tags,
     envelopeScanId: latestScan('envelope', 'id'),
     envelopeContentType: latestScan('envelope', 'content_type'),
     contentScanId: latestScan('content', 'id'),
@@ -220,18 +243,28 @@ function cardSelection() {
   }
 }
 
-type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'contentScanCount'> & {
+type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'contentScanCount' | 'classification'> & {
   pendingRequests: string | null
   contentScanCount: number
+  stateReadAt: Date | null
+  stateHandledAt: Date | null
+  stateCategory: MailCategory | null
+  stateTags: string[] | null
 }
 
-const toCard = (row: CardRow): ClientMailCard => {
+const toCard = ({ stateReadAt, stateHandledAt, stateCategory, stateTags, ...row }: CardRow): ClientMailCard => {
   const requests = splitPending(row.pendingRequests)
   return {
     ...row,
     contentScanCount: Number(row.contentScanCount),
     pendingRequests: requests,
     pendingKinds: requests.map((request) => request.kind),
+    classification: {
+      readAt: stateReadAt,
+      handledAt: stateHandledAt,
+      category: stateCategory,
+      tags: Array.isArray(stateTags) ? stateTags : [],
+    },
   }
 }
 
@@ -240,7 +273,24 @@ function mailFilterWhere(
   clientIds: string[],
   filters: ClientMailFilters,
   timeZone: string,
+  memberIds: string[],
 ): SQL | undefined {
+  // Le classement de la personne (ADR 044) : sans ligne, non lu, à traiter, non classé.
+  const classified = (condition: SQL) => sql`exists (
+    select 1 from mail_item_member_states as s
+     where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
+       and s.client_member_id in ${memberIds} and ${condition})`
+  const followUp = {
+    'non-lus': sql`not ${classified(sql`s.read_at is not null`)}`,
+    'a-traiter': sql`not ${classified(sql`s.handled_at is not null`)}`,
+    traites: classified(sql`s.handled_at is not null`),
+  } as const
+  const category =
+    filters.category === 'non-classe'
+      ? sql`not ${classified(sql`s.category is not null`)}`
+      : filters.category
+        ? classified(sql`s.category = ${filters.category}`)
+        : undefined
   const forwarded = sql`exists (
     select 1 from mail_requests as r
      where r.tenant_id = ${mailItems.tenantId} and r.mail_item_id = ${mailItems.id}
@@ -261,6 +311,9 @@ function mailFilterWhere(
     filters.from ? gte(mailItems.receivedAt, dayRangeUtc(filters.from, timeZone).startsAt) : undefined,
     filters.to ? lt(mailItems.receivedAt, dayRangeUtc(filters.to, timeZone).endsAt) : undefined,
     filters.state ? state[filters.state] : undefined,
+    filters.followUp ? followUp[filters.followUp] : undefined,
+    category,
+    filters.tag ? classified(sql`json_contains(s.tags, json_array(${filters.tag}))`) : undefined,
   )
 }
 
@@ -276,10 +329,12 @@ export async function searchMailForAccounts(
   timeZone: string,
 ): Promise<{ rows: ClientMailCard[]; total: number }> {
   if (accounts.length === 0) return { rows: [], total: 0 }
+  const memberIds = accounts.map((account) => account.memberId)
   const where = mailFilterWhere(
     accounts.map((account) => account.clientId),
     filters,
     timeZone,
+    memberIds,
   )
   return inClientSpace(accounts, async (tx) => {
     const [counted] = await tx
@@ -290,6 +345,7 @@ export async function searchMailForAccounts(
       .select(cardSelection())
       .from(mailItems)
       .innerJoin(clients, eq(clients.id, mailItems.clientId))
+      .leftJoin(mailItemMemberStates, joinClassification(memberIds))
       .where(where)
       .orderBy(desc(mailItems.receivedAt), desc(mailItems.id))
       .limit(page.size)
@@ -304,6 +360,8 @@ export type ClientMailScan = {
   contentType: string
   createdAt: Date
   mailRequestId: string | null
+  /** Pages d'un contenu (ADR 044), quand elles sont comptées. */
+  pageCount: number | null
 }
 
 export type ClientMailDetail = ClientMailCard & {
@@ -324,6 +382,7 @@ export async function findMailForAccounts(
       .select(cardSelection())
       .from(mailItems)
       .innerJoin(clients, eq(clients.id, mailItems.clientId))
+      .leftJoin(mailItemMemberStates, joinClassification(accounts.map((account) => account.memberId)))
       .where(and(eq(mailItems.id, id), inArray(mailItems.clientId, clientIds), isNull(mailItems.deletedAt)))
       .limit(1)
     if (!row) return undefined
@@ -334,6 +393,7 @@ export async function findMailForAccounts(
         contentType: mailScans.contentType,
         createdAt: mailScans.createdAt,
         mailRequestId: mailScans.mailRequestId,
+        pageCount: mailScans.pageCount,
       })
       .from(mailScans)
       .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt)))
@@ -901,6 +961,86 @@ export async function announceMailActs(
         announcements[kind] = announceNextAct(done, subscriptions, service, { day: today, at: now })
       }
       result.set(clientId, announcements)
+    }
+    return result
+  })
+}
+
+/**
+ * Prix des pages au-delà de celles comprises dans l'ouverture (ADR 044), par
+ * entreprise : la règle du lot (`mailPageInvoiceLines`) — forfait du client
+ * au service `courrier.page` en vigueur aujourd'hui, le plus avantageux, sinon
+ * le catalogue —, annoncée avant la demande d'ouverture.
+ */
+export async function announcePagePricing(
+  accounts: ClientAccount[],
+  timeZone: string,
+  now: Date = new Date(),
+): Promise<Map<string, PagePricing>> {
+  const result = new Map<string, PagePricing>()
+  if (accounts.length === 0) return result
+  const clientIds = accounts.map((account) => account.clientId)
+  const today = todayIsoDate(timeZone, now)
+
+  return inClientSpace(accounts, async (tx) => {
+    const [tenant] = await tx
+      .select({ includedPages: tenants.mailOpeningIncludedPages })
+      .from(tenants)
+      .where(eq(tenants.id, currentTenantId()))
+    const [service] = await tx
+      .select({
+        id: services.id,
+        unitPriceCents: services.unitPriceCents,
+        vatRateBp: services.vatRateBp,
+        currency: services.currency,
+      })
+      .from(services)
+      .where(and(eq(services.code, serviceCodes.mailPage), isNull(services.deletedAt)))
+      .limit(1)
+    if (!service) {
+      for (const clientId of clientIds) result.set(clientId, null)
+      return result
+    }
+    const subscriptionRows = await tx
+      .select({
+        id: subscribedServices.id,
+        clientId: subscribedServices.clientId,
+        startsOn: subscribedServices.startsOn,
+        endsOn: subscribedServices.endsOn,
+        unitPriceCents: subscribedServices.unitPriceCents,
+        discountBp: subscribedServices.discountBp,
+        vatRateBp: subscribedServices.vatRateBp,
+        currency: subscribedServices.currency,
+      })
+      .from(subscribedServices)
+      .where(
+        and(
+          inArray(subscribedServices.clientId, clientIds),
+          eq(subscribedServices.serviceId, service.id),
+          isNull(subscribedServices.deletedAt),
+          or(
+            isNull(subscribedServices.contractId),
+            sql`exists (
+              select 1 from contracts as k
+               where k.tenant_id = ${subscribedServices.tenantId}
+                 and k.id = ${subscribedServices.contractId}
+                 and k.deleted_at is null
+                 and k.status in ('active', 'terminated'))`,
+          ),
+        ),
+      )
+    for (const clientId of clientIds) {
+      // Sans inclus : les pages comprises se règlent par pli, pas par forfait.
+      const subscriptions: ActSubscription[] = subscriptionRows
+        .filter((row) => row.clientId === clientId)
+        .map((row) => ({ ...row, includedQuantity: 0 }))
+      const next = announceNextAct([], subscriptions, service, { day: today, at: now })
+      result.set(
+        clientId,
+        next.source === 'subscription' || next.source === 'catalogue'
+          ? { includedPages: tenant?.includedPages ?? 0, netCentsPerPage: next.netCents, currency: next.currency }
+          : null,
+      )
     }
     return result
   })

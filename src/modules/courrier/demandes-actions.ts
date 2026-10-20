@@ -24,6 +24,7 @@ import {
   requestFiltersQuery,
 } from './demandes-regles.ts'
 import { readScan } from './fichiers.ts'
+import { withPageCount } from './pages.ts'
 import { notifyMailRequestDone, notifyMailRequestRefused } from './notifications.ts'
 
 /**
@@ -190,9 +191,15 @@ export async function completeScanRequestAction(
   formData: FormData,
 ): Promise<RequestActionState> {
   const { member } = await requirePermission('courrier.gerer')
-  const content = await readScan(formData.get('requestContent'))
-  if (content.error) return { fieldErrors: { requestContent: content.error } }
-  if (!content.scan) return { fieldErrors: { requestContent: 'Joignez la numérisation demandée.' } }
+  const read = await readScan(formData.get('requestContent'))
+  if (read.error) return { fieldErrors: { requestContent: read.error } }
+  if (!read.scan) return { fieldErrors: { requestContent: 'Joignez la numérisation demandée.' } }
+  // Pages comptées comme à l'ouverture (ADR 044) ; la numérisation demandée,
+  // elle, se facture par sa demande.
+  const content = withPageCount(formData, 'requestContent', read.scan)
+  if (content.error || !content.scan) {
+    return { fieldErrors: { requestContentPages: content.error ?? '' } }
+  }
 
   let result
   try {

@@ -4,7 +4,7 @@ import { useActionState } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { openMailAction, type MailFormState } from './actions.ts'
-import { FileField } from './mail-form.tsx'
+import { FileField, PagesField } from './mail-form.tsx'
 
 /**
  * Ouverture et numérisation d'un pli : la prestation facturée. Le fichier est
@@ -34,7 +34,7 @@ export function OpenForm({ mailItemId, requested }: { mailItemId: string; reques
 
       <ErrorSummary
         errors={state?.fieldErrors}
-        labels={{ content: 'Contenu' }}
+        labels={{ content: 'Contenu', contentPages: 'Nombre de pages' }}
         message={state?.error}
       />
 
@@ -45,6 +45,7 @@ export function OpenForm({ mailItemId, requested }: { mailItemId: string; reques
         error={state?.fieldErrors?.content}
         required
       />
+      <PagesField name="contentPages" error={state?.fieldErrors?.contentPages} />
 
       <div>
         <button

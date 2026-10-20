@@ -1,3 +1,10 @@
+import {
+  readCategoryFilter,
+  readFollowUpFilter,
+  readTagFilter,
+  type CategoryFilter,
+  type FollowUpFilter,
+} from './classement-regles.ts'
 import { isCalendarDate } from '../../lib/dates.ts'
 import {
   priceActs,
@@ -334,6 +341,10 @@ export type ClientMailFilters = {
   from?: string
   to?: string
   state?: ClientMailState
+  /** Rubriques du classement de la personne (ADR 044). */
+  category?: CategoryFilter
+  followUp?: FollowUpFilter
+  tag?: string
 }
 
 /**
@@ -344,6 +355,9 @@ export type ClientMailFilters = {
 export function readClientMailFilters(params: SearchParams): ClientMailFilters & { page: number } {
   const kind = first(params.type)
   const state = first(params.etat)
+  const category = readCategoryFilter(first(params.categorie))
+  const followUp = readFollowUpFilter(first(params.suivi))
+  const tag = readTagFilter(first(params.etiquette))
   let from = first(params.du)
   let to = first(params.au)
   if (!isCalendarDate(from)) from = undefined
@@ -354,6 +368,10 @@ export function readClientMailFilters(params: SearchParams): ClientMailFilters &
     from,
     to,
     state: (clientMailStates as readonly string[]).includes(state ?? '') ? (state as ClientMailState) : undefined,
+    // Rubriques du classement : présentes seulement quand elles sont choisies.
+    ...(category ? { category } : {}),
+    ...(followUp ? { followUp } : {}),
+    ...(tag ? { tag } : {}),
     page: readPage(params.page),
   }
 }
@@ -365,6 +383,9 @@ export function clientMailQuery(filters: ClientMailFilters, page = 1): string {
   if (filters.from) query.set('du', filters.from)
   if (filters.to) query.set('au', filters.to)
   if (filters.state) query.set('etat', filters.state)
+  if (filters.category) query.set('categorie', filters.category)
+  if (filters.followUp) query.set('suivi', filters.followUp)
+  if (filters.tag) query.set('etiquette', filters.tag)
   if (page > 1) query.set('page', String(page))
   const text = query.toString()
   return text ? `?${text}` : ''
@@ -530,6 +551,23 @@ export function announceNextAct(
     return { source: 'included', remainingAfter: Math.max(0, (subscription?.includedQuantity ?? 0) - used) }
   }
   return { source: next.source, netCents: next.netAmountCents ?? 0, currency: next.currency ?? 'EUR' }
+}
+
+/**
+ * Prix des pages numérisées à l'ouverture (ADR 044) : pages comprises dans
+ * l'ouverture, réglage du centre, et prix d'une page au-delà — celui du
+ * forfait du client à ce service, sinon du catalogue. Nul sans service au
+ * catalogue : aucune page ne se facture, rien n'est annoncé.
+ */
+export type PagePricing = { includedPages: number; netCentsPerPage: number; currency: string } | null
+
+/** « Comprend 5 pages ; au-delà, 0,20 € HT la page. » ; vide sans prix des pages. */
+export function pagePricingText(pricing: PagePricing): string {
+  if (!pricing) return ''
+  const price = `${formatCents(pricing.netCentsPerPage, pricing.currency)} HT la page`
+  if (pricing.includedPages === 0) return `Les pages numérisées s’ajoutent : ${price}.`
+  const pages = `${pricing.includedPages} page${pricing.includedPages > 1 ? 's' : ''}`
+  return `Comprend ${pages} numérisée${pricing.includedPages > 1 ? 's' : ''} ; au-delà, ${price}.`
 }
 
 /** « Incluse dans votre forfait », « 3,50 € HT » : l'annonce, en une phrase. */

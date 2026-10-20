@@ -20,6 +20,7 @@ import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.t
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
+import { mailCategories, type MailCategory } from './categories.ts'
 
 /**
  * Courrier reçu pour les entreprises domiciliées (ADR 015).
@@ -57,7 +58,7 @@ export const mailStatusEnum = (name: string) => mysqlEnum(name, mailStatuses)
  *
  * Au plus une tournée ouverte par centre (`mail_batches_open_key`). Une
  * tournée terminée ne se rouvre pas, ne se supprime pas, et ne reçoit plus de
- * pli (`60-courrier.sql`, `CA015`). Elle peut être terminée vide : c'est
+ * pli (`60-courrier.sql`, `CA017`). Elle peut être terminée vide : c'est
  * ainsi que l'accueil signale qu'aucun courrier n'est arrivé.
  */
 export const mailBatches = mysqlTable(
@@ -564,23 +565,11 @@ export const mailScanViews = mysqlTable(
 export type MailScanView = typeof mailScanViews.$inferSelect
 
 /**
- * Catégories du classement côté client (ADR 044), comme les rubriques d'un
- * espace bancaire. Liste fixe : c'est le client qui range, le centre ne
- * propose rien. Nulle : non classé.
+ * Catégories du classement côté client (ADR 044) : liste fixe
+ * (`categories.ts`), c'est le client qui range, le centre ne propose rien.
+ * Nulle : non classé.
  */
-export const mailCategories = [
-  'impots',
-  'social',
-  'banque',
-  'assurances',
-  'fournisseurs',
-  'clients',
-  'juridique',
-  'administration',
-  'publicite',
-  'autre',
-] as const
-export type MailCategory = (typeof mailCategories)[number]
+export { mailCategories, type MailCategory }
 export const mailCategoryEnum = (name: string) => mysqlEnum(name, mailCategories)
 
 /**

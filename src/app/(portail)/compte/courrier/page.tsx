@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
-import { ArrowRightIcon, ClockIcon, MailIcon, MailOpenIcon } from '../../../../components/ui/icons.tsx'
+import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
+import { ArrowRightIcon, CheckIcon, ClockIcon, MailIcon, MailOpenIcon } from '../../../../components/ui/icons.tsx'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../modules/clients/session.ts'
@@ -14,6 +15,7 @@ import {
   clientMailQuery,
   clientMailStateLabels,
   clientMailStates,
+  type ClientMailFilters,
   clientRequestOptions,
   pageCount,
   pendingRequestStatuses,
@@ -22,6 +24,7 @@ import {
 import { EnvelopeThumbnail } from '../../../../modules/courrier/enveloppe.tsx'
 import { mailKindIcons, SendIcon } from '../../../../modules/courrier/icones.tsx'
 import {
+  mailCategoryLabels,
   mailKindLabels,
   mailRequestKindLabels,
   mailRequestStatusClientLabels,
@@ -29,6 +32,14 @@ import {
   mailStatusStyles,
 } from '../../../../modules/courrier/labels.ts'
 import { MailboxRequest } from '../../../../modules/courrier/mailbox-request.tsx'
+import { mailFolderCounts, type MailFolderCounts } from '../../../../modules/courrier/classement.ts'
+import { SELECTION_FORM_ID, SelectionBar } from '../../../../modules/courrier/classement-forms.tsx'
+import {
+  classificationDoneMessage,
+  followUpFilters,
+  followUpLabels,
+} from '../../../../modules/courrier/classement-regles.ts'
+import { mailCategories } from '../../../../modules/courrier/categories.ts'
 import { mailKinds, type MailStatus } from '../../../../modules/courrier/schema.ts'
 
 export const metadata = { title: 'Ma boîte aux lettres' }
@@ -60,14 +71,19 @@ export default async function BoiteAuxLettresPage({
   const { page, ...filters } = readClientMailFilters(await searchParams)
   const tenant = await currentTenant()
   const timeZone = tenant.timezone
-  const [mail, pending] = await Promise.all([
+  const [mail, pending, folders] = await Promise.all([
     searchMailForAccounts(accounts, filters, { number: page, size: CLIENT_MAIL_PAGE_SIZE }, timeZone),
     listRequestsForAccounts(accounts, { statuses: pendingRequestStatuses }, { number: 1, size: 1 }),
+    mailFolderCounts(accounts),
   ])
+  const params = await searchParams
+  const done = typeof params.classe === 'string' ? /^([a-z-]+)-(\d+)$/.exec(params.classe) : null
   const retention = tenant.mailScanRetentionMonths
   const several = accounts.length > 1
   const pages = pageCount(mail.total, CLIENT_MAIL_PAGE_SIZE)
-  const filtered = Boolean(filters.kind || filters.from || filters.to || filters.state)
+  const filtered = Boolean(
+    filters.kind || filters.from || filters.to || filters.state || filters.category || filters.followUp || filters.tag,
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -100,6 +116,13 @@ export default async function BoiteAuxLettresPage({
         </p>
       </div>
 
+      {done && (
+        <FlashNotice key={String(params.classe)}>{classificationDoneMessage(done[1], Number(done[2]))}</FlashNotice>
+      )}
+
+      <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      <MailFolders folders={folders} filters={filters} />
+      <div className="flex min-w-0 flex-col gap-6">
       {/* Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
       <form className="grid max-w-3xl gap-3 rounded-lg border border-border bg-muted p-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Filtrer le courrier">
         <div>
@@ -140,6 +163,10 @@ export default async function BoiteAuxLettresPage({
           </label>
           <input id="au" name="au" type="date" defaultValue={filters.to ?? ''} className={`${fieldClass} tabular`} />
         </div>
+        {/* Les rubriques choisies à gauche restent quand on filtre. */}
+        {filters.category && <input type="hidden" name="categorie" value={filters.category} />}
+        {filters.followUp && <input type="hidden" name="suivi" value={filters.followUp} />}
+        {filters.tag && <input type="hidden" name="etiquette" value={filters.tag} />}
         <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-center lg:col-span-4">
           <button
             type="submit"
@@ -174,13 +201,19 @@ export default async function BoiteAuxLettresPage({
           </p>
         </div>
       ) : (
-        <ul className="flex max-w-3xl flex-col gap-4">
-          {mail.rows.map((item) => (
-            <li key={item.id}>
-              <MailCard item={item} timeZone={timeZone} showClient={several} />
-            </li>
-          ))}
-        </ul>
+        <>
+          <SelectionBar
+            returnQuery={clientMailQuery(filters, page)}
+            knownTags={folders.tags.map((entry) => entry.tag)}
+          />
+          <ul className="flex max-w-3xl flex-col gap-4">
+            {mail.rows.map((item) => (
+              <li key={item.id}>
+                <MailCard item={item} timeZone={timeZone} showClient={several} />
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       {pages > 1 && (
@@ -210,7 +243,112 @@ export default async function BoiteAuxLettresPage({
           )}
         </nav>
       )}
+      </div>
+      </div>
     </div>
+  )
+}
+
+/**
+ * Rubriques de la boîte aux lettres (ADR 044), comme dans un espace bancaire :
+ * le suivi (non lus, à traiter, traités), les catégories et les étiquettes de
+ * la personne, chacune avec son nombre de plis. Liens simples : la rubrique
+ * est dans l'URL, la page se partage et se recharge.
+ */
+function MailFolders({ folders, filters }: { folders: MailFolderCounts; filters: ClientMailFilters }) {
+  const base = { kind: filters.kind, from: filters.from, to: filters.to, state: filters.state }
+  const link = (next: ClientMailFilters) => `/compte/courrier${clientMailQuery({ ...base, ...next })}`
+  const all = !filters.category && !filters.followUp && !filters.tag
+  const followUpCount = { 'non-lus': folders.unread, 'a-traiter': folders.toHandle, traites: folders.handled }
+  const categories = [...mailCategories, 'non-classe' as const].filter(
+    (category) => folders.byCategory[category].total > 0 || filters.category === category,
+  )
+
+  return (
+    <nav aria-label="Rubriques du courrier" className="flex flex-col gap-4 text-sm">
+      <FolderGroup title="Suivi">
+        <FolderLink href={link({})} active={all} label="Tout le courrier" count={folders.total} />
+        {followUpFilters.map((followUp) => (
+          <FolderLink
+            key={followUp}
+            href={link({ category: filters.category, followUp })}
+            active={filters.followUp === followUp}
+            label={followUpLabels[followUp]}
+            count={followUpCount[followUp]}
+          />
+        ))}
+      </FolderGroup>
+      <FolderGroup title="Catégories">
+        {categories.length === 0 ? (
+          <li className="px-3 text-muted-foreground">Rangez vos courriers : cochez-les, puis « Classer ».</li>
+        ) : (
+          categories.map((category) => (
+            <FolderLink
+              key={category}
+              href={link({ category, followUp: filters.followUp })}
+              active={filters.category === category}
+              label={category === 'non-classe' ? 'Non classé' : mailCategoryLabels[category]}
+              count={folders.byCategory[category].total}
+              unread={folders.byCategory[category].unread}
+            />
+          ))
+        )}
+      </FolderGroup>
+      {folders.tags.length > 0 && (
+        <FolderGroup title="Étiquettes">
+          {folders.tags.map((entry) => (
+            <FolderLink
+              key={entry.tag}
+              href={link({ tag: entry.tag })}
+              active={filters.tag === entry.tag}
+              label={entry.tag}
+              count={entry.count}
+            />
+          ))}
+        </FolderGroup>
+      )}
+    </nav>
+  )
+}
+
+function FolderGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h2 className="px-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">{title}</h2>
+      <ul className="mt-1 flex flex-wrap gap-1 lg:flex-col">{children}</ul>
+    </div>
+  )
+}
+
+function FolderLink({
+  href,
+  active,
+  label,
+  count,
+  unread = 0,
+}: {
+  href: string
+  active: boolean
+  label: string
+  count: number
+  unread?: number
+}) {
+  return (
+    <li>
+      <Link
+        href={href}
+        aria-current={active ? 'page' : undefined}
+        className={`flex min-h-11 items-center justify-between gap-3 rounded-md px-3 transition-colors ${
+          active ? 'bg-primary font-medium text-primary-foreground' : 'text-foreground hover:bg-muted'
+        }`}
+      >
+        <span className="min-w-0 truncate">{label}</span>
+        <span className="tabular">
+          {count}
+          {unread > 0 && <span className="sr-only">, dont {unread} non lu{unread > 1 ? 's' : ''}</span>}
+        </span>
+      </Link>
+    </li>
   )
 }
 
@@ -221,9 +359,38 @@ function MailCard({ item, timeZone, showClient }: { item: ClientMailCard; timeZo
   const pendingOpening = item.pendingRequests.find((request) => request.kind === 'open_and_scan')
   const otherPending = item.pendingRequests.filter((request) => request.kind !== 'open_and_scan')
   const linkLabel = options.scan || options.forward ? 'Numériser, réexpédier, suivre' : 'Détails et suivi'
+  const unread = item.classification.readAt === null
 
   return (
     <article aria-labelledby={`pli-${item.id}`} className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 sm:p-5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="inline-flex min-h-11 cursor-pointer items-center gap-3 text-sm">
+          <input
+            type="checkbox"
+            name="ids"
+            value={item.id}
+            form={SELECTION_FORM_ID}
+            className="size-5"
+            aria-describedby={`pli-${item.id}`}
+          />
+          Sélectionner
+        </label>
+        <div className="flex flex-wrap items-center gap-2 text-xs">
+          {/* Lu et traité se lisent au libellé et à l'icône, pas à la seule couleur. */}
+          {unread && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2.5 py-1 font-semibold text-primary">
+              <MailIcon size={16} />
+              Non lu
+            </span>
+          )}
+          {item.classification.handledAt && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 font-medium">
+              <CheckIcon size={16} className="text-primary" />
+              Traité
+            </span>
+          )}
+        </div>
+      </div>
       <div className="flex gap-4">
         <EnvelopeThumbnail {...item} timeZone={timeZone} size="small" />
         <div className="min-w-0 flex-1">
@@ -246,10 +413,22 @@ function MailCard({ item, timeZone, showClient }: { item: ClientMailCard; timeZo
             </span>
             {showClient && <span className="text-muted-foreground">· {item.clientName}</span>}
           </div>
-          <h2 id={`pli-${item.id}`} className="mt-1 truncate text-base font-semibold">
+          <h2 id={`pli-${item.id}`} className={`mt-1 truncate text-base ${unread ? 'font-bold' : 'font-semibold'}`}>
             {item.sender ?? 'Expéditeur non précisé'}
           </h2>
           <p className="text-sm text-muted-foreground tabular">Reçu le {formatDateTime(item.receivedAt, timeZone)}</p>
+          {(item.classification.category || item.classification.tags.length > 0) && (
+            <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+              {item.classification.category && (
+                <span className="font-medium text-primary">{mailCategoryLabels[item.classification.category]}</span>
+              )}
+              {item.classification.tags.map((tag) => (
+                <span key={tag} className="rounded-full bg-muted px-2 py-0.5 text-foreground">
+                  {tag}
+                </span>
+              ))}
+            </p>
+          )}
         </div>
       </div>
 

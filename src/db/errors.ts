@@ -163,3 +163,9 @@ export const DB_TENANT_MISMATCH = 'CA014'
 export const DB_CLIENT_SCOPE_REFUSED = 'CA015'
 /** Devis refusé (ADR 043) : passage d'état impossible, devis validé à modifier, ligne sur un devis figé. */
 export const DB_PROPOSAL_REFUSED = 'CA016'
+/**
+ * Règle du courrier refusée par la base (ADR 044, `60-courrier.sql`) : pli
+ * enregistré dans une tournée terminée, tournée rouverte ou supprimée, pages
+ * d'une numérisation déjà facturée.
+ */
+export const DB_MAIL_REFUSED = 'CA017'

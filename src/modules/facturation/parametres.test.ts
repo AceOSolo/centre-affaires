@@ -72,6 +72,7 @@ describe('règles de facturation (ADR 026)', () => {
     recoveryIndemnity: '40',
     earlyPaymentDiscountText: 'Pas d’escompte.',
     invoiceFooterText: '',
+    mailOpeningIncludedPages: '5',
   }
 
   it('lit l’échéance, le moment de facturation et les mentions', () => {
@@ -85,8 +86,19 @@ describe('règles de facturation (ADR 026)', () => {
         recoveryIndemnityCents: 4_000,
         earlyPaymentDiscountText: 'Pas d’escompte.',
         invoiceFooterText: null,
+        mailOpeningIncludedPages: 5,
       },
     })
+  })
+
+  it('lit les pages comprises dans l’ouverture d’un pli, 0 compris (ADR 044)', () => {
+    const zero = parseInvoicingRules({ ...saisie, mailOpeningIncludedPages: '0' })
+    assert.equal(zero.ok && zero.update.mailOpeningIncludedPages, 0)
+    for (const pages of ['', '-1', '2,5', '1001']) {
+      const result = parseInvoicingRules({ ...saisie, mailOpeningIncludedPages: pages })
+      assert.equal(result.ok, false, pages)
+      if (!result.ok) assert.ok(result.fieldErrors.mailOpeningIncludedPages, pages)
+    }
   })
 
   it('refuse une échéance au-delà de 60 jours, plafond légal', () => {

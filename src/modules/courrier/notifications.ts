@@ -1,5 +1,6 @@
 import {
   findPendingMailRequestId,
+  notifyMailBatchClosed as notifyBatchClosed,
   notifyMailReceived,
   notifyMailRequestDone as notifyRequestDone,
   notifyMailRequestRefused as notifyRequestRefused,
@@ -21,9 +22,20 @@ import {
  * qu'appellent les actions du courrier ; aucune ne lève.
  */
 
-/** Arrivée d'un pli : aux personnes de l'entreprise, inscrites ou déjà connectées. */
+/**
+ * Arrivée d'un pli seul, hors tournée : aux personnes de l'entreprise. Depuis
+ * les tournées (ADR 044), l'enregistrement ne l'appelle plus.
+ */
 export async function notifyMailRegistered(mailItemId: string): Promise<void> {
   await notifyMailReceived(mailItemId)
+}
+
+/**
+ * Fin de tournée (ADR 044) : « courrier du jour » à chaque entreprise qui en a
+ * reçu, « pas de courrier » aux domiciliés sans pli.
+ */
+export async function notifyMailBatchClosed(batchId: string): Promise<void> {
+  await notifyBatchClosed(batchId)
 }
 
 export async function notifyMailScanned(mailItemId: string): Promise<void> {

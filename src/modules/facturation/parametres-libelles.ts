@@ -17,6 +17,7 @@ export const centreSettingsLabels: Record<string, string> = {
   recoveryIndemnity: 'Indemnité forfaitaire de recouvrement',
   earlyPaymentDiscountText: 'Escompte',
   invoiceFooterText: 'Pied de facture',
+  mailOpeningIncludedPages: 'Pages comprises dans l’ouverture d’un pli',
   legalName: 'Raison sociale',
   legalForm: 'Forme juridique',
   shareCapital: 'Capital social',

@@ -24,6 +24,7 @@ import {
   sameForwardAddress,
   staffRequestActions,
   type ForwardAddress,
+  pagePricingText,
 } from './demandes-regles.ts'
 
 /**
@@ -323,5 +324,21 @@ describe('prix annoncé avant la demande (ADR 024)', () => {
       '3,50 € HT, au tarif du centre.',
     )
     assert.match(announcementText({ source: 'included', remainingAfter: 3 }), /encore 3/)
+  })
+})
+
+describe('prix des pages annoncé avant l’ouverture (ADR 044)', () => {
+  it('annonce les pages comprises puis le prix d’une page au-delà', () => {
+    const text = pagePricingText({ includedPages: 5, netCentsPerPage: 20, currency: 'EUR' })
+    assert.match(text, /^Comprend 5 pages numérisées ; au-delà, 0,20\s€ HT la page\.$/)
+    assert.match(pagePricingText({ includedPages: 1, netCentsPerPage: 20, currency: 'EUR' }), /^Comprend 1 page numérisée ;/)
+  })
+
+  it('annonce un prix par page dès la première quand aucune n’est comprise', () => {
+    assert.match(pagePricingText({ includedPages: 0, netCentsPerPage: 15, currency: 'EUR' }), /^Les pages numérisées s’ajoutent : 0,15\s€ HT la page\.$/)
+  })
+
+  it('ne dit rien sans prix des pages au catalogue', () => {
+    assert.equal(pagePricingText(null), '')
   })
 })

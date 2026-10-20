@@ -8,10 +8,13 @@ import { requirePermission } from '../../lib/auth/staff.ts'
 import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
+import { DB_MAIL_REFUSED, dbErrorCode } from '../../db/errors.ts'
 import { readScan, type ScanFile } from './fichiers.ts'
-import { notifyMailRegistered, notifyMailScanned } from './notifications.ts'
-import { MailStateError, openMail, registerMail, withdrawMail } from './queries.ts'
+import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
+import { readPageCount, withPageCount } from './pages.ts'
+import { correctScanPageCount, MailStateError, openMail, registerMail, withdrawMail } from './queries.ts'
 import { mailKinds, type MailKind } from './schema.ts'
+import { closeOpenBatch, MailBatchClosedError } from './tournees.ts'
 
 /**
  * Champs en erreur, par nom de champ : le formulaire affiche un résumé en tête
@@ -59,6 +62,7 @@ export async function registerMailAction(
     sender: text(formData, 'sender'),
     receivedAt: text(formData, 'receivedAt'),
     note: text(formData, 'note'),
+    contentPages: text(formData, 'contentPages'),
   }
   const fieldErrors: Record<string, string> = {}
 
@@ -77,8 +81,10 @@ export async function registerMailAction(
 
   const envelope = await readScan(formData.get('envelope'))
   if (envelope.error) fieldErrors.envelope = envelope.error
-  const content = await readScan(formData.get('content'))
-  if (content.error) fieldErrors.content = content.error
+  const read = await readScan(formData.get('content'))
+  if (read.error) fieldErrors.content = read.error
+  const content = withPageCount(formData, 'content', read.scan)
+  if (content.error) fieldErrors.contentPages = content.error
 
   if (Object.keys(fieldErrors).length > 0 || !receivedAt) {
     return { fieldErrors, values }
@@ -101,8 +107,8 @@ export async function registerMailAction(
     return { ...storageFailure(error), values }
   }
 
-  // Après la réponse : un SMTP lent ne retient pas le formulaire suivant.
-  after(() => notifyMailRegistered(id))
+  // Aucun message ici : les domiciliés sont prévenus à la fin de la tournée
+  // (ADR 044), un seul message par entreprise.
   revalidatePath('/courrier')
   // Retour au formulaire vide : le courrier du jour s'enregistre à la chaîne.
   redirect(`/courrier/nouveau?enregistre=${id}`)
@@ -116,11 +122,13 @@ export async function openMailAction(
   const id = text(formData, 'id')
   if (!id) return { error: 'Courrier introuvable.' }
 
-  const content = await readScan(formData.get('content'))
-  if (content.error) return { fieldErrors: { content: content.error } }
-  if (!content.scan) {
+  const read = await readScan(formData.get('content'))
+  if (read.error) return { fieldErrors: { content: read.error } }
+  if (!read.scan) {
     return { fieldErrors: { content: 'Joignez la numérisation du contenu.' } }
   }
+  const content = withPageCount(formData, 'content', read.scan)
+  if (content.error || !content.scan) return { fieldErrors: { contentPages: content.error ?? '' } }
 
   try {
     await openMail(id, member.id, content.scan satisfies ScanFile)
@@ -142,4 +150,53 @@ export async function withdrawMailAction(formData: FormData): Promise<void> {
   await withdrawMail(id)
   revalidatePath('/courrier')
   redirect(`/courrier/${id}`)
+}
+
+/**
+ * Fin de la tournée (ADR 044) : la tournée est close, puis chaque domicilié
+ * reçoit son message — après la réponse, un SMTP lent ne retient pas l'écran.
+ * Sans tournée ouverte, signale qu'aucun courrier n'est arrivé.
+ */
+export async function closeMailBatchAction(
+  _previous: MailFormState,
+  formData: FormData,
+): Promise<MailFormState> {
+  const { member } = await requirePermission('courrier.gerer')
+  const expected = text(formData, 'batchId') || undefined
+  let batchId: string
+  try {
+    batchId = await closeOpenBatch(member.id, expected)
+  } catch (error) {
+    if (error instanceof MailBatchClosedError) return { error: error.message }
+    throw error
+  }
+  after(() => notifyMailBatchClosed(batchId))
+  revalidatePath('/courrier')
+  redirect(`/courrier/tournee?terminee=${batchId}`)
+}
+
+/**
+ * Correction du nombre de pages d'un contenu par l'accueil (ADR 044), tant
+ * qu'aucune facture ne le tient : la base refuse ensuite (`CA017`).
+ */
+export async function correctScanPagesAction(
+  _previous: MailFormState,
+  formData: FormData,
+): Promise<MailFormState> {
+  await requirePermission('courrier.gerer')
+  const mailItemId = text(formData, 'mailItemId')
+  const scanId = text(formData, 'scanId')
+  const pages = readPageCount(text(formData, 'pages'), undefined)
+  if (pages.error !== undefined) return { fieldErrors: { pages: pages.error } }
+  try {
+    const done = await correctScanPageCount(scanId, pages.pages)
+    if (!done) return { error: 'Numérisation introuvable, ou sans compte de pages à corriger.' }
+  } catch (error) {
+    if (dbErrorCode(error) === DB_MAIL_REFUSED) {
+      return { error: 'Ces pages sont déjà facturées : la correction passe par un avoir sur la facture.' }
+    }
+    throw error
+  }
+  revalidatePath(`/courrier/${mailItemId}`)
+  redirect(`/courrier/${mailItemId}?pages=corrigees`)
 }

@@ -14,6 +14,8 @@ import {
 } from '../../../modules/courrier/labels.ts'
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { listMail } from '../../../modules/courrier/queries.ts'
+import { BatchBanner } from '../../../modules/courrier/tournee-bandeau.tsx'
+import { findOpenBatch } from '../../../modules/courrier/tournees.ts'
 
 export const metadata = { title: 'Courrier' }
 
@@ -35,11 +37,12 @@ export default async function CourrierPage({
     redirect(`/courrier/demandes?nature=ouverture${clientId ? `&client=${clientId}` : ''}`)
   }
 
-  const [timeZone, rows, pending, filteredClient] = await Promise.all([
+  const [timeZone, rows, pending, filteredClient, batch] = await Promise.all([
     currentTimeZone(),
     listMail({ clientId }),
     countPendingMailRequests(),
     clientId ? findClient(clientId) : undefined,
+    findOpenBatch(),
   ])
   const requestCount = pending.total
 
@@ -71,6 +74,8 @@ export default async function CourrierPage({
           </Link>
         </div>
       </div>
+
+      <BatchBanner batch={batch} timeZone={timeZone} />
 
       <div className="flex flex-wrap items-center gap-2">
         <FilterLink

@@ -54,6 +54,8 @@ export type InvoiceLineDraft = {
   mailItemId: string | null
   /** Demande de courrier faite : numérisation ou réexpédition, et ses frais (ADR 037). */
   mailRequestId: string | null
+  /** Numérisation dont les pages au-delà de celles comprises sont facturées (ADR 044). */
+  mailScanId: string | null
   serviceId: string | null
   resourceId: string | null
 }
@@ -76,6 +78,7 @@ const EMPTY_SOURCES = {
   subscribedServiceId: null,
   mailItemId: null,
   mailRequestId: null,
+  mailScanId: null,
   serviceId: null,
   resourceId: null,
 } as const
@@ -714,6 +717,103 @@ function actInvoiceLines(
 }
 
 /* -------------------------------------------------------------------------- */
+/* Pages numérisées au-delà de l'ouverture (ADR 044)                          */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Contenu numérisé à l'ouverture d'un pli de la période, dont des pages
+ * dépassent celles comprises dans l'ouverture.
+ */
+export type BillingMailPages = {
+  /** La numérisation, source de la ligne. */
+  scanId: string
+  clientId: string
+  /** Instant d'ouverture du pli. */
+  openedAt: Date
+  /** Jour du centre de l'ouverture. */
+  day: string
+  /** Pages facturées : au-delà de celles comprises (`billablePages`). */
+  pages: number
+  held: boolean
+}
+
+/**
+ * Une ligne par pli ouvert dont les pages dépassent celles comprises dans
+ * l'ouverture (`tenants.mail_opening_included_pages`), au service
+ * `courrier.page`, en quantité de pages. Le prix est celui d'une souscription
+ * du client à ce service en vigueur le jour de l'ouverture (la plus
+ * avantageuse), sinon celui du catalogue : la règle des actes (`priceActs`),
+ * sans ses inclus — les pages comprises se règlent par pli, au réglage du
+ * centre, pas par forfait mensuel. Sans service au catalogue, rien n'est
+ * valorisé et chaque client concerné est signalé.
+ */
+export function mailPageInvoiceLines(
+  pages: readonly BillingMailPages[],
+  service: BillingActService | null,
+  subscriptions: readonly BillingActSubscription[],
+  settings: RunSettings,
+): { byClient: Map<string, InvoiceLineDraft[]>; warnings: RunWarning[] } {
+  const byClient = new Map<string, InvoiceLineDraft[]>()
+  const warnings: RunWarning[] = []
+  const due = pages.filter((entry) => !entry.held && entry.pages > 0)
+
+  if (!service) {
+    const counts = new Map<string, number>()
+    for (const entry of due) counts.set(entry.clientId, (counts.get(entry.clientId) ?? 0) + entry.pages)
+    for (const [clientId, count] of counts) {
+      warnings.push({
+        clientId,
+        message: `${count} page${count > 1 ? 's' : ''} numérisée${count > 1 ? 's' : ''} au-delà de l’ouverture non valorisée${count > 1 ? 's' : ''} : aucun service de code « courrier.page » au catalogue.`,
+      })
+    }
+    return { byClient, warnings }
+  }
+
+  const perPage = subscriptions.map((subscription) => ({ ...subscription, includedQuantity: 0 }))
+  const sorted = [...due].sort(
+    (a, b) => a.openedAt.getTime() - b.openedAt.getTime() || byText(a.scanId, b.scanId),
+  )
+  for (const entry of sorted) {
+    const clientSubscriptions = perPage.filter((subscription) => subscription.clientId === entry.clientId)
+    const [priced] = priceActs([{ id: entry.scanId, day: entry.day, at: entry.openedAt }], clientSubscriptions, service)
+    if (!priced || priced.source === 'unpriced') continue
+    if (priced.currency !== settings.currency) {
+      warnings.push({
+        clientId: entry.clientId,
+        message: `Pages du pli ouvert le ${dayLabel(entry.day)} : prix en ${priced.currency}, à facturer à la main.`,
+      })
+      continue
+    }
+    const unitPriceCents = priced.unitPriceCents ?? 0
+    const vatRateBp = priced.vatRateBp ?? service.vatRateBp
+    const line: InvoiceLineDraft = {
+      ...EMPTY_SOURCES,
+      kind: 'act',
+      description: `${service.name} — ${entry.pages} page${entry.pages > 1 ? 's' : ''}, pli ouvert le ${dayLabel(entry.day)}`,
+      periodStart: entry.day,
+      periodEnd: entry.day,
+      quantity: entry.pages,
+      unit: 'unit',
+      unitPriceCents,
+      discountBp: priced.discountBp,
+      // Une remise en montant d'une souscription vaut par page, comme par acte.
+      discountAmountCents: null,
+      prorataNumerator: null,
+      prorataDenominator: null,
+      vatRateBp,
+      vatCategory: vatCategoryFor(vatRateBp),
+      subscribedServiceId: priced.subscriptionId,
+      mailScanId: entry.scanId,
+      serviceId: service.id,
+    }
+    const clientLines = byClient.get(entry.clientId)
+    if (clientLines) clientLines.push(line)
+    else byClient.set(entry.clientId, [line])
+  }
+  return { byClient, warnings }
+}
+
+/* -------------------------------------------------------------------------- */
 /* Demandes de courrier faites (R21, ADR 037)                                 */
 /* -------------------------------------------------------------------------- */
 
@@ -926,6 +1026,10 @@ export type RunSources = {
   requestSubscriptions?: Partial<Record<BillableMailRequestKind, readonly BillingActSubscription[]>>
   /** Frais d'affranchissement relevés, pas encore facturés. */
   postages?: readonly BillingPostage[]
+  /** Pages au-delà de celles comprises dans l'ouverture (ADR 044). */
+  mailPages?: readonly BillingMailPages[]
+  pageService?: BillingActService | null
+  pageSubscriptions?: readonly BillingActSubscription[]
 }
 
 export type ClientRun = { clientId: string; lines: InvoiceLineDraft[]; warnings: RunWarning[] }
@@ -989,6 +1093,16 @@ export function computeRun(sources: RunSources, settings: RunSettings): ClientRu
   const acts = mailActInvoiceLines(sources.mailItems, sources.actService, sources.actSubscriptions, settings)
   for (const [clientId, lines] of acts.byClient) add(clientId, lines, [])
   for (const warning of acts.warnings) add(warning.clientId ?? '', [], [warning])
+
+  // Les pages au-delà de l'ouverture suivent les ouvertures (ADR 044).
+  const pageRun = mailPageInvoiceLines(
+    sources.mailPages ?? [],
+    sources.pageService ?? null,
+    sources.pageSubscriptions ?? [],
+    settings,
+  )
+  for (const [clientId, lines] of pageRun.byClient) add(clientId, lines, [])
+  for (const warning of pageRun.warnings) add(warning.clientId ?? '', [], [warning])
 
   // Puis les demandes faites : numérisations, réexpéditions, et les frais
   // d'affranchissement relevés (ADR 037).

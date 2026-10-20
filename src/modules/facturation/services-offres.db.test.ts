@@ -217,8 +217,9 @@ describe('catalogue de services et offres groupées', { skip: raisonDeSaut }, ()
     const semer = (prices: Record<string, number | null>) =>
       asTenant((tx) => seedExpectedServices(tx, prices))
 
-    // Les actes du courrier sans prix fixé : numérisation seule et réexpédition (ADR 037).
-    const autresActes = ['courrier.numerisation', 'courrier.reexpedition']
+    // Les actes du courrier sans prix fixé : numérisation seule, page au-delà de
+    // l'ouverture et réexpédition (ADR 037, ADR 044).
+    const autresActes = ['courrier.numerisation', 'courrier.page', 'courrier.reexpedition']
 
     it('ne crée pas l’ouverture d’un pli sans prix fixé par le centre', async () => {
       assert.deepEqual(await semer({}), {

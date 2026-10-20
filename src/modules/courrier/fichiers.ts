@@ -32,7 +32,12 @@ export function detectScanType(bytes: Uint8Array): ScanContentType | undefined {
   return undefined
 }
 
-export type ScanFile = { bytes: Uint8Array; contentType: ScanContentType }
+export type ScanFile = {
+  bytes: Uint8Array
+  contentType: ScanContentType
+  /** Pages d'un contenu (ADR 044) : lues dans le fichier ou saisies par l'accueil. */
+  pageCount?: number
+}
 
 /**
  * Lit un champ de fichier de formulaire.

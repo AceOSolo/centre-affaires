@@ -94,9 +94,9 @@ describe('services attendus par l’application', () => {
     assert.equal('unitPriceCents' in ouverture, false)
   })
 
-  it('attend aussi la numérisation seule et la réexpédition demandées (ADR 037), sans prix inventé', () => {
+  it('attend aussi la numérisation seule, la page au-delà de l’ouverture et la réexpédition (ADR 037, 044), sans prix inventé', () => {
     const codes = expectedServices.map((service) => service.code)
-    assert.deepEqual(codes, ['courrier.ouverture', 'courrier.numerisation', 'courrier.reexpedition'])
+    assert.deepEqual(codes, ['courrier.ouverture', 'courrier.numerisation', 'courrier.page', 'courrier.reexpedition'])
     for (const service of expectedServices) {
       assert.equal(service.nature, 'act')
       assert.equal(service.unit, 'unit')
@@ -107,14 +107,14 @@ describe('services attendus par l’application', () => {
   it('signale ceux qui manquent parmi les services vivants', () => {
     assert.deepEqual(
       missingExpectedServices(['standard', null]).map((service) => service.code),
-      ['courrier.ouverture', 'courrier.numerisation', 'courrier.reexpedition'],
+      ['courrier.ouverture', 'courrier.numerisation', 'courrier.page', 'courrier.reexpedition'],
     )
     assert.deepEqual(
       missingExpectedServices(['courrier.ouverture']).map((service) => service.code),
-      ['courrier.numerisation', 'courrier.reexpedition'],
+      ['courrier.numerisation', 'courrier.page', 'courrier.reexpedition'],
     )
     assert.deepEqual(
-      missingExpectedServices(['courrier.ouverture', 'courrier.numerisation', 'courrier.reexpedition']),
+      missingExpectedServices(['courrier.ouverture', 'courrier.numerisation', 'courrier.page', 'courrier.reexpedition']),
       [],
     )
   })

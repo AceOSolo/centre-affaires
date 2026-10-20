@@ -136,6 +136,26 @@ BEGIN
         MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
     END IF;
   END IF;
+  -- Pages (ADR 044) : l'accueil corrige un compte faux tant qu'aucune facture
+  -- ne tient la numérisation. Jamais posées ni effacées après le dépôt, jamais
+  -- touchées depuis l'espace client.
+  IF NOT (NEW.page_count <=> OLD.page_count) THEN
+    IF @app_client_ids IS NOT NULL THEN
+      SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+        MESSAGE_TEXT = 'Écriture refusée : le nombre de pages se corrige au centre.';
+    END IF;
+    IF OLD.page_count IS NULL OR NEW.page_count IS NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+        'CA017: Le nombre de pages se corrige ; il ne se pose ni ne s''efface après le dépôt.';
+    END IF;
+    IF EXISTS (
+      SELECT 1 FROM invoice_lines
+       WHERE tenant_id = NEW.tenant_id AND mail_scan_id = NEW.id AND held_live = 1
+    ) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+        'CA017: Ces pages sont déjà facturées : un avoir doit d''abord libérer la ligne.';
+    END IF;
+  END IF;
 END;
 --> statement-breakpoint
 
@@ -151,9 +171,22 @@ CREATE TRIGGER mail_items_before_insert
 BEFORE INSERT ON mail_items
 FOR EACH ROW
 BEGIN
+  DECLARE v_batch_closed DATETIME(3);
   IF @app_client_ids IS NOT NULL AND NOT FIND_IN_SET(NEW.client_id, @app_client_ids) THEN
     SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
       MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
+  END IF;
+  -- Tournée (ADR 044) : le verrou partagé attend une fin de tournée en cours,
+  -- qui verrouille la ligne : un pli n'entre jamais dans une tournée terminée,
+  -- ni après le départ de ses messages.
+  IF NEW.batch_id IS NOT NULL THEN
+    SELECT closed_at INTO v_batch_closed FROM mail_batches
+     WHERE tenant_id = NEW.tenant_id AND id = NEW.batch_id
+       FOR SHARE;
+    IF v_batch_closed IS NOT NULL THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+        'CA017: Cette tournée est terminée : le pli s''enregistre dans une nouvelle tournée.';
+    END IF;
   END IF;
   IF NEW.opened_at IS NULL AND NEW.deleted_at IS NOT NULL
      AND NEW.opening_requested_at IS NOT NULL THEN
@@ -223,6 +256,10 @@ guard: BEGIN
        OR NOT FIND_IN_SET(NEW.client_id, @app_client_ids)) THEN
     SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
       MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
+  END IF;
+  IF NOT (NEW.batch_id <=> OLD.batch_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA017: Un pli reste dans la tournée où il a été enregistré.';
   END IF;
   IF COALESCE(@app_mail_request_sync, '') = 'on' THEN
     LEAVE guard;
@@ -610,4 +647,120 @@ BEGIN
     WHEN 'forward' THEN 'courrier.reexpedition'
     ELSE NULL
   END;
+END;
+
+--> statement-breakpoint
+
+-- ---------------------------------------------------------------------------
+-- Tournées du courrier (ADR 044, CA017)
+-- ---------------------------------------------------------------------------
+-- - affaire du centre : jamais écrites sous portée client ;
+-- - naissent ouvertes, datées par la base ; au plus une ouverte par centre
+--   (`mail_batches_open_key`) ;
+-- - se terminent une fois, à la date de la base, par un membre de l'équipe ;
+--   ne se rouvrent pas ; ni leur ouverture ni leur fin ne se réécrivent ;
+-- - ne se suppriment pas : les plis et les messages envoyés les citent.
+DROP TRIGGER IF EXISTS mail_batches_before_insert;
+--> statement-breakpoint
+CREATE TRIGGER mail_batches_before_insert
+BEFORE INSERT ON mail_batches
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : les tournées du courrier sont l''affaire du centre.';
+  END IF;
+  IF NEW.closed_at IS NOT NULL OR NEW.closed_by IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA017: Une tournée naît ouverte ; elle se termine ensuite.';
+  END IF;
+  SET NEW.opened_at = CURRENT_TIMESTAMP(3);
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_batches_before_update;
+--> statement-breakpoint
+CREATE TRIGGER mail_batches_before_update
+BEFORE UPDATE ON mail_batches
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : les tournées du courrier sont l''affaire du centre.';
+  END IF;
+  IF NOT (NEW.opened_at <=> OLD.opened_at) OR NOT (NEW.opened_by <=> OLD.opened_by) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA017: L''ouverture d''une tournée ne se réécrit pas.';
+  END IF;
+  IF OLD.closed_at IS NOT NULL THEN
+    IF NOT (NEW.closed_at <=> OLD.closed_at) OR NOT (NEW.closed_by <=> OLD.closed_by) THEN
+      SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+        'CA017: Une tournée terminée ne se rouvre pas et sa fin ne se réécrit pas.';
+    END IF;
+  ELSEIF NEW.closed_by IS NOT NULL THEN
+    SET NEW.closed_at = GREATEST(CURRENT_TIMESTAMP(3), OLD.opened_at);
+  END IF;
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_batches_before_delete;
+--> statement-breakpoint
+CREATE TRIGGER mail_batches_before_delete
+BEFORE DELETE ON mail_batches
+FOR EACH ROW
+BEGIN
+  SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+    'CA017: Une tournée ne se supprime pas : ses plis et ses messages la citent.';
+END;
+--> statement-breakpoint
+
+-- ---------------------------------------------------------------------------
+-- Classement côté client (ADR 044) : portée client
+-- ---------------------------------------------------------------------------
+-- Lu, traité, catégorie et étiquettes d'une personne sur un pli de son
+-- entreprise. Les clés étrangères tiennent le pli et la personne dans la même
+-- entreprise ; les triggers refusent une entreprise hors de la portée.
+DROP TRIGGER IF EXISTS mail_item_member_states_before_insert;
+--> statement-breakpoint
+CREATE TRIGGER mail_item_member_states_before_insert
+BEFORE INSERT ON mail_item_member_states
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND NOT FIND_IN_SET(NEW.client_id, @app_client_ids) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
+  END IF;
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_item_member_states_before_update;
+--> statement-breakpoint
+CREATE TRIGGER mail_item_member_states_before_update
+BEFORE UPDATE ON mail_item_member_states
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND (
+       NOT FIND_IN_SET(OLD.client_id, @app_client_ids)
+       OR NOT FIND_IN_SET(NEW.client_id, @app_client_ids)) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
+  END IF;
+  IF NOT (NEW.mail_item_id <=> OLD.mail_item_id)
+     OR NOT (NEW.client_member_id <=> OLD.client_member_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA017: Un classement reste celui de sa personne et de son pli.';
+  END IF;
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_item_member_states_before_delete;
+--> statement-breakpoint
+CREATE TRIGGER mail_item_member_states_before_delete
+BEFORE DELETE ON mail_item_member_states
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND NOT FIND_IN_SET(OLD.client_id, @app_client_ids) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
+  END IF;
 END;

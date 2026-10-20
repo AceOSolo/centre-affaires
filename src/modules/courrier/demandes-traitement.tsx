@@ -13,7 +13,7 @@ import {
   updateForwardShippingAction,
   type RequestActionState,
 } from './demandes-actions.ts'
-import { FileField } from './mail-form.tsx'
+import { FileField, PagesField } from './mail-form.tsx'
 
 /**
  * Traitement d'une demande par l'accueil (R21, ADR 037) : prendre en charge,
@@ -189,7 +189,7 @@ export function CompleteScanForm({ requestId }: { requestId: string }) {
       <input type="hidden" name="id" value={requestId} />
       <ErrorSummary
         errors={state?.fieldErrors}
-        labels={{ requestContent: 'Numérisation' }}
+        labels={{ requestContent: 'Numérisation', requestContentPages: 'Nombre de pages' }}
         message={state?.error}
       />
       <FileField
@@ -199,6 +199,7 @@ export function CompleteScanForm({ requestId }: { requestId: string }) {
         error={state?.fieldErrors?.requestContent}
         required
       />
+      <PagesField name="requestContentPages" error={state?.fieldErrors?.requestContentPages} />
       <div>
         <button type="submit" disabled={pending} className={primaryClass}>
           {pending ? 'Dépôt en cours…' : 'Déposer et marquer faite'}

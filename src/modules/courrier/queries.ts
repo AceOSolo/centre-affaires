@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { and, asc, desc, eq, gte, inArray, isNull, lt, ne, sql } from 'drizzle-orm'
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, ne, sql } from 'drizzle-orm'
 import { alias, type AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
 import { maintenant } from '../../db/columns.ts'
@@ -15,6 +15,7 @@ import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
+import { inOpenBatch } from './tournees.ts'
 import type { OpeningLine } from './regles.ts'
 import {
   mailItems,
@@ -84,6 +85,8 @@ export const scanRows = (mailItemId: string, stored: StoredScan[], uploadedBy: s
     byteSize: scan.bytes.byteLength,
     encryptionKeyVersion,
     uploadedBy,
+    // Seul un contenu a des pages ; l'enveloppe n'en compte pas (ADR 044).
+    pageCount: side === 'content' ? (scan.pageCount ?? null) : null,
   }))
 
 /* -------------------------------------------------------------------------- */
@@ -234,13 +237,16 @@ export async function registerMail(
   const stored = await store(tenantId, scans)
 
   try {
-    return await withTenant(tenantId, async (tx) => {
+    // Dans la tournée ouverte (ADR 044) : les domiciliés ne sont prévenus
+    // qu'à sa fin, un message par entreprise.
+    return await inOpenBatch(staffMemberId, async (tx, batchId) => {
       const opened = Boolean(scans.content)
       // Identifiant posé avant l'insertion : MySQL n'a pas de `RETURNING`.
       const id = uuidv7()
       await tx.insert(mailItems).values({
         ...input,
         id,
+        batchId,
         registeredBy: staffMemberId,
         status: opened ? 'opened' : 'received',
         openedAt: opened ? maintenant() : null,
@@ -253,6 +259,24 @@ export async function registerMail(
     await discard(stored)
     throw error
   }
+}
+
+/**
+ * Correction du nombre de pages d'un contenu par l'accueil (ADR 044). Faux :
+ * pas de contenu compté sous cet identifiant. La base refuse une correction
+ * de pages déjà facturées (`CA017`).
+ */
+export async function correctScanPageCount(scanId: string, pages: number): Promise<boolean> {
+  if (!isUuid(scanId)) return false
+  return withTenant(currentTenantId(), async (tx) => {
+    const rows = await updateReturning(
+      tx,
+      mailScans,
+      { pageCount: pages },
+      and(eq(mailScans.id, scanId), eq(mailScans.side, 'content'), isNotNull(mailScans.pageCount)),
+    )
+    return rows.length > 0
+  })
 }
 
 /** Levée quand le pli n'est plus dans l'état attendu : déjà ouvert, retiré. */
@@ -537,7 +561,7 @@ export async function cancelOpeningRequest(id: string, accounts: ClientAccount[]
 
 export type ScanToServe = Pick<
   MailScan,
-  'id' | 'side' | 'storageKey' | 'contentType' | 'encryptionKeyVersion'
+  'id' | 'side' | 'storageKey' | 'contentType' | 'encryptionKeyVersion' | 'mailItemId'
 > & {
   receivedAt: Date
   clientId: string
@@ -549,6 +573,7 @@ const scanToServe = {
   storageKey: mailScans.storageKey,
   contentType: mailScans.contentType,
   encryptionKeyVersion: mailScans.encryptionKeyVersion,
+  mailItemId: mailScans.mailItemId,
   receivedAt: mailItems.receivedAt,
   clientId: mailItems.clientId,
 }

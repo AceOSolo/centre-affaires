@@ -22,6 +22,7 @@ const labels: Record<string, string> = {
   note: 'Précision pour le client',
   envelope: 'Enveloppe',
   content: 'Contenu',
+  contentPages: 'Nombre de pages du contenu',
 }
 
 /**
@@ -170,6 +171,7 @@ export function MailForm({
           hint="Seulement si le pli est ouvert maintenant. L’ouverture sera comptée au relevé de facturation, à l’initiative du centre."
           error={errors.content}
         />
+        <PagesField name="contentPages" error={errors.contentPages} />
       </fieldset>
 
       <div className="flex items-center gap-3">
@@ -228,6 +230,35 @@ export function FileField({
       />
       <p id={`${name}-hint`} className="mt-1 text-xs text-muted-foreground">
         {hint}
+      </p>
+      <FieldError name={name} error={error} />
+    </div>
+  )
+}
+
+/**
+ * Pages d'un contenu déposé (ADR 044). Facultatif : laissé vide, le compte est
+ * lu dans le PDF ; une image compte pour une page. La facturation en dépend,
+ * au-delà des pages comprises dans l'ouverture.
+ */
+export function PagesField({ name, error }: { name: string; error?: string }) {
+  return (
+    <div className="max-w-xs">
+      <label className={labelClass} htmlFor={name}>
+        Nombre de pages <span className="font-normal text-muted-foreground">(facultatif)</span>
+      </label>
+      <input
+        id={name}
+        name={name}
+        inputMode="numeric"
+        autoComplete="off"
+        aria-invalid={error ? true : undefined}
+        aria-describedby={`${name}-hint${error ? ` ${name}-error` : ''}`}
+        className={`${fieldClass} mt-1 tabular`}
+      />
+      <p id={`${name}-hint`} className="mt-1 text-xs text-muted-foreground">
+        Laissez vide : les pages sont comptées dans le PDF. À saisir si le compte est faux
+        (pages blanches retirées) ou si le fichier ne se lit pas.
       </p>
       <FieldError name={name} error={error} />
     </div>

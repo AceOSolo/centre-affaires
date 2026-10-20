@@ -705,6 +705,7 @@ CREATE PROCEDURE invoice_line_check(
   IN p_subscribed_service_id CHAR(36),
   IN p_mail_item_id CHAR(36),
   IN p_mail_request_id CHAR(36),
+  IN p_mail_scan_id CHAR(36),
   IN p_service_id CHAR(36),
   IN p_credited_line_id CHAR(36),
   IN p_quantity INT,
@@ -740,6 +741,10 @@ main: BEGIN
   DECLARE v_req_postage INT;
   DECLARE v_req_currency CHAR(3);
   DECLARE v_service_code VARCHAR(40);
+  DECLARE v_scan_client CHAR(36);
+  DECLARE v_scan_pages SMALLINT;
+  DECLARE v_scan_opening TINYINT;
+  DECLARE v_scan_billable TINYINT;
   DECLARE v_zero CHAR(36) DEFAULT '00000000-0000-0000-0000-000000000000';
 
   SET p_compute = 0;
@@ -785,7 +790,7 @@ main: BEGIN
   IF v_invoice_kind = 'credit_note' THEN
     IF (p_contract_id IS NOT NULL) + (p_contract_line_id IS NOT NULL) + (p_booking_id IS NOT NULL)
        + (p_subscribed_service_id IS NOT NULL) + (p_mail_item_id IS NOT NULL)
-       + (p_mail_request_id IS NOT NULL) > 0 THEN
+       + (p_mail_request_id IS NOT NULL) + (p_mail_scan_id IS NOT NULL) > 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA003: Une ligne d''avoir ne porte pas de source : elle désigne la ligne qu''elle crédite.';
     END IF;
@@ -813,6 +818,7 @@ main: BEGIN
        OR (p_booking_id IS NOT NULL AND p_kind <> 'booking')
        OR (p_mail_item_id IS NOT NULL AND p_kind <> 'act')
        OR (p_mail_request_id IS NOT NULL AND p_kind NOT IN ('act', 'other'))
+       OR (p_mail_scan_id IS NOT NULL AND p_kind <> 'act')
        OR (p_contract_line_id IS NOT NULL AND p_kind NOT IN ('rent', 'package'))
        OR (p_subscribed_service_id IS NOT NULL AND p_kind NOT IN ('package', 'act')) THEN
       SET v_message = LEFT(CONCAT('CA003: Ligne de facture incohérente : une ligne « ',
@@ -895,6 +901,45 @@ main: BEGIN
                           ' centimes (', v_req_currency, '), une fois, sans remise.'), 128);
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_message;
           END IF;
+        END IF;
+      END IF;
+    END IF;
+
+    -- Pages d'une numérisation (ADR 044) : le contenu de l'ouverture d'un pli
+    -- du client, ouvert et non retiré, compté ; au service `courrier.page`,
+    -- jamais plus de pages que comptées. Verrouillée en partage : une
+    -- correction du compte attend la facturation en cours.
+    IF p_mail_scan_id IS NOT NULL THEN
+      SET v_scan_client = NULL;
+      SELECT i.client_id, s.page_count,
+             (s.side = 'content' AND (s.mail_request_id IS NULL OR r.kind = 'open_and_scan')),
+             (i.opened_at IS NOT NULL AND i.deleted_at IS NULL)
+        INTO v_scan_client, v_scan_pages, v_scan_opening, v_scan_billable
+        FROM mail_scans AS s
+        JOIN mail_items AS i ON i.tenant_id = s.tenant_id AND i.id = s.mail_item_id
+        LEFT JOIN mail_requests AS r ON r.tenant_id = s.tenant_id AND r.id = s.mail_request_id
+       WHERE s.tenant_id = p_tenant_id AND s.id = p_mail_scan_id
+         FOR SHARE OF s;
+      IF v_scan_client IS NOT NULL THEN
+        IF NOT (v_scan_client <=> v_client) THEN
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+            'CA003: Cette numérisation n''est pas celle d''un pli du client facturé.';
+        END IF;
+        IF v_scan_opening = 0 OR v_scan_pages IS NULL OR v_scan_billable = 0 THEN
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+            'CA003: Seules les pages comptées du contenu d''un pli ouvert, non retiré, se facturent.';
+        END IF;
+        IF p_quantity > v_scan_pages THEN
+          SET v_message = LEFT(CONCAT('CA003: Cette numérisation compte ', v_scan_pages,
+            ' page(s) : pas davantage ne se facture.'), 128);
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_message;
+        END IF;
+        SELECT COUNT(*) INTO v_count
+          FROM services
+         WHERE tenant_id = p_tenant_id AND id = p_service_id AND code = 'courrier.page';
+        IF v_count = 0 THEN
+          SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+            'CA003: Les pages numérisées se facturent avec le service « courrier.page ».';
         END IF;
       END IF;
     END IF;
@@ -1089,7 +1134,7 @@ BEGIN
   END IF;
   CALL invoice_line_check(0, NEW.tenant_id, NEW.id, NEW.invoice_id, NEW.tenant_id, NEW.invoice_id, 0, 0,
     NEW.kind, NEW.contract_id, NEW.contract_line_id, NEW.booking_id, NEW.subscribed_service_id,
-    NEW.mail_item_id, NEW.mail_request_id, NEW.service_id, NEW.credited_line_id,
+    NEW.mail_item_id, NEW.mail_request_id, NEW.mail_scan_id, NEW.service_id, NEW.credited_line_id,
     NEW.quantity, NEW.unit_price_cents, NEW.discount_bp, NEW.discount_amount_cents,
     NEW.prorata_numerator, NEW.released_at, NEW.deleted_at,
     v_period_start, v_period_end, v_compute);
@@ -1163,6 +1208,7 @@ BEGIN
       AND NEW.subscribed_service_id <=> OLD.subscribed_service_id
       AND NEW.mail_item_id <=> OLD.mail_item_id
       AND NEW.mail_request_id <=> OLD.mail_request_id
+      AND NEW.mail_scan_id <=> OLD.mail_scan_id
       AND NEW.service_id <=> OLD.service_id
       AND NEW.resource_id <=> OLD.resource_id
       AND NEW.credited_line_id <=> OLD.credited_line_id
@@ -1196,6 +1242,7 @@ BEGIN
       AND NEW.subscribed_service_id <=> OLD.subscribed_service_id
       AND NEW.mail_item_id <=> OLD.mail_item_id
       AND NEW.mail_request_id <=> OLD.mail_request_id
+      AND NEW.mail_scan_id <=> OLD.mail_scan_id
       AND NEW.service_id <=> OLD.service_id
       AND NEW.resource_id <=> OLD.resource_id
       AND NEW.credited_line_id <=> OLD.credited_line_id
@@ -1206,7 +1253,7 @@ BEGIN
   CALL invoice_line_check(1, NEW.tenant_id, NEW.id, NEW.invoice_id, OLD.tenant_id, OLD.invoice_id,
     v_same_but_released, v_same_but_deleted,
     NEW.kind, NEW.contract_id, NEW.contract_line_id, NEW.booking_id, NEW.subscribed_service_id,
-    NEW.mail_item_id, NEW.mail_request_id, NEW.service_id, NEW.credited_line_id,
+    NEW.mail_item_id, NEW.mail_request_id, NEW.mail_scan_id, NEW.service_id, NEW.credited_line_id,
     NEW.quantity, NEW.unit_price_cents, NEW.discount_bp, NEW.discount_amount_cents,
     NEW.prorata_numerator, NEW.released_at, NEW.deleted_at,
     v_period_start, v_period_end, v_compute);

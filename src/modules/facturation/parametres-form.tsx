@@ -302,7 +302,7 @@ export function CentreSettingsForms({ values }: { values: Record<string, string>
       <SettingsSection
         id="facturation"
         title="Facturation"
-        description="Échéance et mentions obligatoires, reprises dans chaque facture émise et figées avec elle."
+        description="Échéance et mentions obligatoires, reprises dans chaque facture émise et figées avec elle ; pages comprises dans l’ouverture d’un pli."
         action={saveInvoicingRulesAction}
         values={values}
         submitLabel="Enregistrer la facturation"
@@ -323,6 +323,13 @@ export function CentreSettingsForms({ values }: { values: Record<string, string>
                 inputMode="decimal"
                 suffix="€"
                 hint="40 € minimum entre professionnels (art. D. 441-5)."
+              />
+              <TextField
+                name="mailOpeningIncludedPages"
+                context={context}
+                inputMode="numeric"
+                suffix="pages"
+                hint="Au-delà, chaque page numérisée se facture au service « Page numérisée ». 0 : toutes."
               />
             </div>
             <RadioField

@@ -53,6 +53,19 @@ export const expectedServices: readonly ExpectedService[] = [
     vatRateBp: 2_000,
     purpose: 'Chaque numérisation demandée et faite est portée sur la facture du client à ce prix (R21).',
   },
+  // Pages au-delà de celles comprises dans l'ouverture (ADR 044) : une ligne
+  // par pli, en quantité de pages.
+  {
+    code: serviceCodes.mailPage,
+    name: 'Page numérisée au-delà de l’ouverture',
+    description:
+      'Page du contenu d’un pli numérisée au-delà des pages comprises dans son ouverture, réglées par le centre.',
+    nature: 'act',
+    unit: 'unit',
+    vatRateBp: 2_000,
+    purpose:
+      'Les pages numérisées au-delà de celles comprises dans l’ouverture d’un pli sont portées sur la facture du client à ce prix, par page (ADR 044).',
+  },
   {
     code: serviceCodes.mailForwarding,
     name: 'Réexpédition d’un pli',

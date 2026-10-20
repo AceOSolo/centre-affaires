@@ -84,6 +84,7 @@ export function parseInvoicingRules(input: SettingsInput): SettingsResult {
   const indemnity = parseAmountToCents(read(input, 'recoveryIndemnity'))
   const discount = read(input, 'earlyPaymentDiscountText')
   const footer = read(input, 'invoiceFooterText')
+  const includedPages = integerIn(read(input, 'mailOpeningIncludedPages'), 0, 1000)
 
   // Soixante jours après l'émission : plafond légal (art. L. 441-10 du Code de commerce).
   if (terms === undefined) fieldErrors.invoicePaymentTermsDays = 'Un nombre entier de jours, de 0 à 60 (plafond légal).'
@@ -93,6 +94,9 @@ export function parseInvoicingRules(input: SettingsInput): SettingsResult {
   if (!penalty) fieldErrors.latePaymentPenaltyText = 'Mention obligatoire sur toute facture : indiquez le taux des pénalités.'
   if (indemnity === undefined) fieldErrors.recoveryIndemnity = 'Montant illisible. Exemple : 40,00'
   if (!discount) fieldErrors.earlyPaymentDiscountText = 'Mention obligatoire : indiquez les conditions d’escompte, ou leur absence.'
+  if (includedPages === undefined) {
+    fieldErrors.mailOpeningIncludedPages = 'Un nombre entier de pages, de 0 à 1000. 0 : toutes les pages se facturent.'
+  }
 
   return finish(fieldErrors, {
     invoicePaymentTermsDays: terms,
@@ -102,6 +106,7 @@ export function parseInvoicingRules(input: SettingsInput): SettingsResult {
     recoveryIndemnityCents: indemnity,
     earlyPaymentDiscountText: discount,
     invoiceFooterText: footer || null,
+    mailOpeningIncludedPages: includedPages,
   })
 }
 
@@ -266,6 +271,7 @@ export function centreSettingsValues(tenant: Tenant): Record<string, string> {
     recoveryIndemnity: centsToInput(tenant.recoveryIndemnityCents),
     earlyPaymentDiscountText: tenant.earlyPaymentDiscountText,
     invoiceFooterText: tenant.invoiceFooterText ?? '',
+    mailOpeningIncludedPages: String(tenant.mailOpeningIncludedPages),
     legalName: tenant.legalName ?? '',
     legalForm: tenant.legalForm ?? '',
     shareCapital: tenant.shareCapitalCents === null ? '' : centsToInput(tenant.shareCapitalCents),

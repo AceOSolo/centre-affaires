@@ -6,6 +6,9 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { mailKindLabels } from '../courrier/labels.ts'
 import { mailItems, mailRequests, type MailRequestKind } from '../courrier/schema.ts'
+import { batchRecipients, type BatchRecipients } from '../courrier/tournees.ts'
+import { mailCountPhrase, mailKindsPhrase, scannedPhrase } from '../courrier/tournees-regles.ts'
+import { formatLongDate } from '../../lib/dates.ts'
 import { centreTimeZone, formatInstant, mailRequestKindPhrases, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.ts'
 
@@ -251,4 +254,69 @@ export async function findPendingMailRequestId(
     options.database,
   )
   return row?.id
+}
+
+export type MailBatchNotifications = { received: number; none: number; failed: number }
+
+/**
+ * Fin de tournée (ADR 044) : un message par entreprise qui a reçu du
+ * courrier — leur nombre et leur nature —, et « pas de courrier aujourd'hui »
+ * aux domiciliés sans pli, à la première tournée de la journée. Relit la
+ * tournée terminée : ce qui part est l'état à sa fin. Ne lève jamais.
+ */
+export async function notifyMailBatchClosed(
+  batchId: string,
+  options: NotifyOptions = {},
+): Promise<MailBatchNotifications> {
+  const counts: MailBatchNotifications = { received: 0, none: 0, failed: 0 }
+  let recipients: BatchRecipients
+  try {
+    recipients = await batchRecipients(batchId, options.database)
+  } catch (error) {
+    console.error('Notification de fin de tournée impossible', error)
+    return counts
+  }
+  const jour = formatLongDate(recipients.day, recipients.timeZone)
+  const lien = appUrl('/compte/courrier')
+  const related = { type: 'mail_batch', id: batchId } as const
+  const clientName = (clientId: string) => recipients.clientNames.get(clientId) ?? 'votre entreprise'
+
+  for (const entry of recipients.received) {
+    const outcome = await guarded('courrier du jour', () =>
+      notify(
+        {
+          event: 'mail_batch_received',
+          clientId: entry.clientId,
+          related,
+          values: {
+            client: clientName(entry.clientId),
+            jour,
+            nombre: mailCountPhrase(entry.count),
+            detail: mailKindsPhrase(entry.byKind),
+            numerises: scannedPhrase(entry.scanned) || null,
+            lien,
+          },
+        },
+        options,
+      ),
+    )
+    if (outcome?.status === 'failed' || outcome === null) counts.failed++
+    else counts.received++
+  }
+  for (const clientId of recipients.none) {
+    const outcome = await guarded('pas de courrier', () =>
+      notify(
+        {
+          event: 'mail_none',
+          clientId,
+          related,
+          values: { client: clientName(clientId), jour, lien },
+        },
+        options,
+      ),
+    )
+    if (outcome?.status === 'failed' || outcome === null) counts.failed++
+    else counts.none++
+  }
+  return counts
 }

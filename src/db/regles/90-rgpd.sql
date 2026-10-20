@@ -605,6 +605,12 @@ BEGIN
      SET sender = NULL, note = NULL, sender_anonymized_at = CURRENT_TIMESTAMP(3)
    WHERE tenant_id = v_tenant AND client_id = p_client_id AND sender_anonymized_at IS NULL;
 
+  -- Étiquettes libres du classement côté client (ADR 044) : du texte saisi
+  -- par les personnes, qui part avec elles. Lu, traité et catégorie restent.
+  UPDATE mail_item_member_states
+     SET tags = JSON_ARRAY()
+   WHERE tenant_id = v_tenant AND client_id = p_client_id AND JSON_LENGTH(tags) > 0;
+
   UPDATE mail_requests
      SET client_note = NULL,
          forward_recipient = CASE WHEN kind = 'forward' THEN 'Destinataire anonymisé' END,
@@ -824,6 +830,12 @@ BEGIN
      WHERE tenant_id = v_ctx AND id = p_id
        AND deleted_at IS NOT NULL AND anonymized_at IS NULL;
     SET v_done = ROW_COUNT();
+    -- Ses étiquettes libres sur le courrier (ADR 044).
+    IF v_done > 0 THEN
+      UPDATE mail_item_member_states
+         SET tags = JSON_ARRAY()
+       WHERE tenant_id = v_ctx AND client_member_id = p_id AND JSON_LENGTH(tags) > 0;
+    END IF;
   ELSE
     UPDATE staff_members
        SET email = CONCAT('anonyme-', id, '@anonymise.invalid'),

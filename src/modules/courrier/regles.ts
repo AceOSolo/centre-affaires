@@ -99,3 +99,14 @@ export function groupOpeningsByClient(lines: OpeningLine[]): ClientOpenings[] {
   }
   return sorted
 }
+
+/**
+ * Pages facturées pour un contenu numérisé (ADR 044) : celles au-delà des
+ * pages comprises dans l'ouverture (`tenants.mail_opening_included_pages`).
+ * Un contenu sans compte de pages (déposé avant le compteur) n'en facture
+ * aucune : rien n'est inventé.
+ */
+export function billablePages(pageCount: number | null, includedPages: number): number {
+  if (pageCount === null || pageCount <= 0) return 0
+  return Math.max(0, pageCount - Math.max(0, includedPages))
+}

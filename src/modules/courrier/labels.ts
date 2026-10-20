@@ -1,5 +1,6 @@
 import type { OpeningOrigin } from './regles.ts'
 import type {
+  MailCategory,
   MailKind,
   MailRequestKind,
   MailRequestStatus,
@@ -90,4 +91,18 @@ export const mailRequestStatusStyles: Record<MailRequestStatus, string> = {
   done: 'bg-primary text-primary-foreground',
   refused: 'bg-muted text-foreground',
   cancelled: 'bg-muted text-muted-foreground',
+}
+
+/** Rubriques du classement côté client (ADR 044), comme celles d'un espace bancaire. */
+export const mailCategoryLabels: Record<MailCategory, string> = {
+  impots: 'Impôts et taxes',
+  social: 'URSSAF et organismes sociaux',
+  banque: 'Banque et finances',
+  assurances: 'Assurances',
+  fournisseurs: 'Fournisseurs et factures',
+  clients: 'Clients',
+  juridique: 'Juridique : greffe, tribunal, INPI',
+  administration: 'Autres administrations',
+  publicite: 'Publicité',
+  autre: 'Autre',
 }

@@ -9,6 +9,7 @@ import {
   expectedPaymentFor,
   issuedInvoiceWarning,
   mailActInvoiceLines,
+  mailPageInvoiceLines,
   mailRequestInvoiceLines,
   postageInvoiceLines,
   previewAmounts,
@@ -19,6 +20,7 @@ import {
   type BillingBooking,
   type BillingContract,
   type BillingMailItem,
+  type BillingMailPages,
   type BillingMailRequest,
   type BillingSubscription,
   type InvoiceLineDraft,
@@ -582,6 +584,107 @@ describe('actes du courrier (R14, ADR 024)', () => {
   })
 })
 
+describe('pages numérisées au-delà de l’ouverture (ADR 044)', () => {
+  const page: BillingActService = {
+    id: 'svc-page',
+    name: 'Page numérisée au-delà de l’ouverture',
+    unitPriceCents: 20,
+    vatRateBp: 2000,
+    currency: 'EUR',
+  }
+  const pages = (scanId: string, day: string, count: number, clientId = 'c1', held = false): BillingMailPages => ({
+    scanId,
+    clientId,
+    openedAt: new Date(`${day}T09:00:00Z`),
+    day,
+    pages: count,
+    held,
+  })
+  const forfaitPages = (overrides: Partial<BillingActSubscription> = {}): BillingActSubscription => ({
+    id: 'sub-page',
+    clientId: 'c1',
+    includedQuantity: 50,
+    unitPriceCents: 15,
+    discountBp: null,
+    discountAmountCents: null,
+    vatRateBp: 2000,
+    currency: 'EUR',
+    startsOn: '2026-01-01',
+    endsOn: null,
+    ...overrides,
+  })
+
+  it('facture une ligne par pli, en quantité de pages, au prix du catalogue', () => {
+    const { byClient } = mailPageInvoiceLines([pages('s1', '2026-09-03', 7)], page, [], octobre)
+    const [line] = byClient.get('c1') ?? []
+    assert.equal(line.kind, 'act')
+    assert.equal(line.quantity, 7)
+    assert.equal(line.unitPriceCents, 20)
+    assert.equal(net(line), 140)
+    assert.equal(line.mailScanId, 's1')
+    assert.equal(line.mailItemId, null)
+    assert.equal(line.serviceId, 'svc-page')
+    assert.match(line.description, /7 pages, pli ouvert le 03\/09\/2026/)
+  })
+
+  it('prend le prix d’une souscription au service, sans en compter les inclus', () => {
+    // Les pages comprises se règlent par pli (réglage du centre), pas par forfait.
+    const { byClient } = mailPageInvoiceLines([pages('s1', '2026-09-03', 3)], page, [forfaitPages()], octobre)
+    const [line] = byClient.get('c1') ?? []
+    assert.equal(line.unitPriceCents, 15)
+    assert.equal(line.subscribedServiceId, 'sub-page')
+    assert.doesNotMatch(line.description, /inclus/)
+  })
+
+  it('ne refacture pas des pages déjà tenues par une ligne', () => {
+    const { byClient } = mailPageInvoiceLines(
+      [pages('s1', '2026-09-03', 4, 'c1', true), pages('s2', '2026-09-04', 2)],
+      page,
+      [],
+      octobre,
+    )
+    assert.deepEqual((byClient.get('c1') ?? []).map((line) => line.mailScanId), ['s2'])
+  })
+
+  it('ne valorise rien sans service au catalogue, et le dit client par client', () => {
+    const { byClient, warnings } = mailPageInvoiceLines(
+      [pages('s1', '2026-09-03', 4), pages('s2', '2026-09-04', 2), pages('s3', '2026-09-05', 9, 'c2', true)],
+      null,
+      [],
+      octobre,
+    )
+    assert.equal(byClient.size, 0)
+    assert.deepEqual(warnings.map((warning) => warning.clientId), ['c1'])
+    assert.match(warnings[0].message, /6 pages numérisées/)
+  })
+
+  it('suit les ouvertures dans la facture du lot', () => {
+    const runs = computeRun(
+      {
+        contracts: [],
+        contractBilled: new Map(),
+        subscriptions: [],
+        subscriptionBilled: new Map(),
+        bookings: [],
+        mailItems: [{ id: 'p1', clientId: 'c1', openedAt: new Date('2026-09-03T09:00:00Z'), day: '2026-09-03', held: false }],
+        actService: { ...page, id: 'svc-ouverture', name: 'Ouverture', unitPriceCents: 300 },
+        actSubscriptions: [],
+        mailPages: [pages('s1', '2026-09-03', 2)],
+        pageService: page,
+        pageSubscriptions: [],
+      },
+      octobre,
+    )
+    assert.deepEqual(
+      runs[0].lines.map((line) => [line.mailItemId, line.mailScanId, line.quantity]),
+      [
+        ['p1', null, 1],
+        [null, 's1', 2],
+      ],
+    )
+  })
+})
+
 describe('demandes de courrier faites (R21, ADR 037)', () => {
   const numerisation: BillingActService = {
     id: 'svc-scan',
@@ -949,6 +1052,7 @@ describe('TVA par taux, pas ligne à ligne (ADR 026)', () => {
     subscribedServiceId: null,
     mailItemId: null,
     mailRequestId: null,
+    mailScanId: null,
     serviceId: null,
     resourceId: null,
   })

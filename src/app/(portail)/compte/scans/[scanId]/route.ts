@@ -1,4 +1,5 @@
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
+import { markMailRead } from '../../../../../modules/courrier/classement.ts'
 import { findScanForAccounts } from '../../../../../modules/courrier/queries.ts'
 import { serveScan } from '../../../../../modules/courrier/servir.ts'
 
@@ -21,6 +22,9 @@ export async function GET(
   // Le journal nomme la personne au titre de l'entreprise destinataire.
   const account = accounts.find((candidate) => candidate.clientId === scan.clientId)
   if (!account) return new Response('Numérisation introuvable.', { status: 404 })
+
+  // Lire le contenu, c'est lire le pli (ADR 044) ; l'enveloppe ne compte pas.
+  if (scan.side === 'content') await markMailRead([account], scan.mailItemId)
 
   return serveScan(scan, {
     viewer: 'client',

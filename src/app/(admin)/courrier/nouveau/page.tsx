@@ -7,6 +7,8 @@ import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
 import { MailForm } from '../../../../modules/courrier/mail-form.tsx'
 import { findMail } from '../../../../modules/courrier/queries.ts'
+import { BatchBanner } from '../../../../modules/courrier/tournee-bandeau.tsx'
+import { findOpenBatch } from '../../../../modules/courrier/tournees.ts'
 
 export const metadata = { title: 'Enregistrer un courrier' }
 
@@ -17,10 +19,11 @@ export default async function NouveauCourrierPage({
 }) {
   await requirePermission('courrier.gerer')
   const { clientId, enregistre } = await searchParams
-  const [timeZone, clients, registered] = await Promise.all([
+  const [timeZone, clients, registered, batch] = await Promise.all([
     currentTimeZone(),
     listClients(),
     enregistre ? findMail(enregistre) : undefined,
+    findOpenBatch(),
   ])
 
   return (
@@ -31,8 +34,13 @@ export default async function NouveauCourrierPage({
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Enregistrer un courrier</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Le pli apparaît aussitôt dans l’espace du client, qui peut en demander l’ouverture.
+          Le pli apparaît aussitôt dans l’espace du client, qui peut en demander l’ouverture. Il
+          est prévenu à la fin de la tournée.
         </p>
+      </div>
+
+      <div className="max-w-3xl">
+        <BatchBanner batch={batch} timeZone={timeZone} />
       </div>
 
       {registered && (
@@ -41,7 +49,7 @@ export default async function NouveauCourrierPage({
           className="flex max-w-3xl flex-wrap items-center gap-2 rounded-md border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-primary"
         >
           <CheckIcon size={20} />
-          Courrier enregistré pour {registered.clientName}.
+          Courrier enregistré pour {registered.clientName}, dans la tournée en cours.
           <Link href={`/courrier/${registered.id}`} className="font-medium underline underline-offset-2">
             Voir le courrier
           </Link>

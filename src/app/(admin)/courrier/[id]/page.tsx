@@ -16,6 +16,7 @@ import {
   openingOriginLabels,
 } from '../../../../modules/courrier/labels.ts'
 import { OpenForm } from '../../../../modules/courrier/open-form.tsx'
+import { CorrectPagesForm } from '../../../../modules/courrier/pages-form.tsx'
 import { findMail } from '../../../../modules/courrier/queries.ts'
 import { canOpen, openingOrigin } from '../../../../modules/courrier/regles.ts'
 
@@ -39,15 +40,18 @@ const notices: Record<string, string> = {
   envoi: 'Suivi et frais d’affranchissement enregistrés.',
 }
 
+/** « 1 page », « 12 pages ». */
+const pagesLabel = (count: number) => `${count} page${count > 1 ? 's' : ''}`
+
 export default async function CourrierDetailPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ fait?: string }>
+  searchParams: Promise<{ fait?: string; pages?: string }>
 }) {
   await requirePermission('courrier.gerer')
-  const [{ id }, { fait }] = await Promise.all([params, searchParams])
+  const [{ id }, { fait, pages }] = await Promise.all([params, searchParams])
   const [mail, timeZone, requests] = await Promise.all([
     findMail(id),
     currentTimeZone(),
@@ -94,6 +98,9 @@ export default async function CourrierDetailPage({
       </div>
 
       {fait && notices[fait] && <FlashNotice key={fait}>{notices[fait]}</FlashNotice>}
+      {pages === 'corrigees' && (
+        <FlashNotice key="pages">Nombre de pages corrigé. Le prochain lot de facturation en tient compte.</FlashNotice>
+      )}
 
       <dl className="grid grid-cols-[11rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
         <dt className="text-muted-foreground">Destinataire</dt>
@@ -162,14 +169,25 @@ export default async function CourrierDetailPage({
                     <span className="font-normal"> — numérisation demandée</span>
                   )}
                   <span className="text-xs font-normal text-muted-foreground tabular">
-                    {formatDateTime(scan.createdAt, timeZone)} · {formatBytes(scan.byteSize)} · nouvel
-                    onglet
+                    {formatDateTime(scan.createdAt, timeZone)} · {formatBytes(scan.byteSize)}
+                    {scan.pageCount !== null && ` · ${pagesLabel(scan.pageCount)}`} · nouvel onglet
                   </span>
                 </a>
               </li>
             ))}
           </ul>
         )}
+        {mail.scans
+          .filter((scan) => scan.side === 'content' && scan.pageCount !== null)
+          .map((scan) => (
+            <CorrectPagesForm
+              key={scan.id}
+              mailItemId={mail.id}
+              scanId={scan.id}
+              pages={scan.pageCount as number}
+              label={`contenu du ${formatDateTime(scan.createdAt, timeZone)}`}
+            />
+          ))}
         <p className="text-xs text-muted-foreground">
           Chaque consultation, par le centre comme par le client, est inscrite au journal ci-dessous.
         </p>

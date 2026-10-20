@@ -12,7 +12,8 @@ import { clients } from '../clients/schema.ts'
 import { contractTypeLabels } from '../contrats/labels.ts'
 import { contractLines, contracts } from '../contrats/schema.ts'
 import { selectPriceVersions, selectSegments } from '../contrats/versions.ts'
-import { mailItems, mailRequests } from '../courrier/schema.ts'
+import { billablePages } from '../courrier/regles.ts'
+import { mailItems, mailRequests, mailScans } from '../courrier/schema.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { frozenQuoteDisplay } from './devis.ts'
@@ -403,6 +404,39 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
     }
   }
   const opening = await actService(await actServiceRow(serviceCodes.mailOpening), windows.consumption.start)
+
+  /*
+   * Pages au-delà de celles comprises dans l'ouverture (ADR 044) : le contenu
+   * numérisé à l'ouverture des plis de la période — d'office, ou sur demande
+   * d'ouverture —, compté. Les numérisations demandées ensuite (`scan`) se
+   * facturent par leur demande, pas à la page. Une numérisation purgée garde
+   * son compte : la ligne reste justifiée.
+   */
+  const pageService = await actService(await actServiceRow(serviceCodes.mailPage), windows.consumption.start)
+  const pageRows = await tx
+    .select({
+      scanId: mailScans.id,
+      clientId: mailItems.clientId,
+      openedAt: mailItems.openedAt,
+      pageCount: mailScans.pageCount,
+      held: sql<boolean>`exists (
+        select 1 from invoice_lines as l
+         where l.tenant_id = mail_scans.tenant_id and l.mail_scan_id = mail_scans.id
+           and l.deleted_at is null and l.released_at is null)`,
+    })
+    .from(mailScans)
+    .innerJoin(mailItems, eq(mailItems.id, mailScans.mailItemId))
+    .leftJoin(mailRequests, eq(mailRequests.id, mailScans.mailRequestId))
+    .where(
+      and(
+        eq(mailScans.side, 'content'),
+        isNotNull(mailScans.pageCount),
+        or(isNull(mailScans.mailRequestId), eq(mailRequests.kind, 'open_and_scan')),
+        isNull(mailItems.deletedAt),
+        gte(mailItems.openedAt, consumption.startsAt),
+        lt(mailItems.openedAt, consumption.endsAt),
+      ),
+    )
   const requestServiceRows = {
     scan: await actServiceRow(serviceCodes.mailScan),
     forward: await actServiceRow(serviceCodes.mailForwarding),
@@ -539,6 +573,18 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
     })),
     actService: opening.service,
     actSubscriptions: opening.subscriptions,
+    mailPages: pageRows
+      .map((row) => ({
+        scanId: row.scanId,
+        clientId: row.clientId,
+        openedAt: row.openedAt as Date,
+        day: toIsoDate(row.openedAt as Date, tenant.timezone),
+        pages: billablePages(row.pageCount, tenant.mailOpeningIncludedPages),
+        held: Boolean(row.held),
+      }))
+      .filter((row) => row.pages > 0),
+    pageService: pageService.service,
+    pageSubscriptions: pageService.subscriptions,
     mailRequests: requestRows.map((row) => ({
       id: row.id,
       clientId: row.clientId,
@@ -716,6 +762,7 @@ function lineValues(invoiceId: string, line: InvoiceLineDraft, position: number)
     subscribedServiceId: line.subscribedServiceId,
     mailItemId: line.mailItemId,
     mailRequestId: line.mailRequestId,
+    mailScanId: line.mailScanId,
     serviceId: line.serviceId,
     resourceId: line.resourceId,
   }
