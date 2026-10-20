@@ -4,7 +4,8 @@ import { NextResponse, type NextRequest } from 'next/server'
 /**
  * Filtre d'accès au back-office (ADR 008).
  *
- * Next 16 nomme ce fichier `proxy.ts`. Il redirige vers la connexion les
+ * Next 16 nomme ce fichier `proxy.ts` et, le projet ayant un dossier `src/`,
+ * ne le cherche qu'ici : à la racine, il n'était jamais exécuté. Il redirige vers la connexion les
  * visiteurs sans cookie de session, avant même le rendu de la page.
  *
  * Ce filtre est une commodité, pas la protection : il ne regarde que la
@@ -46,6 +47,7 @@ export const config = {
     '/courrier/:path*',
     '/etats-des-lieux/:path*',
     '/indicateurs/:path*',
+    '/notifications/:path*',
     '/equipe/:path*',
     '/comptes/:path*',
     '/configuration/:path*',

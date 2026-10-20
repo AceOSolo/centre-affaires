@@ -5,6 +5,7 @@ import { useState, useTransition } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import { authClient } from '../../../../lib/auth/client.ts'
+import { safeRedirect } from '../../../../lib/redirection.ts'
 
 const fieldClass =
   'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30'
@@ -46,7 +47,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
 
   // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
   // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
-  const redirectTo = searchParams.get('redirect') ?? (equipe ? '/reservations' : '/auth/suite')
+  const redirectTo = safeRedirect(searchParams.get('redirect')) ?? (equipe ? '/reservations' : '/auth/suite')
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
