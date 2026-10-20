@@ -10,7 +10,7 @@ import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { resolveClientAccounts } from '../clients/comptes.ts'
 import { lire, toutVider } from '../clients/test-support.ts'
 import { activeBan, attachAccountToClient, banAccounts, liftBans, listAccounts } from './comptes.ts'
-import { ensureSignupClient } from './inscription.ts'
+import { ensureSignupClient, resolveOrSignupClientAccounts } from './inscription.ts'
 
 /**
  * Inscription libre et comptes bannis (ADR 045), contre une vraie base.
@@ -147,6 +147,55 @@ describe('comptes du site', { skip: raisonDeSaut }, () => {
         tx.execute(sql`insert into client_members (client_id, email) values (${HOLDING}, ${jeanne.email})`),
       )
       assert.equal(await asTenant((tx) => ensureSignupClient(tx, jeanne)), false)
+    })
+  })
+
+  describe('premier accès à l’espace client', () => {
+    /** Attend que `nombre` transactions de la base de test bloquent sur un verrou. */
+    const attendreDesVerrous = async (nombre: number) => {
+      for (let essai = 0; essai < 200; essai++) {
+        const [lignes] = (await bases.owner.client.query(
+          `select count(*) as n from performance_schema.data_lock_waits w
+             join performance_schema.data_locks l on l.engine_lock_id = w.requesting_engine_lock_id
+            where l.object_schema = database()`,
+        )) as unknown as [{ n: number }[]]
+        if (Number(lignes[0].n) >= nombre) return
+        await new Promise((resolve) => setTimeout(resolve, 25))
+      }
+      throw new Error(`Moins de ${nombre} requêtes attendent le verrou du compte.`)
+    }
+
+    it('crée la fiche à la première visite d’une adresse confirmée', async () => {
+      const comptes = await asTenant((tx) => resolveOrSignupClientAccounts(tx, jeanne, { emailVerified: true }))
+      assert.deepEqual(comptes.map((c) => c.clientName), ['Durand Conseil'])
+    })
+
+    it('ne crée rien tant que l’adresse n’est pas confirmée', async () => {
+      assert.deepEqual(await asTenant((tx) => resolveOrSignupClientAccounts(tx, jeanne, { emailVerified: false })), [])
+      const [{ n }] = await asTenant((tx) => lire(tx, sql`select count(*) as n from clients where origin = 'inscription'`))
+      assert.equal(Number(n), 0)
+    })
+
+    it('rend la fiche aussi à la requête simultanée qui ne l’a pas créée', async () => {
+      // La page et ses requêtes parallèles arrivent ensemble : toutes lisent
+      // « aucune entreprise », puis attendent le verrou du compte. Celle qui
+      // passait en second lisait « Accès refusé ».
+      const verrou = await bases.owner.client.getConnection()
+      try {
+        await verrou.query('begin')
+        await verrou.query('select id from auth_users where id = ? for update', [U_JEANNE])
+        const requetes = [1, 2].map(() => asTenant((tx) => resolveOrSignupClientAccounts(tx, jeanne)))
+        await attendreDesVerrous(2)
+        await verrou.query('commit')
+
+        const [une, autre] = await Promise.all(requetes)
+        assert.deepEqual(une.map((c) => c.clientName), ['Durand Conseil'])
+        assert.deepEqual(autre, une)
+      } finally {
+        verrou.release()
+      }
+      const [{ n }] = await asTenant((tx) => lire(tx, sql`select count(*) as n from clients where origin = 'inscription'`))
+      assert.equal(Number(n), 1)
     })
   })
 

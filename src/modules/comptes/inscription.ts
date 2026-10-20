@@ -7,6 +7,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { authUsers } from '../../lib/auth/schema.ts'
+import { resolveClientAccounts, type ClientAccount } from '../clients/comptes.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 
 /**
@@ -97,4 +98,28 @@ export async function ensureSignupClient(
     fullName: user.name || null,
   })
   return true
+}
+
+/**
+ * Entreprises du compte connecté, sa fiche d'inscription libre créée au
+ * besoin : le cœur de `clientAccess` (`clients/session.ts`), ici pour être
+ * éprouvé contre une vraie base.
+ *
+ * Pas de fiche avant que l'adresse soit confirmée, pour qu'une adresse
+ * inventée ne remplisse pas la liste des clients.
+ *
+ * La résolution est rejouée même quand `ensureSignupClient` n'a rien créé :
+ * au premier accès, la page et ses requêtes parallèles arrivent ensemble ;
+ * celle qui attendait le verrou du compte trouve la fiche que l'autre vient
+ * de créer, et doit la rendre plutôt que la liste vide lue avant.
+ */
+export async function resolveOrSignupClientAccounts(
+  tx: Transaction,
+  user: AuthenticatedUser,
+  options: { emailVerified?: boolean } = {},
+): Promise<ClientAccount[]> {
+  const found = await resolveClientAccounts(tx, user, options)
+  if (found.length > 0 || options.emailVerified === false) return found
+  await ensureSignupClient(tx, user)
+  return resolveClientAccounts(tx, user, options)
 }

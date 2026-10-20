@@ -6,8 +6,8 @@ import { withTenant } from '../../db/index.ts'
 import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { sessionUser } from '../../lib/auth/session.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { ensureSignupClient } from '../comptes/inscription.ts'
-import { resolveClientAccounts, type ClientAccount } from './comptes.ts'
+import { resolveOrSignupClientAccounts } from '../comptes/inscription.ts'
+import type { ClientAccount } from './comptes.ts'
 
 /**
  * Du compte connecté aux entreprises dont il relève (ADR 015).
@@ -24,14 +24,11 @@ export const clientAccess = cache(async (): Promise<ClientAccess> => {
   if (!session) return { status: 'anonyme' }
   const { user, emailVerified } = session
 
-  const accounts = await withTenant(currentTenantId(), async (tx) => {
-    const found = await resolveClientAccounts(tx, user, { emailVerified })
-    // Inscription libre (ADR 045) : sans entreprise, le compte reçoit la
-    // sienne — pas avant que son adresse soit confirmée, pour qu'une adresse
-    // inventée ne remplisse pas la liste des clients.
-    if (found.length > 0 || emailVerified === false) return found
-    return (await ensureSignupClient(tx, user)) ? resolveClientAccounts(tx, user, { emailVerified }) : found
-  })
+  // Inscription libre (ADR 045) : sans entreprise, le compte reçoit la
+  // sienne, une fois son adresse confirmée.
+  const accounts = await withTenant(currentTenantId(), (tx) =>
+    resolveOrSignupClientAccounts(tx, user, { emailVerified }),
+  )
   return accounts.length > 0 ? { status: 'client', user, accounts } : { status: 'refuse', user }
 })
 

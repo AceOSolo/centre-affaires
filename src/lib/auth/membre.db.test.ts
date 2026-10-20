@@ -202,5 +202,54 @@ describe('résolution du membre de l’équipe', { skip: raisonDeSaut }, () => {
         assert.equal(await resoudre(compte('u2', 'alexis@exemple.fr')), undefined)
       })
     })
+
+    describe('deux requêtes au premier accès', () => {
+      /** Attend qu'une transaction de la base de test bloque sur un verrou. */
+      const attendreUnVerrou = async () => {
+        for (let essai = 0; essai < 200; essai++) {
+          const [lignes] = (await bases.owner.client.query(
+            `select count(*) as n from performance_schema.data_lock_waits w
+               join performance_schema.data_locks l on l.engine_lock_id = w.requesting_engine_lock_id
+              where l.object_schema = database()`,
+          )) as unknown as [{ n: number }[]]
+          if (Number(lignes[0].n) > 0) return
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        }
+        throw new Error('Aucune requête n’attend le verrou du membre.')
+      }
+
+      it('rend le membre aussi à la requête qui a perdu le rattachement', async () => {
+        // La page et ses requêtes parallèles résolvent le même compte en même
+        // temps. Celle qui perd la course lisait « Accès refusé ».
+        await inscrire('alexis@exemple.fr')
+        const alexis = compte('u1', 'alexis@exemple.fr')
+
+        // La première rattache le membre et garde sa transaction ouverte…
+        let liberer!: () => void
+        const tenue = new Promise<void>((resolve) => (liberer = resolve))
+        let signaler!: () => void
+        const rattache = new Promise<void>((resolve) => (signaler = resolve))
+        const premiere = withTenant(
+          DEFAULT_TENANT_ID,
+          async (tx) => {
+            const membre = await resolveStaffMember(tx, alexis)
+            signaler()
+            await tenue
+            return membre
+          },
+          bases.app.db,
+        )
+        await rattache
+
+        // …la seconde a vu le membre libre et attend son verrou.
+        const seconde = resoudre(alexis)
+        await attendreUnVerrou()
+        liberer()
+
+        const [gagnante, perdante] = await Promise.all([premiere, seconde])
+        assert.equal(gagnante?.authUserId, 'u1')
+        assert.equal(perdante?.id, gagnante?.id)
+      })
+    })
   }
 })

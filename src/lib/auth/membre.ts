@@ -44,17 +44,22 @@ export async function resolveStaffMember(
   user: AuthenticatedUser,
   options: { emailVerified?: boolean } = {},
 ): Promise<StaffMember | undefined> {
-  const [linked] = await tx
-    .select()
-    .from(staffMembers)
-    .where(
-      and(
-        inCurrentTenant(),
-        eq(staffMembers.authUserId, user.id),
-        isNull(staffMembers.deletedAt),
-      ),
-    )
-    .limit(1)
+  const linkedToAccount = async () => {
+    const [linked] = await tx
+      .select()
+      .from(staffMembers)
+      .where(
+        and(
+          inCurrentTenant(),
+          eq(staffMembers.authUserId, user.id),
+          isNull(staffMembers.deletedAt),
+        ),
+      )
+      .limit(1)
+    return linked
+  }
+
+  const linked = await linkedToAccount()
   if (linked) return linked
 
   // Premier accès : le membre a été inscrit par son adresse, le compte lui est
@@ -88,5 +93,11 @@ export async function resolveStaffMember(
     // les deux requêtes, une autre connexion a pu rattacher le même membre.
     and(inCurrentTenant(), eq(staffMembers.id, invited.id), isNull(staffMembers.authUserId)),
   )
-  return claimed
+  if (claimed) return claimed
+
+  // Rattachement perdu : au premier accès, la page et ses requêtes parallèles
+  // résolvent le même compte en même temps, et la première a rattaché le
+  // membre. Relu par le compte — en `READ COMMITTED`, la relecture voit ce
+  // rattachement ; fait par un autre compte, elle ne trouve toujours rien.
+  return linkedToAccount()
 }
