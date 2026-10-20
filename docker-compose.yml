@@ -30,7 +30,9 @@ services:
       MYSQL_DATABASE: centre_affaires
     ports:
       # Boucle locale seulement : la base de dev n'est pas ouverte au réseau.
-      - "127.0.0.1:3306:3306"
+      # Port choisi par DB_PORT (`--env-file .env.local`) quand 3306 est déjà
+      # pris, par un WAMP par exemple.
+      - "127.0.0.1:${DB_PORT:-3306}:3306"
     volumes:
       - db-data:/var/lib/mysql
     healthcheck:

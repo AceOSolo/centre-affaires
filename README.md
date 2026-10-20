@@ -67,7 +67,7 @@ d'adresse (l'application le refuse en production).
 ### Base locale
 
 ```bash
-docker compose up -d db          # MySQL 8.4 sur 127.0.0.1:3306
+docker compose --env-file .env.local up -d db   # MySQL 8.4 sur 127.0.0.1:DB_PORT (3306 par défaut)
 # .env.local : DB_HOST=127.0.0.1, DB_NAME=centre_affaires, DB_USER=centre_affaires,
 #   DB_PASSWORD=<au choix>, DB_ADMIN_USER=root, DB_ADMIN_PASSWORD=root
 npm run db:migrer                # crée la base et DB_USER, structure, règles, droits
