@@ -1,3 +1,6 @@
+import Link from 'next/link'
+
+import { staffAccess } from '../../../lib/auth/staff.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
 import { SignOutButton } from '../../(auth)/sign-out-button.tsx'
 import { CompteNav } from './compte-nav.tsx'
@@ -13,6 +16,8 @@ export const metadata = { title: 'Espace client' }
  */
 export default async function CompteLayout({ children }: { children: React.ReactNode }) {
   const { user, accounts } = await requireClientAccount()
+  // Un membre de l'équipe peut aussi être client : il retrouve le back-office.
+  const staff = await staffAccess()
 
   return (
     <div className="mx-auto w-full max-w-[1200px] px-5 py-8 sm:px-8 sm:py-12">
@@ -23,7 +28,17 @@ export default async function CompteLayout({ children }: { children: React.React
           </p>
           <p className="truncate text-muted-foreground">Connecté avec {user.email}</p>
         </div>
-        <SignOutButton className="inline-flex min-h-11 items-center rounded-md border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-background disabled:opacity-60" />
+        <div className="flex flex-wrap items-center gap-2">
+          {staff.status === 'membre' && (
+            <Link
+              href="/reservations"
+              className="inline-flex min-h-11 items-center rounded-md border border-border bg-white px-4 text-sm font-medium text-primary transition-colors hover:bg-background"
+            >
+              Back-office
+            </Link>
+          )}
+          <SignOutButton className="inline-flex min-h-11 items-center rounded-md border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-background disabled:opacity-60" />
+        </div>
       </div>
       <div className="mt-6">
         <CompteNav />

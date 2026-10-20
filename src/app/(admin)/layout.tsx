@@ -1,10 +1,13 @@
 import Image from 'next/image'
 import Link from 'next/link'
 
+import { withTenant } from '../../db/index.ts'
 import { staffRoleLabels } from '../../db/staff.ts'
 import { permissionsOf } from '../../lib/auth/permissions.ts'
 import { requireStaff } from '../../lib/auth/staff.ts'
-import { currentTenant } from '../../lib/tenant.ts'
+import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
+import { staffHasClientSpace } from '../../modules/comptes/espace-equipe.ts'
+import { openStaffClientSpaceAction } from '../../modules/comptes/espace-equipe-actions.ts'
 import { countPendingMailRequests } from '../../modules/courrier/demandes-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
@@ -31,12 +34,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // Les pages et les actions serveur vérifient le droit de leur rôle par
   // `requirePermission()` — les actions ne passent pas par cette coque
   // (ADR 008, ADR 019).
-  const { member } = await requireStaff()
-  const [tenant, pending, mailRequests] = await Promise.all([
+  const { user, member } = await requireStaff()
+  const [tenant, pending, mailRequests, hasClientSpace] = await Promise.all([
     currentTenant(),
     listPendingBookings(),
     // Demandes de courrier à traiter, toutes natures (ADR 037).
     countPendingMailRequests().then((counts) => counts.total),
+    withTenant(currentTenantId(), (tx) => staffHasClientSpace(tx, user)),
   ])
 
   const logo = (
@@ -72,6 +76,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       {/* Le fuseau est affiché : toutes les heures de l'écran sont les
           siennes, alors que la base est en UTC (décision 4). */}
       <p>Heures affichées en {tenant.timezone}</p>
+      {/* Le même compte peut aussi être client du centre. Un formulaire et non
+          un lien : la première fois, l'action crée la fiche. */}
+      <form action={openStaffClientSpaceAction}>
+        <button
+          type="submit"
+          className="font-medium text-primary underline-offset-2 transition-colors duration-150 ease-out hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+        >
+          {hasClientSpace ? 'Mon espace client' : 'Créer mon espace client'}
+        </button>
+      </form>
       <SignOutButton
         redirectTo="/auth/equipe"
         className="self-start rounded-md border border-border bg-white px-3 py-1.5 text-xs font-medium text-foreground transition-colors duration-150 ease-out hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />

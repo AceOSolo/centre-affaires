@@ -154,3 +154,20 @@ serveur n'exige pas la vérification, ce qui n'arrive jamais en production.
 - Tests : `modules/comptes/regles.test.ts` (état, durée, formulaire),
   `modules/comptes/comptes.db.test.ts` (création unique de la fiche, refus,
   bannissement, sessions fermées, levée, centres séparés, rattachement).
+
+## Révision du 20/10/2026 — espace client d'un membre de l'équipe
+
+Un membre de l'équipe peut aussi être client du centre : il loue, ou veut
+voir le portail comme ses clients le voient. Il garde un seul compte.
+
+- **Sur demande seulement.** Le lien « Créer mon espace client » en pied de
+  la barre latérale du back-office (`openStaffClientSpaceAction`) lui crée sa
+  fiche prospect, d'origine `back_office` : pas une inscription en ligne à
+  examiner. `ensureSignupClient(…, { forStaff: true })` saute pour cela
+  l'exclusion des membres de l'équipe ; sans l'option, rien ne change. Jamais
+  d'office : un membre qui fait une demande de réservation connecté sur le site
+  ne se retrouve pas avec une fiche qu'il n'a pas demandée.
+- **Ensuite.** Le lien devient « Mon espace client » (`staffHasClientSpace`,
+  qui compte aussi une inscription faite à son adresse par le centre). Depuis
+  `/compte`, un bouton « Back-office » le ramène à l'équipe.
+- Un ancien accès retiré par l'équipe ne renaît toujours pas.

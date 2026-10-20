@@ -37,12 +37,20 @@ export function signupClientName(input: { companyName: string | null; name: stri
  *
  * - un accès à une entreprise, en cours ou retiré — retiré par l'équipe, il ne
  *   doit pas renaître sous une fiche neuve à la connexion suivante ;
- * - une place dans l'équipe, en cours ou passée.
+ * - une place dans l'équipe, en cours ou passée — sauf `forStaff` : un membre
+ *   de l'équipe qui demande lui-même son espace client depuis le back-office
+ *   (`espace-equipe-actions.ts`). Jamais d'office : un membre qui fait une
+ *   demande de réservation connecté sur le site ne doit pas se retrouver avec
+ *   une fiche qu'il n'a pas demandée.
  *
  * Le compte est verrouillé le temps de la vérification : deux requêtes
  * simultanées de la première connexion ne créent pas deux fiches.
  */
-export async function ensureSignupClient(tx: Transaction, user: AuthenticatedUser): Promise<boolean> {
+export async function ensureSignupClient(
+  tx: Transaction,
+  user: AuthenticatedUser,
+  options: { forStaff?: boolean } = {},
+): Promise<boolean> {
   const [account] = await tx
     .select({ id: authUsers.id, companyName: authUsers.companyName })
     .from(authUsers)
@@ -72,13 +80,15 @@ export async function ensureSignupClient(tx: Transaction, user: AuthenticatedUse
       ),
     )
     .limit(1)
-  if (staff) return false
+  if (staff && !options.forStaff) return false
 
   const client = await insertReturning(tx, clients, {
     name: signupClientName({ companyName: account.companyName, name: user.name, email: user.email }),
     email: user.email,
     status: 'prospect',
-    origin: 'inscription',
+    // Créée depuis le back-office par le membre lui-même : pas une inscription
+    // en ligne à examiner dans l'écran Comptes.
+    origin: options.forStaff ? 'back_office' : 'inscription',
   })
   await tx.insert(clientMembers).values({
     clientId: client.id,

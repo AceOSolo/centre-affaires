@@ -126,6 +126,20 @@ describe('comptes du site', { skip: raisonDeSaut }, () => {
       assert.equal(await asTenant((tx) => ensureSignupClient(tx, exploitant)), false)
     })
 
+    it('crée l’espace client d’un membre de l’équipe qui le demande, une seule fois', async () => {
+      const exploitant = { id: U_EXPLOITANT, email: 'exploitant@exemple.test', name: 'Alex Exploitant' }
+      assert.equal(await asTenant((tx) => ensureSignupClient(tx, exploitant, { forStaff: true })), true)
+      assert.equal(await asTenant((tx) => ensureSignupClient(tx, exploitant, { forStaff: true })), false)
+
+      const comptes = await asTenant((tx) => resolveClientAccounts(tx, exploitant))
+      assert.deepEqual(comptes.map((c) => c.clientName), ['Alex Exploitant'])
+      // Demandée depuis le back-office : pas une inscription en ligne.
+      const [fiche] = await asTenant((tx) =>
+        lire(tx, sql`select status, origin from clients where id = ${comptes[0].clientId}`),
+      )
+      assert.deepEqual(fiche, { status: 'prospect', origin: 'back_office' })
+    })
+
     it('ne crée rien pour une adresse invitée par le centre, pas encore réclamée', async () => {
       // La résolution la rattache d'abord ; si elle ne l'a pas fait, la fiche
       // existante prime sur une fiche neuve.
