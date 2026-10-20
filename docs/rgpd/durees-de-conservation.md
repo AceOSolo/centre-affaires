@@ -74,7 +74,7 @@ de motif personnel ; on écrit « Réunion Alpha », pas « Entretien M. Dupont 
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
 |---|---|---|---|---|---|
-| Journaux Apache (adresse IP, URL, navigateur) | 14 jours avec la rotation par défaut de Debian | écriture | fichier effacé | M6 | à vérifier sur le serveur, puis à valider. La CNIL recommande 6 mois à 1 an pour les journaux de sécurité. |
+| Journaux nginx (adresse IP, URL, navigateur) | 14 jours avec la rotation par défaut de Debian | écriture | fichier effacé | M6 | à vérifier sur le serveur, puis à valider. La CNIL recommande 6 mois à 1 an pour les journaux de sécurité. |
 | Journaux de l'application (erreurs ; une adresse électronique peut y figurer) | jusqu'au déploiement suivant, 50 Mo au plus | écriture | effacés | M5 | fixé par l'ADR 022 |
 | Journaux d'envoi de Brevo (destinataire, objet, statut) | durée fixée par Brevo | envoi | — | Brevo | à vérifier dans le compte Brevo |
 | Journal binaire de MySQL (`binlog`, volume `db-data` du VPS : contient les écritures, donc des données personnelles) | 30 jours (réglage par défaut de MySQL 8.4) | écriture | fichier effacé par le serveur | `binlog_expire_logs_seconds` | à valider : une donnée effacée de la base reste lisible dans ces fichiers jusqu'à 30 jours, par qui a accès au volume du serveur ; réduire la durée si le centre le juge nécessaire |
@@ -150,8 +150,9 @@ Si le centre veut raccourcir cette survie, il réduit
 `infra/serveur/compose.yml` : cinq fichiers de 10 Mo, effacés aussi quand un
 déploiement recrée le conteneur.
 
-**M6. Journaux Apache.** `/etc/logrotate.d/apache2` sur le serveur
-(`rotate` × période).
+**M6. Journaux nginx.** `/etc/logrotate.d/nginx` sur le serveur
+(`rotate` × période). Le serveur web du VPS est nginx, pas Apache (ADR 051) :
+`/var/log/nginx/handfield-*.log`.
 
 **M7. Anonymisation RGPD (ADR 040, complété par l'ADR 041).**
 
@@ -209,5 +210,5 @@ déploiement recrée le conteneur.
 3. ~~Construire l'anonymisation des fiches clients, contacts, contrats et
    plis~~ : fait (M7, ADR 040). Reste l'IBAN chiffré des mandats révoqués
    (durée propre, ADR 034).
-4. **Vérifier** sur le serveur la rotation Apache et, chez Brevo, la durée
+4. **Vérifier** sur le serveur la rotation nginx et, chez Brevo, la durée
    des journaux d'envoi.

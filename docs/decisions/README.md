@@ -26,7 +26,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
 | 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté ; vue semaine amendée par l'ADR 017 |
 | 012 | [Les horaires sont portés par la ressource](012-horaires-portes-par-la-ressource.md) | 2026-09-18 | accepté |
-| 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** |
+| 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** ; Apache remplacé par nginx et port local 3100 (ADR 051) ; job de déploiement retiré de la CI le 15/10/2026, mise en ligne manuelle |
 | 013 | [Séries et délais de réservation](013-series-et-delais-de-reservation.md) | 2026-09-21 | accepté — **numéro en double** |
 | 014 | [Un agenda Google par ressource](014-agendas-google-par-ressource.md) | 2026-09-30 | **proposé** : le compromis RGPD est à valider |
 | 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté ; inscription libre par l'ADR 045 (fiche client créée à l'inscription) |
@@ -65,6 +65,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 048 | [Menu du back-office rangé par le parcours d'une demande](048-menu-du-back-office-par-parcours-client.md) | 2026-10-20 | accepté ; remplace le menu par produit de l'ADR 046 (filtres par produit des pages conservés) |
 | 049 | [Produits et tarifs reçus de Dolibarr par son module Webhook](049-produits-recus-de-dolibarr.md) | 2026-10-20 | accepté ; première pièce de la passerelle entrante de l'ADR 046 § 5 (services et tarifs, `POST /api/dolibarr/produits`), sans migration ; tiers et contrats restent à faire |
 | 050 | [Écran « Aujourd'hui », page d'arrivée de l'équipe](050-ecran-aujourdhui.md) | 2026-10-20 | accepté ; amende l'ADR 048 (ordre des groupes du menu : « Aujourd'hui » en tête) |
+| 051 | [nginx devant l'application, à la place d'Apache](051-nginx-devant-l-application.md) | 2026-10-20 | accepté ; amende l'ADR 013 (serveur web nginx, application sur `127.0.0.1:3100`) ; plafond d'envoi de l'ADR 015 et lecture de l'adresse IP de l'ADR 047 portés par nginx ; reprend l'ADR nginx d'une branche non fusionnée du 06/10/2026 |
 
 ## Numéros en double et numéro manquant
 
@@ -112,7 +113,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **051** (049 pris par la session des produits Dolibarr, 050 par l'écran « Aujourd'hui »).
+   `ListAgents`. Le prochain numéro libre est **052** (049 pris par la session des produits Dolibarr, 050 par l'écran « Aujourd'hui », 051 par nginx).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

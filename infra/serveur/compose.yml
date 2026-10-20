@@ -1,9 +1,9 @@
-# Production sur le VPS de production (ADR 013, ADR 042).
+# Production sur le VPS de production (ADR 013, ADR 042, ADR 051).
 #
 # Ce fichier est recopié sur le serveur à chaque déploiement par la CI : la
 # configuration suit le dépôt. Les secrets, eux, vivent dans le `.env` posé à
 # côté, jamais dans le dépôt (modèle : `.env.example`). HTTPS et le domaine
-# sont l'affaire de l'Apache déjà en place (`apache-handfield.conf`).
+# sont l'affaire du nginx déjà en place (`nginx-handfield-*.conf`, ADR 051).
 #
 # La base MySQL tourne ici, dans le même compose que l'application : elle n'est
 # publiée sur aucun port, seul le conteneur `app` (et `migrer`) l'atteint par
@@ -52,10 +52,13 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    # Publié sur la boucle locale seulement : joignable par Apache, jamais
-    # depuis l'extérieur. PORT_LOCAL si 3000 est déjà pris sur le serveur.
+    # Publié sur la boucle locale seulement : joignable par nginx, jamais
+    # depuis l'extérieur. 3100 et pas 3000 : sur le VPS de production, 3000
+    # est pris par Open WebUI (ADR 051). PORT_LOCAL si 3100 l'est aussi, à
+    # reporter alors dans `nginx-handfield-https.conf`. Dans le conteneur,
+    # l'application écoute toujours sur 3000 (Dockerfile).
     ports:
-      - "127.0.0.1:${PORT_LOCAL:-3000}:3000"
+      - "127.0.0.1:${PORT_LOCAL:-3100}:3000"
     # Journaux bornés (registre RGPD, docs/rgpd/durees-de-conservation.md) :
     # sans limite, Docker les garde jusqu'à saturer le disque. Ils peuvent
     # citer une adresse électronique dans une erreur d'envoi. Cinq fichiers

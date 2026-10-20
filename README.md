@@ -26,7 +26,7 @@ Les règles du projet, à lire avant toute contribution, sont dans
 | Authentification | Better Auth auto-hébergé, sur la même base | ADR 042 |
 | Fichiers | S3 en région UE (MinIO sur le VPS ou hébergeur), bucket privé `uploads` | ADR 015, 042 |
 | Courriels | SMTP de Brevo | ADR 015 |
-| Hébergement | Image Docker sur le VPS de production, derrière Apache | ADR 013 |
+| Hébergement | Image Docker sur le VPS de production, derrière nginx (`127.0.0.1:3100`) | ADR 013, 051 |
 | Sauvegardes | Lot nocturne chiffré, hors du serveur | ADR 022 |
 
 ## Organisation

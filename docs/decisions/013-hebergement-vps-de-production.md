@@ -3,6 +3,25 @@
 **Date** : 2026-09-30
 **Statut** : accepté — remplace la partie « hébergement applicatif » de l'ADR 001
 
+> **Amendements (20/10/2026).** Le texte ci-dessous est conservé tel qu'il a
+> été accepté ; trois points ont changé depuis :
+>
+> - **nginx, pas Apache.** Le serveur web en place sur le VPS est nginx, et
+>   l'application y est publiée sur `127.0.0.1:3100` (3000 est pris par
+>   Open WebUI) : voir l'[ADR 051](051-nginx-devant-l-application.md).
+>   `apache-handfield.conf` est remplacé par `nginx-handfield-http.conf` et
+>   `nginx-handfield-https.conf`.
+> - **MySQL sur le VPS, pas Neon.** La base est le service `db` du même
+>   compose que l'application, et l'authentification Better Auth
+>   auto-hébergé ([ADR 042](042-mysql-sur-le-vps.md)). Les migrations restent
+>   manuelles : `docker compose run --rm migrer` sur le serveur.
+> - **Plus de déploiement automatique.** Le job `deploy` décrit plus bas a
+>   été retiré de la CI le 15/10/2026 (commit `e469801`, passage à MySQL) et
+>   n'est pas rétabli ; le dernier déploiement automatique date du
+>   06/10/2026. Une version se met en ligne à la main
+>   (`infra/serveur/README.md`, section 4). Rétablir le déploiement
+>   automatique est une décision en attente.
+
 ## Contexte
 
 L'ADR 001 retenait Vercel pour l'application et prévoyait une sortie : « vers

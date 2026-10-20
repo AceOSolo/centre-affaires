@@ -1,10 +1,13 @@
 # Mise en production sur le VPS de production
 
-Le choix et ses raisons : [ADR 013](../../docs/decisions/013-hebergement-vps-de-production.md).
+Le choix et ses raisons : [ADR 013](../../docs/decisions/013-hebergement-vps-de-production.md),
+amendé par l'[ADR 051](../../docs/decisions/051-nginx-devant-l-application.md)
+(nginx) ; la base : [ADR 042](../../docs/decisions/042-mysql-sur-le-vps.md).
 
 L'application tourne dans un conteneur Docker sur le VPS de production (Debian),
-à côté des sites qu'il héberge déjà. Elle n'écoute que sur `127.0.0.1` ; c'est
-l'Apache en place qui sert le domaine et HTTPS. La base MySQL 8.4 tourne sur
+à côté des sites qu'il héberge déjà. Elle n'écoute que sur `127.0.0.1:3100`
+(3000 est pris par Open WebUI) ; c'est le nginx en place qui sert le domaine
+et HTTPS. La base MySQL 8.4 tourne sur
 le même serveur, dans un conteneur du même compose, sans port publié : seuls
 l'application et l'outil de migration l'atteignent (ADR 042).
 
@@ -21,7 +24,7 @@ S'il n'y est pas déjà (`docker compose version` pour vérifier) :
 curl -fsSL https://get.docker.com | sudo sh
 ```
 
-Docker ne touche ni à Apache ni aux sites existants : le conteneur n'est
+Docker ne touche ni à nginx ni aux sites existants : le conteneur n'est
 joignable que depuis le serveur lui-même.
 
 ## 2. Compte de déploiement
@@ -74,8 +77,11 @@ serveur, et c'est lui qui configure aussi la base : il y a un seul fichier.
 - `AUTH_SECRET` : `openssl rand -base64 32`. `AUTH_SKIP_EMAIL_VERIFICATION`
   reste à `false` ; l'application refuse de démarrer en production avec
   `true`.
-- Si `sudo ss -ltnp | grep ':3000 '` montre que le port 3000 est déjà pris,
-  y ajouter `PORT_LOCAL=<autre port>`.
+- L'application est publiée sur `127.0.0.1:3100`, 3000 étant pris par
+  Open WebUI (ADR 051). Si `sudo ss -ltnp | grep ':3100 '` montre que 3100
+  est pris par autre chose que l'application, y ajouter
+  `PORT_LOCAL=<autre port>` et reporter ce port dans
+  `nginx-handfield-https.conf` (`proxy_pass`).
 - La clé de chiffrement des documents se crée et se sauvegarde hors du
   serveur comme indiqué à « Chiffrement des documents », plus bas.
 
@@ -153,27 +159,61 @@ ajoutent, sans les remplacer (étape 8).
 L'IPv4 du serveur figure dans l'espace client OVH (Bare Metal Cloud → VPS), ou
 dans la zone DNS d'un autre domaine déjà hébergé dessus.
 
-## 7. Apache et certificat
+## 7. nginx et certificat
 
-Une fois le DNS propagé (`dig +short www.handfield.fr` renvoie l'adresse du
-serveur), en root sur le serveur :
+Le serveur web du VPS est nginx, pas Apache
+([ADR 051](../../docs/decisions/051-nginx-devant-l-application.md)). Deux
+fichiers du dépôt lui confient le domaine : `nginx-handfield-http.conf`
+(port 80 : validation Let's Encrypt et redirection vers HTTPS), puis
+`nginx-handfield-https.conf` (port 443 : proxy vers `127.0.0.1:3100`), activé
+une fois le certificat obtenu.
+
+**Déjà en place depuis l'installation du 06/10/2026** : `www.handfield.fr`
+est servi par nginx. À chaque mise en ligne, il suffit de vérifier que la
+configuration installée est celle du dépôt (section 4.5). La suite de cette
+section sert à une installation neuve ou à une réparation.
+
+Une fois le DNS modifié (section 6), en root sur le serveur. Aucun autre site
+nginx ne doit déjà déclarer le domaine : la première commande ne doit rien
+afficher. Si elle cite un fichier (ancien site), supprimer son lien dans
+`sites-enabled`.
 
 ```bash
-a2enmod proxy proxy_http headers ssl rewrite
-mkdir -p /var/www/letsencrypt
-cp /home/deploy/centre-affaires/apache-handfield.conf /etc/apache2/sites-available/
-a2ensite apache-handfield
-apache2ctl configtest && systemctl reload apache2
+grep -rl handfield /etc/nginx/sites-enabled/ /etc/nginx/conf.d/
 
-# Le bloc HTTPS du fichier ne s'active qu'une fois le certificat présent.
+mkdir -p /var/www/letsencrypt/.well-known/acme-challenge
+cp /home/deploy/centre-affaires/nginx-handfield-*.conf /etc/nginx/sites-available/
+ln -s /etc/nginx/sites-available/nginx-handfield-http.conf /etc/nginx/sites-enabled/
+nginx -t && systemctl reload nginx
+
+echo ok > /var/www/letsencrypt/.well-known/acme-challenge/test
+for d in handfield.fr www.handfield.fr; do echo "$d -> $(getent ahosts $d | awk '{print $1}' | sort -u | xargs) | test : $(curl -s http://$d/.well-known/acme-challenge/test)"; done
+```
+
+Les deux lignes doivent montrer l'IPv4 du serveur, seule, et `test : ok`.
+Toute autre adresse, IPv6 comprise (Let's Encrypt essaie l'IPv6 en premier),
+est une ligne à supprimer dans la zone DNS (section 6). Tant que ce n'est pas
+le cas, ne pas lancer certbot : Let's Encrypt bloque après cinq échecs par
+heure. Relancer la boucle après chaque modification du DNS.
+
+Puis, d'un seul tenant : le bloc HTTPS ne s'active que si certbot a réussi.
+Sans certificat, nginx refuserait de démarrer, et avec lui tous les sites du
+serveur.
+
+```bash
 apt install certbot   # s'il n'y est pas
 certbot certonly --webroot -w /var/www/letsencrypt \
   -d www.handfield.fr -d handfield.fr \
-  --deploy-hook "systemctl reload apache2"
-systemctl reload apache2
+  --deploy-hook "systemctl reload nginx" \
+  && ln -sf /etc/nginx/sites-available/nginx-handfield-https.conf /etc/nginx/sites-enabled/ \
+  && nginx -t && systemctl reload nginx
 ```
 
-Le renouvellement est automatique (minuteur de certbot) et recharge Apache.
+Si `nginx -t` échoue un jour avec le bloc HTTPS actif, retirer son lien
+aussitôt (`rm /etc/nginx/sites-enabled/nginx-handfield-https.conf`) : nginx
+continue de servir sa configuration précédente, mais ne redémarrerait pas.
+
+Le renouvellement est automatique (minuteur de certbot) et recharge nginx.
 Vérifier :
 
 ```bash
@@ -181,9 +221,9 @@ curl -I https://www.handfield.fr   # 200
 curl -I https://handfield.fr       # 301 vers https://www.handfield.fr/
 ```
 
-Le fichier Apache est redéposé dans `/home/deploy/centre-affaires/` à chaque
-déploiement. S'il change dans le dépôt, le recopier dans `sites-available` et
-recharger Apache.
+Les deux fichiers nginx sont redéposés dans `/home/deploy/centre-affaires/` à
+chaque mise en ligne (section 4.2). S'ils changent dans le dépôt, les
+recopier dans `sites-available` puis `nginx -t && systemctl reload nginx`.
 
 ## 8. Courriels avec Brevo
 
@@ -330,7 +370,7 @@ docker compose logs -f db     # journaux de MySQL
 tail sauvegardes.log          # dernières sauvegardes (section 9)
 ```
 
-Journaux Apache du site : `/var/log/apache2/handfield-*.log`.
+Journaux nginx du site : `/var/log/nginx/handfield-*.log`.
 
 ## Conservation du courrier
 
