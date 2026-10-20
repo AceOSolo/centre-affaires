@@ -2,8 +2,8 @@
 
 **Date** : 2026-10-20
 **Statut** : accepté — amende l'ADR 016 (Dolibarr devient le logiciel des
-devis et des factures ; la bascule de la facturation est renvoyée à un ADR
-suivant), précise l'ADR 005 (une demande publique porte désormais un devis) et
+devis et des factures ; la bascule de la facturation, renvoyée à un ADR
+suivant, est faite par l'ADR 046), précise l'ADR 005 (une demande publique porte désormais un devis) et
 l'ADR 036 (une réservation de l'espace client aussi) ; les choix marqués
 « à valider » attendent le centre
 

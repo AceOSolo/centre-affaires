@@ -3,9 +3,10 @@
  *
  * Une entrée correspond quand son chemin est celui de la page ou l'un de ses
  * parents, et que chacun de ses paramètres (`?type=salle`, `?produit=bureaux`)
- * figure dans l'adresse avec la même valeur : le rayon Salles reste allumé de
- * la vue jour à la vue semaine de son planning, et ne s'allume pas sur le
- * planning du camion (ADR 046).
+ * figure dans l'adresse avec la même valeur : une entrée filtrée sur les
+ * salles reste allumée de la vue jour à la vue semaine du planning, et ne
+ * s'allume pas sur celui du camion (ADR 046). Le menu par parcours (ADR 048)
+ * ne porte plus d'entrée filtrée ; la règle reste.
  *
  * La plus précise l'emporte : d'abord celle qui retient le plus de paramètres,
  * puis le plus long chemin — `/ressources/annonces` n'allume pas `/ressources`.

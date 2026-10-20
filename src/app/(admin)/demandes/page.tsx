@@ -49,7 +49,8 @@ export default async function DemandesPage({
   searchParams: Promise<{ produit?: string | string[] }>
 }) {
   const { member } = await requirePermission('demandes.traiter')
-  // Chaque rayon produit du menu ouvre la file de son produit (ADR 046).
+  // Le produit se choisit par les pastilles de la page (ADR 048) ; les
+  // adresses filtrées (`?produit=bureaux`) restent valables (ADR 046).
   const product = parseProduct((await searchParams).produit)
   const timeZone = await currentTimeZone()
   const [pending, offerRequests, openProposals] = await Promise.all([

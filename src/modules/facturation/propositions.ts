@@ -150,7 +150,7 @@ export function validatesOnCreation(product: ProposalProduct, lineCount: number)
 }
 
 /**
- * Rayon d'un devis dans les filtres par produit du back-office (ADR 046) :
+ * Produit d'un devis dans les pastilles de filtre du back-office (ADR 046, 048) :
  * celui de la ressource réservée, ou la domiciliation, qui n'en réserve pas.
  */
 export function proposalProductKey(proposal: { product: ProposalProduct; resourceType: ResourceType | null }): ProductKey | undefined {

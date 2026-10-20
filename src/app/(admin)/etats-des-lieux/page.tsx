@@ -38,7 +38,7 @@ export default async function InspectionsPage({
   const { etape, fait, produit } = await searchParams
   const stage = filters.find((filter) => filter.value === etape && filter.value !== 'tous')
     ?.value as InspectionFilter['stage']
-  // Les rayons Bureaux et Camion du menu ouvrent les leurs (ADR 046).
+  // Le produit se choisit par les pastilles de la page (ADR 048).
   const product = parseProduct(produit)
   const [rows, timeZone] = await Promise.all([
     listInspections({ stage, ...(product && { resourceTypes: typesOf(product) }) }),
