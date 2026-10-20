@@ -21,6 +21,8 @@ import {
   type PortalBookingMode,
 } from './portail-regles.ts'
 import { availableEnds, availableStarts, publicSelection } from './public-selection.ts'
+import type { ProposalProduct } from '../facturation/schema-devis.ts'
+import { QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
 
 const fieldClass =
   'mt-1 w-full min-h-11 rounded-sm border border-border bg-white px-3 py-2 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive disabled:bg-muted disabled:text-muted-foreground'
@@ -29,7 +31,7 @@ const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus
 
 /** Un espace dans la journée : ses plages libres déjà coupées par le préavis du centre. */
 export type PortalBookingFormProps = {
-  resource: { id: string; name: string; typeLabel: string; mode: PortalBookingMode }
+  resource: { id: string; name: string; typeLabel: string; mode: PortalBookingMode; product?: ProposalProduct }
   date: string
   dateLabel: string
   timeZone: string
@@ -154,6 +156,14 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   }
 
   const errors = state.status === 'error' ? (state.fieldErrors ?? {}) : {}
+  const answers = state.status === 'error' ? state.answers : undefined
+  // Erreurs du questionnaire, par nom de question, comme les attend le composant.
+  const answerErrors = Object.fromEntries(
+    Object.entries(state.status === 'error' ? (state.answerErrors ?? {}) : {}).map(([field, message]) => [
+      field.replace(/^q\./, ''),
+      message,
+    ]),
+  )
   const ready = Boolean(selection && clientId && quote && quote.status !== 'error')
   const submitLabel =
     quote && quote.status !== 'error' && quote.outcome === 'confirmed'
@@ -163,8 +173,8 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   return (
     <form action={formAction} noValidate className="flex flex-col gap-5">
       <ErrorSummary
-        errors={state.status === 'error' ? state.fieldErrors : undefined}
-        labels={fieldLabels}
+        errors={state.status === 'error' ? { ...state.fieldErrors, ...state.answerErrors } : undefined}
+        labels={resource.product ? { ...fieldLabels, ...questionnaireErrorLabels(resource.product) } : fieldLabels}
         message={state.status === 'error' ? state.message : undefined}
       />
       <input type="hidden" name="resourceId" value={resource.id} />
@@ -296,6 +306,21 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
         </p>
         <FieldError name="title" error={errors.title} />
       </div>
+
+      {resource.product && (
+        <fieldset className="flex flex-col gap-4 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-semibold">Votre besoin</legend>
+          <p className="text-sm text-muted-foreground">
+            Ces réponses accompagnent votre devis : elles permettent à l’accueil de préparer l’espace.
+          </p>
+          <QuestionnaireFields
+            key={JSON.stringify(answers ?? {})}
+            product={resource.product}
+            defaults={answers}
+            errors={answerErrors}
+          />
+        </fieldset>
+      )}
 
       <div>
         <label htmlFor="notes" className={labelClass}>

@@ -120,6 +120,7 @@ virement et prélèvement suivis à la main.
 | D7 | Offres groupées et services | ADR 009 : la grille est liée à un type de ressource | Nouvel objet « catalogue de services » plutôt qu'une extension de la grille ; une offre = lignes (ressource, type ou service) avec prix ou remise. |
 | D8 | Champs d'état des lieux par type ; photos | Non tranché (slide 5) | Modèles de champs en JSONB en base, versionnés. Compression à l'upload avec `sharp` (nouvelle dépendance, à justifier). → ADR 039 : compression dans le navigateur (canvas), sans dépendance. |
 | D9 | Durées de conservation par type de donnée | `CLAUDE.md` RGPD, ADR 015 | Tableau des durées plus registre des traitements dans `docs/`. |
+| D10 | Demandes par produit et devis Dolibarr (20/10/2026) | ADR 005 (une seule demande, pour les salles) ; ADR 016 et D1 (facturation dans l'application) | **ADR 043.** Trois produits — salle ou bureau, camion, domiciliation — chacun avec ses questions ; chaque demande produit un devis structuré (`DV-AAAA-NNNN`) que Dolibarr vient chercher par une API (`docs/integrations/dolibarr.md`). **Dolibarr fera aussi les factures** : D1 est amendée, la bascule (lot, contrats, actes du courrier, relances, SEPA, FEC, plateforme agréée) est à trancher avec le développeur Dolibarr dans un ADR suivant. En attendant, le lot de l'application ne facture plus une réservation qui a un devis vivant. |
 
 ## Phases
 

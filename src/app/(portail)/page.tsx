@@ -20,9 +20,12 @@ import {
 } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { findDefaultRatePlan } from '../../modules/facturation/queries.ts'
+import { proposalProducts, type ProposalProduct } from '../../modules/facturation/schema-devis.ts'
 import { formatCents, resolveRate } from '../../modules/facturation/tarifs.ts'
 import { PublicBookingForm } from '../../modules/reservations/public-booking-form.tsx'
 import { PublicAvailabilityDate } from '../../modules/reservations/public-availability-date.tsx'
+import { PublicDomiciliationForm } from '../../modules/reservations/public-domiciliation-form.tsx'
+import { productForResourceType, questionnaires } from '../../modules/reservations/questionnaires.ts'
 import { listDayAvailability } from '../../modules/reservations/queries.ts'
 import { formatOpeningSummary } from '../../modules/ressources/ouverture.ts'
 import { listOpeningHours } from '../../modules/ressources/ouverture-queries.ts'
@@ -40,14 +43,16 @@ export const metadata = {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/
 const WALL_TIME = /^\d{2}:\d{2}$/
 
+const productIcons = { espace: BuildingIcon, vehicule: CarIcon, domiciliation: MapPinIcon } as const
+
 export default async function PortailPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; espace?: string; debut?: string; fin?: string }>
+  searchParams: Promise<{ produit?: string; date?: string; espace?: string; debut?: string; fin?: string }>
 }) {
   const tenant = await currentTenant()
   const timeZone = tenant.timezone
-  const { date, espace, debut, fin } = await searchParams
+  const { produit, date, espace, debut, fin } = await searchParams
 
   const now = new Date()
   const { earliest, latest } = requestBounds(tenant, now)
@@ -74,7 +79,20 @@ export default async function PortailPage({
   const espaceEnAvant = resources.find((resource) => resource.photoPath)
   const heroImage = espaceEnAvant?.photoPath ?? tenant.heroImagePath
 
-  const bookingResources = resources.map((resource) => ({
+  // Produit de la demande (ADR 043) : `?produit=`, sinon celui de l'espace
+  // visé par `?espace=` (liens « Voir les créneaux »), sinon le premier proposé.
+  // Un produit sans ressource réservable n'est pas proposé ; la domiciliation,
+  // sans calendrier, l'est toujours.
+  const offeredProducts = proposalProducts.filter((product) =>
+    product === 'domiciliation' || resources.some((resource) => productForResourceType(resource.resourceType) === product),
+  )
+  const espaceVise = resources.find((resource) => resource.id === espace)
+  const requestedProduct: ProposalProduct | undefined =
+    proposalProducts.find((product) => product === produit) ??
+    (espaceVise ? productForResourceType(espaceVise.resourceType) : undefined)
+  const product = requestedProduct && offeredProducts.includes(requestedProduct) ? requestedProduct : offeredProducts[0]
+
+  const bookingResources = resources.filter((resource) => productForResourceType(resource.resourceType) === product).map((resource) => ({
     id: resource.id,
     name: resource.name,
     resourceType: resource.resourceType,
@@ -436,19 +454,57 @@ export default async function PortailPage({
         <div className="mx-auto max-w-[1200px] px-5 py-16 sm:px-8">
           <div className="mb-8">
             <h2 className="text-3xl font-semibold tracking-tight text-primary">
-              Réservez votre salle, étape par étape
+              Demandez votre devis, étape par étape
             </h2>
             <p className="mt-3 max-w-2xl text-muted-foreground">
-              Une salle, un créneau, vos coordonnées. Nous vous guidons jusqu’au choix du paiement ou du devis.
+              Choisissez ce que vous souhaitez réserver. Nous vous guidons jusqu’à votre devis.
             </p>
           </div>
-          {resources.length ? (
+
+          {/* Des liens, pas des onglets : le choix marche sans JavaScript et l'adresse se partage. */}
+          <nav aria-labelledby="produit-titre" className="mb-8">
+            <p id="produit-titre" className="mb-3 text-sm font-medium text-primary">Que souhaitez-vous réserver ?</p>
+            <ul className="grid gap-3 sm:grid-cols-3">
+              {offeredProducts.map((item) => {
+                const Icon = productIcons[item]
+                const active = item === product
+                return (
+                  <li key={item}>
+                    <Link
+                      href={`/?${new URLSearchParams({ produit: item, date: isoDate })}#demande`}
+                      aria-current={active ? 'page' : undefined}
+                      className={`flex h-full min-h-11 items-start gap-3 rounded-lg border-2 p-4 transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-primary ${active ? 'border-primary bg-accent/10' : 'border-border bg-background hover:border-primary/50'}`}
+                    >
+                      <span className={`flex size-11 shrink-0 items-center justify-center rounded-md ${active ? 'bg-primary text-primary-foreground' : 'bg-muted text-primary'}`}>
+                        <Icon size={24} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block font-medium text-primary">{questionnaires[item].label}</span>
+                        <span className="mt-1 block text-sm text-muted-foreground">{questionnaires[item].description}</span>
+                        {active && (
+                          <span className="mt-2 flex items-center gap-1.5 text-sm font-medium text-primary">
+                            <CheckIcon size={16} />
+                            Votre choix
+                          </span>
+                        )}
+                      </span>
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          </nav>
+
+          {product === 'domiciliation' ? (
+            <PublicDomiciliationForm />
+          ) : (
             <PublicBookingForm
-              key={`${espace ?? ''}/${isoDate}/${debut ?? ''}/${fin ?? ''}`}
+              key={`${product}/${espace ?? ''}/${isoDate}/${debut ?? ''}/${fin ?? ''}`}
+              product={product}
               resources={bookingResources}
               currency={tarifs?.currency ?? tenant.currency}
               timeZone={timeZone}
-              defaultResourceId={resources.find((resource) => resource.id === espace)?.id}
+              defaultResourceId={bookingResources.find((resource) => resource.id === espace)?.id}
               defaultDate={isoDate}
               minDate={minDate}
               maxDate={maxDate}
@@ -456,10 +512,6 @@ export default async function PortailPage({
               defaultStartTime={WALL_TIME.test(debut ?? '') ? debut : undefined}
               defaultEndTime={WALL_TIME.test(fin ?? '') ? fin : undefined}
             />
-          ) : (
-            <p className="rounded-lg border border-dashed border-border bg-muted px-6 py-10 text-center text-muted-foreground">
-              Aucun espace n’est proposé à la réservation pour le moment. Appelez-nous, nous trouverons une solution.
-            </p>
           )}
         </div>
       </section>

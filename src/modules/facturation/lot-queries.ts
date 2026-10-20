@@ -325,6 +325,12 @@ async function loadRun(tx: Transaction, tenantId: string, month: string): Promis
         isNotNull(bookings.clientId),
         gte(bookings.startsAt, consumption.startsAt),
         lt(bookings.startsAt, consumption.endsAt),
+        // Une réservation qui a un devis vivant est facturée par Dolibarr
+        // (ADR 043) : la facturer ici la ferait payer deux fois.
+        sql`not exists (
+          select 1 from proposals as p
+           where p.tenant_id = bookings.tenant_id and p.booking_id = bookings.id
+             and p.status <> 'cancelled')`,
       ),
     )
 

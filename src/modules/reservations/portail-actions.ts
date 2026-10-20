@@ -32,6 +32,8 @@ import {
   type PortalBookingOutcome,
 } from './portail-regles.ts'
 import { publicSelection } from './public-selection.ts'
+import { errorsByField } from './questionnaire-fields.tsx'
+import { parseAnswers, productForResourceType, type Answers } from './questionnaires.ts'
 import { requestableRanges } from './request-policy.ts'
 
 /**
@@ -89,6 +91,10 @@ export type PortalBookingFormState =
       status: 'error'
       message?: string
       fieldErrors?: Partial<Record<PortalBookingFields, string>>
+      /** Réponses au questionnaire du produit refusées, par nom de champ (ADR 043). */
+      answerErrors?: Record<string, string>
+      /** Réponses lues, rendues au formulaire : React le vide après l'envoi. */
+      answers?: Answers
     }
   | {
       status: 'done'
@@ -112,7 +118,7 @@ export async function bookFromPortalAction(
   _previous: PortalBookingFormState,
   formData: FormData,
 ): Promise<PortalBookingFormState> {
-  const { accounts } = await requireClientAccount()
+  const { user, accounts } = await requireClientAccount()
   const tenant = await currentTenant()
   const timeZone = tenant.timezone
   const now = new Date()
@@ -162,8 +168,13 @@ export async function bookFromPortalAction(
     // Pris entre-temps : les horaires proposés sont relus.
     if (rejection === 'creneau-indisponible') revalidatePath('/compte/reservations', 'layout')
   }
-  if (Object.keys(fieldErrors).length > 0 || !account || !selection) {
-    return { status: 'error', fieldErrors }
+  // Les questions du produit de l'espace (ADR 043) : celui de la ressource
+  // relue en base, jamais celui qu'annoncerait le formulaire.
+  const product = productForResourceType(availability.resource.resourceType)
+  const parsed = product ? parseAnswers(product, formData) : undefined
+  const answerErrors = parsed ? errorsByField(parsed.errors) : {}
+  if (Object.keys(fieldErrors).length > 0 || Object.keys(answerErrors).length > 0 || !account || !selection) {
+    return { status: 'error', fieldErrors, answerErrors, answers: parsed?.answers }
   }
 
   let created
@@ -176,13 +187,17 @@ export async function bookFromPortalAction(
       endsAt: selection.endsAt,
       title: portalBookingTitle(title, account.clientName),
       notes: notes || null,
+      proposal:
+        product && parsed
+          ? { product, answers: parsed.answers, requesterName: user.name, requesterEmail: user.email, timeZone }
+          : undefined,
     })
   } catch (error) {
     if (error instanceof PortalBookingError) {
-      if (error.reason !== 'conflit') return { status: 'error', message: error.message }
+      if (error.reason !== 'conflit') return { status: 'error', message: error.message, answers: parsed?.answers }
       // Les horaires proposés sont relus : le créneau pris n'y figure plus.
       revalidatePath('/compte/reservations', 'layout')
-      return { status: 'error', fieldErrors: { startTime: error.message } }
+      return { status: 'error', fieldErrors: { startTime: error.message }, answers: parsed?.answers }
     }
     throw error
   }
@@ -200,6 +215,7 @@ export async function bookFromPortalAction(
   revalidatePath('/compte/reservations', 'layout')
   revalidatePath('/reservations', 'layout')
   revalidatePath('/demandes')
+  revalidatePath('/devis')
   revalidatePath('/')
 
   const day = formatLongDate(toIsoDate(selection.startsAt, timeZone), timeZone)

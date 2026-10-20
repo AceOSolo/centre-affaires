@@ -26,6 +26,7 @@ const groups: { label: string; entries: Entry[] }[] = [
       // Les demandes du site public bloquent un créneau tant qu'elles ne sont
       // pas traitées (ADR 005) : leur nombre est affiché en permanence.
       { href: '/demandes', label: 'Demandes', permission: 'demandes.traiter', counter: 'pending' },
+      { href: '/devis', label: 'Devis', permission: 'demandes.traiter' },
       // Les demandes de courrier à traiter (ouverture, numérisation,
       // réexpédition) sont comptées : c'est une file d'attente (ADR 037).
       { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },

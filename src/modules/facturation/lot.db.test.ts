@@ -545,4 +545,31 @@ describe('lot de facturation', { skip: raisonDeSaut }, () => {
       assert.equal(report.linesCreated, 0)
     })
   })
+
+  describe('réservations facturées par Dolibarr (ADR 043)', () => {
+    it('laisse au lot Dolibarr une réservation qui a un devis vivant, pas une dont le devis est annulé', async () => {
+      const avecDevis = uuidv7()
+      const devisAnnule = uuidv7()
+      await asTenant(async (tx) => {
+        for (const [id, jour] of [[avecDevis, '2026-09-15'], [devisAnnule, '2026-09-16']]) {
+          await tx.execute(sql`
+            insert into bookings (id, resource_id, client_id, channel, starts_at, ends_at, title,
+                                  quote_unit, quote_quantity, quote_unit_price_cents, quote_vat_rate_bp,
+                                  quote_currency, quoted_at)
+            values (${id}, ${SALLE}, ${DURAND}, 'client', ${`${jour} 08:00:00.000`}, ${`${jour} 10:00:00.000`},
+                    'Réunion', 'hour', 2, 2500, 2000, 'EUR', current_timestamp(3))`)
+          await tx.execute(sql`
+            insert into proposals (id, number, product, channel, client_id, booking_id, answers)
+            values (${uuidv7()}, ${`DV-TEST-${jour}`}, 'espace', 'client', ${DURAND}, ${id}, '{}')`)
+        }
+        await tx.execute(sql`update proposals set status = 'cancelled' where booking_id = ${devisAnnule}`)
+      })
+
+      const apercu = await previewInvoiceRun(OCTOBRE)
+      const durand = apercu.clients.find((client) => client.clientId === DURAND)
+      // Le loyer, le standard, l'acte au-delà des inclus, la réservation du
+      // 10 septembre et celle au devis annulé ; pas celle au devis vivant.
+      assert.equal(durand?.totals.exclTaxCents, 90_000 + 5_000 + 5_000 + 250 + 5_000)
+    })
+  })
 })

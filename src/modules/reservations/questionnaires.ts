@@ -37,6 +37,8 @@ export type Question = {
   maxLength?: number
   /** Valeurs admises (`choice`, `multi`), avec leur libellé. */
   choices?: readonly { value: string; label: string }[]
+  /** Date qui ne peut pas être passée, quand l'appelant donne le jour du centre (`today`). */
+  notBeforeToday?: boolean
 }
 
 export type Questionnaire = {
@@ -55,11 +57,6 @@ export type Questionnaire = {
   autoValidate: boolean
   questions: readonly Question[]
 }
-
-const yesNo = [
-  { value: 'oui', label: 'Oui' },
-  { value: 'non', label: 'Non' },
-] as const
 
 export const questionnaires: Record<ProposalProduct, Questionnaire> = {
   espace: {
@@ -192,7 +189,7 @@ export const questionnaires: Record<ProposalProduct, Questionnaire> = {
         requiredWhen: { question: 'situation', values: ['immatriculee', 'transfert'] },
         hint: 'Neuf chiffres. Pour une société déjà immatriculée.',
       },
-      { name: 'debut', label: 'À partir de quand ?', kind: 'date', required: true },
+      { name: 'debut', label: 'À partir de quand ?', kind: 'date', required: true, notBeforeToday: true },
       {
         name: 'courrier',
         label: 'Que faire de votre courrier ?',
@@ -269,7 +266,16 @@ function isRealDate(value: string): boolean {
  * facultative est absente des réponses, pas une chaîne vide. Une valeur hors
  * des choix est refusée : un `<select>` se réécrit avant l'envoi.
  */
-export function parseAnswers(product: ProposalProduct, source: AnswerSource): ParsedAnswers {
+export function parseAnswers(
+  product: ProposalProduct,
+  source: AnswerSource,
+  /**
+   * `today` : le jour du centre (`AAAA-MM-JJ`). Donné par la page publique et
+   * l'espace client, une date `notBeforeToday` passée y est refusée ; omis au
+   * back-office, où l'accueil peut régulariser une date.
+   */
+  options: { today?: string } = {},
+): ParsedAnswers {
   const answers: Answers = {}
   const errors: Record<string, string> = {}
   const { questions } = questionnaires[product]
@@ -306,7 +312,9 @@ export function parseAnswers(product: ProposalProduct, source: AnswerSource): Pa
         break
       case 'date':
         if (raw && !isRealDate(raw)) errors[question.name] = 'Saisissez une date valide.'
-        else if (raw) answers[question.name] = raw
+        else if (raw && question.notBeforeToday && options.today && raw < options.today) {
+          errors[question.name] = 'Choisissez une date à partir d’aujourd’hui.'
+        } else if (raw) answers[question.name] = raw
         break
       case 'siren': {
         const digits = raw.replace(/\s/g, '')

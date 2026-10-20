@@ -132,3 +132,23 @@ describe('describeAnswers', () => {
     assert.deepEqual(describeAnswers('domiciliation', { debut: '2026-11-01' }), [{ label: 'À partir de quand ?', value: '1 novembre 2026' }])
   })
 })
+
+describe('date de début d’une domiciliation', () => {
+  const base = {
+    [q('situation')]: 'creation',
+    [q('raisonSociale')]: 'Atelier Martin',
+    [q('forme')]: 'sas',
+    [q('courrier')]: 'sur-place',
+    [q('engagement')]: '6',
+  }
+
+  it('refuse une date passée quand le jour du centre est donné (page publique)', () => {
+    const { errors } = parseAnswers('domiciliation', form({ ...base, [q('debut')]: '2026-10-19' }), { today: '2026-10-20' })
+    assert.equal(errors.debut, 'Choisissez une date à partir d’aujourd’hui.')
+    assert.deepEqual(parseAnswers('domiciliation', form({ ...base, [q('debut')]: '2026-10-20' }), { today: '2026-10-20' }).errors, {})
+  })
+
+  it('accepte une date passée au back-office, qui ne donne pas le jour', () => {
+    assert.deepEqual(parseAnswers('domiciliation', form({ ...base, [q('debut')]: '2026-01-01' })).errors, {})
+  })
+})

@@ -57,10 +57,27 @@ export const rejectionMessages: Record<RequestRejection, string> = {
  */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/
 
-export type RequestInput = {
+export type ContactInput = {
   name: string
   email: string
   phone: string
+}
+
+/**
+ * Coordonnées à corriger, champ par champ : un formulaire les signale toutes à
+ * la fois. Sert aussi aux demandes sans créneau (domiciliation, ADR 043).
+ */
+export function contactRejections(
+  input: ContactInput,
+): Partial<Record<keyof ContactInput, RequestRejection>> {
+  const rejections: Partial<Record<keyof ContactInput, RequestRejection>> = {}
+  if (!input.name.trim()) rejections.name = 'nom-manquant'
+  if (!EMAIL.test(input.email.trim())) rejections.email = 'email-invalide'
+  if (!input.phone.trim()) rejections.phone = 'telephone-manquant'
+  return rejections
+}
+
+export type RequestInput = ContactInput & {
   title: string
   range: TimeRange
   resourceIsBookable: boolean
@@ -78,9 +95,9 @@ export function rejectRequest(
   now: Date = new Date(),
   policy: RequestPolicy = DEFAULT_REQUEST_POLICY,
 ): RequestRejection | undefined {
-  if (!input.name.trim()) return 'nom-manquant'
-  if (!EMAIL.test(input.email.trim())) return 'email-invalide'
-  if (!input.phone.trim()) return 'telephone-manquant'
+  const contact = contactRejections(input)
+  const contactRejection = contact.name ?? contact.email ?? contact.phone
+  if (contactRejection) return contactRejection
   if (!input.title.trim()) return 'objet-manquant'
 
   const { startsAt, endsAt } = input.range

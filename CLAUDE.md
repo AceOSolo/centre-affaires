@@ -122,6 +122,13 @@ Conséquence sur les choix dès maintenant : les factures sont stockées en
 de vérité. L'émission passera par une plateforme agréée, jamais par du code
 maison.
 
+**Dolibarr fait les devis et les factures (ADR 043).** L'application recueille
+les demandes par produit (salle ou bureau, camion, domiciliation) et en fait
+des devis structurés que Dolibarr vient chercher (`/api/dolibarr/devis`,
+`docs/integrations/dolibarr.md`). La bascule de la facturation interne vers
+Dolibarr reste à trancher dans un ADR ; d'ici là, une réservation qui a un
+devis vivant n'est jamais facturée par le lot de l'application.
+
 ## RGPD
 
 Le module courrier manipule des documents sensibles (scans de courrier

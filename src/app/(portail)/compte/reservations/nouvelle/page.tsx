@@ -11,6 +11,7 @@ import {
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { PortalBookingForm } from '../../../../../modules/reservations/portail-booking-form.tsx'
+import { productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
 import { listPortalDayAvailability } from '../../../../../modules/reservations/portail-queries.ts'
 import { portalModeLabels } from '../../../../../modules/reservations/portail-regles.ts'
 import { availableStarts } from '../../../../../modules/reservations/public-selection.ts'
@@ -176,6 +177,7 @@ export default async function NouvelleReservationPage({
                   name: selected.resource.name,
                   typeLabel: resourceTypeLabels[selected.resource.resourceType],
                   mode: selected.resource.clientBookingMode,
+                  product: productForResourceType(selected.resource.resourceType),
                 }}
                 date={date}
                 dateLabel={dateLabel}

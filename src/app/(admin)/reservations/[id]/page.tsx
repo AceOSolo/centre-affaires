@@ -11,12 +11,15 @@ import { contractStatusLabels } from '../../../../modules/contrats/labels.ts'
 import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
 import { frozenQuoteDisplay } from '../../../../modules/facturation/devis.ts'
 import { QuoteSummary } from '../../../../modules/facturation/devis-resume.tsx'
+import { findProposalForBooking } from '../../../../modules/facturation/propositions-queries.ts'
+import { proposalStatusLabels } from '../../../../modules/facturation/propositions.ts'
 import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
 import { cancelBookingAction } from '../../../../modules/reservations/actions.ts'
 import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
 import { AssignClientForm } from '../../../../modules/reservations/assign-client-form.tsx'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
 import { findBookingAuthors } from '../../../../modules/reservations/demandes-queries.ts'
+import { productForResourceType } from '../../../../modules/reservations/questionnaires.ts'
 import { findBooking, findBookingClientLock } from '../../../../modules/reservations/queries.ts'
 import { bookingClientLockMessages } from '../../../../modules/reservations/rattachement.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
@@ -31,14 +34,18 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   const booking = await findBooking(id)
   if (!booking) notFound()
   // `findClient` et non la liste : une fiche archivée reste nommée ici.
-  const [clients, client, authors, clientLock] = await Promise.all([
+  // Devis de la réservation (ADR 043), pour qui traite les demandes.
+  const canQuote = can(member.role, 'demandes.traiter')
+  const [clients, client, authors, clientLock, proposal] = await Promise.all([
     listClients(),
     booking.clientId ? findClient(booking.clientId) : undefined,
     // Auteur de la réservation et de l'annulation (ADR 036).
     findBookingAuthors(booking.id),
     // Client figé par l'espace client, un état des lieux ou une facture (ADR 041).
     booking.kind === 'booking' ? findBookingClientLock(booking.id) : undefined,
+    canQuote ? findProposalForBooking(booking.id) : undefined,
   ])
+  const quoteProduct = productForResourceType(booking.resource.resourceType)
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
   const cancelled = booking.status === 'cancelled'
@@ -251,6 +258,26 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
             Déplacer la réservation
           </Link>
         </div>
+      )}
+
+      {canQuote && (proposal || (booking.kind === 'booking' && !cancelled && quoteProduct)) && (
+        <section aria-labelledby="devis-titre" className="rounded-lg border border-border bg-white px-5 py-4 text-sm">
+          <h2 id="devis-titre" className="font-medium text-foreground">
+            Devis
+          </h2>
+          {proposal ? (
+            <Link href={`/devis/${proposal.id}`} className="mt-1 inline-block text-primary underline-offset-2 hover:underline">
+              Devis {proposal.number} — {proposalStatusLabels[proposal.status]}
+            </Link>
+          ) : (
+            <Link
+              href={`/devis/nouveau?produit=${quoteProduct}&reservation=${booking.id}`}
+              className="mt-1 inline-block text-primary underline-offset-2 hover:underline"
+            >
+              Établir le devis
+            </Link>
+          )}
+        </section>
       )}
 
       {/* États des lieux au titre de cette réservation (R06, ADR 039). */}

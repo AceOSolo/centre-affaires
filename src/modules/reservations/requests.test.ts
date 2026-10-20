@@ -4,6 +4,7 @@ import { describe, it } from 'node:test'
 import {
   MAX_DAYS_AHEAD,
   MAX_REQUESTS_PER_EMAIL,
+  contactRejections,
   rejectRequest,
   type RequestInput,
 } from './requests.ts'
@@ -127,6 +128,20 @@ describe('recevabilité d’une demande publique', () => {
         endsAt: new Date(NOW.getTime() - minutes(60)),
       }
       assert.equal(rejectRequest(valide({ name: '', range }), NOW), 'nom-manquant')
+    })
+  })
+})
+
+describe('coordonnées d’une demande sans créneau (domiciliation)', () => {
+  it('accepte des coordonnées complètes', () => {
+    assert.deepEqual(contactRejections({ name: 'Camille', email: 'camille@exemple.fr', phone: '06 12 34 56 78' }), {})
+  })
+
+  it('signale chaque champ à corriger, pas seulement le premier', () => {
+    assert.deepEqual(contactRejections({ name: ' ', email: 'camille', phone: '' }), {
+      name: 'nom-manquant',
+      email: 'email-invalide',
+      phone: 'telephone-manquant',
     })
   })
 })
