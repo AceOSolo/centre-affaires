@@ -21,9 +21,10 @@ ressources, réservations, clients, contrats, facturation, courrier,
 - Tailwind CSS
 - MySQL 8.4 + Drizzle ORM (`mysql-core`, driver `mysql2`), configuré par le `.env` (ADR 042)
 - better-auth, auto-hébergé, tables `auth_*` de la même base (ADR 042)
-- Hébergement : VPS de production (Debian, Apache), image Docker déployée
-  depuis GitHub (app, ADR 013) ; MySQL tourne dans le même `compose.yml`,
-  **région EU obligatoire**
+- Hébergement : VPS de production (Debian), nginx en frontal (ADR 051), image
+  Docker de l'application (ADR 013) ; MySQL tourne dans le même `compose.yml`,
+  **région EU obligatoire**. Pas de déploiement automatique depuis le 15/10/2026 :
+  mise en ligne et migrations à la main (`infra/serveur/README.md`)
 - Stockage fichiers : S3 européen — ou MinIO sur le VPS — (scans de courrier,
   photos d'états des lieux), configuré par `S3_*`
 
@@ -127,8 +128,9 @@ devis, contrats, offres, services, tarifs, factures, règlements,
 prélèvements, relances et export comptable sont dans Dolibarr ; le site garde
 l'opérationnel et fait la passerelle, par une API à lui que le connecteur
 Dolibarr appelle (`/api/dolibarr/*`, `docs/integrations/dolibarr.md`) :
-devis et consommations facturables vers Dolibarr, tiers, contrats et tarifs
-depuis Dolibarr. Les droits de facturation ne sont accordés à aucun rôle et
+devis vers Dolibarr (ADR 043), produits et tarifs depuis Dolibarr (ADR 049) ;
+consommations facturables, tiers et contrats sont la seconde tranche, à venir.
+Les droits de facturation ne sont accordés à aucun rôle et
 le lot planifié est arrêté : **ne pas rouvrir d'écran ni de tâche qui facture
 depuis le site**. Le code et les tables de facturation restent en sommeil.
 
@@ -197,13 +199,17 @@ travail quotidien :
   ligne.
 - Un état vide dit quoi faire ensuite, il ne laisse pas un écran blanc.
 
-### Back-office rangé par produit
+### Back-office rangé par parcours
 
-Le menu a un rayon par produit (ADR 046) : Salles, Bureaux (et casiers),
-Domiciliation (courrier, boîtes aux lettres), Camion. Le regroupement des
-types de ressource vit dans `src/modules/ressources/produits.ts`, jamais en
-base. Un nouvel écran lié à un type de ressource se range dans le rayon de
-son produit et se filtre par `?type=` ou `?produit=`.
+Le menu suit le parcours d'une demande (ADR 048) : ce qui arrive, commande,
+administratif, gestion, retour client, avec « Aujourd'hui » en tête comme page
+d'arrivée (ADR 050). Une entrée par écran, décrite dans `(admin)/menu.ts` et
+vérifiée par `menu.test.ts` ; ce qui se règle une fois va dans Réglages
+(`(admin)/reglages/sections.ts`). **Pas de rayon par produit dans le menu** :
+le produit se choisit dans la page, par les pastilles Tous / Salles / Bureaux /
+Domiciliation / Camion et les adresses `?type=` ou `?produit=`. Le
+regroupement des types de ressource vit dans
+`src/modules/ressources/produits.ts`, jamais en base.
 
 ### Mise en page
 
