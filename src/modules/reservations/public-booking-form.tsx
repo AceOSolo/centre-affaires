@@ -12,7 +12,7 @@ import type { ProposalStatus } from '../facturation/schema-devis.ts'
 import { formatCents, type RateCandidate } from '../facturation/tarifs.ts'
 import { resourceTypePluralLabels } from '../ressources/labels.ts'
 import type { Resource, ResourceType } from '../ressources/schema.ts'
-import { chipClass, fieldClass, focusClass, primaryClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
+import { ChampPiege, chipClass, fieldClass, focusClass, primaryClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
 import { loadPublicDayAction, loadPublicQuoteAction, requestBookingAction, type PublicDayAvailability, type PublicFormState, type PublicQuote } from './public-actions.ts'
 import { availableEnds, availableStarts, fitsFreeRange, publicSelection } from './public-selection.ts'
 import { errorsByField, QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
@@ -277,6 +277,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
         <input type="hidden" name="startTime" value={startTime} />
         <input type="hidden" name="endTime" value={endTime} />
         <input type="hidden" name="paymentMethod" value="quote" />
+        <ChampPiege />
         {Object.entries(contact).map(([key, value]) => <input key={key} type="hidden" name={key} value={value} />)}
 
         {step === 1 && <div className="mt-6 space-y-8">

@@ -4,7 +4,7 @@ import { useActionState, useEffect, useRef, useState, type FormEvent } from 'rea
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { FileTextIcon } from '../../components/ui/icons.tsx'
-import { fieldClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
+import { ChampPiege, fieldClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
 import { requestDomiciliationAction, type PublicFormState } from './public-actions.ts'
 import { RequestSent } from './public-booking-form.tsx'
 import { errorsByField, QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
@@ -129,6 +129,8 @@ export function PublicDomiciliationForm({ onClose, onSent }: {
         )}
         {step === 1 && questionErrors && <div className="mt-5"><ErrorSummary errors={questionErrors} labels={questionnaireErrorLabels('domiciliation')} /></div>}
         {step === 2 && contactErrors && <div className="mt-5"><ErrorSummary errors={contactErrors} labels={contactLabels} /></div>}
+
+        <ChampPiege />
 
         {/* Toujours montées : des champs non contrôlés démontés ne partiraient pas avec la demande. */}
         <div hidden={step !== 1} className="mt-6">

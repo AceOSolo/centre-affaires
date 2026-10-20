@@ -5,6 +5,7 @@ import { nextCookies } from 'better-auth/next-js'
 
 import { createDatabase, databaseOptionsFromEnv, withTenant } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
+import { adresseIpDerriereApache } from '../anti-robot.ts'
 import { sendMessage } from '../courriel.ts'
 import { currentTenantId } from '../tenant.ts'
 import {
@@ -117,8 +118,22 @@ function createAuth() {
         },
       },
     },
+    // Contre les robots (`lib/anti-robot.ts`) : Better Auth compte les appels
+    // par adresse IP, en production seulement. Ses plafonds par défaut (trois
+    // essais en dix secondes, plus d'un millier par heure) sont resserrés là
+    // où un robot gagne quelque chose : deviner un mot de passe, créer des
+    // comptes en série, ou faire partir des courriels vers n'importe quelle
+    // adresse. En mémoire : un seul conteneur (ADR 013).
+    rateLimit: {
+      customRules: {
+        '/sign-in/email': { window: 300, max: 10 },
+        '/sign-up/email': { window: 3600, max: 5 },
+        '/send-verification-email': { window: 900, max: 3 },
+      },
+    },
     advanced: {
       database: { generateId: () => crypto.randomUUID() },
+      ipAddress: adresseIpDerriereApache,
     },
     plugins: [nextCookies()],
   })

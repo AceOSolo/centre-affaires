@@ -61,6 +61,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 044 | [Tournée du courrier, pages numérisées facturées, classement côté client](044-tournee-du-courrier-pages-et-classement-client.md) | 2026-10-20 | accepté ; précise les ADR 015, 037 et 038 ; facturation des pages reprise par Dolibarr (ADR 046) ; prix des pages et pages comprises à fixer par le centre |
 | 045 | [Inscription libre sur le site et gestion des comptes par l'équipe](045-inscription-libre-et-gestion-des-comptes.md) | 2026-10-20 | accepté ; revient sur l'accès par inscription préalable des ADR 008 et 015 pour l'espace client ; choix tranchés par le centre (accueil : rattacher ; filtre des clients) |
 | 046 | [Dolibarr tient le commercial et la facturation ; le back-office est rangé par produit](046-dolibarr-commercial-et-facturation-admin-par-produit.md) | 2026-10-20 | accepté ; amende l'ADR 016, met en sommeil les ADR 026 à 034, tranche l'ADR 043 § 6 ; première tranche faite (facturation coupée, menu par produit), passerelle entrante à construire avec le développeur Dolibarr |
+| 047 | [Défenses contre les robots sur ce qui s'écrit sans compte](047-defenses-anti-robot.md) | 2026-10-20 | accepté ; plafonds par IP et du site sur les demandes publiques, champ piège, Better Auth resserré, en-têtes de sécurité |
 
 ## Numéros en double et numéro manquant
 
@@ -108,7 +109,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **047**.
+   `ListAgents`. Le prochain numéro libre est **049** (048 pris par la session du menu du back-office).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

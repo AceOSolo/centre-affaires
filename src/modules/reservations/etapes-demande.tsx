@@ -3,6 +3,7 @@
 import type { ReactNode, RefObject } from 'react'
 
 import { ArrowLeftIcon, ArrowRightIcon } from '../../components/ui/icons.tsx'
+import { CHAMP_PIEGE } from '../../lib/champ-piege.ts'
 
 /**
  * Pièces communes aux demandes du site public (créneau, domiciliation), qui
@@ -83,6 +84,22 @@ export function RecapBlock({ title, onEdit, pending, children }: { title: string
         <button type="button" onClick={onEdit} disabled={pending} className={`-my-3 min-h-11 font-medium text-primary underline underline-offset-2 ${focusClass}`}>Modifier</button>
       </div>
       <div className="mt-1">{children}</div>
+    </div>
+  )
+}
+
+/**
+ * Champ piège contre les robots (`lib/anti-robot.ts`) : hors de l'écran, hors
+ * de la tabulation, masqué aux lecteurs d'écran. Rempli, la demande est
+ * refusée.
+ */
+export function ChampPiege() {
+  return (
+    <div aria-hidden="true" className="absolute -left-[9999px] top-auto h-px w-px overflow-hidden">
+      <label>
+        Ne pas remplir
+        <input type="text" name={CHAMP_PIEGE} tabIndex={-1} autoComplete="off" defaultValue="" />
+      </label>
     </div>
   )
 }

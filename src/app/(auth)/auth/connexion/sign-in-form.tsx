@@ -14,6 +14,12 @@ const labelClass = 'block text-sm font-medium text-foreground'
 type Mode = 'connexion' | 'creation'
 
 /**
+ * Plafond de tentatives atteint (`rateLimit`, `lib/auth/server.ts`) : Better
+ * Auth répond 429 avec un message en anglais.
+ */
+const tropDeTentatives = 'Trop de tentatives depuis votre connexion. Patientez quelques minutes, puis réessayez.'
+
+/**
  * `client` : la page des clients (`/auth/connexion`), avec l'inscription libre.
  * `equipe` : celle du back-office (`/auth/equipe`) ; pas d'entreprise à saisir,
  * et la première connexion d'un membre inscrit dans l'écran Équipe y crée son
@@ -78,7 +84,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
           companyName: companyName || undefined,
         })
         if (authError) {
-          setError(authError.message ?? repli)
+          setError(authError.status === 429 ? tropDeTentatives : (authError.message ?? repli))
           return
         }
         // Sans session (adresse à confirmer), le jeton est nul : on ne
@@ -94,11 +100,13 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
         const { error: authError } = await authClient.signIn.email({ email, password })
         if (authError) {
           setError(
-            authError.code === 'EMAIL_NOT_VERIFIED'
-              ? 'Adresse non confirmée : ouvrez le message de confirmation reçu, puis réessayez.'
-              : authError.code === 'BANNED_USER'
-                ? 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.'
-                : (authError.message ?? repli),
+            authError.status === 429
+              ? tropDeTentatives
+              : authError.code === 'EMAIL_NOT_VERIFIED'
+                ? 'Adresse non confirmée : ouvrez le message de confirmation reçu, puis réessayez.'
+                : authError.code === 'BANNED_USER'
+                  ? 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.'
+                  : (authError.message ?? repli),
           )
           return
         }

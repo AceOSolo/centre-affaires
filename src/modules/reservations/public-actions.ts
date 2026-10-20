@@ -1,9 +1,12 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
+import { headers } from 'next/headers'
 import { after } from 'next/server'
 
 import { withTenant } from '../../db/index.ts'
+import { creerCompteur, ipDuVisiteur, type Plafond } from '../../lib/anti-robot.ts'
+import { champPiegeRempli } from '../../lib/champ-piege.ts'
 import { formatLongDate, formatTime, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
@@ -126,6 +129,35 @@ const NOTES_MAX_LENGTH = 2000
 const answersToCorrect = 'Certaines réponses sont à corriger.'
 
 /**
+ * Plafonds des demandes déposées sans compte (`lib/anti-robot.ts`), salles,
+ * véhicule et domiciliation confondus : par adresse IP, et pour tout le site
+ * contre des robots répartis sur beaucoup d'adresses. Au-delà, le visiteur
+ * est renvoyé vers l'accueil, qui reste joignable.
+ */
+const PAR_ADRESSE_IP: Plafond = { fenetreSecondes: 3600, max: 5 }
+const POUR_TOUT_LE_SITE: Plafond = { fenetreSecondes: 3600, max: 30 }
+const compteur = creerCompteur()
+
+const refusRobot = 'Votre demande n’a pas pu être envoyée. Contactez-nous directement.'
+
+/**
+ * Compte une demande prête à être écrite : appelé après la validation, pour
+ * qu'une personne qui corrige ses réponses ne s'épuise pas. Rend le message
+ * du refus, ou null.
+ */
+async function plafondAtteint(): Promise<string | null> {
+  const ip = ipDuVisiteur(await headers()) ?? 'inconnue'
+  const depasse = compteur.passer([
+    [`demande|${ip}`, PAR_ADRESSE_IP],
+    ['demande', POUR_TOUT_LE_SITE],
+  ])
+  if (!depasse) return null
+  return depasse === 'demande'
+    ? 'Notre service de demande en ligne reçoit beaucoup de demandes. Réessayez dans un moment ou contactez-nous directement.'
+    : 'Plusieurs demandes sont déjà parties de votre connexion dans l’heure. Réessayez plus tard ou contactez-nous directement.'
+}
+
+/**
  * Entreprise du visiteur connecté à son espace client (ADR 015) : sa demande y
  * apparaîtra. Seulement quand il n'en représente qu'une — pour une personne qui
  * gère plusieurs sociétés, deviner laquelle réserve serait attribuer la
@@ -142,6 +174,7 @@ export async function requestBookingAction(
   _previous: PublicFormState,
   formData: FormData,
 ): Promise<PublicFormState> {
+  if (champPiegeRempli(formData)) return { status: 'error', message: refusRobot }
   // Aucun débit ni réservation ne doit être simulé avant le raccordement CB.
   if (text(formData, 'paymentMethod') !== 'quote') {
     return { status: 'error', step: 5, message: 'Le paiement en ligne n’est pas encore disponible. Choisissez « Recevoir un devis ».' }
@@ -210,6 +243,8 @@ export async function requestBookingAction(
   if (!fitsFreeRange(selection, availability.free)) {
     return { status: 'error', step: 2, message: 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.' }
   }
+  const plafond = await plafondAtteint()
+  if (plafond) return { status: 'error', message: plafond }
 
   let requestId: string
   let proposal: { number: string; status: ProposalStatus } | undefined
@@ -268,13 +303,15 @@ export async function requestBookingAction(
  * relit (vérifications légales du domiciliataire).
  *
  * Mêmes garde-fous que la demande de salle : coordonnées exigées, quota par
- * adresse. Le quota ne compte que les demandes de réservation (`bookings`) :
- * des devis de domiciliation en rafale n'y entrent pas.
+ * adresse. Le quota par adresse électronique ne compte que les demandes de
+ * réservation (`bookings`) ; les plafonds par adresse IP et du site comptent
+ * aussi les devis de domiciliation.
  */
 export async function requestDomiciliationAction(
   _previous: PublicFormState,
   formData: FormData,
 ): Promise<PublicFormState> {
+  if (champPiegeRempli(formData)) return { status: 'error', message: refusRobot }
   const tenant = await currentTenant()
   const { answers, errors } = parseAnswers('domiciliation', formData, { today: todayIsoDate(tenant.timezone) })
   if (Object.keys(errors).length > 0) {
@@ -300,6 +337,8 @@ export async function requestDomiciliationAction(
   if ((await countRecentRequestsByEmail(contact.email, RATE_WINDOW_HOURS)) >= MAX_REQUESTS_PER_EMAIL) {
     return { status: 'error', step: 3, message: rejectionMessages['trop-de-demandes'] }
   }
+  const plafond = await plafondAtteint()
+  if (plafond) return { status: 'error', message: plafond }
 
   const clientId = await requesterClientId()
   const raisonSociale = String(answers.raisonSociale ?? '')
