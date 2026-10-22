@@ -75,13 +75,17 @@ async function decode(file: Blob): Promise<{ source: CanvasImageSource; width: n
  * Réduit et recompresse une photo en JPEG. Rend le fichier à envoyer et ses
  * dimensions. Lève `PhotoDecodeError` si le navigateur ne sait pas la lire
  * (HEIC sur un ordinateur, fichier abîmé).
+ *
+ * `maxEdge` et `quality` : ceux d'un état des lieux par défaut. Le courrier
+ * en demande davantage, pour que le texte d'une lettre se lise (ADR 055).
  */
 export async function compressPhoto(
   file: Blob,
+  { maxEdge = PHOTO_MAX_EDGE, quality = PHOTO_QUALITY }: { maxEdge?: number; quality?: number } = {},
 ): Promise<{ blob: Blob; width: number; height: number }> {
   const image = await decode(file)
   try {
-    const size = targetSize(image.width, image.height)
+    const size = targetSize(image.width, image.height, maxEdge)
     const canvas = document.createElement('canvas')
     canvas.width = size.width
     canvas.height = size.height
@@ -93,7 +97,7 @@ export async function compressPhoto(
     context.imageSmoothingQuality = 'high'
     context.drawImage(image.source, 0, 0, size.width, size.height)
     const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob(resolve, PHOTO_OUTPUT_TYPE, PHOTO_QUALITY),
+      canvas.toBlob(resolve, PHOTO_OUTPUT_TYPE, quality),
     )
     if (!blob) throw new PhotoDecodeError()
     return { blob, ...size }

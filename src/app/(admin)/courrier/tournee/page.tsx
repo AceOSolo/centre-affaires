@@ -102,6 +102,7 @@ export default async function TourneePage({
                     <th scope="col" className="px-4 py-3 font-medium">Type</th>
                     <th scope="col" className="px-4 py-3 font-medium">Reçu le</th>
                     <th scope="col" className="px-4 py-3 font-medium">Contenu</th>
+                    <th scope="col" className="px-4 py-3 font-medium">Enveloppe</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -116,6 +117,19 @@ export default async function TourneePage({
                       <td className="whitespace-nowrap px-4 py-2 tabular">{formatDateTime(item.receivedAt, timeZone)}</td>
                       <td className="px-4 py-2 text-muted-foreground">
                         {item.opened ? 'Ouvert et numérisé' : 'Fermé'}
+                      </td>
+                      <td className="px-4 py-2">
+                        {item.envelope ? (
+                          <span className="text-muted-foreground">Photo jointe</span>
+                        ) : (
+                          <Link
+                            href={`/courrier/${item.id}#enveloppe`}
+                            aria-label={`Ajouter la photo de l’enveloppe — ${item.clientName}, ${mailKindLabels[item.kind]} du ${formatDateTime(item.receivedAt, timeZone)}`}
+                            className="font-medium text-primary underline-offset-2 hover:underline"
+                          >
+                            Ajouter la photo
+                          </Link>
+                        )}
                       </td>
                     </tr>
                   ))}

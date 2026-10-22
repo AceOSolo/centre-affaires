@@ -13,7 +13,8 @@ import {
   updateForwardShippingAction,
   type RequestActionState,
 } from './demandes-actions.ts'
-import { FileField, PagesField } from './mail-form.tsx'
+import { PagesField } from './mail-form.tsx'
+import { PhotosField } from './photos-field.tsx'
 
 /**
  * Traitement d'une demande par l'accueil (R21, ADR 037) : prendre en charge,
@@ -192,12 +193,13 @@ export function CompleteScanForm({ requestId }: { requestId: string }) {
         labels={{ requestContent: 'Numérisation', requestContentPages: 'Nombre de pages' }}
         message={state?.error}
       />
-      <FileField
+      <PhotosField
         name="requestContent"
         label="Numérisation"
-        hint="PDF de toutes les pages demandées, ou photo lisible. Le client y a accès dès l’enregistrement, et en est prévenu."
+        hint="Une photo lisible par page demandée, dans l’ordre, ou un PDF. Le client y a accès dès l’enregistrement, et en est prévenu."
         error={state?.fieldErrors?.requestContent}
         required
+        multiple
       />
       <PagesField name="requestContentPages" error={state?.fieldErrors?.requestContentPages} />
       <div>

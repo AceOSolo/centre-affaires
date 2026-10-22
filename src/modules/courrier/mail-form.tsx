@@ -6,8 +6,9 @@ import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { registerMailAction, type MailFormState } from './actions.ts'
-import { MAX_SCAN_BYTES, SCAN_ACCEPT } from './fichiers.ts'
+import { MAX_SCAN_BYTES } from './fichiers.ts'
 import { mailKindLabels } from './labels.ts'
+import { PhotosField } from './photos-field.tsx'
 import { mailKinds } from './schema.ts'
 
 const fieldClass =
@@ -153,23 +154,25 @@ export function MailForm({
       </div>
 
       <fieldset className="flex flex-col gap-5 rounded-lg border border-border bg-white px-5 py-4">
-        <legend className="px-1 text-sm font-semibold tracking-tight">Numérisations</legend>
+        <legend className="px-1 text-sm font-semibold tracking-tight">Photos et numérisations</legend>
         <p className="-mt-2 text-xs text-muted-foreground">
-          PDF, JPEG ou PNG, {MAX_SCAN_BYTES / 1024 / 1024} Mo au plus par fichier. Un fichier
-          refusé est à joindre de nouveau.
+          Photos prises sur place, ou fichiers PDF, JPEG ou PNG de {MAX_SCAN_BYTES / 1024 / 1024} Mo
+          au plus. Un fichier refusé est à joindre de nouveau. La photo de l’enveloppe peut aussi
+          s’ajouter plus tard, depuis la fiche du courrier.
         </p>
 
-        <FileField
+        <PhotosField
           name="envelope"
           label="Enveloppe"
           hint="Le recto, pour que le client décide s’il veut faire ouvrir le pli."
           error={errors.envelope}
         />
-        <FileField
+        <PhotosField
           name="content"
           label="Contenu"
-          hint="Seulement si le pli est ouvert maintenant. L’ouverture sera comptée au relevé de facturation, à l’initiative du centre."
+          hint="Seulement si le pli est ouvert maintenant : une photo par page, dans l’ordre, ou un PDF. L’ouverture sera comptée au relevé de facturation, à l’initiative du centre."
           error={errors.content}
+          multiple
         />
         <PagesField name="contentPages" error={errors.contentPages} defaultValue={values?.contentPages} />
       </fieldset>
@@ -199,48 +202,12 @@ function FieldError({ name, error }: { name: string; error?: string }) {
   )
 }
 
-export function FileField({
-  name,
-  label,
-  hint,
-  error,
-  required,
-}: {
-  name: string
-  label: string
-  hint: string
-  error?: string
-  required?: boolean
-}) {
-  return (
-    <div>
-      <label className={labelClass} htmlFor={name}>
-        {label}{' '}
-        {!required && <span className="font-normal text-muted-foreground">(facultatif)</span>}
-      </label>
-      <input
-        id={name}
-        name={name}
-        type="file"
-        accept={SCAN_ACCEPT}
-        required={required}
-        aria-invalid={error ? true : undefined}
-        aria-describedby={`${name}-hint${error ? ` ${name}-error` : ''}`}
-        className="mt-1 block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-      />
-      <p id={`${name}-hint`} className="mt-1 text-xs text-muted-foreground">
-        {hint}
-      </p>
-      <FieldError name={name} error={error} />
-    </div>
-  )
-}
-
 /**
  * Pages d'un contenu déposé (ADR 044). Facultatif : laissé vide, le compte est
- * lu dans le PDF ; une image compte pour une page. La facturation en dépend,
- * au-delà des pages comprises dans l'ouverture. `defaultValue` : la saisie
- * rendue après un échec, que React efface sinon avec le formulaire.
+ * lu dans le PDF ; une image compte pour une page, plusieurs photos font un
+ * PDF d'autant de pages (ADR 055). La facturation en dépend, au-delà des
+ * pages comprises dans l'ouverture. `defaultValue` : la saisie rendue après
+ * un échec, que React efface sinon avec le formulaire.
  */
 export function PagesField({ name, error, defaultValue }: { name: string; error?: string; defaultValue?: string }) {
   return (
@@ -259,8 +226,8 @@ export function PagesField({ name, error, defaultValue }: { name: string; error?
         className={`${fieldClass} mt-1 tabular`}
       />
       <p id={`${name}-hint`} className="mt-1 text-xs text-muted-foreground">
-        Laissez vide : les pages sont comptées dans le PDF. À saisir si le compte est faux
-        (pages blanches retirées) ou si le fichier ne se lit pas.
+        Laissez vide : une photo compte pour une page, les pages d’un PDF sont comptées. À
+        saisir si le compte est faux (pages blanches retirées) ou si le fichier ne se lit pas.
       </p>
       <FieldError name={name} error={error} />
     </div>

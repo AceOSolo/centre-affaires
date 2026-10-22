@@ -4,7 +4,8 @@ import { useActionState } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { openMailAction, type MailFormState } from './actions.ts'
-import { FileField, PagesField } from './mail-form.tsx'
+import { PagesField } from './mail-form.tsx'
+import { PhotosField } from './photos-field.tsx'
 
 /**
  * Ouverture et numérisation d'un pli : la prestation facturée. Le fichier est
@@ -40,12 +41,13 @@ export function OpenForm({ mailItemId, requested }: { mailItemId: string; reques
         message={state?.error}
       />
 
-      <FileField
+      <PhotosField
         name="content"
         label="Contenu"
-        hint="PDF de toutes les pages, ou photo lisible. Le client y a accès dès l’enregistrement."
+        hint="Une photo lisible par page, dans l’ordre, ou le PDF de toutes les pages. Le client y a accès dès l’enregistrement."
         error={state?.fieldErrors?.content}
         required
+        multiple
       />
       <PagesField
         name="contentPages"

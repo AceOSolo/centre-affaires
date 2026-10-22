@@ -41,8 +41,9 @@ export default async function SaisieGroupeePage({
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Saisie groupée</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Indiquez le nombre de plis reçus par chaque entreprise. Ils entrent fermés dans la tournée
-          en cours, sans expéditeur ni numérisation ; la fiche de chaque pli se complète ensuite si
-          besoin. Personne n’est prévenu avant la fin de la tournée.
+          en cours, sans expéditeur ni photo ; la fiche de chaque pli se complète ensuite si
+          besoin, photo de l’enveloppe comprise, depuis la tournée. Personne n’est prévenu avant la
+          fin de la tournée.
         </p>
       </div>
 
@@ -51,7 +52,7 @@ export default async function SaisieGroupeePage({
           {items} pli{items > 1 ? 's' : ''} enregistré{items > 1 ? 's' : ''} pour {companies}{' '}
           entreprise{companies > 1 ? 's' : ''}.{' '}
           <Link href="/courrier/tournee" className="font-medium underline underline-offset-2">
-            Voir la tournée et la terminer
+            Voir la tournée, ajouter les photos des enveloppes et la terminer
           </Link>
         </FlashNotice>
       )}

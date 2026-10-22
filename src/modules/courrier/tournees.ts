@@ -10,7 +10,7 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { uuidv7 } from '../../lib/uuid.ts'
 import { clients } from '../clients/schema.ts'
 import { contracts } from '../contrats/schema.ts'
-import { mailBatches, mailItems, type MailKind } from './schema.ts'
+import { mailBatches, mailItems, mailScans, type MailKind } from './schema.ts'
 import { batchMessages, type BatchMessages } from './tournees-regles.ts'
 
 /**
@@ -94,6 +94,8 @@ export type OpenBatchItem = {
   kind: MailKind
   receivedAt: Date
   opened: boolean
+  /** Photo de l'enveloppe jointe : sinon, elle s'ajoute depuis la fiche du pli (ADR 055). */
+  envelope: boolean
 }
 
 export type OpenBatch = {
@@ -126,6 +128,10 @@ export async function findOpenBatch(): Promise<OpenBatch | undefined> {
         kind: mailItems.kind,
         receivedAt: mailItems.receivedAt,
         openedAt: mailItems.openedAt,
+        envelope: sql<number>`exists (
+          select 1 from ${mailScans}
+           where ${mailScans.tenantId} = ${mailItems.tenantId} and ${mailScans.mailItemId} = ${mailItems.id}
+             and ${mailScans.side} = 'envelope' and ${mailScans.deletedAt} is null)`,
       })
       .from(mailItems)
       .innerJoin(clients, eq(clients.id, mailItems.clientId))
@@ -139,6 +145,7 @@ export async function findOpenBatch(): Promise<OpenBatch | undefined> {
         kind: item.kind,
         receivedAt: item.receivedAt,
         opened: item.openedAt !== null,
+        envelope: Number(item.envelope) === 1,
       })),
       clientCount: new Set(items.map((item) => item.clientId)).size,
     }

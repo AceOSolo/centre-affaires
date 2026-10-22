@@ -9,10 +9,11 @@ import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { DB_MAIL_REFUSED, dbErrorCode } from '../../db/errors.ts'
-import { readScan, type ScanFile } from './fichiers.ts'
+import { readScan, readScans, type ScanFile } from './fichiers.ts'
 import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
 import { readPageCount, withPageCount } from './pages.ts'
 import {
+  addEnvelope,
   correctScanPageCount,
   MailStateError,
   openMail,
@@ -89,7 +90,8 @@ export async function registerMailAction(
 
   const envelope = await readScan(formData.get('envelope'))
   if (envelope.error) fieldErrors.envelope = envelope.error
-  const read = await readScan(formData.get('content'))
+  // Plusieurs photos du contenu font un seul PDF (ADR 055).
+  const read = await readScans(formData.getAll('content'))
   if (read.error) fieldErrors.content = read.error
   const content = withPageCount(formData, 'content', read.scan)
   if (content.error) fieldErrors.contentPages = content.error
@@ -133,7 +135,7 @@ export async function openMailAction(
   // joint de nouveau.
   const values = { contentPages: text(formData, 'contentPages') }
 
-  const read = await readScan(formData.get('content'))
+  const read = await readScans(formData.getAll('content'))
   if (read.error) return { fieldErrors: { content: read.error }, values }
   if (!read.scan) {
     return { fieldErrors: { content: 'Joignez la numérisation du contenu.' }, values }
@@ -152,6 +154,35 @@ export async function openMailAction(
   revalidatePath('/courrier')
   revalidatePath(`/courrier/${id}`)
   redirect(`/courrier/${id}`)
+}
+
+/**
+ * Photo de l'enveloppe ajoutée après l'enregistrement (ADR 055) : un pli
+ * compté en saisie groupée, ou enregistré sans photo. Une seule par pli ; le
+ * client la voit aussitôt dans son espace, sans nouveau message.
+ */
+export async function addEnvelopeAction(
+  _previous: MailFormState,
+  formData: FormData,
+): Promise<MailFormState> {
+  const { member } = await requirePermission('courrier.gerer')
+  const id = text(formData, 'id')
+  if (!id) return { error: 'Courrier introuvable.' }
+
+  const read = await readScan(formData.get('envelope'))
+  if (read.error) return { fieldErrors: { envelope: read.error } }
+  if (!read.scan) return { fieldErrors: { envelope: 'Joignez la photo de l’enveloppe.' } }
+
+  try {
+    await addEnvelope(id, member.id, read.scan)
+  } catch (error) {
+    if (error instanceof MailStateError) return { error: error.message }
+    return storageFailure(error)
+  }
+
+  revalidatePath('/courrier', 'layout')
+  revalidatePath('/compte/courrier', 'layout')
+  redirect(`/courrier/${id}?fait=enveloppe`)
 }
 
 export async function withdrawMailAction(formData: FormData): Promise<void> {

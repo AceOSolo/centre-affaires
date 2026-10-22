@@ -1,3 +1,5 @@
+import { photosToPdf } from './photos-pdf.ts'
+
 /**
  * Contrôle des numérisations déposées par le centre.
  *
@@ -56,4 +58,43 @@ export async function readScan(
   const contentType = detectScanType(bytes)
   if (!contentType) return { error: 'Seuls les fichiers PDF, JPEG et PNG sont acceptés.' }
   return { scan: { bytes, contentType } }
+}
+
+/**
+ * Photos d'un même dépôt (ADR 055) : au plus 30, et 10 Mo à elles toutes,
+ * comme un fichier seul — un enregistrement porte encore au plus deux fois
+ * 10 Mo, sous le plafond de 21 Mo de l'envoi (`next.config.ts`, nginx).
+ * Compressées dans le navigateur, elles pèsent chacune moins d'un mégaoctet.
+ */
+export const MAX_SCAN_PHOTOS = 30
+export const MAX_SCAN_PHOTOS_BYTES = MAX_SCAN_BYTES
+
+/**
+ * Lit un champ qui accepte plusieurs fichiers (ADR 055). Un seul fichier est
+ * gardé tel quel (`readScan`). Plusieurs photos JPEG — une par page — sont
+ * réunies en un PDF, dans l'ordre de l'envoi : l'étape garde un seul
+ * document, que le client consulte et dont les pages sont comptées.
+ */
+export async function readScans(
+  values: FormDataEntryValue[],
+): Promise<{ scan?: ScanFile; error?: string }> {
+  const files = values.filter((value): value is File => typeof value !== 'string' && value.size > 0)
+  if (files.length <= 1) return readScan(files[0] ?? null)
+  if (files.length > MAX_SCAN_PHOTOS) {
+    return { error: `Au plus ${MAX_SCAN_PHOTOS} photos à la fois. Au-delà, numérisez le courrier en PDF.` }
+  }
+  if (files.reduce((total, file) => total + file.size, 0) > MAX_SCAN_PHOTOS_BYTES) {
+    return { error: 'Les photos dépassent 10 Mo à elles toutes. Retirez-en, ou numérisez le courrier en PDF.' }
+  }
+  const photos: Uint8Array[] = []
+  for (const file of files) {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    if (detectScanType(bytes) !== 'image/jpeg') {
+      return { error: 'Plusieurs fichiers se joignent en photos JPEG. Un PDF ou une image PNG se joint seul.' }
+    }
+    photos.push(bytes)
+  }
+  const pdf = photosToPdf(photos)
+  if (!pdf) return { error: 'Une des photos ne se lit pas. Reprenez-la, puis joignez-la de nouveau.' }
+  return { scan: { bytes: pdf, contentType: 'application/pdf' } }
 }

@@ -5,8 +5,9 @@ const nextConfig: NextConfig = {
   // dépendances qu'il utilise, pour l'image Docker du VPS de production (ADR 013).
   output: "standalone",
   experimental: {
-    // Numérisations de courrier : jusqu'à deux fichiers de 10 Mo par envoi,
-    // enveloppe et contenu, plus l'habillage multipart (ADR 015). Les deux
+    // Numérisations de courrier : jusqu'à deux fois 10 Mo par envoi,
+    // enveloppe et contenu — un fichier, ou des photos réunies en PDF
+    // (ADR 055) —, plus l'habillage multipart (ADR 015). Les deux
     // limites vont ensemble : `proxy.ts` couvre `/courrier`, et au-delà de la
     // sienne il tronquerait le corps sans erreur.
     serverActions: { bodySizeLimit: "21mb" },

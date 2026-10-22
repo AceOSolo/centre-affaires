@@ -8,6 +8,7 @@ import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
 import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
 import { listRequestsForMail } from '../../../../modules/courrier/demandes-queries.ts'
+import { EnvelopeForm } from '../../../../modules/courrier/enveloppe-form.tsx'
 import {
   mailKindLabels,
   mailScanSideLabels,
@@ -38,6 +39,7 @@ const notices: Record<string, string> = {
   numerisee: 'Numérisation déposée et demande faite. Le client est prévenu par courriel.',
   reexpediee: 'Réexpédition notée comme faite. Le client est prévenu par courriel.',
   envoi: 'Suivi et frais d’affranchissement enregistrés.',
+  enveloppe: 'Photo de l’enveloppe ajoutée. Le client la voit dans son espace.',
 }
 
 /** « 1 page », « 12 pages ». */
@@ -62,6 +64,7 @@ export default async function CourrierDetailPage({
   const withdrawn = Boolean(mail.deletedAt)
   const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
   const scanOrigin = new Map(requests.map((request) => [request.id, request]))
+  const hasEnvelope = mail.scans.some((scan) => scan.side === 'envelope')
   const now = new Date()
 
   return (
@@ -207,6 +210,9 @@ export default async function CourrierDetailPage({
           Chaque consultation, par le centre comme par le client, est inscrite au journal ci-dessous.
         </p>
       </section>
+
+      {/* Enveloppe à photographier après coup : saisie groupée, pli enregistré sans photo (ADR 055). */}
+      {!withdrawn && !hasEnvelope && <EnvelopeForm mailItemId={mail.id} />}
 
       {/* Un pli réexpédié a quitté le centre : il ne s'ouvre plus ici. */}
       {!withdrawn && !forwarded && canOpen(mail.status) && (

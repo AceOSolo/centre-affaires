@@ -15,7 +15,10 @@ import {
   findScanForAccounts,
   listMailForAccounts,
   listOpenings,
+  MailStateError,
+  recordEnvelope,
   requestOpening,
+  type StoredScan,
 } from './queries.ts'
 
 /**
@@ -373,6 +376,63 @@ describe('courrier', { skip: raisonDeSaut }, () => {
       // 30 septembre 23h30 UTC = 1er octobre 1h30 à Paris : octobre.
       await pli(DURAND, { openedAt: '2026-09-30T23:30:00Z' })
       assert.deepEqual(await listOpenings(septembre), [])
+    })
+  })
+
+  describe('photo de l’enveloppe ajoutée après coup (ADR 055)', () => {
+    /** Une enveloppe déjà déposée au stockage, telle que `store` la rend. */
+    const deposee = (cle: string): StoredScan[] => [
+      {
+        side: 'envelope',
+        key: `courrier/test/${cle}.jpg`,
+        scan: { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), contentType: 'image/jpeg' },
+        encryptionKeyVersion: 1,
+      },
+    ]
+    const enveloppes = (mailItemId: string) =>
+      asTenant((tx) =>
+        lire(tx, sql`
+          select side, uploaded_by, page_count, mail_request_id from mail_scans
+           where mail_item_id = ${mailItemId}`),
+      )
+
+    it('pose l’enveloppe d’un pli qui n’en a pas, visible aussitôt du client', async () => {
+      // Un pli compté en saisie groupée : fermé, sans photo.
+      const id = await pli(DURAND)
+      await recordEnvelope(id, CAMILLE, deposee('saisie-groupee'))
+      assert.deepEqual(
+        (await enveloppes(id)).map((row) => [row.side, row.uploaded_by, row.page_count, row.mail_request_id]),
+        [['envelope', CAMILLE, null, null]],
+      )
+      const [boite] = await listMailForAccounts(durand)
+      assert.equal(boite.id, id)
+      assert.notEqual(boite.envelopeScanId, null)
+    })
+
+    it('pose aussi l’enveloppe d’un pli déjà ouvert, sans toucher à son ouverture', async () => {
+      const id = await pli(DURAND, { openedAt: '2026-09-10T10:00:00Z' })
+      await numeriser(id, 'content')
+      await recordEnvelope(id, CAMILLE, deposee('ouvert'))
+      assert.deepEqual((await enveloppes(id)).map((row) => row.side).sort(), ['content', 'envelope'])
+      assert.equal((await statut(id)).status, 'opened')
+    })
+
+    it('refuse une seconde enveloppe pour le même pli', async () => {
+      const id = await pli(DURAND)
+      await numeriser(id, 'envelope')
+      await assert.rejects(
+        recordEnvelope(id, CAMILLE, deposee('seconde')),
+        (error: unknown) => error instanceof MailStateError && /déjà une photo/.test(error.message),
+      )
+      assert.equal((await enveloppes(id)).length, 1)
+    })
+
+    it('refuse l’enveloppe d’un pli retiré ou inconnu', async () => {
+      const retire = await pli(DURAND, { deleted: true })
+      await assert.rejects(recordEnvelope(retire, CAMILLE, deposee('retire')), MailStateError)
+      await assert.rejects(recordEnvelope(uuidv7(), CAMILLE, deposee('inconnu')), MailStateError)
+      const [row] = await asTenant((tx) => lire(tx, sql`select count(*) as total from mail_scans`))
+      assert.equal(Number(row.total), 0)
     })
   })
 

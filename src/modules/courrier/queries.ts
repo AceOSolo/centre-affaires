@@ -404,6 +404,48 @@ export async function recordOpening(
 }
 
 /**
+ * Photo de l'enveloppe ajoutée après l'enregistrement (ADR 055) : un pli
+ * compté en saisie groupée, ou enregistré sans photo. Déposée d'abord, comme
+ * à l'enregistrement ; effacée si l'écriture échoue.
+ */
+export async function addEnvelope(id: string, staffMemberId: string, envelope: ScanFile): Promise<void> {
+  if (!isUuid(id)) throw new MailStateError('Courrier introuvable.')
+  const stored = await store(currentTenantId(), { envelope })
+  try {
+    await recordEnvelope(id, staffMemberId, stored)
+  } catch (error) {
+    await discard(stored)
+    throw error
+  }
+}
+
+/**
+ * Écriture de l'enveloppe, une fois déposée : séparée du dépôt pour
+ * s'éprouver contre la base sans stockage réel. Le pli est verrouillé : un
+ * retrait simultané attend. Une seule enveloppe par pli, tenue par la base
+ * (`mail_scans_item_side_key`) : deux dépôts simultanés n'en font pas deux.
+ */
+export async function recordEnvelope(id: string, staffMemberId: string, stored: StoredScan[]): Promise<void> {
+  try {
+    await withTenant(currentTenantId(), async (tx) => {
+      const [item] = await tx
+        .select({ id: mailItems.id })
+        .from(mailItems)
+        .where(and(eq(mailItems.id, id), isNull(mailItems.deletedAt)))
+        .limit(1)
+        .for('update')
+      if (!item) throw new MailStateError('Ce courrier a été retiré, ou il est introuvable.')
+      await tx.insert(mailScans).values(scanRows(item.id, stored, staffMemberId))
+    })
+  } catch (error) {
+    if (dbErrorCode(error) === DB_UNIQUE_VIOLATION) {
+      throw new MailStateError('Ce courrier a déjà une photo de l’enveloppe. Rechargez la page.')
+    }
+    throw error
+  }
+}
+
+/**
  * Retrait d'un pli enregistré par erreur — le plus souvent, attribué au
  * mauvais client. Il sort de la boîte aux lettres du client et du relevé de
  * facturation ; la ligne et le journal d'accès restent (décision 6).
