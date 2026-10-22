@@ -8,7 +8,7 @@ export const metadata = { title: 'Réglages' }
 
 /**
  * « Réglages » (ADR 048) : les écrans qui paramètrent le centre, réunis hors
- * du menu, qui ne garde que le parcours d'une demande. Seuls les écrans que
+ * du menu, qui ne garde que ce qui se traite au quotidien. Seuls les écrans que
  * le rôle permet sont montrés ; chacun revérifie son droit.
  */
 export default async function ReglagesPage() {

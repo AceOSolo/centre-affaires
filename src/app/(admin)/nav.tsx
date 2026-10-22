@@ -9,7 +9,7 @@ import { activeEntry } from './nav-actif.ts'
 import { menuGroups as groups, type MenuEntry as Entry } from './menu.ts'
 
 /**
- * Navigation du back-office, rangée par étape du parcours (ADR 048). Client parce que l'entrée
+ * Navigation du back-office, rangée par service vendu (ADR 053). Client parce que l'entrée
  * active dépend de l'URL courante ; le reste de la coque reste rendu sur le
  * serveur.
  */
@@ -55,8 +55,8 @@ export function Nav({
       {visibles.map((group, index) => {
         const titleId = `${prefix}-${group.label.replace(/\s+/g, '-')}`
         const last = index === visibles.length - 1 && group.label === 'Réglages'
-        // Un groupe d'une seule entrée du même nom (« Aujourd’hui ») n'a pas besoin de titre visible.
-        const solo = group.entries.length === 1 && group.entries[0].label === group.label
+        // Un groupe qui porte le nom de sa première entrée (« Aujourd’hui ») n'a pas besoin de titre visible.
+        const solo = group.entries[0].label === group.label
         return (
           <div
             key={group.label}

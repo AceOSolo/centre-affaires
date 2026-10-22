@@ -199,17 +199,19 @@ travail quotidien :
   ligne.
 - Un état vide dit quoi faire ensuite, il ne laisse pas un écran blanc.
 
-### Back-office rangé par parcours
+### Back-office rangé par service vendu
 
-Le menu suit le parcours d'une demande (ADR 048) : ce qui arrive, commande,
-administratif, gestion, retour client, avec « Aujourd'hui » en tête comme page
-d'arrivée (ADR 050). Une entrée par écran, décrite dans `(admin)/menu.ts` et
-vérifiée par `menu.test.ts` ; ce qui se règle une fois va dans Réglages
-(`(admin)/reglages/sections.ts`). **Pas de rayon par produit dans le menu** :
-le produit se choisit dans la page, par les pastilles Tous / Salles / Bureaux /
-Domiciliation / Camion et les adresses `?type=` ou `?produit=`. Le
-regroupement des types de ressource vit dans
-`src/modules/ressources/produits.ts`, jamais en base.
+Le menu a un rayon par produit (ADR 053) : Salles, Bureaux, Domiciliation,
+Camion, dans l'ordre de `src/modules/ressources/produits.ts`, chacun avec ses
+seuls écrans (planning, parc, courrier, états des lieux) en adresses filtrées
+`?type=` ou `?produit=`. En tête, « Aujourd'hui » (ADR 050) et **une seule
+« Demandes »** (ADR 048) ; ce qui sert à tous les produits est sous « Tous les
+services », ce qui se règle une fois dans Réglages
+(`(admin)/reglages/sections.ts`). **Pas d'écran répété dans le menu** : ni
+« Demandes » par rayon, ni vue d'ensemble doublée — la pastille « Tous » de la
+page y mène. Le menu est décrit dans `(admin)/menu.ts` et vérifié par
+`menu.test.ts`. Le regroupement des types de ressource vit dans `produits.ts`,
+jamais en base.
 
 ### Mise en page
 

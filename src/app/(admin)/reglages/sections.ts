@@ -3,7 +3,7 @@ import type { Permission } from '../../../lib/auth/permissions.ts'
 /**
  * Ce que la page « Réglages » réunit (ADR 048) : les écrans qu'on ouvre pour
  * paramétrer le centre, pas pour traiter une demande. Ils sortent du menu, qui
- * ne garde que le parcours d'une demande.
+ * ne garde que ce qui se traite au quotidien (ADR 053).
  *
  * Chaque lien porte le droit de sa page (ADR 019) : la page n'affiche que ceux
  * du rôle, et le menu ne montre « Réglages » qu'à qui en a au moins un.

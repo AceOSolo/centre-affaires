@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-20
 **Statut** : accepté — remplace la partie « menu rangé par produit » de
-l'ADR 046 ; les filtres par produit des pages (ADR 046) sont conservés
+l'ADR 046 ; les filtres par produit des pages (ADR 046) sont conservés ;
+rangement par parcours remplacé par le rangement par service vendu de
+l'ADR 053 (boîte de réception unique, « Réglages » et fiche client conservés)
 
 ## Contexte
 
