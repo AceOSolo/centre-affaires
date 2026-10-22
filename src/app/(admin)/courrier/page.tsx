@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { redirect } from 'next/navigation'
 
+import { ArrowRightIcon } from '../../../components/ui/icons.tsx'
 import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../lib/dates.ts'
@@ -50,76 +51,56 @@ export default async function CourrierPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Courrier</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Plis reçus pour les entreprises domiciliées. Chacune les retrouve dans son espace client.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          {can(member.role, 'courrier.releve') && (
-            <Link
-              href="/courrier/ouvertures"
-              className="rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
-            >
-              Relevé des ouvertures
-            </Link>
-          )}
-          {/* Pli par pli : pour joindre la photo de l'enveloppe, l'expéditeur ou une précision. */}
-          <Link
-            href={clientId ? `/courrier/nouveau?clientId=${clientId}` : '/courrier/nouveau'}
-            className="rounded-md border border-border bg-white px-4 py-2 text-sm font-medium hover:bg-muted"
-          >
-            Un pli avec photo
-          </Link>
-          {/* Le geste du matin : tout le courrier du jour sur un écran (« 3 pour Y, 2 pour X »). */}
-          <Link
-            href="/courrier/tournee/saisie"
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-          >
-            Saisir le courrier du jour
-          </Link>
-        </div>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Courrier</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Plis reçus pour les entreprises domiciliées. Chacune les retrouve dans son espace client.
+        </p>
       </div>
 
+      {/* Les gestes du jour tiennent tous dans le bandeau de la tournée : saisir, puis terminer.
+          Le pli par pli reste accessible depuis la tournée et la fiche du client. */}
       <BatchBanner batch={batch} timeZone={timeZone} />
 
-      <div className="flex flex-wrap items-center gap-2">
-        <FilterLink
-          href={clientId ? `/courrier?client=${clientId}` : '/courrier'}
-          label="Tous"
-          active
-        />
-        <FilterLink
-          href={`/courrier/demandes${suffix}`}
-          label={`Demandes à traiter (${requestCount})`}
-          active={false}
-        />
-        {filteredClient && (
-          <span className="ml-2 inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-medium">
-            Client : {filteredClient.name}
-            <Link
-              href="/courrier"
-              className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            >
-              Tous les clients
-            </Link>
-          </span>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href={`/courrier/demandes${suffix}`}
+            className="inline-flex min-h-6 items-center gap-1.5 text-sm font-medium text-primary underline-offset-2 hover:underline"
+          >
+            {requestCount > 0
+              ? `${requestCount} demande${requestCount > 1 ? 's' : ''} à traiter`
+              : 'Demandes des domiciliés'}
+            <ArrowRightIcon size={16} />
+          </Link>
+          {filteredClient && (
+            <span className="inline-flex items-center gap-2 rounded-full bg-muted px-3 py-1 text-xs font-medium">
+              Client : {filteredClient.name}
+              <Link
+                href="/courrier"
+                className="text-muted-foreground underline underline-offset-2 hover:text-foreground"
+              >
+                Tous les clients
+              </Link>
+            </span>
+          )}
+        </div>
+        {can(member.role, 'courrier.releve') && (
+          <Link
+            href="/courrier/ouvertures"
+            className="inline-flex min-h-6 items-center text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            Relevé des ouvertures
+          </Link>
         )}
       </div>
 
       {rows.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            Aucun courrier enregistré. Le client verra chaque pli dans son espace dès son enregistrement.
+            Aucun courrier enregistré. Commencez par « Saisir le courrier du jour », ci-dessus : le
+            client verra chaque pli dans son espace dès son enregistrement.
           </p>
-          <Link
-            href="/courrier/tournee/saisie"
-            className="mt-4 inline-block rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover"
-          >
-            Saisir le courrier du jour
-          </Link>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border bg-white">
@@ -173,21 +154,5 @@ export default async function CourrierPage({
         </p>
       )}
     </div>
-  )
-}
-
-function FilterLink({ href, label, active }: { href: string; label: string; active: boolean }) {
-  return (
-    <Link
-      href={href}
-      aria-current={active ? 'page' : undefined}
-      className={`rounded-full border px-3 py-1 text-xs font-medium ${
-        active
-          ? 'border-primary bg-primary text-white'
-          : 'border-border text-muted-foreground hover:border-border'
-      }`}
-    >
-      {label}
-    </Link>
   )
 }

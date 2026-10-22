@@ -42,10 +42,14 @@ export function BatchBanner({ batch, timeZone }: { batch: OpenBatch | undefined;
         <div>
           <p className="font-medium">
             Tournée en cours depuis {formatTime(batch.openedAt, timeZone)} :{' '}
-            <span className="tabular">
-              {count} courrier{count > 1 ? 's' : ''} pour {batch.clientCount} entreprise
-              {batch.clientCount > 1 ? 's' : ''}
-            </span>
+            {count === 0 ? (
+              'aucun courrier pour l’instant'
+            ) : (
+              <span className="tabular">
+                {count} courrier{count > 1 ? 's' : ''} pour {batch.clientCount} entreprise
+                {batch.clientCount > 1 ? 's' : ''}
+              </span>
+            )}
           </p>
           <p className="text-muted-foreground">
             Les domiciliés ne sont prévenus qu’à la fin de la tournée, un message chacun.
