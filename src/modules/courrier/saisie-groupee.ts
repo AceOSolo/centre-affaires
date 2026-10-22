@@ -6,8 +6,10 @@ import { uuidv7 } from '../../lib/uuid.ts'
 import { clients } from '../clients/schema.ts'
 import { contracts } from '../contrats/schema.ts'
 import { resources } from '../ressources/schema.ts'
-import { expandMailCounts, type MailCount } from './saisie-groupee-regles.ts'
-import { mailItems } from './schema.ts'
+import type { ScanFile } from './fichiers.ts'
+import { discard, scanRows, store, type StoredScan } from './queries.ts'
+import { pairEnvelopes, type MailCount } from './saisie-groupee-regles.ts'
+import { mailItems, mailScans } from './schema.ts'
 import { inOpenBatch } from './tournees.ts'
 
 /**
@@ -82,22 +84,69 @@ export class UnknownRecipientError extends Error {
   }
 }
 
+/** Levée quand une photo d'enveloppe n'a pas pu être déposée : rien n'est enregistré. */
+export class EnvelopeStorageError extends Error {
+  constructor(cause: unknown) {
+    super('Une photo d’enveloppe n’a pas pu être déposée.', { cause })
+    this.name = 'EnvelopeStorageError'
+  }
+}
+
+/**
+ * Saisie avec les photos des enveloppes (ADR 055) : chaque photo est déposée,
+ * chiffrée, avant toute écriture en base, comme à l'enregistrement d'un pli.
+ * Si l'enregistrement échoue ensuite, les fichiers déposés sont effacés.
+ */
+export async function registerMailCountsWithEnvelopes(
+  counts: MailCount[],
+  receivedAt: Date,
+  staffMemberId: string,
+  photos: Map<string, ScanFile[]>,
+): Promise<{ items: number; clients: number; envelopes: number }> {
+  const tenantId = currentTenantId()
+  const envelopes = new Map<string, StoredScan[]>()
+  const stored: StoredScan[] = []
+  try {
+    for (const [clientId, files] of photos) {
+      const own: StoredScan[] = []
+      for (const envelope of files) {
+        let scan: StoredScan
+        try {
+          ;[scan] = await store(tenantId, { envelope })
+        } catch (error) {
+          throw new EnvelopeStorageError(error)
+        }
+        stored.push(scan)
+        own.push(scan)
+      }
+      envelopes.set(clientId, own)
+    }
+    return await registerMailCounts(counts, receivedAt, staffMemberId, undefined, envelopes)
+  } catch (error) {
+    await discard(stored)
+    throw error
+  }
+}
+
 /**
  * Enregistre tous les plis de la saisie dans la tournée ouverte, en une seule
- * transaction : tout entre, ou rien. Rend le nombre de plis et d'entreprises.
- * Les plis sont fermés, sans expéditeur ni numérisation : la fiche de chacun
- * se complète ensuite si besoin.
+ * transaction : tout entre, ou rien. Rend le nombre de plis, d'entreprises et
+ * de photos d'enveloppe. Les plis sont fermés, sans expéditeur ; chacun reçoit
+ * la photo de son enveloppe si elle a été jointe (`pairEnvelopes`), déjà
+ * déposée au stockage. La fiche de chacun se complète ensuite si besoin.
  */
 export async function registerMailCounts(
   counts: MailCount[],
   receivedAt: Date,
   staffMemberId: string,
   database?: Database,
-): Promise<{ items: number; clients: number }> {
+  envelopes: Map<string, StoredScan[]> = new Map(),
+): Promise<{ items: number; clients: number; envelopes: number }> {
   const tenantId = currentTenantId()
   const clientIds = [...new Set(counts.map((entry) => entry.clientId))]
-  const items = expandMailCounts(counts)
-  if (items.length === 0) return { items: 0, clients: 0 }
+  const items = pairEnvelopes(counts, envelopes).map((item) => ({ ...item, id: uuidv7() }))
+  if (items.length === 0) return { items: 0, clients: 0, envelopes: 0 }
+  const photographed = items.filter((item) => item.envelope !== undefined)
 
   return inOpenBatch(
     staffMemberId,
@@ -112,7 +161,7 @@ export async function registerMailCounts(
 
       await tx.insert(mailItems).values(
         items.map((item) => ({
-          id: uuidv7(),
+          id: item.id,
           clientId: item.clientId,
           kind: item.kind,
           sender: null,
@@ -123,7 +172,12 @@ export async function registerMailCounts(
           status: 'received' as const,
         })),
       )
-      return { items: items.length, clients: clientIds.length }
+      if (photographed.length > 0) {
+        await tx
+          .insert(mailScans)
+          .values(photographed.flatMap((item) => scanRows(item.id, [item.envelope as StoredScan], staffMemberId)))
+      }
+      return { items: items.length, clients: clientIds.length, envelopes: photographed.length }
     },
     database,
   )

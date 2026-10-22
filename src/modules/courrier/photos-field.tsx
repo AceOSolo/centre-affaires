@@ -18,7 +18,13 @@ const labelClass = 'block text-sm font-medium text-foreground'
 const cameraClass =
   'hidden min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border bg-white px-3 py-2 text-sm font-medium text-foreground hover:bg-muted pointer-coarse:inline-flex has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent has-[:disabled]:opacity-50'
 
-type Page = { key: number; file: File; /** Aperçu local d'une photo ; nul pour un PDF. */ preview: string | null }
+export type PhotoPage = {
+  key: number
+  file: File
+  /** Aperçu local d'une photo ; nul pour un PDF. */
+  preview: string | null
+}
+type Page = PhotoPage
 
 /** `DataTransfer` constructible : le champ peut garder les pages ajoutées une à une. */
 let transferSupported: boolean | undefined
@@ -34,6 +40,42 @@ function supportsTransfer(): boolean {
   return transferSupported
 }
 const noSubscription = () => () => {}
+
+/** Vrai une fois la page chargée dans un navigateur qui sait garder les pages (sinon, le champ natif). */
+export const useTransferSupport = () => useSyncExternalStore(noSubscription, supportsTransfer, () => false)
+
+/** Remet toutes les pages dans le champ de fichier envoyé avec le formulaire. */
+export function putFiles(input: HTMLInputElement | null, pages: PhotoPage[]) {
+  if (!input || !supportsTransfer()) return
+  const transfer = new DataTransfer()
+  for (const page of pages) transfer.items.add(page.file)
+  input.files = transfer.files
+}
+
+let lastKey = 0
+/** Clé d'une nouvelle page, unique dans la page web. */
+const nextKey = () => (lastKey += 1)
+
+/**
+ * Prépare une photo avant l'envoi : réduite et recompressée en JPEG, sans
+ * métadonnées EXIF ni position GPS (`compressPhoto`), avec son aperçu local.
+ * Rend la raison, lisible, d'une photo que le navigateur ne sait pas lire.
+ */
+export async function preparePhoto(
+  file: File,
+  name: string,
+): Promise<{ page: PhotoPage; failure?: undefined } | { page?: undefined; failure: string }> {
+  try {
+    const { blob } = await compressPhoto(file, { maxEdge: MAIL_PHOTO_MAX_EDGE, quality: MAIL_PHOTO_QUALITY })
+    return {
+      page: { key: nextKey(), file: new File([blob], name, { type: 'image/jpeg' }), preview: URL.createObjectURL(blob) },
+    }
+  } catch (caught) {
+    return {
+      failure: `${file.name} : ${caught instanceof PhotoDecodeError ? caught.message : 'cette photo n’a pas pu être préparée. Reprenez-la.'}`,
+    }
+  }
+}
 
 const isPdf = (file: File) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
 const plural = (count: number, word: string) => `${count} ${word}${count > 1 ? 's' : ''}`
@@ -67,10 +109,9 @@ export function PhotosField({
   required?: boolean
   multiple?: boolean
 }) {
-  const enhanced = useSyncExternalStore(noSubscription, supportsTransfer, () => false)
+  const enhanced = useTransferSupport()
   const carrierRef = useRef<HTMLInputElement>(null)
   const pagesRef = useRef<Page[]>([])
-  const keyRef = useRef(0)
   const [pages, setPages] = useState<Page[]>([])
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('')
@@ -110,11 +151,7 @@ export function PhotosField({
     }
     pagesRef.current = next
     setPages(next)
-    const carrier = carrierRef.current
-    if (!carrier) return
-    const transfer = new DataTransfer()
-    for (const page of next) transfer.items.add(page.file)
-    carrier.files = transfer.files
+    putFiles(carrierRef.current, next)
   }
 
   async function add(files: File[]) {
@@ -133,7 +170,7 @@ export function PhotosField({
         if (files.length > 1) failures.push(`${file.name} : un PDF se joint seul, sans autre fichier.`)
         else if (file.size > MAX_SCAN_BYTES) failures.push(`${file.name} : le fichier dépasse ${MAX_SCAN_BYTES / 1024 / 1024} Mo.`)
         // Le PDF tient lieu de toutes les pages.
-        else next = [{ key: ++keyRef.current, file, preview: null }]
+        else next = [{ key: nextKey(), file, preview: null }]
         continue
       }
       const kept = multiple ? next.filter((page) => page.preview !== null) : []
@@ -142,23 +179,21 @@ export function PhotosField({
         continue
       }
       setStatus(`Préparation de la photo${files.length > 1 ? ` ${index + 1} sur ${files.length}` : ''}…`)
-      try {
-        const { blob } = await compressPhoto(file, { maxEdge: MAIL_PHOTO_MAX_EDGE, quality: MAIL_PHOTO_QUALITY })
-        const weight = kept.reduce((total, page) => total + page.file.size, blob.size)
-        if (weight > MAX_SCAN_PHOTOS_BYTES) {
-          failures.push(
-            `${file.name} : les photos dépasseraient ${MAX_SCAN_PHOTOS_BYTES / 1024 / 1024} Mo à elles toutes. Numérisez le courrier en PDF.`,
-          )
-          continue
-        }
-        const photo = new File([blob], multiple ? `page-${kept.length + 1}.jpg` : 'photo.jpg', { type: 'image/jpeg' })
-        // Une photo remplace un PDF déjà choisi, et, sans plusieurs pages, la photo précédente.
-        next = [...kept, { key: ++keyRef.current, file: photo, preview: URL.createObjectURL(blob) }]
-      } catch (caught) {
-        failures.push(
-          `${file.name} : ${caught instanceof PhotoDecodeError ? caught.message : 'cette photo n’a pas pu être préparée. Reprenez-la.'}`,
-        )
+      const prepared = await preparePhoto(file, multiple ? `page-${kept.length + 1}.jpg` : 'photo.jpg')
+      if (!prepared.page) {
+        failures.push(prepared.failure)
+        continue
       }
+      const weight = kept.reduce((total, page) => total + page.file.size, prepared.page.file.size)
+      if (weight > MAX_SCAN_PHOTOS_BYTES) {
+        if (prepared.page.preview) URL.revokeObjectURL(prepared.page.preview)
+        failures.push(
+          `${file.name} : les photos dépasseraient ${MAX_SCAN_PHOTOS_BYTES / 1024 / 1024} Mo à elles toutes. Numérisez le courrier en PDF.`,
+        )
+        continue
+      }
+      // Une photo remplace un PDF déjà choisi, et, sans plusieurs pages, la photo précédente.
+      next = [...kept, prepared.page]
     }
 
     apply(next)

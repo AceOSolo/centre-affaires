@@ -23,12 +23,13 @@ const positive = (value: string | undefined) => {
 export default async function SaisieGroupeePage({
   searchParams,
 }: {
-  searchParams: Promise<{ plis?: string; entreprises?: string; saisie?: string }>
+  searchParams: Promise<{ plis?: string; entreprises?: string; photos?: string; saisie?: string }>
 }) {
   await requirePermission('courrier.gerer')
   const params = await searchParams
   const items = positive(params.plis)
   const companies = positive(params.entreprises)
+  const photos = positive(params.photos)
   const timeZone = await currentTimeZone()
   const recipients = await listMailRecipients(todayIsoDate(timeZone))
 
@@ -40,19 +41,29 @@ export default async function SaisieGroupeePage({
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Saisie groupée</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-          Indiquez le nombre de plis reçus par chaque entreprise. Ils entrent fermés dans la tournée
-          en cours, sans expéditeur ni photo ; la fiche de chaque pli se complète ensuite si
-          besoin, photo de l’enveloppe comprise, depuis la tournée. Personne n’est prévenu avant la
-          fin de la tournée.
+          Indiquez le nombre de plis reçus par chaque entreprise et, si vous le souhaitez, joignez la
+          photo de l’enveloppe de chacun : une photo par pli. Ils entrent fermés dans la tournée en
+          cours, sans expéditeur ; la fiche de chaque pli se complète ensuite si besoin, depuis la
+          tournée. Personne n’est prévenu avant la fin de la tournée.
         </p>
       </div>
 
       {items > 0 && (
-        <FlashNotice key={params.saisie ?? 'saisie'}>
+        // Clé propre à l'avis : le formulaire, à côté, porte déjà `params.saisie`.
+        <FlashNotice key={`avis-${params.saisie ?? 'saisie'}`}>
           {items} pli{items > 1 ? 's' : ''} enregistré{items > 1 ? 's' : ''} pour {companies}{' '}
-          entreprise{companies > 1 ? 's' : ''}.{' '}
+          entreprise{companies > 1 ? 's' : ''}
+          {photos > 0 &&
+            (photos < items
+              ? `, dont ${photos} avec la photo de l’enveloppe`
+              : items === 1
+                ? ', avec la photo de l’enveloppe'
+                : ', tous avec la photo de l’enveloppe')}
+          .{' '}
           <Link href="/courrier/tournee" className="font-medium underline underline-offset-2">
-            Voir la tournée, ajouter les photos des enveloppes et la terminer
+            {photos < items
+              ? 'Voir la tournée, ajouter les photos manquantes et la terminer'
+              : 'Voir la tournée et la terminer'}
           </Link>
         </FlashNotice>
       )}

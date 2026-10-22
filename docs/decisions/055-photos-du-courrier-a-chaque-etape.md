@@ -1,8 +1,8 @@
 # ADR 055 — Photos du courrier à chaque étape du back-office
 
-**Date** : 2026-10-22
+**Date** : 2026-10-22 (§ 5 ajouté le même jour)
 **Statut** : accepté — complète les ADR 015 (numérisations), 044 (tournée,
-pages comptées) et 037 (numérisation demandée)
+pages comptées, saisie groupée) et 037 (numérisation demandée)
 
 ## Contexte
 
@@ -26,7 +26,8 @@ Jusqu'ici, chaque étape avait un champ de fichier unique (PDF, JPEG ou PNG de
 | Étape | Écran | Photos |
 |---|---|---|
 | Enregistrement d'un pli | `/courrier/nouveau` | enveloppe (une) et contenu (plusieurs) |
-| Saisie groupée | `/courrier/tournee` | colonne « Enveloppe » : « Photo jointe », ou lien « Ajouter la photo » vers la fiche |
+| Saisie groupée | `/courrier/tournee/saisie` | colonne « Photos » : une photo d'enveloppe par pli, sur la ligne de l'entreprise (§ 5) |
+| Tournée | `/courrier/tournee` | colonne « Enveloppe » : « Photo jointe », ou lien « Ajouter la photo » vers la fiche |
 | Fiche du pli | `/courrier/[id]` | « Ajouter la photo de l'enveloppe », tant que le pli n'en a pas et n'est pas retiré, quel que soit son état |
 | Ouverture | fiche du pli | contenu (plusieurs) |
 | Numérisation demandée | fiche du pli | pages demandées (plusieurs) |
@@ -80,6 +81,33 @@ photo de l'enveloppe ».
 
 Le client voit la photo aussitôt dans son espace, **sans nouveau message** :
 il a déjà été prévenu à la fin de la tournée.
+
+### 5. Photos dans la saisie groupée
+
+Précision de l'exploitation, le même jour : la saisie groupée est l'endroit
+où joindre les photos. « Entreprise Y : 2 courriers » se saisit avec ses deux
+photos d'enveloppe, sur la même ligne.
+
+- **Une photo par pli, jamais plus.** Chaque ligne a sa colonne « Photos »
+  (champ `p.<clientId>`). Les photos vont aux plis de la ligne dans l'ordre
+  des colonnes (lettres, recommandés, colis, autres), puis dans l'ordre où
+  elles ont été jointes (`envelopeSlots`, `pairEnvelopes`). Quand une ligne
+  mêle plusieurs types, chaque miniature dit à quel pli elle va
+  (« Lettre 2 », « Colis »).
+- **Pas de pli créé à partir des photos.** Plus de photos que de plis bloque
+  l'envoi, sur la ligne et en pied de formulaire (`checkPhotoCounts`, tenu
+  aussi par le serveur). Moins de photos est permis : les plis restants
+  attendent la leur, que la tournée signale.
+- **Tout ou rien.** Les photos sont déposées d'abord, puis plis et photos
+  s'écrivent dans la même transaction. Si l'enregistrement échoue, les
+  fichiers déposés sont effacés (`registerMailCountsWithEnvelopes`).
+- **20 Mo de photos par envoi**, sous le plafond de 21 Mo. Une photo
+  d'enveloppe compressée pèse quelques centaines de kilo-octets. Au-delà de
+  20 Mo, l'écran demande d'enregistrer la tournée en deux envois.
+- **Un envoi refusé ne perd pas les photos.** Elles sont gardées au-dessus du
+  tableau, qui se remonte après un refus.
+- **Sur téléphone**, la colonne « Entreprise » reste fixée à gauche pendant
+  que le tableau défile jusqu'aux photos.
 
 ## Justification
 

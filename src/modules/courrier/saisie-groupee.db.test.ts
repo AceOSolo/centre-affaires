@@ -8,6 +8,7 @@ import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/te
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { todayIsoDate } from '../../lib/dates.ts'
 import { toutVider } from '../clients/test-support.ts'
+import type { StoredScan } from './queries.ts'
 import { listMailRecipients, registerMailCounts, UnknownRecipientError } from './saisie-groupee.ts'
 import { closeOpenBatch, findOpenBatch } from './tournees.ts'
 
@@ -84,7 +85,7 @@ describe('saisie groupée du courrier', { skip: raisonDeSaut }, () => {
       ACCUEIL,
       bases.app.db,
     )
-    assert.deepEqual(done, { items: 5, clients: 2 })
+    assert.deepEqual(done, { items: 5, clients: 2, envelopes: 0 })
 
     const open = await findOpenBatch()
     assert.equal(open?.items.length, 5)
@@ -117,6 +118,46 @@ describe('saisie groupée du courrier', { skip: raisonDeSaut }, () => {
     assert.equal(next?.items.length, 1)
   })
 
+  /** Des photos d'enveloppe déjà déposées au stockage, telles que `store` les rend. */
+  const deposees = (prefixe: string, nombre: number): StoredScan[] =>
+    Array.from({ length: nombre }, (_, index) => ({
+      side: 'envelope',
+      key: `courrier/test/${prefixe}-${index + 1}.jpg`,
+      scan: { bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]), contentType: 'image/jpeg' },
+      encryptionKeyVersion: 1,
+    }))
+
+  it('« 2 lettres et 1 colis pour Durand, 2 photos » : chaque lettre a son enveloppe, le colis attend la sienne', async () => {
+    const done = await registerMailCounts(
+      [
+        { clientId: DURAND, kind: 'colis', count: 1 },
+        { clientId: DURAND, kind: 'lettre', count: 2 },
+        { clientId: PETIT, kind: 'lettre', count: 1 },
+      ],
+      new Date(Date.now() - 60_000),
+      ACCUEIL,
+      bases.app.db,
+      new Map([[DURAND, deposees('durand', 2)]]),
+    )
+    assert.deepEqual(done, { items: 4, clients: 2, envelopes: 2 })
+
+    const scans = await lire(`
+      select i.client_id, i.kind, s.side, s.storage_key, s.uploaded_by, s.page_count
+        from mail_scans s join mail_items i on i.id = s.mail_item_id
+       order by s.storage_key`)
+    assert.deepEqual(
+      scans.map((row) => [row.client_id, row.kind, row.side, row.storage_key, row.uploaded_by, row.page_count]),
+      [
+        [DURAND, 'lettre', 'envelope', 'courrier/test/durand-1.jpg', ACCUEIL, null],
+        [DURAND, 'lettre', 'envelope', 'courrier/test/durand-2.jpg', ACCUEIL, null],
+      ],
+    )
+    // Deux plis différents, et la tournée le montre : deux photos jointes, deux à ajouter.
+    assert.equal(new Set((await lire(`select mail_item_id from mail_scans`)).map((row) => row.mail_item_id)).size, 2)
+    const open = await findOpenBatch()
+    assert.deepEqual(open?.items.map((item) => item.envelope).sort(), [false, false, true, true])
+  })
+
   it('une entreprise archivée entre-temps : rien n’est enregistré', async () => {
     await assert.rejects(
       registerMailCounts(
@@ -133,5 +174,23 @@ describe('saisie groupée du courrier', { skip: raisonDeSaut }, () => {
     assert.deepEqual(await lire(`select id from mail_items`), [])
     // La tournée ouverte par cette saisie part avec elle.
     assert.deepEqual(await lire(`select id from mail_batches`), [])
+  })
+
+  it('une entreprise archivée entre-temps : aucune photo n’est rattachée non plus', async () => {
+    await assert.rejects(
+      registerMailCounts(
+        [
+          { clientId: DURAND, kind: 'lettre', count: 1 },
+          { clientId: ARCHIVE, kind: 'lettre', count: 1 },
+        ],
+        new Date(Date.now() - 60_000),
+        ACCUEIL,
+        bases.app.db,
+        new Map([[DURAND, deposees('durand', 1)]]),
+      ),
+      UnknownRecipientError,
+    )
+    assert.deepEqual(await lire(`select id from mail_scans`), [])
+    assert.deepEqual(await lire(`select id from mail_items`), [])
   })
 })

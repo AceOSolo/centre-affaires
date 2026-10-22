@@ -49,9 +49,70 @@ export function parseMailCounts(entries: Iterable<[string, unknown]>): ParsedMai
   return { counts, fieldErrors, total }
 }
 
-/** Les plis à insérer, un par unité : `{ a, lettre, 3 }` donne trois lettres pour a. */
-export function expandMailCounts(counts: MailCount[]): { clientId: string; kind: MailKind }[] {
-  return counts.flatMap((entry) =>
-    Array.from({ length: entry.count }, () => ({ clientId: entry.clientId, kind: entry.kind })),
-  )
+/*
+ * Photos des enveloppes (ADR 055) : un champ de fichiers `p.<clientId>` par
+ * ligne, une photo par pli. Elles vont aux plis de l'entreprise dans l'ordre
+ * des colonnes — lettres, recommandés, colis, autres —, et dans l'ordre où
+ * elles ont été jointes. Jamais plus de photos que de plis.
+ */
+
+export const photoFieldName = (clientId: string) => `p.${clientId}`
+
+/** L'entreprise d'un champ de photos ; rien pour un autre champ. */
+export function photoFieldClientId(name: string): string | undefined {
+  const match = /^p\.([^.]+)$/.exec(name)
+  return match && isUuid(match[1]) ? match[1] : undefined
+}
+
+/**
+ * Photos d'une saisie, à elles toutes : 20 Mo, sous le plafond de 21 Mo d'un
+ * envoi (`next.config.ts`, nginx). Compressée dans le navigateur, une photo
+ * d'enveloppe pèse quelques centaines de kilo-octets.
+ */
+export const MAX_ENTRY_PHOTOS_BYTES = 20 * 1024 * 1024
+
+/** Les plis d'une entreprise, dans l'ordre où ses photos leur vont : `[lettre, lettre, colis]`. */
+export function envelopeSlots(counts: MailCount[], clientId: string): MailKind[] {
+  return mailKinds.flatMap((kind) => {
+    const count = counts
+      .filter((entry) => entry.clientId === clientId && entry.kind === kind)
+      .reduce((sum, entry) => sum + entry.count, 0)
+    return Array.from({ length: count }, () => kind)
+  })
+}
+
+const plural = (count: number, word: string) => `${count} ${word}${count > 1 ? 's' : ''}`
+
+/** « 3 photos pour 2 plis » : le message d'une ligne qui a trop de photos. */
+export function photoCountError(photos: number, items: number): string {
+  return `${plural(photos, 'photo')} pour ${plural(items, 'pli')} : une photo par pli. Retirez-en, ou comptez les plis qui manquent.`
+}
+
+/** Une erreur par entreprise qui a plus de photos que de plis, sur son champ de photos. */
+export function checkPhotoCounts(counts: MailCount[], photos: Map<string, number>): Record<string, string> {
+  const errors: Record<string, string> = {}
+  for (const [clientId, count] of photos) {
+    const items = envelopeSlots(counts, clientId).length
+    if (count > items) errors[photoFieldName(clientId)] = photoCountError(count, items)
+  }
+  return errors
+}
+
+/**
+ * Les plis à insérer, un par unité — `{ a, lettre, 3 }` donne trois lettres
+ * pour a —, chacun avec la photo de son enveloppe s'il y en a une
+ * (`envelopeSlots`). Une photo sans pli est ignorée : `checkPhotoCounts` la
+ * refuse avant.
+ */
+export function pairEnvelopes<T>(
+  counts: MailCount[],
+  photos: Map<string, T[]> = new Map(),
+): { clientId: string; kind: MailKind; envelope?: T }[] {
+  const clientIds = [...new Set(counts.map((entry) => entry.clientId))]
+  return clientIds.flatMap((clientId) => {
+    const own = photos.get(clientId) ?? []
+    return envelopeSlots(counts, clientId).map((kind, index) =>
+      own[index] === undefined ? { clientId, kind } : { clientId, kind, envelope: own[index] },
+    )
+  })
 }
