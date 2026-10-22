@@ -231,7 +231,9 @@ export function PhotosField({
             if (picked.length === 0) apply(pagesRef.current)
             else void add(picked)
           }}
-          className="block min-w-0 flex-1 text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+          // Pleine largeur : sous le bouton photo sur un téléphone, sans
+          // imposer sa largeur au cadre qui le contient.
+          className="block w-full text-sm text-muted-foreground file:mr-3 file:rounded-md file:border file:border-border file:bg-white file:px-3 file:py-2 file:text-sm file:font-medium file:text-foreground hover:file:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         />
       </div>
 

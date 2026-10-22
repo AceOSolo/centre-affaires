@@ -125,7 +125,7 @@ export default async function TourneePage({
                           <Link
                             href={`/courrier/${item.id}#enveloppe`}
                             aria-label={`Ajouter la photo de l’enveloppe — ${item.clientName}, ${mailKindLabels[item.kind]} du ${formatDateTime(item.receivedAt, timeZone)}`}
-                            className="font-medium text-primary underline-offset-2 hover:underline"
+                            className="inline-flex min-h-6 items-center font-medium text-primary underline-offset-2 hover:underline"
                           >
                             Ajouter la photo
                           </Link>

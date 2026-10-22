@@ -153,7 +153,8 @@ export function MailForm({
         </p>
       </div>
 
-      <fieldset className="flex flex-col gap-5 rounded-lg border border-border bg-white px-5 py-4">
+      {/* `min-w-0` : un fieldset ne descend pas sous la largeur de son contenu, sinon. */}
+      <fieldset className="flex min-w-0 flex-col gap-5 rounded-lg border border-border bg-white px-5 py-4">
         <legend className="px-1 text-sm font-semibold tracking-tight">Photos et numérisations</legend>
         <p className="-mt-2 text-xs text-muted-foreground">
           Photos prises sur place, ou fichiers PDF, JPEG ou PNG de {MAX_SCAN_BYTES / 1024 / 1024} Mo
