@@ -124,7 +124,10 @@ describe('états des lieux', { skip: raisonDeSaut }, () => {
     )
 
   let photos = 0
-  const photo = async (inspectionId: string, values: { fieldId?: string; contentType?: string; byteSize?: number } = {}) => {
+  const photo = async (
+    inspectionId: string,
+    values: { fieldId?: string; contentType?: string; byteSize?: number; width?: number | null; height?: number | null } = {},
+  ) => {
     photos += 1
     const id = uuidv7()
     await asTenant((tx) =>
@@ -132,7 +135,8 @@ describe('états des lieux', { skip: raisonDeSaut }, () => {
         insert into inspection_photos (id, inspection_id, storage_key, encryption_key_version, content_type,
                                        byte_size, width, height, field_id, uploaded_by)
         values (${id}, ${inspectionId}, ${`etats-des-lieux/test/${photos}.jpg`}, 1,
-                ${values.contentType ?? 'image/jpeg'}, ${values.byteSize ?? 180_000}, 1600, 1200,
+                ${values.contentType ?? 'image/jpeg'}, ${values.byteSize ?? 180_000},
+                ${'width' in values ? values.width : 1600}, ${'height' in values ? values.height : 1200},
                 ${values.fieldId ?? null}, ${CAMILLE})`),
     )
     return id
@@ -503,6 +507,24 @@ describe('états des lieux', { skip: raisonDeSaut }, () => {
           ),
         ),
         DB_CHECK_VIOLATION,
+      )
+    })
+
+    it('acceptent un PDF sans dimensions, figé comme une photo à la clôture (ADR 056)', async () => {
+      const id = await etat(await modele())
+      const pdf = { contentType: 'application/pdf', width: null, height: null }
+      const document = await photo(id, { ...pdf, fieldId: 'murs' })
+      await photo(id, pdf)
+      // Une photo a ses dimensions, un PDF n'en a pas.
+      assert.equal(await codeErreur(() => photo(id, { ...pdf, width: 800, height: 600 })), DB_CHECK_VIOLATION)
+      assert.equal(await codeErreur(() => photo(id, { width: null, height: null })), DB_CHECK_VIOLATION)
+      await clore(id)
+      assert.equal(await codeErreur(() => photo(id, pdf)), DB_INSPECTION_LOCKED)
+      assert.equal(
+        await codeErreur(() =>
+          asTenant((tx) => tx.execute(sql`update inspection_photos set caption = 'Plan' where id = ${document}`)),
+        ),
+        DB_INSPECTION_LOCKED,
       )
     })
 

@@ -4,30 +4,36 @@ import { useEffect, useId, useRef, useState, useTransition } from 'react'
 
 import { useRouter } from 'next/navigation'
 
+import { FileTextIcon } from '../../components/ui/icons.tsx'
 import {
   captionInspectionPhotoAction,
   removeInspectionPhotoAction,
   uploadInspectionPhotoAction,
 } from './actions.ts'
 import { compressPhoto, PhotoDecodeError } from './compression.ts'
+import { ATTACHMENT_ACCEPT, PHOTO_MAX_BYTES } from './photos.ts'
 import { dangerSmallButton, fieldClass, smallButton } from './styles.ts'
 
 export type DraftPhoto = {
   id: string
   caption: string | null
-  width: number
-  height: number
+  /** Nulles pour un PDF (ADR 056). */
+  width: number | null
+  height: number | null
 }
 
+const isPdfFile = (file: File) => file.type === 'application/pdf' || /\.pdf$/i.test(file.name)
+
 /**
- * Photos d'un champ (ou d'ensemble) sur un brouillon d'état des lieux : dépôt,
- * légende, retrait.
+ * Photos et documents PDF d'un champ (ou d'ensemble) sur un brouillon d'état
+ * des lieux : dépôt, légende, retrait.
  *
  * Chaque photo est compressée **dans le navigateur** avant de partir
- * (`compression.ts`) puis envoyée seule : une connexion de téléphone qui
- * flanche ne perd que la photo en cours. Le serveur vérifie, chiffre et
- * dépose. Aucun `<form>` ici : ce bloc vit à l'intérieur du formulaire de
- * saisie, et ses contrôles n'ont pas de `name` — ils ne partent pas avec lui.
+ * (`compression.ts`) ; un PDF part tel quel (ADR 056). Chaque fichier est
+ * envoyé seul : une connexion de téléphone qui flanche ne perd que le fichier
+ * en cours. Le serveur vérifie, chiffre et dépose. Aucun `<form>` ici : ce
+ * bloc vit à l'intérieur du formulaire de saisie, et ses contrôles n'ont pas
+ * de `name` — ils ne partent pas avec lui.
  */
 export function DraftPhotos({
   inspectionId,
@@ -61,13 +67,24 @@ export function DraftPhotos({
     for (const [index, file] of list.entries()) {
       const rank = list.length > 1 ? ` ${index + 1} sur ${list.length}` : ''
       try {
-        setStatus(`Compression de la photo${rank}…`)
-        const compressed = await compressPhoto(file)
-        setStatus(`Envoi de la photo${rank}…`)
+        let attachment: File
+        if (isPdfFile(file)) {
+          if (file.size > PHOTO_MAX_BYTES) {
+            failures.push(`${file.name} : le PDF dépasse 10 Mo. Enregistrez-le en qualité réduite, ou en plusieurs fichiers.`)
+            continue
+          }
+          setStatus(`Envoi du document${rank}…`)
+          attachment = new File([file], 'document.pdf', { type: 'application/pdf' })
+        } else {
+          setStatus(`Compression de la photo${rank}…`)
+          const compressed = await compressPhoto(file)
+          setStatus(`Envoi de la photo${rank}…`)
+          attachment = new File([compressed.blob], 'photo.jpg', { type: compressed.blob.type })
+        }
         const data = new FormData()
         data.set('inspectionId', inspectionId)
         if (fieldId) data.set('fieldId', fieldId)
-        data.set('photo', new File([compressed.blob], 'photo.jpg', { type: compressed.blob.type }))
+        data.set('photo', attachment)
         const result = await uploadInspectionPhotoAction(data)
         if (result.error) failures.push(`${file.name} : ${result.error}`)
         else sent += 1
@@ -85,8 +102,8 @@ export function DraftPhotos({
     setErrors(failures)
     setStatus(
       sent === 0
-        ? 'Aucune photo ajoutée.'
-        : `${sent} photo${sent > 1 ? 's' : ''} ajoutée${sent > 1 ? 's' : ''}.`,
+        ? 'Aucun fichier ajouté.'
+        : `${sent} fichier${sent > 1 ? 's' : ''} ajouté${sent > 1 ? 's' : ''}.`,
     )
     if (inputRef.current) inputRef.current.value = ''
     if (sent > 0) startTransition(() => router.refresh())
@@ -101,7 +118,7 @@ export function DraftPhotos({
               <DraftPhotoItem
                 inspectionId={inspectionId}
                 photo={photo}
-                alt={photo.caption ?? `Photo ${index + 1} — ${subject}`}
+                alt={photo.caption ?? `${photo.width === null ? 'Document' : 'Photo'} ${index + 1} — ${subject}`}
                 href={`${photoBase}/${photo.id}`}
                 onChanged={() => startTransition(() => router.refresh())}
               />
@@ -115,12 +132,12 @@ export function DraftPhotos({
           htmlFor={inputId}
           className={`${smallButton} cursor-pointer has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent`}
         >
-          {busy ? 'Envoi en cours…' : `Ajouter des photos — ${subject}`}
+          {busy ? 'Envoi en cours…' : `Ajouter des photos ou des PDF — ${subject}`}
           <input
             ref={inputRef}
             id={inputId}
             type="file"
-            accept="image/*"
+            accept={ATTACHMENT_ACCEPT}
             multiple
             disabled={busy}
             onChange={(event) => {
@@ -197,17 +214,28 @@ function DraftPhotoItem({
   return (
     <figure className="flex w-48 flex-col gap-2">
       <a href={href} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-md border border-border bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent">
-        {/* Les dimensions réservent la place : pas de saut au chargement. */}
-        {/* eslint-disable-next-line @next/next/no-img-element -- photo déchiffrée et journalisée par la route, pas d'optimisation d'image */}
-        <img
-          src={href}
-          alt={alt}
-          width={photo.width}
-          height={photo.height}
-          loading="lazy"
-          className="h-32 w-full object-cover"
-        />
-        <span className="sr-only"> (ouvrir en grand dans un nouvel onglet)</span>
+        {photo.width === null || photo.height === null ? (
+          // Un PDF n'a pas de vignette : la même place, son icône et son nom.
+          <span className="flex h-32 flex-col items-center justify-center gap-2 px-3 text-center text-sm font-medium text-primary">
+            <FileTextIcon size={24} />
+            Document PDF
+            <span className="sr-only"> : {alt} (ouvrir dans un nouvel onglet)</span>
+          </span>
+        ) : (
+          <>
+            {/* Les dimensions réservent la place : pas de saut au chargement. */}
+            {/* eslint-disable-next-line @next/next/no-img-element -- photo déchiffrée et journalisée par la route, pas d'optimisation d'image */}
+            <img
+              src={href}
+              alt={alt}
+              width={photo.width}
+              height={photo.height}
+              loading="lazy"
+              className="h-32 w-full object-cover"
+            />
+            <span className="sr-only"> (ouvrir en grand dans un nouvel onglet)</span>
+          </>
+        )}
       </a>
       <figcaption className="flex flex-col gap-1">
         <label htmlFor={captionId} className="text-xs font-medium">
@@ -232,7 +260,7 @@ function DraftPhotoItem({
             type="button"
             onClick={saveCaption}
             disabled={pending}
-            aria-label={`Enregistrer la légende de la photo : ${alt}`}
+            aria-label={`Enregistrer la légende : ${alt}`}
             className={smallButton}
           >
             Enregistrer la légende
@@ -252,7 +280,7 @@ function DraftPhotoItem({
               type="button"
               onClick={() => setConfirming(true)}
               disabled={pending}
-              aria-label={`Retirer la photo : ${alt}`}
+              aria-label={`Retirer : ${alt}`}
               className={dangerSmallButton}
             >
               Retirer

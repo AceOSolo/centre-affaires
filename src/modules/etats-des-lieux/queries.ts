@@ -384,8 +384,9 @@ export type InspectionPhotoRow = {
   id: string
   fieldId: string | null
   caption: string | null
-  width: number
-  height: number
+  /** Nulles pour un PDF (ADR 056). */
+  width: number | null
+  height: number | null
   position: number
 }
 

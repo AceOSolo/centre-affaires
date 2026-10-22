@@ -145,8 +145,8 @@ export default async function ClientInspectionPage({
           photoRetentionMonths={tenant.inspectionPhotoRetentionMonths}
         />
         <p className="text-xs text-muted-foreground">
-          Les photos sont conservées {tenant.inspectionPhotoRetentionMonths} mois après l’état des
-          lieux de sortie, puis effacées. Chaque consultation est enregistrée.
+          Les photos et documents sont conservés {tenant.inspectionPhotoRetentionMonths} mois après
+          l’état des lieux de sortie, puis effacés. Chaque consultation est enregistrée.
         </p>
       </section>
     </div>

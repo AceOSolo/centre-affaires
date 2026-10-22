@@ -1,10 +1,11 @@
+import { FileTextIcon } from '../../components/ui/icons.tsx'
 import { formatInspectionValue } from './champs.ts'
 import type { InspectionPhotoRow } from './queries.ts'
 import type { InspectionField, InspectionValues } from './schema.ts'
 
 /**
- * Lecture d'un état des lieux : chaque champ de sa version, sa valeur et ses
- * photos, puis les observations et les photos d'ensemble. Sert au
+ * Lecture d'un état des lieux : chaque champ de sa version, sa valeur, ses
+ * photos et ses PDF, puis les observations et les pièces d'ensemble. Sert au
  * back-office, à la vue imprimable et à l'espace client — seul le chemin des
  * photos change (`photoBase`), chacun avec son contrôle et son journal.
  *
@@ -61,15 +62,16 @@ export function InspectionValuesView({
       {(general.length > 0 || purgedPhotoCount > 0) && (
         <section aria-labelledby="photos-ensemble-titre" className="flex flex-col gap-2">
           <h3 id="photos-ensemble-titre" className="text-sm font-semibold tracking-tight">
-            Photos d’ensemble
+            Photos et documents d’ensemble
           </h3>
           {general.length > 0 && (
             <PhotoGallery photos={general} photoBase={photoBase} subject="vue d’ensemble" />
           )}
           {purgedPhotoCount > 0 && (
             <p className="text-sm text-muted-foreground">
-              {purgedPhotoCount} photo{purgedPhotoCount > 1 ? 's' : ''} effacée
-              {purgedPhotoCount > 1 ? 's' : ''} au terme de leur durée de conservation
+              {purgedPhotoCount} photo{purgedPhotoCount > 1 ? 's' : ''} ou document
+              {purgedPhotoCount > 1 ? 's' : ''} effacé{purgedPhotoCount > 1 ? 's' : ''} au terme de leur durée de
+              conservation
               {photoRetentionMonths ? ` (${photoRetentionMonths} mois après la sortie)` : ''}.
             </p>
           )}
@@ -79,7 +81,11 @@ export function InspectionValuesView({
   )
 }
 
-/** Vignettes cliquables : chaque affichage passe par la route, qui journalise. */
+/**
+ * Vignettes cliquables, et un lien par PDF (ADR 056) : chaque affichage passe
+ * par la route, qui journalise. À l'impression, un PDF figure par son nom et
+ * sa légende : il se consulte dans l'application.
+ */
 export function PhotoGallery({
   photos,
   photoBase,
@@ -93,7 +99,8 @@ export function PhotoGallery({
     <ul className="flex flex-wrap gap-3">
       {photos.map((photo, index) => {
         const href = `${photoBase}/${photo.id}`
-        const alt = photo.caption ?? `Photo ${index + 1} — ${subject}`
+        const pdf = photo.width === null || photo.height === null
+        const alt = photo.caption ?? `${pdf ? 'Document' : 'Photo'} ${index + 1} — ${subject}`
         return (
           <li key={photo.id} className="w-40 print:w-56">
             <figure className="flex flex-col gap-1">
@@ -103,16 +110,29 @@ export function PhotoGallery({
                 rel="noreferrer"
                 className="block overflow-hidden rounded-md border border-border bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
               >
-                {/* eslint-disable-next-line @next/next/no-img-element -- photo déchiffrée et journalisée par la route, pas d'optimisation d'image */}
-                <img
-                  src={href}
-                  alt={alt}
-                  width={photo.width}
-                  height={photo.height}
-                  loading="lazy"
-                  className="h-28 w-full object-cover print:h-auto"
-                />
-                <span className="sr-only"> (ouvrir en grand dans un nouvel onglet)</span>
+                {photo.width === null || photo.height === null ? (
+                  <span className="flex h-28 flex-col items-center justify-center gap-2 px-3 text-center text-sm font-medium text-primary print:h-auto print:py-3">
+                    <FileTextIcon size={24} className="print:hidden" />
+                    Document PDF
+                    <span className="hidden text-xs font-normal text-muted-foreground print:block">
+                      Joint à l’état des lieux, consultable dans l’application.
+                    </span>
+                    <span className="sr-only"> : {alt} (ouvrir dans un nouvel onglet)</span>
+                  </span>
+                ) : (
+                  <>
+                    {/* eslint-disable-next-line @next/next/no-img-element -- photo déchiffrée et journalisée par la route, pas d'optimisation d'image */}
+                    <img
+                      src={href}
+                      alt={alt}
+                      width={photo.width}
+                      height={photo.height}
+                      loading="lazy"
+                      className="h-28 w-full object-cover print:h-auto"
+                    />
+                    <span className="sr-only"> (ouvrir en grand dans un nouvel onglet)</span>
+                  </>
+                )}
               </a>
               {photo.caption && <figcaption className="text-xs text-muted-foreground">{photo.caption}</figcaption>}
             </figure>

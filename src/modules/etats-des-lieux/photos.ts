@@ -1,18 +1,18 @@
 /**
- * Contrôle des photos d'états des lieux reçues par le serveur (R06, R33,
- * ADR 039).
+ * Contrôle des photos et des documents PDF d'états des lieux reçus par le
+ * serveur (R06, R33, ADR 039, ADR 056).
  *
- * Le navigateur les a déjà réduites et recompressées (`compression.ts`) ; le
- * serveur ne les retouche pas, il vérifie. Le type et les dimensions sont lus
- * dans les octets, jamais dans ce que le navigateur déclare : la photo est
- * ensuite servie avec ce type, et un HTML déguisé en image s'exécuterait sur
- * notre domaine.
+ * Le navigateur a déjà réduit et recompressé les photos (`compression.ts`) ;
+ * un PDF arrive tel quel. Le serveur ne les retouche pas, il vérifie. Le type
+ * et les dimensions sont lus dans les octets, jamais dans ce que le
+ * navigateur déclare : le fichier est ensuite servi avec ce type, et un HTML
+ * déguisé en image s'exécuterait sur notre domaine.
  *
  * Module pur, sans base ni stockage : `photos.test.ts`.
  */
 
 /** Types acceptés : `inspection_photos_content_type_allowed`. */
-export const photoContentTypes = ['image/jpeg', 'image/webp', 'image/png'] as const
+export const photoContentTypes = ['image/jpeg', 'image/webp', 'image/png', 'application/pdf'] as const
 export type PhotoContentType = (typeof photoContentTypes)[number]
 
 /** 10 Mio : `INSPECTION_PHOTO_MAX_BYTES` (schéma), `inspection_photos_byte_size_valid`. */
@@ -24,9 +24,13 @@ export const photoExtensions: Record<PhotoContentType, string> = {
   'image/jpeg': 'jpg',
   'image/webp': 'webp',
   'image/png': 'png',
+  'application/pdf': 'pdf',
 }
 
-export type DetectedImage = { contentType: PhotoContentType; width: number; height: number }
+/** Ce que le champ de fichier accepte : toute image que le navigateur sait lire, et les PDF. */
+export const ATTACHMENT_ACCEPT = 'image/*,application/pdf'
+
+export type DetectedImage = { contentType: Exclude<PhotoContentType, 'application/pdf'>; width: number; height: number }
 
 const ascii = (bytes: Uint8Array, offset: number, length: number) =>
   String.fromCharCode(...bytes.subarray(offset, offset + length))
@@ -120,27 +124,42 @@ export function detectImage(bytes: Uint8Array): DetectedImage | undefined {
   return jpeg(bytes) ?? png(bytes) ?? webp(bytes)
 }
 
-export type PhotoFile = DetectedImage & { bytes: Uint8Array }
+/** Un PDF commence par `%PDF-`. */
+export function isPdf(bytes: Uint8Array): boolean {
+  return [0x25, 0x50, 0x44, 0x46, 0x2d].every((byte, index) => bytes[index] === byte)
+}
+
+/** Une photo vérifiée, ou un PDF : sans dimensions (`inspection_photos_dimensions_valid`). */
+export type PhotoFile =
+  | (DetectedImage & { bytes: Uint8Array })
+  | { contentType: 'application/pdf'; width: null; height: null; bytes: Uint8Array }
 
 /**
- * Lit la photo d'un formulaire. Rend la photo vérifiée, ou un message à
- * afficher : vide, trop lourde, d'un type refusé, de dimensions illisibles.
+ * Lit la photo ou le PDF d'un formulaire. Rend le fichier vérifié, ou un
+ * message à afficher : vide, trop lourd, d'un type refusé, de dimensions
+ * illisibles.
  */
 export async function readPhoto(
   value: FormDataEntryValue | null,
 ): Promise<{ photo?: PhotoFile; error?: string }> {
   if (!value || typeof value === 'string' || value.size === 0) {
-    return { error: 'Aucune photo reçue.' }
+    return { error: 'Aucun fichier reçu.' }
   }
-  if (value.size > PHOTO_MAX_BYTES) {
+  const bytes = new Uint8Array(await value.arrayBuffer())
+  if (isPdf(bytes)) {
+    if (bytes.byteLength > PHOTO_MAX_BYTES) {
+      return { error: 'Le PDF dépasse 10 Mo. Enregistrez-le en qualité réduite, ou en plusieurs fichiers.' }
+    }
+    return { photo: { contentType: 'application/pdf', width: null, height: null, bytes } }
+  }
+  if (bytes.byteLength > PHOTO_MAX_BYTES) {
     return {
       error:
         'La photo dépasse 10 Mo même après compression. Reprenez-la, ou réduisez-la avant de l’envoyer.',
     }
   }
-  const bytes = new Uint8Array(await value.arrayBuffer())
   const image = detectImage(bytes)
-  if (!image) return { error: 'Seules les photos JPEG, WebP et PNG sont acceptées.' }
+  if (!image) return { error: 'Seules les photos JPEG, WebP et PNG, et les documents PDF, sont acceptés.' }
   if (
     image.width < 1 ||
     image.height < 1 ||

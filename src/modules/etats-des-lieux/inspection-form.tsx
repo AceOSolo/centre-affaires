@@ -118,11 +118,12 @@ export function InspectionForm({
 
       <section aria-labelledby="photos-ensemble" className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
         <h2 id="photos-ensemble" className="text-sm font-semibold tracking-tight">
-          Photos d’ensemble
+          Photos et documents d’ensemble
         </h2>
         <p className="-mt-2 text-xs text-muted-foreground">
-          Vues générales, compteur, clés. Les photos sont réduites et recompressées sur cet appareil
-          avant l’envoi, puis chiffrées par le centre.
+          Vues générales, compteur, clés ; un PDF aussi : inventaire, plan, constat. Les photos sont
+          réduites et recompressées sur cet appareil avant l’envoi, un PDF part tel quel (10 Mo au
+          plus) ; tous sont chiffrés par le centre.
         </p>
         <DraftPhotos
           inspectionId={inspectionId}
@@ -143,8 +144,8 @@ export function InspectionForm({
         <fieldset className="flex flex-col gap-3 rounded-lg border border-primary/30 bg-white px-5 py-4">
           <legend className="px-1 text-sm font-semibold tracking-tight">Clore l’état des lieux</legend>
           <p className="text-sm text-muted-foreground">
-            La clôture enregistre la saisie et la fige : ni les valeurs, ni les photos, ni la date ne
-            changeront plus. Le client le consulte alors dans son espace et le valide. Chaque champ
+            La clôture enregistre la saisie et la fige : ni les valeurs, ni les photos et documents,
+            ni la date ne changeront plus. Le client le consulte alors dans son espace et le valide. Chaque champ
             obligatoire doit être renseigné.
           </p>
           <label className="inline-flex min-h-6 items-start gap-2 text-sm">

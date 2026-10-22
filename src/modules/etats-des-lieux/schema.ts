@@ -307,15 +307,20 @@ export const inspections = mysqlTable(
 export type Inspection = typeof inspections.$inferSelect
 export type NewInspection = typeof inspections.$inferInsert
 
-/** Types acceptés : ce que produit la compression du navigateur (canvas). */
-export const inspectionPhotoContentTypes = ['image/jpeg', 'image/webp', 'image/png'] as const
+/**
+ * Types acceptés : les photos, telles que la compression du navigateur les
+ * produit (canvas), et les documents PDF joints tels quels (ADR 056).
+ */
+export const inspectionPhotoContentTypes = ['image/jpeg', 'image/webp', 'image/png', 'application/pdf'] as const
 export type InspectionPhotoContentType = (typeof inspectionPhotoContentTypes)[number]
 
-/** Taille maximale d'une photo, en octets, après compression : la base la refuse au-delà. */
+/** Taille maximale d'une photo après compression, ou d'un PDF, en octets : la base la refuse au-delà. */
 export const INSPECTION_PHOTO_MAX_BYTES = 10 * 1024 * 1024
 
 /**
- * Photos d'un état des lieux. Comme les numérisations (ADR 015, 020) : le
+ * Photos et documents PDF d'un état des lieux (ADR 039, ADR 056 pour les
+ * PDF) : un PDF est une pièce jointe comme une autre, sans dimensions.
+ * Comme les numérisations (ADR 015, 020) : le
  * fichier vit dans le stockage objet, chiffré — ici toujours, la version de
  * clé est obligatoire, il n'y a pas d'objet hérité en clair —, la base n'en
  * garde que la clé ; chaque lecture passe par l'application et s'inscrit au
@@ -339,9 +344,9 @@ export const inspectionPhotos = mysqlTable(
     contentType: varchar('content_type', { length: 100 }).notNull(),
     /** Taille du document en clair. */
     byteSize: int('byte_size').notNull(),
-    /** Dimensions, pour réserver la place à l'affichage. */
-    width: int('width').notNull(),
-    height: int('height').notNull(),
+    /** Dimensions d'une photo, pour réserver la place à l'affichage ; nulles pour un PDF. */
+    width: int('width'),
+    height: int('height'),
     caption: text('caption'),
     /** Champ du modèle illustré ; nul pour une photo d'ensemble. */
     fieldId: varchar('field_id', { length: 64 }),
@@ -363,13 +368,18 @@ export const inspectionPhotos = mysqlTable(
     }).onDelete('restrict'),
     check(
       'inspection_photos_content_type_allowed',
-      sql`${table.contentType} in ('image/jpeg', 'image/webp', 'image/png')`,
+      sql`${table.contentType} in ('image/jpeg', 'image/webp', 'image/png', 'application/pdf')`,
     ),
     // 10 Mio : `INSPECTION_PHOTO_MAX_BYTES`.
     check('inspection_photos_byte_size_valid', sql`${table.byteSize} between 1 and 10485760`),
+    // Une photo a ses dimensions, un PDF n'en a pas. Une expression booléenne :
+    // MySQL refuse un `case` dans un CHECK. Les `is not null` sont explicites :
+    // un CHECK qui vaut NULL passe, et `null between 1 and 10000` vaut NULL.
     check(
       'inspection_photos_dimensions_valid',
-      sql`${table.width} between 1 and 10000 and ${table.height} between 1 and 10000`,
+      sql`(${table.contentType} = 'application/pdf' and ${table.width} is null and ${table.height} is null)
+        or (${table.contentType} <> 'application/pdf' and ${table.width} is not null and ${table.height} is not null
+            and ${table.width} between 1 and 10000 and ${table.height} between 1 and 10000)`,
     ),
     check(
       'inspection_photos_encryption_key_version_positive',

@@ -26,7 +26,7 @@ export const metadata = { title: 'État des lieux' }
 const PHOTO_BASE = '/etats-des-lieux/photos'
 
 const notices: Record<string, string> = {
-  cree: 'Brouillon ouvert. Saisissez les champs et ajoutez les photos ; rien n’est visible du client avant la clôture.',
+  cree: 'Brouillon ouvert. Saisissez les champs et ajoutez les photos et les PDF ; rien n’est visible du client avant la clôture.',
   enregistre: 'Brouillon enregistré.',
   clos: 'État des lieux clos : il est figé, et le client peut le consulter et le valider dans son espace.',
 }
@@ -222,7 +222,7 @@ export default async function InspectionPage({
           <div className="flex flex-col gap-2 rounded-lg border border-border bg-white px-5 py-4 text-sm">
             <p className="text-muted-foreground">
               Ouvert par erreur (mauvaise ressource, mauvais client) ? Retirez le brouillon : il sort
-              des listes, et ses photos sont effacées.
+              des listes, et ses photos et documents sont effacés.
             </p>
             <div>
               <ConfirmDialog
@@ -235,7 +235,7 @@ export default async function InspectionPage({
                 fields={{ id: inspection.id }}
               >
                 <p>
-                  Le brouillon sort de la liste des états des lieux et ses photos sont effacées. Il ne
+                  Le brouillon sort de la liste des états des lieux et ses photos et documents sont effacés. Il ne
                   pourra plus être repris : un nouvel état des lieux s’ouvre depuis la fiche.
                 </p>
               </ConfirmDialog>

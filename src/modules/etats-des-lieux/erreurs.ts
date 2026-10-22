@@ -36,8 +36,9 @@ const constraintMessages: Record<string, string> = {
   inspections_entry_fk:
     'L’état des lieux d’entrée désigné n’est pas celui de ce client et de cette ressource.',
   inspections_signed_by_member_fk: 'Cette personne n’est pas de l’entreprise concernée.',
-  inspection_photos_content_type_allowed: 'Seules les photos JPEG, WebP et PNG sont acceptées.',
-  inspection_photos_byte_size_valid: 'La photo dépasse 10 Mo.',
+  inspection_photos_content_type_allowed:
+    'Seules les photos JPEG, WebP et PNG, et les documents PDF, sont acceptés.',
+  inspection_photos_byte_size_valid: 'Le fichier dépasse 10 Mo.',
   inspection_photos_dimensions_valid: 'Les dimensions de cette photo dépassent 10 000 pixels.',
 }
 

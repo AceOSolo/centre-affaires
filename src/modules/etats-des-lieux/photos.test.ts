@@ -64,8 +64,8 @@ describe('photos reçues', () => {
 
   it('bornent la taille à celle que la base accepte', async () => {
     assert.equal(PHOTO_MAX_BYTES, INSPECTION_PHOTO_MAX_BYTES)
-    assert.deepEqual(await readPhoto(null), { error: 'Aucune photo reçue.' })
-    assert.deepEqual(await readPhoto(asFile(new Uint8Array(0))), { error: 'Aucune photo reçue.' })
+    assert.deepEqual(await readPhoto(null), { error: 'Aucun fichier reçu.' })
+    assert.deepEqual(await readPhoto(asFile(new Uint8Array(0))), { error: 'Aucun fichier reçu.' })
     const lourde = new Uint8Array(PHOTO_MAX_BYTES + 1)
     lourde.set(jpeg(100, 100))
     assert.match((await readPhoto(asFile(lourde))).error ?? '', /dépasse 10 Mo/)
@@ -77,6 +77,24 @@ describe('photos reçues', () => {
     const { photo } = await readPhoto(asFile(jpeg(1600, 1200), 'application/octet-stream'))
     assert.equal(photo?.contentType, 'image/jpeg')
     assert.equal(photo?.width, 1600)
+  })
+
+  it('acceptent un PDF tel quel, sans dimensions, reconnu à ses octets (ADR 056)', async () => {
+    const pdf = new TextEncoder().encode('%PDF-1.7\n%âãÏÓ\n1 0 obj\n<< >>\nendobj\n')
+    const { photo, error } = await readPhoto(asFile(pdf, 'application/octet-stream'))
+    assert.equal(error, undefined)
+    assert.deepEqual(
+      { contentType: photo?.contentType, width: photo?.width, height: photo?.height, size: photo?.bytes.byteLength },
+      { contentType: 'application/pdf', width: null, height: null, size: pdf.byteLength },
+    )
+    // Un HTML qui se dit PDF reste refusé.
+    assert.match(
+      (await readPhoto(asFile(new TextEncoder().encode('<html>%PDF-'), 'application/pdf'))).error ?? '',
+      /documents PDF/,
+    )
+    const lourd = new Uint8Array(PHOTO_MAX_BYTES + 1)
+    lourd.set(pdf)
+    assert.match((await readPhoto(asFile(lourd))).error ?? '', /Le PDF dépasse 10 Mo/)
   })
 })
 

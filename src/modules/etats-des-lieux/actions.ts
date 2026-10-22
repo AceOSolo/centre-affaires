@@ -315,8 +315,9 @@ export type PhotoActionResult = { error?: string }
 const MAX_CAPTION = 500
 
 /**
- * Dépôt d'une photo, déjà compressée par le navigateur : le serveur vérifie
- * le type et la taille dans les octets, chiffre, dépose, inscrit.
+ * Dépôt d'une photo, déjà compressée par le navigateur, ou d'un PDF tel quel
+ * (ADR 056) : le serveur vérifie le type et la taille dans les octets,
+ * chiffre, dépose, inscrit.
  */
 export async function uploadInspectionPhotoAction(formData: FormData): Promise<PhotoActionResult> {
   const { member } = await requirePermission('etats-des-lieux.gerer')
@@ -338,11 +339,11 @@ export async function uploadInspectionPhotoAction(formData: FormData): Promise<P
     if (failure instanceof DocumentKeyError) {
       return {
         error:
-          'La photo n’a pas été déposée : le chiffrement des documents n’est pas configuré sur ce serveur. Prévenez la personne qui administre l’application.',
+          'Le fichier n’a pas été déposé : le chiffrement des documents n’est pas configuré sur ce serveur. Prévenez la personne qui administre l’application.',
       }
     }
     return {
-      error: 'La photo n’a pas pu être déposée. Réessayez ; si le problème persiste, le stockage est peut-être indisponible.',
+      error: 'Le fichier n’a pas pu être déposé. Réessayez ; si le problème persiste, le stockage est peut-être indisponible.',
     }
   }
   revalidatePath(`/etats-des-lieux/${inspectionId}`)
