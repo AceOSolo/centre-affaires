@@ -233,9 +233,11 @@ try {
       )
     }
 
-    // L'exploitant de démonstration : invité par son adresse, sans compte.
+    // La direction de démonstration : invitée par son adresse, sans compte.
+    // Direction plutôt qu'exploitant : la démonstration montre tous les
+    // écrans, la nomination des exploitants comprise (ADR 054).
     await cnx.query(
-      `insert into staff_members (id, email, role, full_name) values (?, ?, 'admin', 'Exploitant de démonstration')`,
+      `insert into staff_members (id, email, role, full_name) values (?, ?, 'super_admin', 'Direction de démonstration')`,
       [uuidv7(), COURRIEL_EXPLOITANT_DEMO],
     )
 
@@ -252,8 +254,8 @@ try {
       `et ${bilan.contracts} contrats fictifs insérés.`,
   )
   console.log(
-    `Exploitant de démonstration : ${COURRIEL_EXPLOITANT_DEMO}. Créer son compte sur /auth/connexion ` +
-      "(« Créer votre accès » ; avec AUTH_SKIP_EMAIL_VERIFICATION=true, la session s'ouvre directement).",
+    `Direction de démonstration : ${COURRIEL_EXPLOITANT_DEMO}. Créer son compte sur /auth/equipe ` +
+      "(« Choisir votre mot de passe » ; avec AUTH_SKIP_EMAIL_VERIFICATION=true, la session s'ouvre directement).",
   )
 } finally {
   await client.end()

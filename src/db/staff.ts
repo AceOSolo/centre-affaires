@@ -29,16 +29,21 @@ import { tenantId } from './tenants.ts'
  * métier au sens de `CLAUDE.md`, c'est du contrôle d'accès transverse — au même
  * titre que `tenants`, qui vit déjà ici.
  */
-export const staffRoles = ['admin', 'staff'] as const
+export const staffRoles = ['super_admin', 'admin', 'staff'] as const
 export type StaffRole = (typeof staffRoles)[number]
 export const staffRoleEnum = (name: string) => mysqlEnum(name, staffRoles)
 
 /**
  * Les rôles du cahier des charges (R27), sous les valeurs techniques gardées
- * en base (ADR 019) : `admin` est l'exploitant, `staff` l'accueil. C'est ce
- * libellé que l'interface affiche, jamais la valeur.
+ * en base (ADR 019) : `admin` est l'exploitant, `staff` l'accueil. Au-dessus,
+ * `super_admin`, la direction, seule à nommer ou retirer un exploitant
+ * (ADR 054). C'est ce libellé que l'interface affiche, jamais la valeur.
+ *
+ * L'ordre de `staffRoles` est celui de l'énumération en base, donc du tri :
+ * la direction d'abord, l'accueil en dernier.
  */
 export const staffRoleLabels: Record<StaffRole, string> = {
+  super_admin: 'Direction',
   admin: 'Exploitant',
   staff: 'Accueil',
 }
@@ -81,7 +86,10 @@ export const staffMembers = mysqlTable(
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
     email: varchar('email', { length: 255 }).notNull(),
     fullName: varchar('full_name', { length: 255 }),
-    /** `admin` : exploitant, gère l'équipe ; `staff` : accueil (ADR 019). */
+    /**
+     * `super_admin` : direction, nomme les exploitants (ADR 054) ; `admin` :
+     * exploitant, inscrit l'accueil ; `staff` : accueil (ADR 019).
+     */
     role: staffRoleEnum('role').notNull().default('staff'),
     ...timestamps(),
     /** Retrait de l'équipe : l'accès cesse, l'historique reste (décision 6). */

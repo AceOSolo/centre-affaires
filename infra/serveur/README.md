@@ -288,7 +288,7 @@ cd /home/deploy/centre-affaires
 # structure et règles, donné les droits (4.4).
 docker compose run --rm migrer node infra/configurer-centre.mjs
 docker compose run --rm migrer node infra/catalogue.mjs
-docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
+docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <adresse de la direction> --role super_admin --nom "Prénom Nom"
 docker compose restart app
 ```
 
@@ -317,8 +317,11 @@ docker compose restart app
   `docker compose exec db mysql -uroot -p` (le mot de passe est
   `DB_ADMIN_PASSWORD`).
 
-Ce premier exploitant inscrit ensuite le reste de l'équipe depuis l'écran
-Équipe du back-office (`/equipe`).
+La personne inscrite choisit son mot de passe sur `/auth/equipe` avec cette
+adresse. Elle est la **direction** (ADR 054) : seule à nommer, rétrograder ou
+retirer un exploitant. Elle inscrit ensuite le reste de l'équipe depuis
+l'écran Équipe du back-office (`/equipe`) ; les exploitants y inscrivent
+l'accueil.
 
 Par la suite, chaque version se migre **sur le serveur**, une fois son image
 tirée : `docker compose run --rm migrer` (section 4.4). Les migrations ne

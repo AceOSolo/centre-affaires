@@ -43,6 +43,13 @@
       "when": 1792504883254,
       "tag": "0005_domiciliation_demande_alerte",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1792653004641,
+      "tag": "0006_role_direction",
+      "breakpoints": true
     }
   ]
 }

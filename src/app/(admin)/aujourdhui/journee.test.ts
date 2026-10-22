@@ -42,8 +42,8 @@ describe('tuiles « à traiter »', () => {
     assert.deepEqual(keys, ['mailRequests'])
   })
 
-  it('montre tout à l’accueil comme à l’exploitant', () => {
-    for (const role of ['staff', 'admin'] as const) {
+  it('montre tout à l’accueil comme à l’exploitant et à la direction', () => {
+    for (const role of ['staff', 'admin', 'super_admin'] as const) {
       assert.equal(todoTiles(counts, (permission) => can(role, permission)).length, 4, role)
     }
   })

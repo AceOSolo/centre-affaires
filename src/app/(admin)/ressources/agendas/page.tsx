@@ -1,3 +1,4 @@
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { googleConfig } from '../../../../modules/reservations/agenda-google.ts'
@@ -30,7 +31,8 @@ export default async function AgendasPage({
     listResourceCalendarLinks(),
     searchParams,
   ])
-  const isAdmin = member.role === 'admin'
+  // Par le droit, pas par la valeur du rôle : la direction l'a aussi (ADR 054).
+  const isAdmin = can(member.role, 'agenda-google.gerer')
   const flash = flashFor(params)
 
   return (

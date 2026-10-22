@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation'
 import { staffRoleLabels, staffRoles, type StaffRole } from '../../db/staff.ts'
 import { isUuid } from '../uuid.ts'
 import {
+  assignableRoles,
   inscribeTeamMember,
   teamRefusalMessages,
   updateTeamMember,
@@ -14,9 +15,10 @@ import {
 import { requirePermission } from './staff.ts'
 
 /**
- * Actions de l'écran Équipe, réservées à l'exploitant (`equipe.gerer`). Chacune
- * revérifie le droit : une action serveur s'invoque par son identifiant,
- * depuis n'importe quelle page (ADR 008).
+ * Actions de l'écran Équipe, réservées à l'exploitant et à la direction
+ * (`equipe.gerer`). Chacune revérifie le droit : une action serveur s'invoque
+ * par son identifiant, depuis n'importe quelle page (ADR 008). Le rôle donné
+ * doit être de ceux que l'auteur peut donner (ADR 054).
  */
 
 export type TeamFormState = {
@@ -35,7 +37,7 @@ export async function addTeamMemberAction(
   _previous: TeamFormState,
   formData: FormData,
 ): Promise<TeamFormState> {
-  await requirePermission('equipe.gerer')
+  const { member } = await requirePermission('equipe.gerer')
   const values = {
     email: String(formData.get('email') ?? '').trim().toLowerCase(),
     fullName: String(formData.get('fullName') ?? '').trim(),
@@ -45,6 +47,9 @@ export async function addTeamMemberAction(
   const fieldErrors: NonNullable<TeamFormState>['fieldErrors'] = {}
   if (!EMAIL.test(values.email)) fieldErrors.email = 'Saisissez une adresse électronique valide.'
   if (!isRole(values.role)) fieldErrors.role = 'Choisissez un rôle.'
+  else if (!assignableRoles(member.role).includes(values.role)) {
+    fieldErrors.role = teamRefusalMessages['reserve-direction']
+  }
   if (Object.keys(fieldErrors).length > 0) return { fieldErrors, values }
 
   const created = await inscribeTeamMember({

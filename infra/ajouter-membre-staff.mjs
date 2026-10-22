@@ -2,28 +2,30 @@
  * Inscrit une personne dans l'équipe du centre, c'est-à-dire lui ouvre le
  * back-office (ADR 008).
  *
- *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --role admin --nom "Alexis Martin"
+ *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --role super_admin --nom "Alexis Martin"
  *   node --env-file=.env.local infra/ajouter-membre-staff.mjs --lister
  *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --retirer
+ *
+ * Rôles : `super_admin` (direction), `admin` (exploitant), `staff` (accueil).
  *
  * Amorçage : personne ne peut inscrire un membre depuis l'application tant
  * qu'aucun membre n'existe. Ce script est la porte d'entrée initiale, et il
  * s'exécute avec l'identité applicative — donc sous les gardes d'écriture par
  * centre, comme le ferait l'application.
  *
- * Une fois le premier exploitant (`--role admin`) inscrit, l'équipe se gère
- * depuis l'écran Équipe du back-office (`/equipe`, ADR 019), qui applique ses
- * règles : ni se retirer soi-même, ni retirer ou rétrograder le dernier
- * exploitant. Le script reste pour l'amorçage et le dépannage, et ne les
- * applique pas.
+ * Une fois la première direction (`--role super_admin`) inscrite, l'équipe se
+ * gère depuis l'écran Équipe du back-office (`/equipe`, ADR 019 et 054), qui
+ * applique ses règles : la direction seule nomme ou retire un exploitant, on
+ * ne se retire pas soi-même, le centre garde une direction. Le script reste
+ * pour l'amorçage et le dépannage, et ne les applique pas.
  *
- * La personne inscrite n'a pas encore de compte : elle en crée un sur
- * /auth/connexion avec cette adresse, et le rattachement se fait à la première
- * connexion.
+ * La personne inscrite n'a pas encore de compte : elle choisit son mot de
+ * passe sur /auth/equipe avec cette adresse, et le rattachement se fait à la
+ * première connexion.
  */
 import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs'
 
-const ROLES = ['admin', 'staff']
+const ROLES = ['super_admin', 'admin', 'staff']
 
 const args = process.argv.slice(2)
 const flag = (name) => {
@@ -55,7 +57,7 @@ try {
       console.log(`${rows.length} membre(s) :`)
       for (const row of rows) {
         const etat = row.connecte ? 'compte rattaché' : 'jamais connecté'
-        console.log(`  ${row.email.padEnd(32)} ${row.role.padEnd(6)} ${etat}`)
+        console.log(`  ${row.email.padEnd(32)} ${row.role.padEnd(11)} ${etat}`)
       }
     }
     process.exit(0)
@@ -64,7 +66,7 @@ try {
   if (!email) {
     console.error(
       'Indiquer une adresse électronique.\n' +
-        '  node --env-file=.env.local infra/ajouter-membre-staff.mjs <adresse> [--role admin|staff] [--nom "Prénom Nom"]\n' +
+        '  node --env-file=.env.local infra/ajouter-membre-staff.mjs <adresse> [--role super_admin|admin|staff] [--nom "Prénom Nom"]\n' +
         '  node --env-file=.env.local infra/ajouter-membre-staff.mjs --lister',
     )
     process.exit(1)
@@ -120,7 +122,7 @@ try {
 
   console.log(`${email} inscrit comme « ${role} ».`)
   console.log(
-    "Prochaine étape : la personne crée son compte sur /auth/connexion avec cette adresse ; " +
+    "Prochaine étape : la personne choisit son mot de passe sur /auth/equipe avec cette adresse ; " +
       'le rattachement se fait tout seul à la première connexion.',
   )
 } finally {

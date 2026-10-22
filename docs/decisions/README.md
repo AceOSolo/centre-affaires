@@ -68,6 +68,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 051 | [nginx devant l'application, à la place d'Apache](051-nginx-devant-l-application.md) | 2026-10-20 | accepté ; amende l'ADR 013 (serveur web nginx, application sur `127.0.0.1:3100`) ; plafond d'envoi de l'ADR 015 et lecture de l'adresse IP de l'ADR 047 portés par nginx ; reprend l'ADR nginx d'une branche non fusionnée du 06/10/2026 |
 | 052 | [Correctifs de la vérification du 20/10/2026 : pages du courrier, relevé, devis refait, mot de passe oublié, adresse du centre, webhook Dolibarr, alerte de domiciliation](052-correctifs-de-la-verification-du-20-10.md) | 2026-10-20 | accepté ; amende les ADR 044 § 3 (pages verrouillées une fois le mois clos), 037 et 046 § 2 (demandes au relevé), 043 § 3 (devis refait, migration 0004), 048 et 050 (offres comptées), 049 (refus en 400, pas d'`oldcopy`) ; complète les ADR 045 et 047 (mot de passe oublié) ; alerte de domiciliation (migration 0005) ; anti-double-location des occupations de contrat en lecture verrouillante (décision 3) |
 | 053 | [Menu du back-office rangé par service vendu](053-menu-du-back-office-par-service-vendu.md) | 2026-10-22 | accepté ; remplace le rangement par parcours de l'ADR 048 (boîte de réception unique, « Réglages » et fiche client conservés) ; rayons Salles, Bureaux, Domiciliation, Camion sans répétition, 19 entrées |
+| 054 | [La direction, au-dessus des exploitants](054-direction-au-dessus-des-exploitants.md) | 2026-10-22 | accepté ; complète l'ADR 019 (troisième rôle `super_admin`, droit `equipe.exploitants`, migration 0006) et l'ADR 008 (amorçage en `--role super_admin`) |
 
 ## Numéros en double et numéro manquant
 
@@ -115,7 +116,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **053** (051 pris par nginx, 052 par les correctifs de la vérification du 20/10).
+   `ListAgents`. Le prochain numéro libre est **056** (053 pris par le menu par service vendu, 054 par la direction, 055 par les photos du courrier).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

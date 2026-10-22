@@ -12,8 +12,10 @@ import { staffRoleLabels, type StaffRole } from '../../db/staff.ts'
  * Répartition : l'accueil tient l'opérationnel du quotidien — planning,
  * demandes, courrier, fiches clients, lecture des contrats ; l'exploitant
  * fait tout, dont les tarifs, les services, les contrats et leurs avenants,
- * les indicateurs, l'équipe et la configuration du centre. La facturation,
- * les paiements et l'export comptable sont dans Dolibarr (ADR 046).
+ * les indicateurs, l'équipe et la configuration du centre. La direction fait
+ * tout ce que fait l'exploitant, et seule nomme, rétrograde ou retire un
+ * exploitant (ADR 054). La facturation, les paiements et l'export comptable
+ * sont dans Dolibarr (ADR 046).
  *
  * Module pur, sans Next ni accès à la base : il s'éprouve seul
  * (`permissions.test.ts`). La coque du back-office en tire la liste des droits
@@ -57,6 +59,8 @@ export const permissions = [
   'comptes.rattacher',
   // Tout membre peut ouvrir son propre espace client (ADR 045, révision).
   'espace-client.personnel',
+  // La direction seule nomme ou retire un exploitant (ADR 054).
+  'equipe.exploitants',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -88,7 +92,7 @@ export const permissionLabels: Record<Permission, string> = {
   'centre.configurer':
     'Configuration du centre : règles de réservation, conservation, règles tarifaires, identité de facturation',
   'agenda-google.gerer': 'Agendas Google',
-  'equipe.gerer': 'Équipe : inscrire, changer un rôle, retirer',
+  'equipe.gerer': 'Équipe : inscrire et retirer un membre de l’accueil',
   'notifications.consulter': 'Consulter le journal des messages envoyés',
   'notifications.gerer': 'Modèles des messages envoyés aux clients et au centre',
   'etats-des-lieux.gerer': 'Saisir, photographier et clore les états des lieux',
@@ -97,6 +101,8 @@ export const permissionLabels: Record<Permission, string> = {
   'comptes.gerer': 'Comptes du site : bannir et réactiver',
   'comptes.rattacher': 'Comptes du site : consulter, rattacher à une entreprise',
   'espace-client.personnel': 'Ouvrir son propre espace client depuis le back-office',
+  'equipe.exploitants':
+    'Équipe : nommer, rétrograder ou retirer un exploitant ou un membre de la direction',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */
@@ -133,13 +139,19 @@ export function inDolibarr(permission: Permission): boolean {
   return dolibarrPermissions.includes(permission)
 }
 
+/** Droits de la direction seule : la tenue des exploitants (ADR 054). */
+export const directionPermissions: readonly Permission[] = ['equipe.exploitants']
+
 /**
- * La matrice : `admin` est l'exploitant, `staff` l'accueil (ADR 019). Toute
- * valeur de `staff_role` y figure — le `Record` le fait vérifier par le
- * compilateur le jour où un rôle s'ajoute.
+ * La matrice : `super_admin` est la direction, `admin` l'exploitant, `staff`
+ * l'accueil (ADR 019, ADR 054). Toute valeur de `staff_role` y figure — le
+ * `Record` le fait vérifier par le compilateur le jour où un rôle s'ajoute.
  */
 export const rolePermissions: Record<StaffRole, readonly Permission[]> = {
-  admin: permissions.filter((permission) => !inDolibarr(permission)),
+  super_admin: permissions.filter((permission) => !inDolibarr(permission)),
+  admin: permissions.filter(
+    (permission) => !inDolibarr(permission) && !directionPermissions.includes(permission),
+  ),
   staff: accueil,
 }
 

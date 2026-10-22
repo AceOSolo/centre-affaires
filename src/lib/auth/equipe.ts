@@ -3,56 +3,85 @@ import { and, asc, eq, isNull, or, sql } from 'drizzle-orm'
 import { maintenant } from '../../db/columns.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { updateReturning } from '../../db/returning.ts'
-import { staffMembers, type StaffMember, type StaffRole } from '../../db/staff.ts'
+import { staffMembers, staffRoles, type StaffMember, type StaffRole } from '../../db/staff.ts'
 import { inCurrentTenant } from './membre.ts'
+import { can } from './permissions.ts'
 import { currentTenantId } from '../tenant.ts'
 import { isUuid, uuidv7 } from '../uuid.ts'
 
 /**
- * L'équipe du centre, gérée depuis le back-office par l'exploitant (R27,
- * ADR 019). Remplace l'usage courant de `infra/ajouter-membre-staff.mjs`, qui
- * reste la porte d'amorçage : tant qu'aucun exploitant n'existe, personne ne
- * peut ouvrir cet écran.
+ * L'équipe du centre, gérée depuis le back-office (R27, ADR 019) : la
+ * direction nomme et retire les exploitants, l'exploitant inscrit et retire
+ * l'accueil (ADR 054). Remplace l'usage courant de
+ * `infra/ajouter-membre-staff.mjs`, qui reste la porte d'amorçage : tant
+ * qu'aucune direction n'existe, personne ne peut nommer d'exploitant depuis
+ * l'application.
  *
  * Comme `membre.ts`, ce module ne connaît ni Next ni la session : les règles
  * s'éprouvent contre une vraie base (`equipe.db.test.ts`).
  */
 
 /** Ce qui fait refuser un changement dans l'équipe. */
-export type TeamRefusal = 'soi-meme' | 'dernier-exploitant' | 'introuvable'
+export type TeamRefusal = 'soi-meme' | 'reserve-direction' | 'derniere-direction' | 'introuvable'
 
 export const teamRefusalMessages: Record<TeamRefusal, string> = {
   'soi-meme':
-    'Vous ne pouvez ni vous retirer de l’équipe ni changer votre propre rôle : demandez-le à un autre exploitant.',
-  'dernier-exploitant':
-    'C’est le dernier exploitant du centre : nommez-en un autre avant de le retirer ou de le passer à l’accueil.',
+    'Vous ne pouvez ni vous retirer de l’équipe ni changer votre propre rôle : demandez-le à la direction.',
+  'reserve-direction':
+    'Seule la direction nomme, rétrograde ou retire un exploitant ou un membre de la direction.',
+  'derniere-direction':
+    'C’est le dernier membre de la direction : nommez-en un autre avant de le retirer ou de changer son rôle.',
   introuvable: 'Ce membre ne fait plus partie de l’équipe.',
 }
 
 export type TeamChange = { kind: 'retrait' } | { kind: 'role'; role: StaffRole }
 
 /**
- * La règle, seule : on ne se retire pas soi-même, on ne change pas son propre
- * rôle, et le centre garde toujours au moins un exploitant — sans lui,
- * personne ne pourrait plus gérer l'équipe depuis l'application.
+ * Les rôles qu'un membre peut donner (ADR 054) : tous pour la direction,
+ * l'accueil seul pour l'exploitant, aucun pour l'accueil. Sert à
+ * l'inscription, au changement de rôle, et à dire sur qui l'on a la main :
+ * on ne touche qu'un membre dont on pourrait donner le rôle.
+ */
+export function assignableRoles(role: StaffRole | null | undefined): StaffRole[] {
+  if (can(role, 'equipe.exploitants')) return [...staffRoles]
+  if (can(role, 'equipe.gerer')) return ['staff']
+  return []
+}
+
+/**
+ * La règle, seule :
  *
- * `activeAdminCount` compte les exploitants actifs, la cible comprise.
+ * - on ne se retire pas soi-même, on ne change pas son propre rôle ;
+ * - on ne touche qu'un membre dont on peut donner le rôle, et l'on ne donne
+ *   que ces rôles-là : la direction seule nomme, rétrograde ou retire un
+ *   exploitant ou un membre de la direction ;
+ * - le centre garde toujours au moins un membre de la direction.
+ *
+ * `actor` est relu en base sous verrou, pas pris de la session : un membre
+ * rétrogradé à l'instant n'a plus la main. `activeDirectionCount` compte la
+ * direction active, la cible comprise.
  */
 export function checkTeamChange(input: {
-  actorId: string
+  actor: Pick<StaffMember, 'id' | 'role'> | undefined
   target: Pick<StaffMember, 'id' | 'role'>
   change: TeamChange
-  activeAdminCount: number
+  activeDirectionCount: number
 }): TeamRefusal | null {
-  const { actorId, target, change, activeAdminCount } = input
-  if (target.id === actorId) return 'soi-meme'
-  const losesAdmin =
-    target.role === 'admin' && (change.kind === 'retrait' || change.role !== 'admin')
-  if (losesAdmin && activeAdminCount <= 1) return 'dernier-exploitant'
+  const { actor, target, change, activeDirectionCount } = input
+  if (target.id === actor?.id) return 'soi-meme'
+  const allowed = assignableRoles(actor?.role)
+  if (!allowed.includes(target.role) || (change.kind === 'role' && !allowed.includes(change.role))) {
+    return 'reserve-direction'
+  }
+  // Ne se déclenche que si une règle ci-dessus change : la direction ne
+  // touche qu'une autre direction, il en reste donc une. Gardée exprès.
+  const losesDirection =
+    target.role === 'super_admin' && (change.kind === 'retrait' || change.role !== 'super_admin')
+  if (losesDirection && activeDirectionCount <= 1) return 'derniere-direction'
   return null
 }
 
-/** Membres actifs : les exploitants d'abord, puis par adresse. */
+/** Membres actifs : la direction, les exploitants puis l'accueil, par adresse. */
 export async function listTeam(tx: Transaction): Promise<StaffMember[]> {
   return tx
     .select()
@@ -98,11 +127,11 @@ export type TeamChangeResult =
 /**
  * Changement de rôle ou retrait, sous la règle de `checkTeamChange`.
  *
- * Les exploitants actifs et la cible sont verrouillés ensemble, dans l'ordre
- * des identifiants : deux exploitants qui se rétrogradent l'un l'autre au
- * même instant passent l'un après l'autre, et le second relit un exploitant
- * de moins. Sans ce verrou, chacun compterait deux exploitants et le centre
- * finirait sans aucun.
+ * La direction active, l'auteur et la cible sont verrouillés ensemble, dans
+ * l'ordre des identifiants : deux membres de la direction qui se rétrogradent
+ * l'un l'autre au même instant passent l'un après l'autre, et le second relit
+ * son propre rôle, déjà perdu. Sans ce verrou, chacun se croirait encore de la
+ * direction et le centre finirait sans aucune.
  */
 export async function changeTeamMember(
   tx: Transaction,
@@ -117,7 +146,11 @@ export async function changeTeamMember(
       and(
         inCurrentTenant(),
         isNull(staffMembers.deletedAt),
-        or(eq(staffMembers.role, 'admin'), eq(staffMembers.id, targetId)),
+        or(
+          eq(staffMembers.role, 'super_admin'),
+          eq(staffMembers.id, targetId),
+          eq(staffMembers.id, actorId),
+        ),
       ),
     )
     .orderBy(asc(staffMembers.id))
@@ -127,10 +160,10 @@ export async function changeTeamMember(
   if (!target) return { ok: false, refusal: 'introuvable' }
 
   const refusal = checkTeamChange({
-    actorId,
+    actor: locked.find((row) => row.id === actorId),
     target,
     change,
-    activeAdminCount: locked.filter((row) => row.role === 'admin').length,
+    activeDirectionCount: locked.filter((row) => row.role === 'super_admin').length,
   })
   if (refusal) return { ok: false, refusal }
 

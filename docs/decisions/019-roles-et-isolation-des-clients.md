@@ -1,7 +1,7 @@
 # ADR 019 — Rôles de l'équipe et isolation des clients entre eux
 
 **Date** : 2026-10-01
-**Statut** : accepté
+**Statut** : accepté ; complété par l'ADR 054 (la direction, troisième rôle, seule à nommer ou retirer un exploitant)
 
 ## Contexte
 

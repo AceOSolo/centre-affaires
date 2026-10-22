@@ -1,6 +1,6 @@
 import { CheckIcon } from '../../../components/ui/icons.tsx'
 import { staffRoleLabels, staffRoles, type StaffRole } from '../../../db/staff.ts'
-import { findTeamMember, listTeamMembers } from '../../../lib/auth/equipe.ts'
+import { assignableRoles, findTeamMember, listTeamMembers } from '../../../lib/auth/equipe.ts'
 import { can, inDolibarr, permissionLabels, permissions } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
@@ -10,14 +10,20 @@ import { TeamRowActions } from './team-row-actions.tsx'
 
 export const metadata = { title: 'Équipe' }
 
-const otherRole: Record<StaffRole, StaffRole> = { admin: 'staff', staff: 'admin' }
+/** Pastille du rôle : la teinte double le libellé, elle ne le remplace pas. */
+const roleBadge: Record<StaffRole, string> = {
+  super_admin: 'bg-primary text-primary-foreground',
+  admin: 'border border-primary text-primary',
+  staff: 'bg-accent/15 text-primary',
+}
 
 /**
  * L'équipe du centre (R27, ADR 019) : qui entre dans le back-office, avec quel
- * rôle. Réservé à l'exploitant.
+ * rôle. Ouvert à l'exploitant, qui inscrit et retire l'accueil, et à la
+ * direction, qui seule nomme et retire les exploitants (ADR 054).
  *
  * Remplace l'usage courant de `infra/ajouter-membre-staff.mjs`, gardé pour
- * l'amorçage : le premier exploitant ne peut pas s'inscrire lui-même.
+ * l'amorçage : la première direction ne peut pas s'inscrire elle-même.
  */
 export default async function EquipePage({
   searchParams,
@@ -30,8 +36,9 @@ export default async function EquipePage({
     listTeamMembers(),
     retire ? findTeamMember(retire) : undefined,
   ])
-  const adminCount = team.filter((member) => member.role === 'admin').length
-  const roles = staffRoles.map((role) => ({ value: role, label: staffRoleLabels[role] }))
+  const assignable = assignableRoles(me.role)
+  const isDirection = can(me.role, 'equipe.exploitants')
+  const roles = assignable.map((role) => ({ value: role, label: staffRoleLabels[role] }))
 
   return (
     <div className="flex flex-col gap-6">
@@ -40,7 +47,8 @@ export default async function EquipePage({
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Les personnes qui ont accès au back-office et leur rôle. L’accueil tient le quotidien —
           planning, demandes, courrier, fiches clients ; l’exploitant fait tout, dont les tarifs,
-          les contrats, l’équipe et la configuration du centre.
+          les contrats et la configuration du centre, et inscrit l’accueil ; la direction fait de
+          même et seule nomme, rétrograde ou retire un exploitant.
         </p>
       </div>
 
@@ -75,8 +83,9 @@ export default async function EquipePage({
             <tbody className="divide-y divide-border">
               {team.map((member) => {
                 const self = member.id === me.id
-                const lastAdmin = member.role === 'admin' && adminCount <= 1
-                const next = otherRole[member.role]
+                // On n'a la main que sur un membre dont on peut donner le rôle.
+                const inHand = assignable.includes(member.role)
+                const otherRoles = roles.filter((role) => role.value !== member.role)
                 return (
                   <tr key={member.id}>
                     <td className="px-4 py-3">
@@ -87,11 +96,7 @@ export default async function EquipePage({
                     <td className="px-4 py-3">
                       {/* Libellé et couleur : le rôle ne se lit pas qu'à la teinte. */}
                       <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                          member.role === 'admin'
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-accent/15 text-primary'
-                        }`}
+                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${roleBadge[member.role]}`}
                       >
                         {staffRoleLabels[member.role]}
                       </span>
@@ -102,17 +107,17 @@ export default async function EquipePage({
                     <td className="px-4 py-3 text-right">
                       {self ? (
                         <span className="text-xs text-muted-foreground">
-                          Votre compte : un autre exploitant le gère.
+                          {isDirection
+                            ? 'Votre compte : un autre membre de la direction le gère.'
+                            : 'Votre compte : la direction le gère.'}
                         </span>
-                      ) : lastAdmin ? (
-                        <span className="text-xs text-muted-foreground">
-                          Dernier exploitant : nommez-en un autre avant de le changer.
-                        </span>
+                      ) : !inHand ? (
+                        <span className="text-xs text-muted-foreground">Géré par la direction.</span>
                       ) : (
                         <TeamRowActions
                           memberId={member.id}
                           name={member.fullName ?? member.email}
-                          nextRole={{ value: next, label: staffRoleLabels[next] }}
+                          roles={otherRoles}
                         />
                       )}
                     </td>
@@ -139,6 +144,7 @@ export default async function EquipePage({
           La personne choisit ensuite son mot de passe sur la page de connexion de l’équipe
           (<span className="font-medium text-foreground">/auth/equipe</span>), avec cette
           adresse : son compte lui est rattaché à la première connexion.
+          {!isDirection && ' Vous inscrivez l’accueil ; un exploitant est nommé par la direction.'}
         </p>
         <div className="rounded-lg border border-border bg-white px-5 py-4">
           <TeamMemberForm roles={roles} />
