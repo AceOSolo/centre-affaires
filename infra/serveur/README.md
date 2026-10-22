@@ -287,9 +287,25 @@ cd /home/deploy/centre-affaires
 # `docker compose run --rm migrer` a déjà créé la base et DB_USER, appliqué
 # structure et règles, donné les droits (4.4).
 docker compose run --rm migrer node infra/configurer-centre.mjs
+docker compose run --rm migrer node infra/catalogue.mjs
 docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <votre adresse> --role admin --nom "Prénom Nom"
 docker compose restart app
 ```
+
+- `configurer-centre.mjs` pose l'identité du centre et ses horaires
+  d'ouverture. `catalogue.mjs` pose le parc réel (deux salles avec leurs
+  photos, neuf bureaux, quarante boîtes aux lettres) et la grille tarifaire
+  de départ (ADR 009). **Sans le catalogue, la page d'accueil publique ne
+  propose ni salle ni bureau**, et la domiciliation n'a pas de prix.
+- Les prix des services du courrier (ouverture, numérisation, réexpédition,
+  page) ne sont posés par aucun script : ils arrivent de Dolibarr par son
+  webhook (ADR 049, `docs/integrations/dolibarr-produits.md`), ou se
+  saisissent à l'écran Services. Tant qu'ils manquent, la page d'accueil
+  n'affiche pas la rubrique « À la demande » de la domiciliation.
+- **Jamais `seed-demo.mjs` en production** : ses clients, réservations et
+  prix sont inventés pour le développement.
+- Aucune annonce (`/annonces`) n'est créée : elles se rédigent à l'écran
+  Annonces du back-office.
 
 - Le migrateur se connecte avec `DB_ADMIN_USER` (root), qui seul peut définir
   la structure, et donne à `DB_USER` les droits de lecture et d'écriture, sans

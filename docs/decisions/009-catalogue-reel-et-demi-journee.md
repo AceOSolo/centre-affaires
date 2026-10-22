@@ -4,7 +4,11 @@
 **Statut** : accepté — durée de la demi-journée devenue un paramètre du centre
 (ADR 023) ; options facturées modélisables en services (ADR 024) ; unité
 retenue par le devis quand la grille en propose plusieurs : ADR 023 (mise en
-œuvre)
+œuvre) ; depuis le 22/10/2026, `infra/catalogue.mjs` ne pose plus les
+horaires (le lundi–samedi 8h–22h ci-dessous contredisait le lundi–vendredi
+8h–18h de `infra/configurer-centre.mjs`, qui seul les pose désormais), mais
+pose les photos des salles ; il est lancé à la mise en service de la
+production (`infra/serveur/README.md`, section 5)
 
 ## Contexte
 

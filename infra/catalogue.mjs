@@ -1,8 +1,16 @@
 /**
- * Catalogue du centre : ressources réelles, horaires d'ouverture et grille
- * tarifaire publique.
+ * Catalogue du centre : ressources réelles, leurs photos et grille tarifaire
+ * publique.
  *
  *   npm run db:catalogue   # node --env-file=.env.local infra/catalogue.mjs
+ *
+ * En production, à la première mise en service de la base, juste après
+ * `configurer-centre.mjs` (infra/serveur/README.md, section 5) : sans lui, la
+ * page d'accueil publique n'a ni salle ni bureau à proposer.
+ *
+ * Les horaires d'ouverture ne sont plus posés ici mais par
+ * `configurer-centre.mjs`, seul : les deux scripts en posaient de différents,
+ * et le dernier lancé l'emportait.
  *
  * À ne pas confondre avec `seed-demo.mjs`, qui pose un jeu fictif pour le
  * développement local. Ici, ce sont les données de configuration du centre :
@@ -25,7 +33,13 @@ import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs
 // Ressources
 // ---------------------------------------------------------------------------
 
-/** Les deux salles de réunion, telles qu'elles sont annoncées publiquement. */
+/**
+ * Les deux salles de réunion, telles qu'elles sont annoncées publiquement.
+ *
+ * `photo` : un fichier de `public/photos/`, servi par l'application (jamais
+ * appelé chez un tiers, ADR 004). Les bureaux et les boîtes n'en ont pas :
+ * aucune photo de bureau n'existe, la carte affiche alors une icône.
+ */
 const SALLES = [
   {
     code: 'SAL-MB',
@@ -33,6 +47,7 @@ const SALLES = [
     description: 'Salle de réunion, formation ou séminaire. Aménageable.',
     capacite: 14,
     attributs: { superficieM2: 30 },
+    photo: '/photos/salle-mont-blanc.jpg',
   },
   {
     code: 'SAL-AE',
@@ -42,6 +57,7 @@ const SALLES = [
     // Superficie non publiée. Mieux vaut un champ absent qu'un chiffre inventé :
     // `describeAttributes()` ignore ce qui manque.
     attributs: {},
+    photo: '/photos/salle-albert-einstein.jpg',
   },
 ]
 
@@ -132,20 +148,6 @@ function catalogue() {
 }
 
 // ---------------------------------------------------------------------------
-// Horaires
-// ---------------------------------------------------------------------------
-
-/**
- * Ouverture du lundi au samedi, 8h à 22h. Remplace les horaires par défaut.
- *
- * Ce sont les horaires du centre entier (`resource_id` nul). Une ressource qui
- * ouvre autrement se règle à l'écran, ligne par ligne.
- */
-const JOURS_OUVERTS = [1, 2, 3, 4, 5, 6]
-const OUVERTURE = '08:00'
-const FERMETURE = '22:00'
-
-// ---------------------------------------------------------------------------
 // Tarifs
 // ---------------------------------------------------------------------------
 
@@ -186,7 +188,7 @@ try {
     await assurerCentre(cnx)
     let creees = 0
 
-    for (const { type, code, nom, description, capacite, attributs } of ressources) {
+    for (const { type, code, nom, description, capacite, attributs, photo = null } of ressources) {
       // Le code identifie la ressource dans le centre. Relancer le script après
       // un renommage met à jour la ligne existante au lieu d'en créer une
       // seconde ; les réservations déjà posées la suivent. Lecture puis
@@ -197,29 +199,19 @@ try {
       )
       if (existante) {
         await cnx.query(
-          `update resources set resource_type = ?, name = ?, description = ?, capacity = ?, attributes = ?
+          `update resources set resource_type = ?, name = ?, description = ?, capacity = ?, attributes = ?,
+             photo_path = ?
             where id = ?`,
-          [type, nom, description, capacite, JSON.stringify(attributs), existante.id],
+          [type, nom, description, capacite, JSON.stringify(attributs), photo, existante.id],
         )
       } else {
         await cnx.query(
-          `insert into resources (id, resource_type, code, name, description, capacity, attributes)
-           values (?, ?, ?, ?, ?, ?, ?)`,
-          [uuidv7(), type, code, nom, description, capacite, JSON.stringify(attributs)],
+          `insert into resources (id, resource_type, code, name, description, capacity, attributes, photo_path)
+           values (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [uuidv7(), type, code, nom, description, capacite, JSON.stringify(attributs), photo],
         )
         creees += 1
       }
-    }
-
-    // Les horaires du centre sont remplacés en bloc : une ligne oubliée du jeu
-    // précédent laisserait le samedi fermé sans que rien ne le signale.
-    await cnx.query('delete from opening_hours where resource_id is null')
-    for (const jour of JOURS_OUVERTS) {
-      await cnx.query(
-        `insert into opening_hours (id, resource_id, weekday, opens_at, closes_at)
-         values (?, null, ?, ?, ?)`,
-        [uuidv7(), jour, OUVERTURE, FERMETURE],
-      )
     }
 
     let [[grille]] = await cnx.query(
@@ -270,7 +262,6 @@ try {
     `${compteurs.total} ressources au catalogue (${compteurs.creees} créées, ` +
       `${compteurs.total - compteurs.creees} mises à jour).`,
   )
-  console.log(`Ouverture : ${JOURS_OUVERTS.length} jours par semaine, ${OUVERTURE}–${FERMETURE}.`)
   console.log(`Grille tarifaire par défaut : ${compteurs.prixAjoutes} prix ajouté(s) sur ${TARIFS.length}.`)
   if (compteurs.prixGardes.length > 0) {
     console.log(
