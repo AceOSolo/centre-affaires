@@ -24,15 +24,11 @@ import {
 } from '../../../../../modules/courrier/demandes-regles.ts'
 import { EnvelopeThumbnail } from '../../../../../modules/courrier/enveloppe.tsx'
 import { mailKindIcons, SendIcon } from '../../../../../modules/courrier/icones.tsx'
-import {
-  mailCategoryLabels,
-  mailKindLabels,
-  mailStatusClientLabels,
-  mailStatusStyles,
-} from '../../../../../modules/courrier/labels.ts'
+import { mailKindLabels, mailStatusClientLabels, mailStatusStyles } from '../../../../../modules/courrier/labels.ts'
 import { MailboxRequest } from '../../../../../modules/courrier/mailbox-request.tsx'
 import { markUnreadAction } from '../../../../../modules/courrier/classement-actions.ts'
 import { ClassificationForm } from '../../../../../modules/courrier/classement-forms.tsx'
+import { categoryName } from '../../../../../modules/courrier/categories-perso-regles.ts'
 import { mailFolderCounts, markMailRead } from '../../../../../modules/courrier/classement.ts'
 
 export const metadata = { title: 'Courrier' }
@@ -174,9 +170,7 @@ export default async function PliPage({
             Mon classement
           </h2>
           <p className="text-sm text-muted-foreground">
-            {mail.classification.category
-              ? mailCategoryLabels[mail.classification.category]
-              : 'Non classé'}
+            {categoryName(mail.classification, folders.custom) ?? 'Non classé'}
             {' · '}
             {mail.classification.handledAt ? 'Traité' : 'À traiter'}
           </p>
@@ -189,7 +183,15 @@ export default async function PliPage({
           mailItemId={mail.id}
           classification={mail.classification}
           knownTags={folders.tags.map((entry) => entry.tag)}
+          // Seules les catégories de l'accès à l'entreprise du pli le rangent (ADR 060).
+          customCategories={folders.custom.filter((entry) => entry.clientId === mail.clientId)}
         />
+        <Link
+          href="/compte/courrier/categories"
+          className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
+        >
+          Créer ou renommer mes catégories
+        </Link>
         <form action={markUnreadAction}>
           <input type="hidden" name="id" value={mail.id} />
           <button

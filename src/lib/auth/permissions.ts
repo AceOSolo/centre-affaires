@@ -63,6 +63,9 @@ export const permissions = [
   'equipe.exploitants',
   // La direction seule branche le centre à son CRM (ADR 065).
   'crm.gerer',
+  // Message libre aux domiciliés ou à une sélection (ADR 060) : il engage le
+  // centre auprès de tous ses clients, comme les modèles de messages.
+  'notifications.diffuser',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -106,6 +109,7 @@ export const permissionLabels: Record<Permission, string> = {
   'equipe.exploitants':
     'Équipe : nommer, rétrograder ou retirer un exploitant ou un membre de la direction',
   'crm.gerer': 'Connexion au CRM : choix du CRM, jeton, identifiants, flux échangés',
+  'notifications.diffuser': 'Envoyer un message aux domiciliés, aux clients des bureaux ou à une sélection de clients',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */

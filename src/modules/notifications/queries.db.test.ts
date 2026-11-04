@@ -41,7 +41,15 @@ describe('écrans des notifications', { skip: raisonDeSaut }, () => {
 
   const asTenant = <T>(run: (tx: Transaction) => Promise<T>) =>
     withTenant(DEFAULT_TENANT_ID, run, bases.app.db)
-  const tous = { mail: true, bookings: true, invoices: true, contracts: true, inspections: true, mail_none: true }
+  const tous = {
+    mail: true,
+    bookings: true,
+    invoices: true,
+    contracts: true,
+    inspections: true,
+    mail_none: true,
+    centre_info: true,
+  }
 
   before(async () => {
     bases = await ouvrirBasesDeTest()
@@ -175,7 +183,8 @@ describe('écrans des notifications', { skip: raisonDeSaut }, () => {
       const [pourDurand, pourPetit] = await listMemberPreferences([durand, petit], bases.app.db)
       assert.deepEqual(pourDurand.enabled, { ...tous, mail: false })
       assert.deepEqual(pourPetit.enabled, tous)
-      assert.equal(await compter('notification_preferences'), 6)
+      // Une ligne par catégorie, « Informations du centre » comprise (ADR 060).
+      assert.equal(await compter('notification_preferences'), 7)
     })
 
     it('refuse une entreprise hors du compte connecté', async () => {

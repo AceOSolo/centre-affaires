@@ -6,7 +6,8 @@ import { redirect } from 'next/navigation'
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
 import { classifyMail } from './classement.ts'
-import { readClassificationChange, readTags, isMailCategory } from './classement-regles.ts'
+import { isCustomCategoryId } from './categories-perso-regles.ts'
+import { readClassificationChange, readTags, isMailCategory, type ClassificationChange } from './classement-regles.ts'
 
 /**
  * Classement du courrier depuis l'espace client (ADR 044). Chaque action
@@ -52,6 +53,14 @@ export async function classifySelectionAction(
   }
 
   const count = await classifyMail(accounts, ids, read.change)
+  if (count === 0 && read.change.type === 'customCategory') {
+    // Une catégorie personnelle ne range que le courrier de son entreprise (ADR 060).
+    return {
+      fieldErrors: {
+        'selection-categorie': 'Cette catégorie ne range que le courrier de son entreprise, ou n’existe plus.',
+      },
+    }
+  }
   if (count === 0) return { error: 'Ces courriers ne sont plus dans votre boîte aux lettres.' }
   revalidatePath('/compte/courrier')
   // Le compte et le geste suffisent à la confirmation : rien de personnel dans l'URL.
@@ -68,17 +77,29 @@ export async function saveClassificationAction(
   if (!isUuid(id)) return { error: 'Courrier introuvable.' }
 
   const categoryInput = String(formData.get('categorie') ?? '')
-  const category = categoryInput === '' ? null : isMailCategory(categoryInput) ? categoryInput : undefined
+  // Une catégorie de départ par sa clé, une catégorie personnelle par son identifiant (ADR 060).
+  const categoryChange: ClassificationChange | undefined =
+    categoryInput === ''
+      ? { type: 'category', category: null }
+      : isMailCategory(categoryInput)
+        ? { type: 'category', category: categoryInput }
+        : isCustomCategoryId(categoryInput)
+          ? { type: 'customCategory', id: categoryInput }
+          : undefined
   const tags = readTags(String(formData.get('etiquettes') ?? ''))
   const fieldErrors: Record<string, string> = {}
-  if (category === undefined) fieldErrors.categorie = 'Choisissez une catégorie de la liste.'
+  if (categoryChange === undefined) fieldErrors.categorie = 'Choisissez une catégorie de la liste.'
   if (tags.error !== undefined) fieldErrors.etiquettes = tags.error
-  if (Object.keys(fieldErrors).length > 0 || category === undefined || tags.error !== undefined) {
+  if (Object.keys(fieldErrors).length > 0 || categoryChange === undefined || tags.error !== undefined) {
     return { fieldErrors }
   }
 
   const handled = formData.get('traite') === 'on'
-  let count = await classifyMail(accounts, [id], { type: 'category', category })
+  let count = await classifyMail(accounts, [id], categoryChange)
+  if (count === 0 && categoryChange.type === 'customCategory') {
+    // Supprimée entre-temps, ou d'une autre entreprise que celle du pli.
+    return { fieldErrors: { categorie: 'Cette catégorie n’existe plus pour ce courrier : choisissez-en une autre.' } }
+  }
   if (count > 0) count = await classifyMail(accounts, [id], { type: 'setTags', tags: tags.tags })
   if (count > 0) count = await classifyMail(accounts, [id], { type: handled ? 'handled' : 'unhandled' })
   if (count === 0) return { error: 'Ce courrier n’est plus dans votre boîte aux lettres.' }

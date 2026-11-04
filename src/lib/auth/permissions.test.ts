@@ -56,6 +56,8 @@ describe('matrice des droits', () => {
     'rgpd.anonymiser',
     // Bannir ferme l'accès d'une personne au centre (ADR 045).
     'comptes.gerer',
+    // Un message à tous les domiciliés engage le centre (ADR 060).
+    'notifications.diffuser',
   ]
   /** La tenue des exploitants (ADR 054) et la connexion au CRM (ADR 065) : la direction seule. */
   const direction: Permission[] = ['equipe.exploitants', 'crm.gerer']

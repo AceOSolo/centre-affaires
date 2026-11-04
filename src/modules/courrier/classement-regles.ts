@@ -1,4 +1,5 @@
 import { mailCategories, type MailCategory } from './categories.ts'
+import { isCustomCategoryId, type CustomCategoryId } from './categories-perso-regles.ts'
 
 /**
  * Classement du courrier par une personne de l'espace client (ADR 044) : lu,
@@ -8,11 +9,16 @@ import { mailCategories, type MailCategory } from './categories.ts'
 export const MAX_TAGS = 10
 export const MAX_TAG_LENGTH = 30
 
-/** Classement d'un pli par une personne. Sans ligne : non lu, à traiter, non classé. */
+/**
+ * Classement d'un pli par une personne. Sans ligne : non lu, à traiter, non
+ * classé. Une catégorie de départ ou une catégorie personnelle (ADR 060),
+ * jamais les deux.
+ */
 export type MailClassification = {
   readAt: Date | null
   handledAt: Date | null
   category: MailCategory | null
+  customCategoryId: string | null
   tags: string[]
 }
 
@@ -20,6 +26,7 @@ export const emptyClassification: MailClassification = {
   readAt: null,
   handledAt: null,
   category: null,
+  customCategoryId: null,
   tags: [],
 }
 
@@ -57,6 +64,8 @@ export type ClassificationChange =
   | { type: 'handled' }
   | { type: 'unhandled' }
   | { type: 'category'; category: MailCategory | null }
+  /** Une catégorie personnelle de la personne (ADR 060). */
+  | { type: 'customCategory'; id: string }
   | { type: 'addTag'; tag: string }
   | { type: 'removeTag'; tag: string }
   | { type: 'setTags'; tags: string[] }
@@ -81,7 +90,9 @@ export function applyClassification(
     case 'unhandled':
       return { ...current, handledAt: null }
     case 'category':
-      return { ...current, category: change.category }
+      return { ...current, category: change.category, customCategoryId: null }
+    case 'customCategory':
+      return { ...current, category: null, customCategoryId: change.id }
     case 'addTag': {
       const tag = cleanTag(change.tag)
       if (!tag || tag.length > MAX_TAG_LENGTH || current.tags.length >= MAX_TAGS) return current
@@ -114,6 +125,7 @@ export function readClassificationChange(
       return { change: { type: 'unhandled' } }
     case 'classer': {
       if (value === 'non-classe') return { change: { type: 'category', category: null } }
+      if (isCustomCategoryId(value)) return { change: { type: 'customCategory', id: value } }
       return isMailCategory(value)
         ? { change: { type: 'category', category: value } }
         : { error: 'Choisissez une catégorie.' }
@@ -169,11 +181,15 @@ export const followUpLabels: Record<FollowUpFilter, string> = {
   traites: 'Traités',
 }
 
-/** Rubrique : une catégorie, ou les plis non classés. */
-export type CategoryFilter = MailCategory | 'non-classe'
+/**
+ * Rubrique : une catégorie de départ, une catégorie personnelle (son
+ * identifiant, ADR 060), ou les plis non classés.
+ */
+export type CategoryFilter = MailCategory | CustomCategoryId | 'non-classe'
 
 export function readCategoryFilter(value: string | undefined): CategoryFilter | undefined {
   if (value === 'non-classe') return value
+  if (isCustomCategoryId(value)) return value.toLowerCase() as CustomCategoryId
   return isMailCategory(value) ? value : undefined
 }
 

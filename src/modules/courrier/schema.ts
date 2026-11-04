@@ -573,6 +573,55 @@ export { mailCategories, type MailCategory }
 export const mailCategoryEnum = (name: string) => mysqlEnum(name, mailCategories)
 
 /**
+ * Catégories personnelles d'une personne de l'espace client (ADR 060), qui se
+ * mêlent à la liste de départ dans le classement et les rubriques. Même portée
+ * que le classement (ADR 044) : l'accès d'une personne à une entreprise.
+ *
+ * Nom unique par personne, à la casse près (collation de la base) ; 40
+ * caractères au plus, vingt catégories au plus (limite du code,
+ * `categories-perso-regles.ts`). Écrites sous portée client : les triggers
+ * (`60-courrier.sql`) refusent une entreprise hors de la portée.
+ *
+ * Réglage personnel, comme les étiquettes : une catégorie supprimée l'est
+ * vraiment, ses plis redeviennent non classés (`categories-perso.ts`). Le nom
+ * est du texte libre : il est neutralisé avec la personne ou l'entreprise
+ * anonymisée (`90-rgpd.sql`).
+ */
+export const mailMemberCategories = mysqlTable(
+  'mail_member_categories',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    clientId: char('client_id', { length: 36 }).notNull(),
+    clientMemberId: char('client_member_id', { length: 36 }).notNull(),
+    name: varchar('name', { length: 40 }).notNull(),
+    ...timestamps(),
+  },
+  (table) => [
+    unique('mail_member_categories_tenant_id_id_key').on(table.tenantId, table.id),
+    // Visée par le classement : la catégorie est celle de la même personne.
+    unique('mail_member_categories_owner_key').on(
+      table.tenantId,
+      table.clientId,
+      table.clientMemberId,
+      table.id,
+    ),
+    uniqueIndex('mail_member_categories_name_key').on(table.tenantId, table.clientMemberId, table.name),
+    foreignKey({
+      name: 'mail_member_categories_member_fk',
+      columns: [table.tenantId, table.clientId, table.clientMemberId],
+      foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
+    }).onDelete('restrict'),
+    check(
+      'mail_member_categories_name_valid',
+      sql`trim(${table.name}) <> '' and char_length(${table.name}) <= 40`,
+    ),
+  ],
+)
+
+export type MailMemberCategory = typeof mailMemberCategories.$inferSelect
+
+/**
  * Classement personnel d'un pli par une personne de l'espace client
  * (ADR 044) : lu ou non, traité ou non, catégorie, étiquettes. Propre à
  * chaque personne — deux associés rangent le même pli chacun à sa façon — et
@@ -599,6 +648,11 @@ export const mailItemMemberStates = mysqlTable(
     /** Marqué traité. Nulle : à traiter. */
     handledAt: instant('handled_at'),
     category: mailCategoryEnum('category'),
+    /**
+     * Catégorie personnelle de la personne (ADR 060), à la place d'une
+     * catégorie de départ : l'une ou l'autre, jamais les deux.
+     */
+    customCategoryId: char('custom_category_id', { length: 36 }),
     /** Étiquettes libres de la personne, sans doublon. Dix au plus, de 30 caractères. */
     tags: json('tags').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
     ...timestamps(),
@@ -622,6 +676,21 @@ export const mailItemMemberStates = mysqlTable(
       columns: [table.tenantId, table.clientId, table.clientMemberId],
       foreignColumns: [clientMembers.tenantId, clientMembers.clientId, clientMembers.id],
     }).onDelete('restrict'),
+    // La catégorie personnelle est celle de la même personne (ADR 060).
+    foreignKey({
+      name: 'mail_item_member_states_custom_category_fk',
+      columns: [table.tenantId, table.clientId, table.clientMemberId, table.customCategoryId],
+      foreignColumns: [
+        mailMemberCategories.tenantId,
+        mailMemberCategories.clientId,
+        mailMemberCategories.clientMemberId,
+        mailMemberCategories.id,
+      ],
+    }).onDelete('restrict'),
+    check(
+      'mail_item_member_states_one_category',
+      sql`${table.category} is null or ${table.customCategoryId} is null`,
+    ),
     check(
       'mail_item_member_states_tags_valid',
       sql`json_type(${table.tags}) = 'ARRAY' and json_length(${table.tags}) <= 10`,

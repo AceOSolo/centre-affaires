@@ -15,6 +15,23 @@ import type { MailCategory } from './categories.ts'
 /** Identifiant du formulaire de sélection : les cases des cartes s'y rattachent (`form=`). */
 export const SELECTION_FORM_ID = 'selection-courrier'
 
+/** Une catégorie personnelle proposée dans les listes (ADR 060). */
+export type CategoryOption = { id: string; name: string }
+
+/** Les catégories personnelles, après celles proposées : un groupe à part dans la liste. */
+function CustomOptions({ options }: { options: readonly CategoryOption[] }) {
+  if (options.length === 0) return null
+  return (
+    <optgroup label="Mes catégories">
+      {options.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.name}
+        </option>
+      ))}
+    </optgroup>
+  )
+}
+
 const categories = Object.keys(mailCategoryLabels) as MailCategory[]
 
 const fieldClass =
@@ -36,7 +53,16 @@ function FieldError({ id, error }: { id: string; error?: string }) {
  * étiquette — un geste répété ligne à ligne se fait sur une sélection
  * (`CLAUDE.md`). Les cases sont dans les cartes, rattachées à ce formulaire.
  */
-export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; knownTags: string[] }) {
+export function SelectionBar({
+  returnQuery,
+  knownTags,
+  customCategories = [],
+}: {
+  returnQuery: string
+  knownTags: string[]
+  /** Catégories personnelles ; le nom porte l'entreprise quand le compte en a plusieurs. */
+  customCategories?: readonly CategoryOption[]
+}) {
   const [state, formAction, pending] = useActionState<ClassificationFormState, FormData>(
     classifySelectionAction,
     null,
@@ -109,6 +135,7 @@ export function SelectionBar({ returnQuery, knownTags }: { returnQuery: string; 
                   {mailCategoryLabels[category]}
                 </option>
               ))}
+              <CustomOptions options={customCategories} />
               <option value="non-classe">Non classé</option>
             </select>
           </div>
@@ -158,10 +185,13 @@ export function ClassificationForm({
   mailItemId,
   classification,
   knownTags,
+  customCategories = [],
 }: {
   mailItemId: string
   classification: MailClassification
   knownTags: string[]
+  /** Catégories personnelles de l'accès à l'entreprise du pli (ADR 060). */
+  customCategories?: readonly CategoryOption[]
 }) {
   const [state, formAction, pending] = useActionState<ClassificationFormState, FormData>(
     saveClassificationAction,
@@ -184,7 +214,7 @@ export function ClassificationForm({
         <select
           id="categorie"
           name="categorie"
-          defaultValue={classification.category ?? ''}
+          defaultValue={classification.customCategoryId ?? classification.category ?? ''}
           aria-invalid={errors.categorie ? true : undefined}
           aria-describedby={errors.categorie ? 'categorie-error' : undefined}
           className={fieldClass}
@@ -195,6 +225,7 @@ export function ClassificationForm({
               {mailCategoryLabels[category]}
             </option>
           ))}
+          <CustomOptions options={customCategories} />
         </select>
         <FieldError id="categorie-error" error={errors.categorie} />
       </div>

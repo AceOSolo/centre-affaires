@@ -84,6 +84,8 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
       // la part du rayon dans « Demandes » (ADR 057).
       { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
+      // Message libre aux domiciliés — fermeture, travaux… — et son historique (ADR 060).
+      { href: '/messages', label: 'Messages aux domiciliés', permission: 'notifications.diffuser' },
     ],
   },
   {

@@ -85,6 +85,13 @@
       "when": 1793808574145,
       "tag": "0011_materiel_et_options",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "5",
+      "when": 1793809799691,
+      "tag": "0012_messages_et_categories",
+      "breakpoints": true
     }
   ]
 }

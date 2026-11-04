@@ -59,6 +59,8 @@ export const notificationEvents = [
   'mail_none',
   // Demande de domiciliation de la page publique (ADR 043) : à l'accueil.
   'domiciliation_request_submitted',
+  // Message libre de l'équipe aux domiciliés ou à une sélection (ADR 060).
+  'client_broadcast',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
@@ -81,6 +83,8 @@ export const notificationCategories = [
   'inspections',
   // « Pas de courrier aujourd'hui » (ADR 044) : se refuse sans renoncer au courrier reçu.
   'mail_none',
+  // Informations du centre : fermeture, travaux, nouveau service (ADR 060).
+  'centre_info',
 ] as const
 export type NotificationCategory = (typeof notificationCategories)[number]
 export const notificationCategoryEnum = (name: string) => mysqlEnum(name, notificationCategories)
@@ -107,6 +111,7 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   mail_batch_received: 'client',
   mail_none: 'client',
   domiciliation_request_submitted: 'centre',
+  client_broadcast: 'client',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -131,6 +136,7 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   mail_batch_received: 'mail',
   mail_none: 'mail_none',
   domiciliation_request_submitted: null,
+  client_broadcast: 'centre_info',
 }
 
 /**
@@ -161,6 +167,8 @@ export const notificationRelatedTypes = [
   'mail_batch',
   // Devis né d'une demande (ADR 043) : la domiciliation n'a pas de réservation.
   'proposal',
+  // Message groupé aux clients (ADR 060).
+  'client_broadcast',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
 export const notificationRelatedTypeEnum = (name: string) =>

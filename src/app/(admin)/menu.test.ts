@@ -88,9 +88,10 @@ describe('menu du back-office', () => {
   })
 
   it('reste court', () => {
-    // 21 depuis le rayon Matériel (ADR 062) : deux entrées de plus, dans un
-    // rayon plié tant qu'on ne l'ouvre pas (ADR 067).
-    assert.ok(entries.length <= 21, `${entries.length} entrées`)
+    // 22 : le rayon Matériel (ADR 062) ajoute deux entrées, dans un rayon
+    // plié tant qu'on ne l'ouvre pas (ADR 067), et « Messages aux
+    // domiciliés » une dans le rayon Domiciliation (ADR 060).
+    assert.ok(entries.length <= 22, `${entries.length} entrées`)
   })
 
   it('range le matériel dans son rayon : planning et appareils (ADR 062)', () => {
