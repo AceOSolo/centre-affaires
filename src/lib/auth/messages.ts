@@ -14,6 +14,13 @@
 /** Longueur minimale d'un mot de passe : imposée par `server.ts`, annoncée par les formulaires. */
 export const MOT_DE_PASSE_MIN = 10
 
+/**
+ * Validité du lien d'invitation à l'espace client, en jours (ADR 059) :
+ * posée par `invitation.ts`, annoncée par le courriel, la fiche du client et
+ * la page du mot de passe.
+ */
+export const INVITATION_JOURS = 7
+
 /** Ce que le client d'authentification rend dans `error`. */
 export type RefusAuth = { code?: string; message?: string; status?: number }
 

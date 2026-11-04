@@ -1,14 +1,16 @@
 import { and, eq, isNull } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
+import type { InvitationLink } from '../../lib/auth/invitation.ts'
 import { appUrl } from '../../lib/courriel.ts'
-import { formatCalendarDate } from '../../lib/dates.ts'
+import { formatCalendarDate, formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
-import { contracts } from '../contrats/schema.ts'
+import { contracts, offerRequests } from '../contrats/schema.ts'
 import { offers } from '../facturation/schema.ts'
 import { resources } from '../ressources/schema.ts'
-import { personName } from './faits.ts'
+import { signalStaff } from './cloche-queries.ts'
+import { centreTimeZone, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.ts'
 
 /**
@@ -72,30 +74,50 @@ export function notifyContractActivated(contractId: string, options: NotifyOptio
 }
 
 /**
- * Accès ouvert à l'espace client : à la personne inscrite seulement, quelle
- * que soit sa préférence (le message n'a pas de catégorie). Retrouvée par son
- * adresse sur la fiche, retirés exclus.
+ * Accès ouvert à l'espace client, ou invitation renvoyée : à la personne
+ * inscrite seulement, quelle que soit sa préférence (le message n'a pas de
+ * catégorie). Retrouvée par son adresse sur la fiche, retirés exclus.
+ *
+ * `prepareLink` prépare le lien pour choisir son mot de passe (ADR 059,
+ * `clients/invitation.ts`), une fois l'accès retrouvé ; sans lui, ou s'il
+ * échoue, le message part sans lien et renvoie à la page de connexion.
  */
-export function notifyMemberInvited(clientId: string, email: string, options: NotifyOptions = {}) {
+export function notifyMemberInvited(
+  clientId: string,
+  email: string,
+  options: NotifyOptions & {
+    prepareLink?: (member: { email: string; fullName: string | null }) => Promise<InvitationLink | undefined>
+  } = {},
+) {
   return guarded('accès à l’espace client ouvert', async () => {
+    const tenantId = options.tenantId ?? currentTenantId()
     const address = email.trim().toLowerCase()
-    const [row] = await withTenant(
-      options.tenantId ?? currentTenantId(),
-      (tx) =>
-        tx
-          .select({ memberId: clientMembers.id, email: clientMembers.email, clientName: clients.name })
+    const row = await withTenant(
+      tenantId,
+      async (tx) => {
+        const [found] = await tx
+          .select({
+            memberId: clientMembers.id,
+            email: clientMembers.email,
+            fullName: clientMembers.fullName,
+            clientName: clients.name,
+          })
           .from(clientMembers)
-          .innerJoin(clients, eq(clients.id, clientMembers.clientId))
+          .innerJoin(clients, and(eq(clients.tenantId, clientMembers.tenantId), eq(clients.id, clientMembers.clientId)))
           .where(
             and(
+              eq(clientMembers.tenantId, tenantId),
               eq(clientMembers.clientId, clientId),
               eq(clientMembers.email, address),
               isNull(clientMembers.deletedAt),
             ),
-          ),
+          )
+        return found && { ...found, timeZone: await centreTimeZone(tx, tenantId) }
+      },
       options.database,
     )
     if (!row) return null
+    const link = await options.prepareLink?.({ email: row.email, fullName: row.fullName })
     return notify(
       {
         event: 'member_invited',
@@ -105,7 +127,11 @@ export function notifyMemberInvited(clientId: string, email: string, options: No
         values: {
           client: row.clientName,
           adresse: row.email,
-          lien: appUrl('/auth/connexion'),
+          lien: link?.url,
+          echeance: link
+            ? `${formatLongDate(toIsoDate(link.expiresAt, row.timeZone), row.timeZone)} à ${formatTime(link.expiresAt, row.timeZone)}`
+            : null,
+          connexion: appUrl('/auth/connexion'),
         },
       },
       options,
@@ -114,7 +140,8 @@ export function notifyMemberInvited(clientId: string, email: string, options: No
 }
 
 /**
- * Offre demandée depuis l'espace client (ADR 036) : à l'adresse du centre.
+ * Offre demandée depuis l'espace client (ADR 036) : à l'adresse du centre, et
+ * dans la cloche de l'équipe (ADR 059).
  * L'appelant (l'action de l'espace) a vérifié que l'offre est montrée aux
  * clients et que la personne relève de l'entreprise ; le message ne dit rien
  * de plus que ce qu'elle a demandé.
@@ -136,12 +163,31 @@ export function notifyOfferRequested(
           .from(clientMembers)
           .innerJoin(clients, eq(clients.id, clientMembers.clientId))
           .where(and(eq(clientMembers.id, request.memberId), eq(clientMembers.clientId, request.clientId)))
-        return { offer, member }
+        // La demande à traiter, que la cloche désigne : une seule par
+        // entreprise et par offre (`offer_requests_open_key`).
+        const [open] = await tx
+          .select({ id: offerRequests.id })
+          .from(offerRequests)
+          .where(
+            and(
+              eq(offerRequests.clientId, request.clientId),
+              eq(offerRequests.offerId, request.offerId),
+              eq(offerRequests.status, 'requested'),
+            ),
+          )
+          .limit(1)
+        return { offer, member, open }
       },
       options.database,
     )
-    const { offer, member } = loaded
+    const { offer, member, open } = loaded
     if (!offer || offer.deletedAt || !offer.clientVisible || !member) return null
+    if (open) {
+      await signalStaff(
+        { kind: 'offer_request', clientId: request.clientId, relatedId: open.id, summary: [offer.name] },
+        options,
+      )
+    }
     return notify(
       {
         event: 'offer_requested',

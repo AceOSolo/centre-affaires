@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
+import { INVITATION_JOURS } from '../../../../lib/auth/messages.ts'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
@@ -19,7 +20,14 @@ import {
 } from '../../../../modules/clients/historique.ts'
 import { listClientMembers } from '../../../../modules/clients/comptes.ts'
 import { removeClientMemberAction } from '../../../../modules/clients/comptes-actions.ts'
+import { latestInvitations } from '../../../../modules/clients/invitation.ts'
+import {
+  canResendInvitation,
+  describeMemberAccess,
+  memberAccessState,
+} from '../../../../modules/clients/invitation-etat.ts'
 import { MemberForm } from '../../../../modules/clients/member-form.tsx'
+import { ResendInvitationForm } from '../../../../modules/clients/resend-invitation-form.tsx'
 import {
   clientStatusLabels,
   clientStatusStyles,
@@ -88,6 +96,8 @@ export default async function ClientPage({
     // La commande du client, de son devis à son contrat (ADR 048).
     can(staff.role, 'demandes.traiter') ? listProposals({ clientId: client.id, limit: 20 }) : null,
   ])
+  // État de chaque accès : actif, ou invité et ce qu'est devenue l'invitation (ADR 059).
+  const invitations = await latestInvitations(members.filter((member) => !member.authUserId).map((member) => member.id))
   const address = formatAddress(client)
   const notice = typeof contactNotice === 'string' ? contactNotices.get(contactNotice) : undefined
   const hasPrimary = contacts.some((contact) => contact.isPrimary)
@@ -541,9 +551,9 @@ export default async function ClientPage({
         </div>
         <p className="text-sm text-muted-foreground">
           Ces personnes consultent le courrier de l’entreprise et en demandent l’ouverture. Chacune
-          crée son accès depuis la page de connexion du site, avec l’adresse inscrite ici. Un accès
-          n’est pas un contact : il ouvre l’espace client, sans faire de la personne un
-          interlocuteur du centre.
+          reçoit par courriel un lien pour choisir son mot de passe, valable {INVITATION_JOURS} jours ;
+          tant qu’elle ne s’est pas connectée, l’invitation se renvoie d’ici. Un accès n’est pas un
+          contact : il ouvre l’espace client, sans faire de la personne un interlocuteur du centre.
         </p>
 
         {members.length > 0 && (
@@ -560,37 +570,47 @@ export default async function ClientPage({
                 </tr>
               </thead>
               <tbody className="divide-y divide-border">
-                {members.map((member) => (
-                  <tr key={member.id}>
-                    <td className="px-4 py-3">{member.email}</td>
-                    <td className="px-4 py-3 text-muted-foreground">{member.fullName ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      {/* Libellé et couleur : l'état ne se lit pas qu'à la teinte. */}
-                      <span
-                        className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                          member.authUserId
-                            ? 'bg-primary text-primary-foreground'
-                            : 'bg-accent/15 text-primary'
-                        }`}
-                      >
-                        {member.authUserId ? 'Compte activé' : 'En attente de connexion'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      <form action={removeClientMemberAction}>
-                        <input type="hidden" name="id" value={member.id} />
-                        <input type="hidden" name="clientId" value={client.id} />
-                        <button
-                          type="submit"
-                          aria-label={`Retirer l’accès de ${member.email}`}
-                          className="rounded-md border border-destructive/30 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/5"
+                {members.map((member) => {
+                  const accessState = memberAccessState(member, invitations.get(member.id))
+                  const access = describeMemberAccess(accessState, timeZone)
+                  return (
+                    <tr key={member.id} className="align-top">
+                      <td className="px-4 py-3">{member.email}</td>
+                      <td className="px-4 py-3 text-muted-foreground">{member.fullName ?? '—'}</td>
+                      <td className="px-4 py-3">
+                        {/* Libellé et couleur : l'état ne se lit pas qu'à la teinte. */}
+                        <span
+                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
+                            access.active ? 'bg-primary text-primary-foreground' : 'bg-accent/15 text-primary'
+                          }`}
                         >
-                          Retirer l’accès
-                        </button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
+                          {access.label}
+                        </span>
+                        {access.detail && (
+                          <span className="mt-1 block max-w-xs text-xs text-muted-foreground">{access.detail}</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex flex-col items-end gap-2">
+                          {!client.deletedAt && canResendInvitation(accessState) && (
+                            <ResendInvitationForm clientId={client.id} memberId={member.id} email={member.email} />
+                          )}
+                          <form action={removeClientMemberAction}>
+                            <input type="hidden" name="id" value={member.id} />
+                            <input type="hidden" name="clientId" value={client.id} />
+                            <button
+                              type="submit"
+                              aria-label={`Retirer l’accès de ${member.email}`}
+                              className="rounded-md border border-destructive/30 px-3 py-1 text-xs font-medium text-destructive hover:bg-destructive/5"
+                            >
+                              Retirer l’accès
+                            </button>
+                          </form>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           </div>

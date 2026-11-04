@@ -14,16 +14,42 @@ import type SMTPTransport from 'nodemailer/lib/smtp-transport'
  *
  * Sans configuration complète, rien ne part : l'envoi est journalisé sans
  * destinataire et l'application continue. C'est le cas du développement, où
- * aucune adresse réelle ne doit recevoir de message.
+ * aucune adresse réelle ne doit recevoir de message — sauf vers un capteur
+ * local (Mailpit, profil `courriel` de `docker-compose.yml`, ADR 059), qui
+ * garde les messages sans les remettre à personne.
  */
 type Env = Record<string, string | undefined>
+
+/** Variables de l'envoi, dans l'ordre où l'encart « Courriels » les cite. */
+export const SMTP_VARIABLES = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'MAIL_FROM'] as const
+export type SmtpVariable = (typeof SMTP_VARIABLES)[number]
+
+/**
+ * Le serveur SMTP est-il sur la machine elle-même ? Seul cas où le clair est
+ * admis : le message ne quitte pas la boucle locale (le capteur de
+ * développement). `localhost.exemple.fr` n'en est pas un.
+ */
+export function isLoopbackHost(host: string): boolean {
+  const name = host.trim().toLowerCase().replace(/^\[|\]$/g, '')
+  return name === 'localhost' || name === '::1' || /^127(?:\.\d{1,3}){3}$/.test(name)
+}
+
+function readPort(env: Env): number | undefined {
+  const port = Number(env.SMTP_PORT?.trim() || 587)
+  return Number.isInteger(port) && port > 0 && port <= 65_535 ? port : undefined
+}
 
 /**
  * Réglages du transport, ou `undefined` s'il en manque un.
  *
- * Jamais de courriel en clair : 465 chiffre d'emblée, tout autre port exige
- * STARTTLS — sans lui, la connexion est refusée plutôt que de continuer en
- * clair. Brevo accepte les deux ; 587 est son port recommandé.
+ * Jamais de courriel en clair sur le réseau : 465 chiffre d'emblée, tout
+ * autre port exige STARTTLS — sans lui, la connexion est refusée plutôt que
+ * de continuer en clair. Brevo accepte les deux ; 587 est son port
+ * recommandé. Seule exception : un serveur de la boucle locale, le capteur de
+ * développement, qui ne chiffre pas.
+ *
+ * Délais bornés : un serveur injoignable répond en secondes, pas en deux
+ * minutes — l'essai de l'encart « Courriels » attend sa réponse.
  */
 export function smtpSettings(env: Env): SMTPTransport.Options | undefined {
   const host = env.SMTP_HOST?.trim()
@@ -31,18 +57,63 @@ export function smtpSettings(env: Env): SMTPTransport.Options | undefined {
   const pass = env.SMTP_PASSWORD
   if (!host || !user || !pass || !env.MAIL_FROM?.trim()) return undefined
 
-  const port = Number(env.SMTP_PORT || 587)
-  if (!Number.isInteger(port) || port <= 0) return undefined
-  return { host, port, secure: port === 465, requireTLS: port !== 465, auth: { user, pass } }
+  const port = readPort(env)
+  if (port === undefined) return undefined
+  return {
+    host,
+    port,
+    secure: port === 465,
+    requireTLS: port !== 465 && !isLoopbackHost(host),
+    auth: { user, pass },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 30_000,
+  }
 }
 
-let transporter: Transporter | undefined
+/**
+ * Ce que l'encart « Courriels » dit de la configuration (ADR 059) : jamais
+ * l'identifiant ni la clé, seulement s'ils sont renseignés.
+ */
+export type SmtpStatus = {
+  configured: boolean
+  /** Variables vides, ou illisibles pour le port. */
+  missing: SmtpVariable[]
+  host: string | null
+  port: number | null
+  /** Chiffrement de la connexion. */
+  security: 'TLS' | 'STARTTLS' | 'aucun, capteur local' | null
+  from: string | null
+}
 
-function transport(): Transporter | undefined {
-  const settings = smtpSettings(process.env)
+export function smtpStatus(env: Env = process.env): SmtpStatus {
+  const missing = SMTP_VARIABLES.filter((name) =>
+    name === 'SMTP_PORT' ? readPort(env) === undefined : !env[name]?.trim(),
+  )
+  const settings = smtpSettings(env)
+  return {
+    configured: settings !== undefined,
+    missing,
+    host: env.SMTP_HOST?.trim() || null,
+    port: readPort(env) ?? null,
+    security: !settings ? null : settings.secure ? 'TLS' : settings.requireTLS ? 'STARTTLS' : 'aucun, capteur local',
+    from: env.MAIL_FROM?.trim() || null,
+  }
+}
+
+/** Un transport par configuration : un environnement changé (tests, essai) n'en réutilise pas un ancien. */
+const transporters = new Map<string, Transporter>()
+
+function transport(env: Env): Transporter | undefined {
+  const settings = smtpSettings(env)
   if (!settings) return undefined
-  transporter ??= nodemailer.createTransport(settings)
-  return transporter
+  const key = JSON.stringify(settings)
+  let found = transporters.get(key)
+  if (!found) {
+    found = nodemailer.createTransport(settings)
+    transporters.set(key, found)
+  }
+  return found
 }
 
 export type Message = { to: string[]; subject: string; text: string }
@@ -67,10 +138,41 @@ export function normalizeRecipients(to: readonly string[]): string[] {
   return [...new Set(to.map((address) => address.trim().toLowerCase()).filter(Boolean))]
 }
 
-/** Cause lisible d'un refus SMTP, bornée : la réponse du serveur, pas le message. */
-function describeFailure(reason: unknown): string {
-  const text = reason instanceof Error ? reason.message : String(reason)
-  return text.replace(/\s+/g, ' ').trim().slice(0, 500) || 'Envoi refusé par le serveur SMTP.'
+/** Ce que nodemailer joint à une erreur SMTP. */
+type SmtpErrorFields = { code?: string; responseCode?: number; command?: string; response?: string }
+
+const UNREACHABLE = ['ECONNECTION', 'ETIMEDOUT', 'ESOCKET', 'ECONNREFUSED', 'ECONNRESET']
+
+/**
+ * Cause lisible d'un refus SMTP, pour le journal des messages et l'encart
+ * « Courriels » (ADR 059) : ce qu'il faut vérifier, en français, puis la
+ * réponse du serveur — jamais le message. Bornée à 400 caractères.
+ */
+export function explainSmtpError(reason: unknown): string {
+  const fields = (typeof reason === 'object' && reason !== null ? reason : {}) as SmtpErrorFields
+  const raw = (reason instanceof Error ? reason.message : String(reason)).replace(/\s+/g, ' ').trim()
+  const code = fields.code ?? ''
+  const command = (fields.command ?? '').toUpperCase()
+
+  let hint: string | null = null
+  if (code === 'EAUTH' || fields.responseCode === 535) {
+    hint =
+      'Identifiant ou clé SMTP refusés : vérifiez SMTP_USER (l’identifiant SMTP affiché par Brevo) et SMTP_PASSWORD (la clé SMTP, pas la clé d’API).'
+  } else if (code === 'EDNS' || /ENOTFOUND|EAI_AGAIN/.test(raw)) {
+    hint = 'Serveur SMTP introuvable : vérifiez SMTP_HOST (smtp-relay.brevo.com chez Brevo).'
+  } else if (code === 'ETLS' || command.includes('STARTTLS')) {
+    hint = 'La connexion chiffrée (STARTTLS) a échoué : vérifiez SMTP_PORT (587 chez Brevo).'
+  } else if (UNREACHABLE.includes(code) || /ECONNREFUSED|ETIMEDOUT/.test(raw)) {
+    hint =
+      'Serveur SMTP injoignable : vérifiez SMTP_HOST et SMTP_PORT (587 chez Brevo), et que le serveur peut sortir sur ce port.'
+  } else if (command.startsWith('MAIL') || /sender|expéditeur/i.test(`${fields.response ?? ''} ${raw}`)) {
+    hint =
+      'Expéditeur refusé : MAIL_FROM doit être une adresse d’un domaine authentifié, ou un expéditeur validé, dans Brevo.'
+  } else if (command.startsWith('RCPT')) {
+    hint = 'Adresse du destinataire refusée par le serveur SMTP.'
+  }
+  const detail = raw || 'Envoi refusé par le serveur SMTP.'
+  return (hint ? `${hint} Réponse du serveur : ${detail}` : detail).slice(0, 400)
 }
 
 /**
@@ -82,12 +184,12 @@ function describeFailure(reason: unknown): string {
  * le journal des messages (`modules/notifications`), et écrite dans les
  * journaux du serveur.
  */
-export async function sendMessage(message: Message): Promise<SendResult> {
+export async function sendMessage(message: Message, env: Env = process.env): Promise<SendResult> {
   const recipients = normalizeRecipients(message.to)
   if (recipients.length === 0) return { status: 'no_recipient', recipients, failed: [], error: null }
 
-  const smtp = transport()
-  const from = process.env.MAIL_FROM as string
+  const smtp = transport(env)
+  const from = env.MAIL_FROM as string
   if (!smtp) {
     console.info(`Courriel non envoyé (SMTP non configuré) : « ${message.subject} »`)
     return { status: 'not_configured', recipients, failed: [], error: null }
@@ -108,7 +210,7 @@ export async function sendMessage(message: Message): Promise<SendResult> {
     status: 'failed',
     recipients,
     failed,
-    error: `${failed.length} envoi${failed.length > 1 ? 's' : ''} sur ${recipients.length} en échec : ${describeFailure(reason)}`,
+    error: `${failed.length} envoi${failed.length > 1 ? 's' : ''} sur ${recipients.length} en échec : ${explainSmtpError(reason)}`,
   }
 }
 

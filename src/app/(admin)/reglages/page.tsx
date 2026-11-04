@@ -2,6 +2,8 @@ import Link from 'next/link'
 
 import { can } from '../../../lib/auth/permissions.ts'
 import { requireAnyPermission } from '../../../lib/auth/staff.ts'
+import { currentTimeZone } from '../../../lib/tenant.ts'
+import { EmailSettingsPanel } from '../../../modules/notifications/encart-courriels.tsx'
 import { reglagesPermissions, reglagesSections } from './sections.ts'
 
 export const metadata = { title: 'Réglages' }
@@ -10,9 +12,13 @@ export const metadata = { title: 'Réglages' }
  * « Réglages » (ADR 048) : les écrans qui paramètrent le centre, réunis hors
  * du menu, qui ne garde que ce qui se traite au quotidien. Seuls les écrans que
  * le rôle permet sont montrés ; chacun revérifie son droit.
+ *
+ * En bas, l'encart « Courriels » (ADR 059), pour qui configure le centre.
  */
 export default async function ReglagesPage() {
   const { member } = await requireAnyPermission(reglagesPermissions)
+  const showsEmail = can(member.role, 'centre.configurer')
+  const timeZone = showsEmail ? await currentTimeZone() : 'Europe/Paris'
   const sections = reglagesSections
     .map((section) => ({ ...section, links: section.links.filter((link) => can(member.role, link.permission)) }))
     .filter((section) => section.links.length > 0)
@@ -46,6 +52,8 @@ export default async function ReglagesPage() {
           </ul>
         </section>
       ))}
+
+      {showsEmail && <EmailSettingsPanel address={member.email} timeZone={timeZone} />}
     </div>
   )
 }

@@ -10,6 +10,7 @@ import { formatCents } from '../facturation/tarifs.ts'
 import { describeAnswers } from '../reservations/questionnaires.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
+import { signalStaff } from './cloche-queries.ts'
 import { centreTimeZone, formatSlot, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotificationRequest, type NotifyOptions } from './moteur.ts'
 import type { NotificationEvent } from './schema.ts'
@@ -131,15 +132,43 @@ function notifyClient(
   })
 }
 
+/** Le devis né avec la réservation (demande par produit, ADR 043), s'il y en a un. */
+async function proposalOfBooking(bookingId: string, options: NotifyOptions): Promise<string | undefined> {
+  const tenantId = options.tenantId ?? currentTenantId()
+  const [row] = await withTenant(
+    tenantId,
+    (tx) =>
+      tx
+        .select({ id: proposals.id })
+        .from(proposals)
+        .where(and(eq(proposals.tenantId, tenantId), eq(proposals.bookingId, bookingId)))
+        .limit(1),
+    options.database,
+  )
+  return row?.id
+}
+
 /**
  * Demande de réservation déposée — page publique, ou espace client sur une
- * ressource « accord de l'accueil » (ADR 036) : à l'adresse du centre.
+ * ressource « accord de l'accueil » (ADR 036) : à l'adresse du centre, et
+ * dans la cloche de l'équipe (ADR 059) — « demande de devis » quand un devis
+ * est né avec elle (page publique, ADR 043).
  */
 export function notifyBookingRequestSubmitted(bookingId: string, options: NotifyOptions = {}) {
   return guarded('demande de réservation déposée', async () => {
     const loaded = await loadBooking(bookingId, options)
     if (!loaded || loaded.booking.kind !== 'booking' || loaded.booking.status !== 'pending') return null
     const { booking } = loaded
+    await signalStaff(
+      {
+        // La cloche ne retient jamais le courriel : une lecture en échec vaut « sans devis ».
+        kind: (await proposalOfBooking(booking.id, options).catch(() => undefined)) ? 'quote_request' : 'booking_request',
+        clientId: booking.clientId,
+        relatedId: booking.id,
+        summary: [loaded.resourceName, formatSlot(booking.startsAt, booking.endsAt, loaded.timeZone)],
+      },
+      options,
+    )
     return notify(
       {
         event: 'booking_request_submitted',
@@ -163,9 +192,10 @@ export function notifyBookingRequestSubmitted(bookingId: string, options: Notify
 
 /**
  * Demande de domiciliation déposée sur la page publique (ADR 043) : pas de
- * réservation, un devis brouillon que l'accueil relit. À l'adresse du centre,
- * tant que le devis attend : un devis déjà validé ou annulé, ou saisi par
- * l'équipe elle-même, ne prévient pas.
+ * réservation, un devis brouillon que l'accueil relit. À l'adresse du centre
+ * et dans la cloche de l'équipe (ADR 059), tant que le devis attend : un
+ * devis déjà validé ou annulé, ou saisi par l'équipe elle-même, ne prévient
+ * pas.
  */
 export function notifyDomiciliationRequestSubmitted(proposalId: string, options: NotifyOptions = {}) {
   return guarded('demande de domiciliation déposée', async () => {
@@ -183,6 +213,15 @@ export function notifyDomiciliationRequestSubmitted(proposalId: string, options:
     if (!row) return null
     const { proposal } = row
     if (proposal.product !== 'domiciliation' || proposal.status !== 'draft' || proposal.channel === 'staff') return null
+    await signalStaff(
+      {
+        kind: 'domiciliation_request',
+        clientId: proposal.clientId,
+        relatedId: proposal.id,
+        summary: [`Devis ${proposal.number}`],
+      },
+      options,
+    )
     // La raison sociale a sa variable : elle n'est pas répétée dans les réponses.
     const answers = Object.fromEntries(Object.entries(proposal.answers).filter(([name]) => name !== 'raisonSociale'))
     const reponses = describeAnswers('domiciliation', answers)

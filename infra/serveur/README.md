@@ -418,8 +418,10 @@ recopier dans `sites-available` puis `nginx -t && systemctl reload nginx`.
 ## 8. Courriels avec Brevo
 
 L'application prévient les clients à l'arrivée et à la numérisation de leur
-courrier, et le centre à chaque demande d'ouverture (ADR 015). L'envoi passe
-par le SMTP de Brevo, prestataire français hébergé en Europe.
+courrier, le centre à chaque demande (ADR 015, ADR 038), et envoie aux
+personnes inscrites par l'accueil le lien pour choisir leur mot de passe
+(ADR 059). L'envoi passe par le SMTP de Brevo, prestataire français hébergé en
+Europe, en port 587 avec STARTTLS (jamais en clair).
 
 **Authentifier le domaine expéditeur**, sans quoi les messages finissent en
 indésirables. Dans Brevo : Expéditeurs, domaines et IP dédiées → Domaines →
@@ -431,9 +433,12 @@ ajouter `include:spf.brevo.com` dans la même ligne : un domaine n'a qu'un seul
 SPF. Attendre que Brevo affiche le domaine comme authentifié.
 
 **Créer la clé SMTP** : SMTP & API → onglet SMTP → générer une clé. Dans le
-`.env` du serveur : `SMTP_USER` reçoit l'identifiant affiché par Brevo (il
-contient un `@`, c'est normal), `SMTP_PASSWORD` la clé SMTP — pas la clé
-d'API. `MAIL_FROM` utilise une adresse du domaine authentifié.
+`.env` du serveur : `SMTP_HOST=smtp-relay.brevo.com`, `SMTP_PORT=587`,
+`SMTP_USER` reçoit l'identifiant affiché par Brevo (il contient un `@`, c'est
+normal), `SMTP_PASSWORD` la clé SMTP — pas la clé d'API. `MAIL_FROM` utilise
+une adresse du domaine authentifié, avec un nom si l'on veut :
+`MAIL_FROM="Nom du centre <adresse@domaine-authentifié>"`. Une adresse
+d'un autre domaine est refusée par Brevo ; l'erreur le dit au journal.
 
 **Désactiver le suivi** des ouvertures et des clics dans les réglages des
 e-mails transactionnels : il ajouterait un pixel espion aux messages et
@@ -443,9 +448,15 @@ ferait passer les liens vers l'espace client par un domaine de Brevo.
 accord de traitement des données (DPA, dans les paramètres du compte) et
 l'inscrire au registre des traitements du centre.
 
-Vérifier : relancer l'application (`docker compose up -d`), puis sur la fiche
-d'un client de test, donner l'accès à sa propre adresse — le courriel
-d'invitation doit arriver.
+Vérifier : relancer l'application (`docker compose up -d`), puis dans le
+back-office, **Réglages → encart « Courriels »** : il doit dire « Envoi
+configuré » (serveur, port 587, STARTTLS, expéditeur). Le bouton « Envoyer un
+e-mail d'essai » écrit à l'adresse du membre connecté et dit tout de suite si
+le message est parti ; en cas de refus, la cause est en clair (identifiant ou
+clé refusés, expéditeur non validé, serveur injoignable). Les derniers échecs
+du journal des messages s'affichent dessous. Enfin, sur la fiche d'un client
+de test, donner l'accès à sa propre adresse : le courriel d'invitation, avec
+son lien pour choisir le mot de passe, doit arriver.
 
 ## 9. Sauvegardes
 

@@ -12,8 +12,8 @@ const labelClass = 'block text-sm font-medium text-foreground'
 /**
  * Inscription d'une personne à l'espace d'une entreprise cliente.
  *
- * Aucun courriel n'est envoyé : la personne crée son accès avec cette adresse,
- * et le rattachement se fait à sa première connexion (ADR 015).
+ * La personne reçoit un courriel avec le lien pour choisir son mot de passe
+ * (ADR 059) ; le rattachement se fait à sa première connexion (ADR 015).
  */
 export function MemberForm({ clientId }: { clientId: string }) {
   const [state, formAction, pending] = useActionState<MemberFormState, FormData>(

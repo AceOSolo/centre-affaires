@@ -93,7 +93,7 @@ export const permissionLabels: Record<Permission, string> = {
     'Configuration du centre : règles de réservation, conservation, règles tarifaires, identité de facturation',
   'agenda-google.gerer': 'Agendas Google',
   'equipe.gerer': 'Équipe : inscrire et retirer un membre de l’accueil',
-  'notifications.consulter': 'Consulter le journal des messages envoyés',
+  'notifications.consulter': 'Consulter le journal des messages envoyés et la cloche de l’équipe',
   'notifications.gerer': 'Modèles des messages envoyés aux clients et au centre',
   'etats-des-lieux.gerer': 'Saisir, photographier et clore les états des lieux',
   'etats-des-lieux.modeles': 'Modèles de formulaire des états des lieux',

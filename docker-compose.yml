@@ -1,8 +1,10 @@
 # Environnement de développement local : MySQL 8.4, et MinIO si l'on veut un
-# stockage de fichiers (profil `stockage`).
+# stockage de fichiers (profil `stockage`), Mailpit pour voir les courriels
+# sans en envoyer (profil `courriel`).
 #
 #   docker compose up -d db                        # la base
 #   docker compose --profile stockage up -d        # la base et MinIO
+#   docker compose --profile courriel up -d mailpit  # le capteur de courriels
 #   npm run db:migrer                              # structure + règles
 #
 # Les valeurs de .env.example conviennent telles quelles, avec DB_ADMIN_USER=root
@@ -60,6 +62,26 @@ services:
       - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
+
+  # Capteur de courriels (ADR 059) : il reçoit tout ce que l'application envoie
+  # et ne le remet à personne. Messages lisibles sur http://127.0.0.1:8025.
+  # Dans .env.local : SMTP_HOST=127.0.0.1, SMTP_PORT=1025, SMTP_USER=dev,
+  # SMTP_PASSWORD=dev, MAIL_FROM="Centre (dev) <centre@exemple.test>". Le clair
+  # n'est admis que vers la boucle locale (`src/lib/courriel.ts`). Les messages
+  # restent en mémoire du conteneur : rien ne survit à son arrêt.
+  mailpit:
+    profiles: ["courriel"]
+    image: axllent/mailpit:latest
+    container_name: centre-affaires-mailpit
+    restart: unless-stopped
+    environment:
+      # N'importe quel identifiant, sans chiffrement : le capteur est local.
+      MP_SMTP_AUTH_ACCEPT_ANY: "1"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "1"
+      MP_MAX_MESSAGES: "500"
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
 
 volumes:
   db-data:

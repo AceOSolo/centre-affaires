@@ -132,6 +132,7 @@ describe('route de conservation', { skip: raisonDeSaut }, () => {
       anonymizedClients: { clients: 0, contacts: 0, accesses: 0, mailSenders: 0 },
       anonymizedMembers: { accesses: 0, staff: 0 },
       notificationDeliveries: 0,
+      staffNotifications: 0,
       inspectionPhotos: 0,
       inspectionPhotoViews: 0,
       failed: [],
@@ -204,6 +205,23 @@ describe('route de conservation', { skip: raisonDeSaut }, () => {
     const restants = await lire('select subject from notification_deliveries')
     assert.deepEqual(
       restants.map((row) => row.subject),
+      ['Récente'],
+    )
+  })
+
+  it('purge la cloche de l’équipe au terme du journal des messages (ADR 059)', async () => {
+    await bases.owner.client.query('update tenants set notification_log_retention_months = 12')
+    await asTenant((tx) =>
+      tx.execute(sql`
+        insert into staff_notifications (id, kind, related_id, summary, created_at) values
+          (${uuidv7()}, 'booking_request', ${uuidv7()}, 'Ancienne', CURRENT_TIMESTAMP(3) - interval 13 month),
+          (${uuidv7()}, 'booking_request', ${uuidv7()}, 'Récente', CURRENT_TIMESTAMP(3) - interval 1 month)`),
+    )
+    const response = await appeler(`Bearer ${TOKEN}`)
+    assert.equal((await response.json()).staffNotifications, 1)
+    const restantes = await lire('select summary from staff_notifications')
+    assert.deepEqual(
+      restantes.map((row) => row.summary),
       ['Récente'],
     )
   })

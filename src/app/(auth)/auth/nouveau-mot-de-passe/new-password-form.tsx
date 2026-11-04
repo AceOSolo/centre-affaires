@@ -24,8 +24,19 @@ type Echec = { message?: string; champs?: Record<string, string> }
  * Les sessions ouvertes avec l'ancien mot de passe sont fermées
  * (`revokeSessionsOnPasswordReset`, `lib/auth/server.ts`) ; aucune n'est
  * ouverte ici : la personne se connecte ensuite, avec le nouveau.
+ *
+ * `invitation` : premier mot de passe d'une personne invitée par l'accueil
+ * (ADR 059) ; seuls les textes changent.
  */
-export function NewPasswordForm({ token, equipe }: { token: string; equipe: boolean }) {
+export function NewPasswordForm({
+  token,
+  equipe,
+  invitation = false,
+}: {
+  token: string
+  equipe: boolean
+  invitation?: boolean
+}) {
   const [envoi, setEnvoi] = useState(false)
   const [echec, setEchec] = useState<Echec | null>(null)
   const [change, setChange] = useState(false)
@@ -77,11 +88,14 @@ export function NewPasswordForm({ token, equipe }: { token: string; equipe: bool
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-primary">Nouveau mot de passe</h1>
+        <h1 className="text-xl font-semibold text-primary">
+          {invitation ? 'Bienvenue dans votre espace client' : 'Nouveau mot de passe'}
+        </h1>
         {!change && (
           <p className="mt-1 text-sm text-muted-foreground">
-            Choisissez le mot de passe de votre compte. Les sessions ouvertes avec l’ancien seront
-            fermées.
+            {invitation
+              ? 'Choisissez le mot de passe de votre accès. Votre identifiant est l’adresse à laquelle vous avez reçu l’invitation.'
+              : 'Choisissez le mot de passe de votre compte. Les sessions ouvertes avec l’ancien seront fermées.'}
           </p>
         )}
       </div>
@@ -95,7 +109,9 @@ export function NewPasswordForm({ token, equipe }: { token: string; equipe: bool
       >
         {change && (
           <p className="rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-foreground">
-            Votre mot de passe est changé. Connectez-vous avec le nouveau.
+            {invitation
+              ? 'Votre mot de passe est enregistré. Connectez-vous avec votre adresse et ce mot de passe.'
+              : 'Votre mot de passe est changé. Connectez-vous avec le nouveau.'}
           </p>
         )}
       </div>

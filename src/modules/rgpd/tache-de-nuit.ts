@@ -5,6 +5,7 @@ import {
   purgeExpiredInspectionPhotos,
   purgeExpiredInspectionPhotoViews,
 } from '../etats-des-lieux/conservation.ts'
+import { purgeExpiredStaffNotifications } from '../notifications/cloche-queries.ts'
 import { purgeExpiredNotificationDeliveries } from '../notifications/queries.ts'
 import { anonymizeExpiredPublicRequests } from '../reservations/conservation.ts'
 import {
@@ -17,7 +18,7 @@ import { anonymizationLogLine } from './bilan.ts'
 
 /**
  * Tâche de nuit de conservation (RGPD : R22, R29, R33 ; ADR 015, 020, 038,
- * 039, 040) : ce qui est arrivé au terme de sa durée est effacé ou anonymisé,
+ * 039, 040, 059) : ce qui est arrivé au terme de sa durée est effacé ou anonymisé,
  * selon les durées du centre (`tenants`).
  *
  * Chaque étape a sa transaction et son propre filet : l'échec de l'une — le
@@ -41,6 +42,8 @@ export type NightlyConservationReport = {
   anonymizedMembers: RemovedMembersReport | null
   /** Messages du journal des envois purgés (ADR 038). */
   notificationDeliveries: number | null
+  /** Notifications de la cloche de l'équipe purgées, même durée (ADR 059). */
+  staffNotifications: number | null
   /** Consultations des numérisations purgées du journal d'accès (ADR 015). */
   views: number | null
   /** Consultations des photos d'états des lieux purgées (ADR 039). */
@@ -74,6 +77,7 @@ export async function runNightlyConservation(
     anonymizedClients: null,
     anonymizedMembers: null,
     notificationDeliveries: null,
+    staffNotifications: null,
     views: null,
     inspectionPhotoViews: null,
     scans: null,
@@ -101,6 +105,7 @@ export async function runNightlyConservation(
     log.info(anonymizationLogLine(report.anonymizedClients, report.anonymizedMembers))
   }
   await step('notificationDeliveries', purgeExpiredNotificationDeliveries)
+  await step('staffNotifications', purgeExpiredStaffNotifications)
   await step('views', purgeExpiredMailScanViews)
   await step('inspectionPhotoViews', purgeExpiredInspectionPhotoViews)
   // Puis le stockage : le fichier est effacé avant que la base ne marque la
