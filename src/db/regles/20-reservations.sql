@@ -69,6 +69,8 @@ END;
 --  4. bookings_stamp_confirmation (0044).
 --  5. bookings_no_overlap (0002, décision 3) : verrou de la ressource puis
 --     contrôle de chevauchement `[)`, annulées exclues.
+--  6. ressource non restituée (ADR 063) : `booking_assert_resource_returned`,
+--     sous le même verrou.
 CREATE TRIGGER bookings_before_insert
 BEFORE INSERT ON bookings
 FOR EACH ROW
@@ -172,6 +174,11 @@ BEGIN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA000: Ce créneau est déjà occupé sur cette ressource.';
     END IF;
+    -- 6. Ressource non restituée (ADR 063, `85-restitution.sql`) : passé la
+    --    fin prévue d'une occupation dont l'entrée est close, rien ne se pose
+    --    plus sur la ressource tant que sa sortie n'est pas close.
+    CALL booking_assert_resource_returned(
+      NEW.tenant_id, NEW.resource_id, NEW.id, NEW.kind, NEW.contract_id, NEW.ends_at);
   END IF;
 END;
 --> statement-breakpoint
@@ -324,6 +331,14 @@ BEGIN
     IF v_count > 0 THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
         'CA000: Ce créneau est déjà occupé sur cette ressource.';
+    END IF;
+    -- Ressource non restituée (ADR 063, `85-restitution.sql`), seulement si
+    -- la ligne prend du temps qu'elle n'avait pas : une réservation qu'on
+    -- raccourcit, qu'on confirme ou qu'on annule ne prend rien.
+    IF OLD.status = 'cancelled' OR NOT (NEW.resource_id <=> OLD.resource_id)
+       OR NEW.starts_at < OLD.starts_at OR NEW.ends_at > OLD.ends_at THEN
+      CALL booking_assert_resource_returned(
+        NEW.tenant_id, NEW.resource_id, NEW.id, NEW.kind, NEW.contract_id, NEW.ends_at);
     END IF;
   END IF;
 END;

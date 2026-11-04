@@ -23,6 +23,12 @@ export type DisplayableBooking = {
   endsAt: Date
   clientId: string | null
   contractId: string | null
+  /**
+   * Réservation posée après la fin prévue d'une occupation non restituée
+   * (ADR 063, `etats-des-lieux/restitution.ts`) : le seul cas anormal du
+   * planning, montré en `--statut-conflit` et dit « Conflit ».
+   */
+  conflict?: boolean
 }
 
 /** Vrai pour l'occupation d'une ressource par un contrat (ADR 018). */
@@ -46,10 +52,15 @@ export function contractReference(booking: Pick<DisplayableBooking, 'title'>): s
  * - blocage posé par l'équipe : « Indisponible — Entretien » ;
  * - réservation : son objet.
  */
-export function bookingLabel(booking: Pick<DisplayableBooking, 'kind' | 'title'>): string {
-  if (booking.kind === 'contract') return `Occupé — contrat ${contractReference(booking)}`
-  if (booking.kind === 'unavailability') return `Indisponible — ${booking.title}`
-  return booking.title
+export function bookingLabel(booking: Pick<DisplayableBooking, 'kind' | 'title' | 'conflict'>): string {
+  const label =
+    booking.kind === 'contract'
+      ? `Occupé — contrat ${contractReference(booking)}`
+      : booking.kind === 'unavailability'
+        ? `Indisponible — ${booking.title}`
+        : booking.title
+  // Le conflit se lit, pas seulement en couleur (CLAUDE.md).
+  return booking.conflict ? `Conflit — ${label}` : label
 }
 
 /**
@@ -151,9 +162,10 @@ export function bookingFocus(
  * l'information par la couleur seule).
  */
 export function bookingStateLabel(
-  booking: Pick<DisplayableBooking, 'kind' | 'status'>,
+  booking: Pick<DisplayableBooking, 'kind' | 'status' | 'conflict'>,
 ): string {
   if (booking.status === 'cancelled') return 'Annulée'
+  if (booking.conflict) return 'Conflit — ressource non restituée'
   if (booking.kind === 'contract') return 'Sous contrat'
   if (booking.kind === 'unavailability') return 'Indisponible'
   return booking.status === 'pending' ? 'À valider' : 'Confirmée'
@@ -166,10 +178,12 @@ export function bookingStateLabel(
  * rouge.
  */
 export function bookingBlockClass(
-  booking: Pick<DisplayableBooking, 'kind' | 'status'>,
+  booking: Pick<DisplayableBooking, 'kind' | 'status' | 'conflict'>,
   focus: BookingFocus = 'tous',
 ): string {
   if (focus === 'autre') return 'border-border bg-statut-annule text-muted-foreground'
+  // Le rouge du seul cas anormal sur la bordure, le texte foncé sur blanc : 4,5:1 tenu.
+  if (booking.conflict) return 'border-statut-conflit bg-white text-foreground ring-1 ring-inset ring-statut-conflit'
   if (booking.kind === 'contract') return 'border-statut-confirme bg-statut-confirme/15 text-foreground'
   if (booking.kind === 'unavailability') return 'border-muted-foreground bg-statut-annule text-foreground'
   if (booking.status === 'pending') return 'border-statut-reserve bg-statut-reserve/15 text-foreground'
@@ -178,10 +192,11 @@ export function bookingBlockClass(
 
 /** Couleur pleine d'un segment de la barre d'occupation, mêmes jetons. */
 export function bookingSegmentClass(
-  booking: Pick<DisplayableBooking, 'kind' | 'status'>,
+  booking: Pick<DisplayableBooking, 'kind' | 'status' | 'conflict'>,
   focus: BookingFocus = 'tous',
 ): string {
   if (focus === 'autre') return 'bg-muted-foreground/40'
+  if (booking.conflict) return 'bg-statut-conflit'
   if (booking.kind === 'unavailability') return 'bg-muted-foreground/60'
   if (booking.status === 'pending') return 'bg-statut-reserve'
   return 'bg-statut-confirme'

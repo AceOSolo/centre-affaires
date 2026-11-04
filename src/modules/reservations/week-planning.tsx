@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { TriangleAlertIcon } from '../../components/ui/icons.tsx'
 import { formatTime, toWallClock } from '../../lib/dates.ts'
 import { weekdayLabels } from '../ressources/labels.ts'
 import type { TimeRange } from '../ressources/ouverture.ts'
@@ -38,7 +39,8 @@ export function WeekPlanning({
   resource: Resource
   timeZone: string
   columns: WeekColumn[]
-  bookings: BookingWithResource[]
+  /** `conflict` : posée après une ressource non restituée (ADR 063). */
+  bookings: (BookingWithResource & { conflict?: boolean })[]
   /** Plages d'ouverture, par jour ISO. */
   opening: Record<string, TimeRange[]>
   today: string
@@ -171,7 +173,13 @@ export function WeekPlanning({
                         height: `${geometry.heightPercent}%`,
                       }}
                     >
-                      <div className="truncate font-medium">{label}</div>
+                      <div className="flex items-center gap-1 font-medium">
+                        {/* Conflit (ADR 063) : icône et libellé, pas la couleur seule. */}
+                        {booking.conflict && focus !== 'autre' && (
+                          <TriangleAlertIcon size={14} className="shrink-0 text-statut-conflit" />
+                        )}
+                        <span className="truncate">{label}</span>
+                      </div>
                       <div className="truncate tabular-nums opacity-80">
                         {bookingTimeLabel(booking, column.isoDate, timeZone)}
                       </div>

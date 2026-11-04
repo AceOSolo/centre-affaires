@@ -69,6 +69,18 @@ export function dbErrorCode(error: unknown): string | undefined {
 }
 
 /**
+ * Message d'une règle métier de la base, sans son code : « Ressource non
+ * restituée : … » pour `CA000: Ressource non restituée : …`. `undefined` pour
+ * une autre erreur. Le message est écrit pour l'équipe ; l'espace client et la
+ * page publique gardent leurs propres mots.
+ */
+export function dbSignalMessage(error: unknown): string | undefined {
+  const message = driverError(error)?.sqlMessage
+  if (typeof message !== 'string' || !APP_CODE.test(message)) return undefined
+  return message.replace(APP_CODE, '').trim()
+}
+
+/**
  * Nom de la contrainte ou de l'index en cause. MySQL le met dans le message :
  * `Duplicate entry 'x' for key 'resources.resources_tenant_code_key'` ou
  * `Check constraint 'bookings_valid_range' is violated.`

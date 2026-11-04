@@ -101,6 +101,23 @@ describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, (
       CAMILLE,
     )
 
+  /**
+   * Une autre location de Durand sur l'utilitaire, dans `jours` jours : une
+   * entrée par occupation (ADR 063), un second état des lieux d'entrée
+   * demande une seconde occupation.
+   */
+  const autreLocation = async (jours: number) => {
+    const id = uuidv7()
+    await asTenant((tx) =>
+      tx.execute(sql`
+        insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
+          (${id}, ${VOITURE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Autre location',
+           date_add(CURRENT_TIMESTAMP(3), interval ${jours} day),
+           date_add(date_add(CURRENT_TIMESTAMP(3), interval ${jours} day), interval 2 hour))`),
+    )
+    return id
+  }
+
   const clore = (id: string, values: Record<string, unknown> = VEHICULE_COMPLET) =>
     saveInspection(
       id,
@@ -397,7 +414,8 @@ describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, (
     it('rattache la sortie à l’entrée close ; chacune garde sa version, et elles se comparent', async () => {
       const entree = await ouvrir()
       assert.deepEqual(await listOpenEntries(DURAND, VOITURE), [])
-      assert.match((await refus(() => ouvrir('exit', { entry: entree }))) ?? '', /n’est plus disponible/)
+      // L'entrée en saisie : la sortie attend sa clôture (ADR 063).
+      assert.match((await refus(() => ouvrir('exit', { entry: entree }))) ?? '', /en saisie : terminez-la/)
       await clore(entree)
       assert.deepEqual(
         (await listOpenEntries(DURAND, VOITURE)).map((row) => row.id),
@@ -483,7 +501,7 @@ describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, (
 
   describe('espace client', () => {
     it('ne montre que les états clos de l’entreprise', async () => {
-      const brouillon = await ouvrir()
+      const brouillon = await ouvrir('entry', { booking: await autreLocation(3) })
       const clos = await ouvrir()
       await clore(clos)
       const autre = await ouvrir('entry', { booking: LOCATION_PETIT })
@@ -513,7 +531,8 @@ describe('états des lieux, de l’écran à la base', { skip: raisonDeSaut }, (
       assert.equal(detail?.signedByName, 'Jeanne Durand')
       assert.equal(detail?.clientRemarks, 'Rayure sur le hayon')
       assert.ok(detail?.signedAt && Date.now() - detail.signedAt.getTime() < 60_000)
-      assert.equal(await signInspection(await ouvrir(), durand, null), 'not_found')
+      const brouillon = await ouvrir('entry', { booking: await autreLocation(3) })
+      assert.equal(await signInspection(brouillon, durand, null), 'not_found')
     })
 
     describe('photos', () => {

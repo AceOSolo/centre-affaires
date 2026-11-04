@@ -285,12 +285,16 @@ describe('historique du compte', { skip: raisonDeSaut }, () => {
 
   it('reprend les états des lieux clos de l’entreprise, validation comprise, jamais un brouillon', async () => {
     const reservationDurand = uuidv7()
+    // Une entrée par occupation (ADR 063) : le brouillon a la sienne.
+    const autreReservationDurand = uuidv7()
     const reservationPetit = uuidv7()
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into bookings (id, resource_id, client_id, kind, channel, status, title, starts_at, ends_at) values
           (${reservationDurand}, ${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Atelier',
            date_sub(now(3), interval 72 hour), date_sub(now(3), interval 70 hour)),
+          (${autreReservationDurand}, ${SALLE}, ${DURAND}, 'booking', 'staff', 'confirmed', 'Atelier',
+           date_sub(now(3), interval 96 hour), date_sub(now(3), interval 94 hour)),
           (${reservationPetit}, ${SALLE}, ${PETIT}, 'booking', 'staff', 'confirmed', 'Atelier',
            date_sub(now(3), interval 48 hour), date_sub(now(3), interval 46 hour))`)
     })
@@ -323,7 +327,7 @@ describe('historique du compte', { skip: raisonDeSaut }, () => {
       }
       return id
     }
-    await etat(DURAND, reservationDurand, false)
+    await etat(DURAND, autreReservationDurand, false)
     const clos = await etat(DURAND, reservationDurand, true)
     await etat(PETIT, reservationPetit, true)
 

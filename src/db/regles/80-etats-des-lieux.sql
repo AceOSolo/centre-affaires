@@ -354,6 +354,7 @@ END;
 --   avec la version du modèle du **type** de sa ressource (CA011) ;
 -- - ne changent jamais : nature, ressource, client, version du modèle,
 --   auteur (CA010) ;
+-- - une entrée par occupation, brouillon compris (ADR 063, CA011) ;
 -- - brouillon : les valeurs suivent la version (clés connues, types, options,
 --   échelle) ; à la clôture (`status` → `closed`, `closed_by` exigé,
 --   `closed_at` posé par la base), chaque champ obligatoire est renseigné
@@ -367,6 +368,59 @@ END;
 -- silencieusement une mise à jour hors de cette vue ; ici elle est refusée
 -- (42501), faute de pouvoir filtrer les lignes d'un UPDATE.
 -- `@app_anonymization` laisse passer l'anonymisation (ADR 040).
+-- Une entrée par occupation (ADR 063) : une réservation, ou un contrat sur
+-- une ressource — qu'il ait son occupation (`bookings.kind = 'contract'`) ou
+-- qu'il soit encore en brouillon. Un brouillon retiré ne compte plus ; un
+-- brouillon en cours compte : on le reprend plutôt que d'en ouvrir un second.
+-- Même définition que `occupationKey()` (occupations.ts).
+--
+-- Le verrou de l'occupation (le contrat, ou la réservation) sérialise deux
+-- ouvertures simultanées — un formulaire envoyé deux fois — : la seconde
+-- relit, sous READ COMMITTED, la ligne que la première a validée. Le contrat
+-- et la réservation sont verrouillés avant la ressource, dans l'ordre des
+-- écritures qui les modifient (contrat puis occupations, réservation puis
+-- ressource) : pas d'interblocage avec elles.
+DROP PROCEDURE IF EXISTS inspection_assert_single_entry;
+--> statement-breakpoint
+CREATE PROCEDURE inspection_assert_single_entry(
+  IN p_tenant CHAR(36),
+  IN p_id CHAR(36),
+  IN p_resource CHAR(36),
+  IN p_booking CHAR(36),
+  IN p_contract CHAR(36)
+)
+BEGIN
+  DECLARE v_booking_kind VARCHAR(20);
+  DECLARE v_lock INT DEFAULT 0;
+  DECLARE v_twin INT DEFAULT 0;
+
+  IF p_booking IS NOT NULL THEN
+    SELECT MAX(kind) INTO v_booking_kind FROM bookings WHERE tenant_id = p_tenant AND id = p_booking;
+  END IF;
+
+  IF p_contract IS NOT NULL AND (p_booking IS NULL OR v_booking_kind = 'contract') THEN
+    SELECT COUNT(*) INTO v_lock FROM contracts WHERE tenant_id = p_tenant AND id = p_contract FOR UPDATE;
+    SELECT COUNT(*) INTO v_twin
+      FROM inspections AS e
+      LEFT JOIN bookings AS b ON b.tenant_id = e.tenant_id AND b.id = e.booking_id
+     WHERE e.tenant_id = p_tenant AND e.resource_id = p_resource AND e.contract_id = p_contract
+       AND e.kind = 'entry' AND e.deleted_at IS NULL AND e.id <> p_id
+       AND (e.booking_id IS NULL OR b.kind = 'contract');
+  ELSEIF p_booking IS NOT NULL THEN
+    SELECT COUNT(*) INTO v_lock FROM bookings WHERE tenant_id = p_tenant AND id = p_booking FOR UPDATE;
+    SELECT COUNT(*) INTO v_twin
+      FROM inspections
+     WHERE tenant_id = p_tenant AND booking_id = p_booking
+       AND kind = 'entry' AND deleted_at IS NULL AND id <> p_id;
+  END IF;
+
+  IF v_twin > 0 THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA011: Cette occupation a déjà son état des lieux d''entrée : reprenez-le plutôt que d''en ouvrir un second.';
+  END IF;
+END;
+--> statement-breakpoint
+
 DROP TRIGGER IF EXISTS inspections_before_delete;
 --> statement-breakpoint
 CREATE TRIGGER inspections_before_delete
@@ -443,6 +497,11 @@ guard: BEGIN
   IF v_error IS NOT NULL THEN
     SET v_message = LEFT(CONCAT('CA011: ', v_error), 128);
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = v_message;
+  END IF;
+
+  -- Une entrée par occupation (ADR 063).
+  IF NEW.kind = 'entry' THEN
+    CALL inspection_assert_single_entry(NEW.tenant_id, NEW.id, NEW.resource_id, NEW.booking_id, NEW.contract_id);
   END IF;
 END;
 --> statement-breakpoint
@@ -529,6 +588,12 @@ guard: BEGIN
   END IF;
   SELECT fields INTO v_fields FROM inspection_template_versions
    WHERE tenant_id = NEW.tenant_id AND id = NEW.template_version_id;
+
+  -- Une entrée par occupation (ADR 063), si un brouillon d'entrée change d'occupation.
+  IF NEW.kind = 'entry' AND NEW.deleted_at IS NULL
+     AND NOT (NEW.booking_id <=> OLD.booking_id AND NEW.contract_id <=> OLD.contract_id) THEN
+    CALL inspection_assert_single_entry(NEW.tenant_id, NEW.id, NEW.resource_id, NEW.booking_id, NEW.contract_id);
+  END IF;
 
   IF NEW.entry_inspection_id IS NOT NULL
      AND NOT (NEW.entry_inspection_id <=> OLD.entry_inspection_id) THEN

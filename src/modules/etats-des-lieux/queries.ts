@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, ne, notExists, sql, type SQL } from 'drizzle-orm'
+import { and, asc, count, desc, eq, gt, gte, inArray, isNotNull, isNull, lt, ne, notExists, sql, type SQL } from 'drizzle-orm'
 import { alias, type AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
 import { maintenant } from '../../db/columns.ts'
@@ -20,6 +20,14 @@ import { sameFields } from './champs.ts'
 import { InspectionRefusal, inspectionRefusalMessage } from './erreurs.ts'
 import { inspectionStage, type InspectionStage } from './labels.ts'
 import { defaultTemplates } from './modeles-defaut.ts'
+import {
+  canOpenEntry,
+  canOpenExit,
+  occupationKey,
+  occupationProgress,
+  type InspectionBrief,
+  type OccupationProgress,
+} from './occupations.ts'
 import { photoExtensions, type PhotoContentType, type PhotoFile } from './photos.ts'
 import {
   inspectionPhotos,
@@ -283,7 +291,10 @@ export type InspectionListRow = {
   clientName: string
   bookingId: string | null
   bookingTitle: string | null
+  /** `bookings.kind` : `contract` pour l'occupation d'un contrat (ADR 018). */
+  bookingKind: string | null
   bookingStartsAt: Date | null
+  bookingEndsAt: Date | null
   contractId: string | null
   contractReference: string | null
   entryInspectionId: string | null
@@ -305,7 +316,9 @@ const listColumns = {
   clientName: clients.name,
   bookingId: inspections.bookingId,
   bookingTitle: bookings.title,
+  bookingKind: bookings.kind,
   bookingStartsAt: bookings.startsAt,
+  bookingEndsAt: bookings.endsAt,
   contractId: inspections.contractId,
   contractReference: contracts.reference,
   entryInspectionId: inspections.entryInspectionId,
@@ -345,9 +358,36 @@ export type InspectionFilter = {
   resourceId?: string
   bookingId?: string
   contractId?: string
-  stage?: Exclude<InspectionStage, 'withdrawn'>
+  clientId?: string
+  /** Étape : entrée ou sortie. */
+  kind?: InspectionKind
+  /** État ; `closed` réunit « à valider » et « validé ». */
+  stage?: Exclude<InspectionStage, 'withdrawn'> | 'closed'
   /** Types de ressource d'un produit (ADR 046). */
   resourceTypes?: readonly ResourceType[]
+  /** Période : `performed_at` dans `[from, until)`. */
+  from?: Date
+  until?: Date
+}
+
+/** Conditions d'un filtre, `tenant_id` en tête (décision 1) ; brouillons retirés exclus. */
+function filterConditions(tenantId: string, filter: InspectionFilter): SQL[] {
+  const conditions = [eq(inspections.tenantId, tenantId), isNull(inspections.deletedAt)]
+  if (filter.resourceId) conditions.push(eq(inspections.resourceId, filter.resourceId))
+  if (filter.bookingId) conditions.push(eq(inspections.bookingId, filter.bookingId))
+  if (filter.contractId) conditions.push(eq(inspections.contractId, filter.contractId))
+  if (filter.clientId) conditions.push(eq(inspections.clientId, filter.clientId))
+  if (filter.kind) conditions.push(eq(inspections.kind, filter.kind))
+  if (filter.stage === 'draft') conditions.push(eq(inspections.status, 'draft'))
+  if (filter.stage === 'closed') conditions.push(eq(inspections.status, 'closed'))
+  if (filter.stage === 'to_sign') {
+    conditions.push(eq(inspections.status, 'closed'), isNull(inspections.signedAt))
+  }
+  if (filter.stage === 'signed') conditions.push(isNotNull(inspections.signedAt))
+  if (filter.resourceTypes) conditions.push(inArray(resources.resourceType, [...filter.resourceTypes]))
+  if (filter.from) conditions.push(gte(inspections.performedAt, filter.from))
+  if (filter.until) conditions.push(lt(inspections.performedAt, filter.until))
+  return conditions
 }
 
 /**
@@ -356,24 +396,116 @@ export type InspectionFilter = {
  */
 export async function listInspections(filter: InspectionFilter = {}, limit = 200): Promise<InspectionListRow[]> {
   const tenantId = currentTenantId()
-  const conditions = [eq(inspections.tenantId, tenantId), isNull(inspections.deletedAt)]
-  if (filter.resourceId) conditions.push(eq(inspections.resourceId, filter.resourceId))
-  if (filter.bookingId) conditions.push(eq(inspections.bookingId, filter.bookingId))
-  if (filter.contractId) conditions.push(eq(inspections.contractId, filter.contractId))
-  if (filter.stage === 'draft') conditions.push(eq(inspections.status, 'draft'))
-  if (filter.stage === 'to_sign') {
-    conditions.push(eq(inspections.status, 'closed'), isNull(inspections.signedAt))
-  }
-  if (filter.stage === 'signed') conditions.push(isNotNull(inspections.signedAt))
-  if (filter.resourceTypes) conditions.push(inArray(resources.resourceType, [...filter.resourceTypes]))
-
   const rows = await withTenant(tenantId, (tx) =>
     selectInspectionRows(tx)
-      .where(and(...conditions))
+      .where(and(...filterConditions(tenantId, filter)))
       .orderBy(desc(inspections.performedAt), desc(inspections.id))
       .limit(limit),
   )
   return rows.map(toListRow)
+}
+
+export type InspectionPage = { rows: InspectionListRow[]; total: number; page: number }
+
+/**
+ * Historique filtré, page par page (ADR 063) : le total d'abord, puis la page
+ * demandée — ramenée à la dernière si elle la dépasse.
+ */
+export async function searchInspections(
+  filter: InspectionFilter,
+  { page, pageSize }: { page: number; pageSize: number },
+): Promise<InspectionPage> {
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const where = and(...filterConditions(tenantId, filter))
+    const [{ total }] = await tx
+      .select({ total: count() })
+      .from(inspections)
+      .innerJoin(
+        resources,
+        and(eq(resources.tenantId, inspections.tenantId), eq(resources.id, inspections.resourceId)),
+      )
+      .where(where)
+    const last = Math.max(1, Math.ceil(total / pageSize))
+    const current = Math.min(Math.max(1, page), last)
+    const rows = await selectInspectionRows(tx)
+      .where(where)
+      .orderBy(desc(inspections.performedAt), desc(inspections.id))
+      .limit(pageSize)
+      .offset((current - 1) * pageSize)
+    return { rows: rows.map(toListRow), total, page: current }
+  })
+}
+
+export type InspectionFilterOptions = {
+  clients: { id: string; name: string }[]
+  resources: { id: string; name: string; code: string }[]
+}
+
+/** Clients et ressources qui ont au moins un état des lieux : les choix des filtres. */
+export async function listInspectionFilterOptions(): Promise<InspectionFilterOptions> {
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const live = and(eq(inspections.tenantId, tenantId), isNull(inspections.deletedAt))
+    const clientRows = await tx
+      .selectDistinct({ id: clients.id, name: clients.name })
+      .from(inspections)
+      .innerJoin(clients, and(eq(clients.tenantId, inspections.tenantId), eq(clients.id, inspections.clientId)))
+      .where(live)
+      .orderBy(asc(clients.name))
+    const resourceRows = await tx
+      .selectDistinct({ id: resources.id, name: resources.name, code: resources.code })
+      .from(inspections)
+      .innerJoin(
+        resources,
+        and(eq(resources.tenantId, inspections.tenantId), eq(resources.id, inspections.resourceId)),
+      )
+      .where(live)
+      .orderBy(asc(resources.name))
+    return { clients: clientRows, resources: resourceRows }
+  })
+}
+
+/** Une ligne de la chronologie d'une ressource ; pour une entrée, depuis quand elle n'est pas restituée. */
+export type TimelineRow = InspectionListRow & { unreturnedSince: Date | null }
+
+/**
+ * États des lieux vivants d'une ressource, pour sa chronologie (ADR 063). La
+ * situation « non restituée » vient de la base (`inspection_unreturned_since`,
+ * `85-restitution.sql`), la fonction que lit son trigger.
+ */
+export async function listResourceTimeline(resourceId: string, limit = 400): Promise<TimelineRow[]> {
+  if (!isUuid(resourceId)) return []
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const rows = (
+      await selectInspectionRows(tx)
+        .where(and(...filterConditions(tenantId, { resourceId })))
+        .orderBy(desc(inspections.performedAt), desc(inspections.id))
+        .limit(limit)
+    ).map(toListRow)
+    // Seules les entrées closes sans sortie close peuvent être en retard.
+    const returned = new Set(
+      rows.flatMap((row) => (row.kind === 'exit' && row.status === 'closed' && row.entryInspectionId ? [row.entryInspectionId] : [])),
+    )
+    const entries = rows
+      .filter((row) => row.kind === 'entry' && row.status === 'closed' && !returned.has(row.id))
+      .map((row) => row.id)
+    const since = new Map<string, Date>()
+    if (entries.length > 0) {
+      const found = await tx
+        .select({
+          id: inspections.id,
+          since: sql<Date | null>`inspection_unreturned_since(${inspections.tenantId}, ${inspections.id})`.mapWith(
+            inspections.performedAt,
+          ),
+        })
+        .from(inspections)
+        .where(and(eq(inspections.tenantId, tenantId), inArray(inspections.id, entries)))
+      for (const row of found) if (row.since) since.set(row.id, row.since)
+    }
+    return rows.map((row) => ({ ...row, unreturnedSince: since.get(row.id) ?? null }))
+  })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -667,6 +799,62 @@ export type OccupationCandidate = {
   contractReference: string | null
   startsAt: Date | null
   endsAt: Date | null
+  /**
+   * Où en est l'occupation (ADR 063) : une entrée ne s'ouvre que si elle n'en
+   * a pas, une sortie clôt l'entrée close qui l'attend.
+   */
+  progress: OccupationProgress
+  /** L'entrée vivante de l'occupation, s'il y en a une. */
+  entry: { id: string; performedAt: Date; status: InspectionStatus } | null
+}
+
+type BareCandidate = Omit<OccupationCandidate, 'progress' | 'entry'>
+
+/**
+ * États des lieux vivants des ressources des occupations, puis l'étape de
+ * chacune (`occupationProgress`, occupations.ts) — dans la transaction de
+ * l'appelant, pour que l'ouverture revérifie ce que l'écran a montré.
+ */
+async function withProgress(tx: Transaction, candidates: BareCandidate[]): Promise<OccupationCandidate[]> {
+  if (candidates.length === 0) return []
+  const resourceIds = [...new Set(candidates.map((candidate) => candidate.resource.id))]
+  const rows = await tx
+    .select({
+      id: inspections.id,
+      kind: inspections.kind,
+      status: inspections.status,
+      resourceId: inspections.resourceId,
+      bookingId: inspections.bookingId,
+      bookingKind: bookings.kind,
+      contractId: inspections.contractId,
+      entryInspectionId: inspections.entryInspectionId,
+      performedAt: inspections.performedAt,
+    })
+    .from(inspections)
+    .leftJoin(bookings, and(eq(bookings.tenantId, inspections.tenantId), eq(bookings.id, inspections.bookingId)))
+    .where(
+      and(
+        eq(inspections.tenantId, currentTenantId()),
+        inArray(inspections.resourceId, resourceIds),
+        isNull(inspections.deletedAt),
+      ),
+    )
+  const briefs: InspectionBrief[] = rows
+  return candidates.map((candidate) => {
+    const key = occupationKey({
+      resourceId: candidate.resource.id,
+      bookingId: candidate.bookingId,
+      bookingKind: candidate.bookingKind,
+      contractId: candidate.contractId,
+    })
+    const progress: OccupationProgress = key ? occupationProgress(key, briefs) : { step: 'none' }
+    const found = 'entryId' in progress ? rows.find((row) => row.id === progress.entryId) : undefined
+    return {
+      ...candidate,
+      progress,
+      entry: found ? { id: found.id, performedAt: found.performedAt, status: found.status } : null,
+    }
+  })
 }
 
 /** Fenêtre des occupations proposées depuis la fiche d'une ressource. */
@@ -678,6 +866,14 @@ async function candidatesIn(
   context: CandidateContext,
   now: Date,
 ): Promise<OccupationCandidate[]> {
+  return withProgress(tx, await bareCandidatesIn(tx, context, now))
+}
+
+async function bareCandidatesIn(
+  tx: Transaction,
+  context: CandidateContext,
+  now: Date,
+): Promise<BareCandidate[]> {
   const occupationColumns = {
     bookingId: bookings.id,
     bookingTitle: bookings.title,
@@ -723,7 +919,7 @@ async function candidatesIn(
     resource: OccupationCandidate['resource']
     clientId: string
     clientName: string
-  }): OccupationCandidate => ({
+  }): BareCandidate => ({
     key: `b:${row.bookingId}`,
     resource: row.resource,
     client: { id: row.clientId, name: row.clientName },
@@ -767,7 +963,7 @@ async function candidatesIn(
     resource: OccupationCandidate['resource']
     clientId: string
     clientName: string
-  }): OccupationCandidate => ({
+  }): BareCandidate => ({
     key: `c:${row.contractId}:${row.resource.id}`,
     resource: row.resource,
     client: { id: row.clientId, name: row.clientName },
@@ -905,8 +1101,29 @@ export async function createInspection(
         )
       }
 
+      // Une entrée par occupation, et la sortie d'une occupation clôt son
+      // entrée (ADR 063). La base refuse aussi une seconde entrée (CA011).
+      const { progress } = candidate
+      if (input.kind === 'entry' && !canOpenEntry(progress)) {
+        throw new InspectionRefusal(
+          progress.step === 'entry_draft'
+            ? 'Cette occupation a déjà son état des lieux d’entrée, en saisie : reprenez-le plutôt que d’en ouvrir un second.'
+            : 'Cette occupation a déjà son état des lieux d’entrée : seule la sortie reste à faire.',
+        )
+      }
+      if (input.kind === 'exit' && !canOpenExit(progress)) {
+        throw new InspectionRefusal(
+          progress.step === 'entry_draft'
+            ? 'L’entrée de cette occupation est en saisie : terminez-la et close-la avant d’ouvrir la sortie.'
+            : 'Cette occupation a déjà son état des lieux de sortie : reprenez-le plutôt que d’en ouvrir un second.',
+        )
+      }
+
       let entryInspectionId: string | null = null
-      if (input.kind === 'exit' && input.entryInspectionId) {
+      if (input.kind === 'exit' && progress.step === 'entry_closed') {
+        // L'entrée de l'occupation, sans choix : c'est sa sortie qui rend la ressource.
+        entryInspectionId = progress.entryId
+      } else if (input.kind === 'exit' && input.entryInspectionId) {
         const entries = await openEntriesIn(tx, candidate.client.id, candidate.resource.id)
         if (!entries.some((entry) => entry.id === input.entryInspectionId)) {
           throw new InspectionRefusal(

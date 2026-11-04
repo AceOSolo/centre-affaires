@@ -8,6 +8,7 @@ import {
   DB_EXCLUSION_VIOLATION,
   DB_FOREIGN_KEY_VIOLATION,
   dbErrorCode,
+  dbSignalMessage,
 } from '../../db/errors.ts'
 import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { tenants } from '../../db/tenants.ts'
@@ -191,8 +192,12 @@ export class BookingConflictError extends Error {
   // module — et tout ce qui l'importe — impossible à charger sous `node --test`.
   readonly conflicts: Booking[]
 
-  constructor(conflicts: Booking[]) {
-    super('Ce créneau est déjà réservé sur cette ressource.')
+  /**
+   * `message` : celui de la base quand aucune réservation ne chevauche — une
+   * ressource non restituée, par exemple (ADR 063). Écrit pour l'équipe.
+   */
+  constructor(conflicts: Booking[], message?: string) {
+    super(message ?? 'Ce créneau est déjà réservé sur cette ressource.')
     this.name = 'BookingConflictError'
     this.conflicts = conflicts
   }
@@ -358,7 +363,7 @@ export async function createBooking(input: CreateBookingInput): Promise<Booking>
     // La base a refusé l'écriture ; on relit pour dire au staff quelle
     // réservation occupe le créneau plutôt que « conflit ».
     const conflicts = await withTenant(currentTenantId(), (tx) => selectConflicts(tx, input))
-    throw new BookingConflictError(conflicts)
+    throw new BookingConflictError(conflicts, conflicts.length === 0 ? dbSignalMessage(error) : undefined)
   }
 }
 
@@ -431,7 +436,7 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
     const conflicts = await withTenant(currentTenantId(), (tx) =>
       selectConflicts(tx, input, input.id),
     )
-    throw new BookingConflictError(conflicts)
+    throw new BookingConflictError(conflicts, conflicts.length === 0 ? dbSignalMessage(error) : undefined)
   }
 }
 

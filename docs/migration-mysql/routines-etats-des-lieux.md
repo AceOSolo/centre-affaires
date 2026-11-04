@@ -7,6 +7,10 @@
 | `mark_inspection_photo_purged(p_photo_id char(36)) → tinyint` | FUNCTION `SQL SECURITY DEFINER`, écrit | `src/modules/etats-des-lieux/conservation.ts` : `select mark_inspection_photo_purged(${id})` (1 = marquée) |
 | `rekey_inspection_photo(p_photo_id char(36), p_from_version int, p_to_version int) → tinyint` | FUNCTION, écrit | `src/modules/etats-des-lieux/rechiffrement.ts` (1 = changée) |
 | `purge_expired_inspection_photo_views() → int` | FUNCTION `SQL SECURITY DEFINER`, écrit | `src/modules/etats-des-lieux/conservation.ts` |
+| `inspection_assert_single_entry(p_tenant, p_id, p_resource, p_booking, p_contract)` | PROCEDURE, verrouille l'occupation | triggers `inspections_before_insert` / `_update` : une entrée par occupation (`CA011`, ADR 063) |
+| `inspection_occupation_end(p_tenant, p_inspection) → datetime(3)` | FUNCTION `READS SQL DATA` (`85-restitution.sql`) | `inspection_unreturned_since` |
+| `inspection_unreturned_since(p_tenant, p_entry) → datetime(3)` | FUNCTION `READS SQL DATA` (`85-restitution.sql`) | `booking_assert_resource_returned` ; `restitution.ts`, `queries.ts` (chronologie) |
+| `booking_assert_resource_returned(p_tenant, p_resource, p_booking, p_kind, p_contract, p_ends)` | PROCEDURE (`85-restitution.sql`) | triggers `bookings_before_insert` / `_update` (`20-reservations.sql`) : ressource non restituée (`CA000`, ADR 063) |
 
 Les fonctions qui écrivent exigent `log_bin_trust_function_creators = 1` sur un
 serveur qui journalise en binaire (déjà posé par `infra/serveur/compose.yml`).

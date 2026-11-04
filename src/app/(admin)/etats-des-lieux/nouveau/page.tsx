@@ -9,6 +9,7 @@ import {
   NewInspectionForm,
   type CandidateOption,
 } from '../../../../modules/etats-des-lieux/new-inspection-form.tsx'
+import { canOpenEntry, canOpenExit, progressHint } from '../../../../modules/etats-des-lieux/occupations.ts'
 import {
   listOccupationCandidates,
   listOpenEntries,
@@ -102,10 +103,19 @@ export default async function NewInspectionPage({
       )
     }),
   )
+  // Une entrée par occupation, et la sortie clôt l'entrée de son occupation
+  // (ADR 063) : le serveur le revérifie, la base refuse une seconde entrée.
   const options: CandidateOption[] = candidates.map((candidate) => ({
     key: candidate.key,
     ...describe(candidate, timeZone),
     openEntries: entriesByPair.get(`${candidate.client.id}:${candidate.resource.id}`) ?? [],
+    canEntry: canOpenEntry(candidate.progress),
+    canExit: canOpenExit(candidate.progress),
+    hint: progressHint(candidate.progress),
+    ownEntry:
+      candidate.progress.step === 'entry_closed' && candidate.entry
+        ? { id: candidate.entry.id, label: `Entrée du ${formatDateTime(candidate.entry.performedAt, timeZone)}` }
+        : null,
   }))
 
   const defaultKind = nature === 'sortie' ? 'exit' : 'entry'
