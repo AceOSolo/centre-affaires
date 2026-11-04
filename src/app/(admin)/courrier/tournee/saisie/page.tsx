@@ -4,7 +4,8 @@ import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { todayIsoDate, toWallClock } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
-import { MailCountsForm } from '../../../../../modules/courrier/saisie-groupee-form.tsx'
+import { findSenderSuggestions } from '../../../../../modules/courrier/expediteurs-queries.ts'
+import { MailEntryForm } from '../../../../../modules/courrier/saisie-groupee-form.tsx'
 import { listMailRecipients } from '../../../../../modules/courrier/saisie-groupee.ts'
 
 export const metadata = { title: 'Saisie groupée du courrier' }
@@ -15,10 +16,11 @@ const positive = (value: string | undefined) => {
 }
 
 /**
- * Saisie groupée (tournée du courrier, ADR 044) : l'accueil dit combien de
- * plis chaque entreprise a reçus, en un seul envoi, au lieu d'un formulaire
- * par pli. Les plis entrent dans la tournée ouverte ; les domiciliés sont
- * prévenus à sa fin, comme pour le reste.
+ * Saisie groupée (tournée du courrier, ADR 044, ADR 058) : une photo = un
+ * pli. L'accueil choisit l'entreprise et le type, prend les photos des
+ * enveloppes, relit le récapitulatif et enregistre tout en un envoi. Les plis
+ * entrent dans la tournée ouverte ; les domiciliés sont prévenus à sa fin,
+ * comme pour le reste.
  */
 export default async function SaisieGroupeePage({
   searchParams,
@@ -32,19 +34,20 @@ export default async function SaisieGroupeePage({
   const photos = positive(params.photos)
   const timeZone = await currentTimeZone()
   const recipients = await listMailRecipients(todayIsoDate(timeZone))
+  const suggestions = await findSenderSuggestions(recipients.map((recipient) => recipient.id))
 
   return (
-    <div className="flex max-w-5xl flex-col gap-6">
+    <div className="flex max-w-6xl flex-col gap-6">
       <div>
         <Link href="/courrier/tournee" className="text-sm text-muted-foreground hover:underline">
           ← Tournée du courrier
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Saisie groupée</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-          Indiquez le nombre de plis reçus par chaque entreprise et, si vous le souhaitez, joignez la
-          photo de l’enveloppe de chacun : une photo par pli. Ils entrent fermés dans la tournée en
-          cours, sans expéditeur ; la fiche de chaque pli se complète ensuite si besoin, depuis la
-          tournée. Personne n’est prévenu avant la fin de la tournée.
+          Une photo d’enveloppe, un pli : choisissez l’entreprise et le type, prenez ou déposez les
+          photos, puis passez à l’entreprise suivante. Relisez le récapitulatif, précisez les
+          expéditeurs si vous le souhaitez, et enregistrez. Les plis entrent fermés dans la tournée en
+          cours ; personne n’est prévenu avant sa fin.
         </p>
       </div>
 
@@ -68,6 +71,16 @@ export default async function SaisieGroupeePage({
         </FlashNotice>
       )}
 
+      <noscript>
+        <p className="rounded-lg border border-border bg-muted px-4 py-3 text-sm">
+          La saisie groupée a besoin de JavaScript pour préparer les photos.{' '}
+          <Link href="/courrier/nouveau" className="font-medium underline underline-offset-2">
+            Enregistrez les plis un par un
+          </Link>
+          .
+        </p>
+      </noscript>
+
       {recipients.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
@@ -81,10 +94,11 @@ export default async function SaisieGroupeePage({
           </Link>
         </div>
       ) : (
-        <MailCountsForm
-          // Remonté après chaque enregistrement : tableau vide, heure du moment.
+        <MailEntryForm
+          // Remonté après chaque enregistrement : saisie vide, heure du moment.
           key={params.saisie ?? 'nouvelle'}
           recipients={recipients}
+          suggestions={suggestions}
           defaultReceivedAt={toWallClock(new Date(), timeZone)}
         />
       )}

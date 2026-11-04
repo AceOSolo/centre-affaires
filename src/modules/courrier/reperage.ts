@@ -12,7 +12,9 @@ import { toIsoDate } from '../../lib/dates.ts'
  * Le rang se calcule, il ne se stocke pas : par entreprise, sur les plis
  * reçus le même jour du centre (fuseau du centre, décision 4), dans l'ordre de
  * leur enregistrement — l'heure de réception, puis l'identifiant (UUID v7,
- * ordonné dans le temps), qui départage les plis d'une même saisie groupée.
+ * ordonné dans le temps), qui départage les plis d'une même saisie groupée :
+ * ses identifiants sont triés à l'enregistrement, dans l'ordre des photos
+ * (`orderedIds`, ADR 058), car un UUID v7 ne porte que la milliseconde.
  * Un pli retiré (enregistré par erreur) ne compte pas : il n'est plus dans la
  * pile de l'entreprise.
  */

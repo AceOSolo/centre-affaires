@@ -9,6 +9,8 @@ import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { wallClockToUtc } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { DB_MAIL_REFUSED, dbErrorCode } from '../../db/errors.ts'
+import { canonicalSender, readSender } from './expediteurs.ts'
+import { findKnownSenders, updateMailSender } from './expediteurs-queries.ts'
 import { readScan, readScans, type ScanFile } from './fichiers.ts'
 import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
 import { readPageCount, withPageCount } from './pages.ts'
@@ -77,6 +79,9 @@ export async function registerMailAction(
 
   if (!values.clientId) fieldErrors.clientId = 'Choisissez le destinataire.'
   const kind = mailKinds.includes(values.kind as MailKind) ? (values.kind as MailKind) : 'lettre'
+  // Espaces normalisés, écriture connue reprise (ADR 058) : les suggestions ne se dédoublent pas.
+  const sender = readSender(values.sender)
+  if (sender.error) fieldErrors.sender = sender.error
 
   let receivedAt: Date | undefined
   try {
@@ -99,6 +104,7 @@ export async function registerMailAction(
   if (Object.keys(fieldErrors).length > 0 || !receivedAt) {
     return { fieldErrors, values }
   }
+  const knownSender = sender.sender && canonicalSender(sender.sender, await findKnownSenders())
 
   let id: string
   try {
@@ -106,7 +112,7 @@ export async function registerMailAction(
       {
         clientId: values.clientId,
         kind,
-        sender: values.sender || null,
+        sender: knownSender,
         receivedAt,
         note: values.note || null,
       },
@@ -183,6 +189,43 @@ export async function addEnvelopeAction(
   revalidatePath('/courrier', 'layout')
   revalidatePath('/compte/courrier', 'layout')
   redirect(`/courrier/${id}?fait=enveloppe`)
+}
+
+export type SenderFormState = {
+  error?: string
+  fieldErrors?: { sender?: string }
+  /** Expéditeur enregistré, tel que la base le garde (`null` : effacé). */
+  saved?: string | null
+  /** Distingue deux enregistrements successifs du même expéditeur. */
+  savedAt?: number
+  /** Saisie refusée, rendue au champ pour être corrigée plutôt que retapée. */
+  rejected?: string
+} | null
+
+/**
+ * Expéditeur précisé ou corrigé après coup (ADR 058), sur la fiche du pli ou
+ * dans la tournée. L'écran reste en place : la tournée se complète pli après
+ * pli. Le client le voit dans son espace, sans nouveau message.
+ */
+export async function updateMailSenderAction(
+  _previous: SenderFormState,
+  formData: FormData,
+): Promise<SenderFormState> {
+  await requirePermission('courrier.gerer')
+  const id = text(formData, 'id')
+  const rejected = String(formData.get('sender') ?? '')
+  const read = readSender(rejected)
+  if (read.error) return { fieldErrors: { sender: read.error }, rejected }
+  const sender = read.sender && canonicalSender(read.sender, await findKnownSenders())
+  try {
+    await updateMailSender(id, sender)
+  } catch (error) {
+    if (error instanceof MailStateError) return { error: error.message, rejected }
+    throw error
+  }
+  revalidatePath('/courrier', 'layout')
+  revalidatePath('/compte/courrier', 'layout')
+  return { saved: sender, savedAt: Date.now() }
 }
 
 export async function withdrawMailAction(formData: FormData): Promise<void> {

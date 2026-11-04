@@ -5,6 +5,9 @@ import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime, formatLongDate, formatTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
+import { SenderDatalist, SenderForm } from '../../../../modules/courrier/expediteur-form.tsx'
+import { senderListId, suggestionsFor } from '../../../../modules/courrier/expediteurs.ts'
+import { findSenderSuggestions } from '../../../../modules/courrier/expediteurs-queries.ts'
 import { mailKindLabels } from '../../../../modules/courrier/labels.ts'
 import { CloseBatchForm } from '../../../../modules/courrier/tournee-form.tsx'
 import {
@@ -37,9 +40,11 @@ export default async function TourneePage({
     findOpenBatch(),
     listRecentBatches(),
   ])
-  const [preview, closed] = await Promise.all([
+  const batchClientIds = [...new Set(open?.items.map((item) => item.clientId) ?? [])]
+  const [preview, closed, suggestions] = await Promise.all([
     batchRecipients(open?.id ?? null),
     closedId ? batchRecipients(closedId).catch(() => undefined) : undefined,
+    batchClientIds.length > 0 ? findSenderSuggestions(batchClientIds) : undefined,
   ])
 
   return (
@@ -93,13 +98,23 @@ export default async function TourneePage({
               Aucun pli dans cette tournée : les plis enregistrés par erreur en ont été retirés.
             </p>
           ) : (
-            <div className="overflow-x-auto rounded-lg border border-border bg-white">
+            <div className="relative overflow-x-auto rounded-lg border border-border bg-white">
+              {/* Suggestions d'expéditeurs, une liste par entreprise de la tournée (ADR 058). */}
+              {suggestions &&
+                batchClientIds.map((clientId) => (
+                  <SenderDatalist
+                    key={clientId}
+                    id={senderListId(clientId)}
+                    senders={suggestionsFor(suggestions, clientId)}
+                  />
+                ))}
               <table className="w-full text-left text-sm">
                 <caption className="sr-only">Plis de la tournée en cours</caption>
                 <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
                   <tr>
                     <th scope="col" className="px-4 py-3 font-medium">Destinataire</th>
                     <th scope="col" className="px-4 py-3 font-medium">Type</th>
+                    <th scope="col" id="col-expediteur" className="px-4 py-3 font-medium">Expéditeur</th>
                     <th scope="col" className="px-4 py-3 font-medium">Reçu le</th>
                     <th scope="col" className="px-4 py-3 font-medium">Contenu</th>
                     <th scope="col" className="px-4 py-3 font-medium">Enveloppe</th>
@@ -108,12 +123,26 @@ export default async function TourneePage({
                 <tbody className="divide-y divide-border">
                   {open.items.map((item) => (
                     <tr key={item.id}>
-                      <td className="px-4 py-2">
+                      <th scope="row" id={`pli-${item.id}`} className="px-4 py-2 text-left font-normal">
                         <Link href={`/courrier/${item.id}`} className="font-medium underline-offset-2 hover:underline">
                           {item.clientName}
                         </Link>
-                      </td>
+                        <span className="sr-only">, {mailKindLabels[item.kind].toLowerCase()} du {formatDateTime(item.receivedAt, timeZone)}</span>
+                      </th>
                       <td className="px-4 py-2 text-muted-foreground">{mailKindLabels[item.kind]}</td>
+                      <td className="px-4 py-2 align-top">
+                        {item.senderAnonymized ? (
+                          <span className="text-muted-foreground">Effacé (RGPD)</span>
+                        ) : (
+                          <SenderForm
+                            mailItemId={item.id}
+                            sender={item.sender}
+                            listId={senderListId(item.clientId)}
+                            layout="ligne"
+                            labelledBy={`col-expediteur pli-${item.id}`}
+                          />
+                        )}
+                      </td>
                       <td className="whitespace-nowrap px-4 py-2 tabular">{formatDateTime(item.receivedAt, timeZone)}</td>
                       <td className="px-4 py-2 text-muted-foreground">
                         {item.opened ? 'Ouvert et numérisé' : 'Fermé'}

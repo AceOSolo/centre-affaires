@@ -1,11 +1,13 @@
 'use client'
 
-import { useActionState } from 'react'
+import { useActionState, useState } from 'react'
 
 import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { registerMailAction, type MailFormState } from './actions.ts'
+import { SenderDatalist } from './expediteur-form.tsx'
+import { MAX_SENDER_LENGTH, senderListId, suggestionsFor, type SenderSuggestions } from './expediteurs.ts'
 import { MAX_SCAN_BYTES } from './fichiers.ts'
 import { mailKindLabels } from './labels.ts'
 import { PhotosField } from './photos-field.tsx'
@@ -34,10 +36,13 @@ const labels: Record<string, string> = {
  */
 export function MailForm({
   clients,
+  suggestions,
   defaultClientId,
   defaultReceivedAt,
 }: {
   clients: { id: string; name: string }[]
+  /** Expéditeurs suggérés : ceux du destinataire choisi d'abord (ADR 058). */
+  suggestions: SenderSuggestions
   defaultClientId?: string
   /** Heure murale du centre, au format `datetime-local`. */
   defaultReceivedAt: string
@@ -48,6 +53,9 @@ export function MailForm({
   )
   const errors = state?.fieldErrors ?? {}
   const values = state?.values
+  // Le destinataire choisi décide des expéditeurs proposés en premier.
+  const [clientId, setClientId] = useState(values?.clientId ?? defaultClientId ?? '')
+  const listId = senderListId(clientId || null)
 
   return (
     // Remonté après un échec pour reprendre les valeurs saisies : React
@@ -65,6 +73,7 @@ export function MailForm({
             name="clientId"
             required
             defaultValue={values?.clientId ?? defaultClientId ?? ''}
+            onChange={(event) => setClientId(event.target.value)}
             aria-invalid={errors.clientId ? true : undefined}
             aria-describedby={errors.clientId ? 'clientId-error' : undefined}
             className={`${fieldClass} mt-1`}
@@ -108,13 +117,19 @@ export function MailForm({
           <input
             id="sender"
             name="sender"
+            list={listId}
+            autoComplete="off"
+            maxLength={MAX_SENDER_LENGTH}
             defaultValue={values?.sender ?? ''}
-            aria-describedby="sender-hint"
+            aria-invalid={errors.sender ? true : undefined}
+            aria-describedby={`sender-hint${errors.sender ? ' sender-error' : ''}`}
             className={`${fieldClass} mt-1`}
           />
+          <SenderDatalist id={listId} senders={suggestionsFor(suggestions, clientId || null)} />
           <p id="sender-hint" className="mt-1 text-xs text-muted-foreground">
-            Tel qu’il figure sur l’enveloppe.
+            Tel qu’il figure sur l’enveloppe ; tapez ou choisissez dans la liste.
           </p>
+          <FieldError name="sender" error={errors.sender} />
         </div>
 
         <div>

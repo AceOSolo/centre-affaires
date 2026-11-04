@@ -1,68 +1,24 @@
 import { isUuid } from '../../lib/uuid.ts'
+import { readSender } from './expediteurs.ts'
 import { mailKinds, type MailKind } from './schema.ts'
+import { mailKindsPhrase } from './tournees-regles.ts'
 
 /**
- * Saisie groupée du courrier : « 3 lettres pour Y, 2 pour X » en un seul
- * envoi. Chaque case du tableau est un champ `n.<clientId>.<type>` ; une case
- * vide vaut zéro.
+ * Saisie groupée du courrier (ADR 058, qui amende l'ADR 055 § 5) : **une
+ * photo = un pli**. L'accueil choisit l'entreprise, le type, puis prend ou
+ * dépose les photos des enveloppes ; chaque photo crée un pli de ce type pour
+ * cette entreprise. Un pli sans photo (appareil absent, pli abîmé) s'ajoute à
+ * part. Le récapitulatif liste les plis, chacun avec son expéditeur
+ * facultatif, et tout s'enregistre en un seul envoi.
+ *
+ * Chaque pli de l'envoi est un groupe de champs `pli.<clé>.<champ>` : `client`,
+ * `kind`, `sender` et, s'il en a une, `photo`. La clé est propre à l'écran ;
+ * l'ordre des plis est celui de leur première apparition dans l'envoi, qui
+ * est celui du récapitulatif.
  */
 
-/** Au plus par case : au-delà, c'est une faute de frappe (« 30 » pour « 3 »). */
-export const MAX_PER_CELL = 99
 /** Au plus par envoi : une tournée exceptionnelle se saisit en deux fois. */
 export const MAX_PER_ENTRY = 500
-
-export const countFieldName = (clientId: string, kind: MailKind) => `n.${clientId}.${kind}`
-
-export type MailCount = { clientId: string; kind: MailKind; count: number }
-
-export type ParsedMailCounts = {
-  counts: MailCount[]
-  /** Par nom de champ, comme les autres formulaires (résumé d'erreurs). */
-  fieldErrors: Record<string, string>
-  total: number
-}
-
-/**
- * Lit les cases remplies. Les champs inconnus sont ignorés ; une case qui
- * n'est pas un entier de 0 à `MAX_PER_CELL` est une erreur sur ce champ, pas
- * un zéro silencieux : un pli oublié ne doit pas passer inaperçu.
- */
-export function parseMailCounts(entries: Iterable<[string, unknown]>): ParsedMailCounts {
-  const counts: MailCount[] = []
-  const fieldErrors: Record<string, string> = {}
-  for (const [name, raw] of entries) {
-    const match = /^n\.([^.]+)\.([a-z]+)$/.exec(name)
-    if (!match) continue
-    const [, clientId, kind] = match
-    if (!isUuid(clientId) || !(mailKinds as readonly string[]).includes(kind)) continue
-    const value = typeof raw === 'string' ? raw.trim() : ''
-    if (value === '') continue
-    if (!/^\d+$/.test(value) || Number(value) > MAX_PER_CELL) {
-      fieldErrors[name] = `Indiquez un nombre de plis entre 0 et ${MAX_PER_CELL}.`
-      continue
-    }
-    const count = Number(value)
-    if (count > 0) counts.push({ clientId, kind: kind as MailKind, count })
-  }
-  const total = counts.reduce((sum, entry) => sum + entry.count, 0)
-  return { counts, fieldErrors, total }
-}
-
-/*
- * Photos des enveloppes (ADR 055) : un champ de fichiers `p.<clientId>` par
- * ligne, une photo par pli. Elles vont aux plis de l'entreprise dans l'ordre
- * des colonnes — lettres, recommandés, colis, autres —, et dans l'ordre où
- * elles ont été jointes. Jamais plus de photos que de plis.
- */
-
-export const photoFieldName = (clientId: string) => `p.${clientId}`
-
-/** L'entreprise d'un champ de photos ; rien pour un autre champ. */
-export function photoFieldClientId(name: string): string | undefined {
-  const match = /^p\.([^.]+)$/.exec(name)
-  return match && isUuid(match[1]) ? match[1] : undefined
-}
 
 /**
  * Photos d'une saisie, à elles toutes : 20 Mo, sous le plafond de 21 Mo d'un
@@ -71,48 +27,136 @@ export function photoFieldClientId(name: string): string | undefined {
  */
 export const MAX_ENTRY_PHOTOS_BYTES = 20 * 1024 * 1024
 
-/** Les plis d'une entreprise, dans l'ordre où ses photos leur vont : `[lettre, lettre, colis]`. */
-export function envelopeSlots(counts: MailCount[], clientId: string): MailKind[] {
-  return mailKinds.flatMap((kind) => {
-    const count = counts
-      .filter((entry) => entry.clientId === clientId && entry.kind === kind)
-      .reduce((sum, entry) => sum + entry.count, 0)
-    return Array.from({ length: count }, () => kind)
-  })
+export const entryFields = ['client', 'kind', 'sender', 'photo'] as const
+export type EntryField = (typeof entryFields)[number]
+
+/** `pli.12.sender` : nom du champ, et `id` du contrôle vers lequel le résumé d'erreurs renvoie. */
+export const entryFieldName = (key: string | number, field: EntryField) => `pli.${key}.${field}`
+
+const FIELD = /^pli\.(\d{1,9})\.(client|kind|sender|photo)$/
+
+/** Un pli de la saisie. `P` : sa photo — un fichier reçu, puis déposé au stockage. */
+export type EntryItem<P> = {
+  /** Clé du pli dans l'écran : ses erreurs y renvoient. */
+  key: string
+  clientId: string
+  kind: MailKind
+  sender: string | null
+  envelope?: P
 }
 
-const plural = (count: number, word: string) => `${count} ${word}${count > 1 ? 's' : ''}`
-
-/** « 3 photos pour 2 plis » : le message d'une ligne qui a trop de photos. */
-export function photoCountError(photos: number, items: number): string {
-  return `${plural(photos, 'photo')} pour ${plural(items, 'pli')} : une photo par pli. Retirez-en, ou comptez les plis qui manquent.`
+export type ParsedMailEntry = {
+  /** Plis lisibles, dans l'ordre de l'envoi. */
+  items: EntryItem<File>[]
+  /** Plis de l'envoi, lisibles ou non. */
+  count: number
+  /** Par nom de champ, comme les autres formulaires (résumé d'erreurs). */
+  fieldErrors: Record<string, string>
 }
 
-/** Une erreur par entreprise qui a plus de photos que de plis, sur son champ de photos. */
-export function checkPhotoCounts(counts: MailCount[], photos: Map<string, number>): Record<string, string> {
-  const errors: Record<string, string> = {}
-  for (const [clientId, count] of photos) {
-    const items = envelopeSlots(counts, clientId).length
-    if (count > items) errors[photoFieldName(clientId)] = photoCountError(count, items)
+type Draft = { client?: unknown; kind?: unknown; sender?: unknown; photos: File[] }
+
+const isFile = (value: unknown): value is File =>
+  typeof value === 'object' && value !== null && typeof (value as File).arrayBuffer === 'function'
+
+/**
+ * Lit les plis d'un envoi. Les champs étrangers sont ignorés. Un pli sans
+ * entreprise ou sans type valable est une erreur sur ce champ, jamais un pli
+ * deviné ; un pli a au plus une photo. Les photos elles-mêmes (type, poids)
+ * sont contrôlées ensuite, comme toute numérisation (`readScan`).
+ */
+export function parseMailEntry(entries: Iterable<[string, unknown]>): ParsedMailEntry {
+  const drafts = new Map<string, Draft>()
+  for (const [name, value] of entries) {
+    const match = FIELD.exec(name)
+    if (!match) continue
+    const [, key, field] = match
+    const draft = drafts.get(key) ?? { photos: [] }
+    drafts.set(key, draft)
+    if (field === 'photo') {
+      // Un champ de fichier laissé vide envoie un fichier de zéro octet.
+      if (isFile(value) && value.size > 0) draft.photos.push(value)
+    } else if (draft[field as 'client' | 'kind' | 'sender'] === undefined) {
+      draft[field as 'client' | 'kind' | 'sender'] = value
+    }
   }
-  return errors
+
+  const items: EntryItem<File>[] = []
+  const fieldErrors: Record<string, string> = {}
+  for (const [key, draft] of drafts) {
+    const clientId = typeof draft.client === 'string' ? draft.client.trim() : ''
+    const kind = typeof draft.kind === 'string' ? draft.kind.trim() : ''
+    const sender = readSender(draft.sender)
+    let valid = true
+    if (!isUuid(clientId)) {
+      fieldErrors[entryFieldName(key, 'client')] = 'Choisissez l’entreprise de ce pli.'
+      valid = false
+    }
+    if (!(mailKinds as readonly string[]).includes(kind)) {
+      fieldErrors[entryFieldName(key, 'kind')] = 'Choisissez le type de ce pli : lettre, recommandé, colis ou autre.'
+      valid = false
+    }
+    if (sender.error) {
+      fieldErrors[entryFieldName(key, 'sender')] = sender.error
+      valid = false
+    }
+    if (draft.photos.length > 1) {
+      fieldErrors[entryFieldName(key, 'photo')] = 'Une seule photo par pli : chaque photo est un pli.'
+      valid = false
+    }
+    if (!valid) continue
+    const item: EntryItem<File> = { key, clientId, kind: kind as MailKind, sender: sender.sender }
+    if (draft.photos[0]) item.envelope = draft.photos[0]
+    items.push(item)
+  }
+  return { items, count: drafts.size, fieldErrors }
+}
+
+/** Une entreprise du récapitulatif : « ACME : 3 lettres et 1 colis ». */
+export type EntryGroup<T extends { clientId: string; kind: MailKind }> = {
+  clientId: string
+  items: T[]
+  byKind: Record<MailKind, number>
+  /** « 3 lettres et 1 colis ». */
+  phrase: string
 }
 
 /**
- * Les plis à insérer, un par unité — `{ a, lettre, 3 }` donne trois lettres
- * pour a —, chacun avec la photo de son enveloppe s'il y en a une
- * (`envelopeSlots`). Une photo sans pli est ignorée : `checkPhotoCounts` la
- * refuse avant.
+ * Les plis groupés par entreprise, dans l'ordre où chacune est apparue dans
+ * la saisie ; dans une entreprise, l'ordre de la saisie. C'est l'ordre du
+ * récapitulatif, et celui de l'enregistrement : le rang du pli dans sa
+ * journée (« pli 2 sur 3 du 04/11 », ADR 057) suit donc l'ordre des photos.
  */
-export function pairEnvelopes<T>(
-  counts: MailCount[],
-  photos: Map<string, T[]> = new Map(),
-): { clientId: string; kind: MailKind; envelope?: T }[] {
-  const clientIds = [...new Set(counts.map((entry) => entry.clientId))]
-  return clientIds.flatMap((clientId) => {
-    const own = photos.get(clientId) ?? []
-    return envelopeSlots(counts, clientId).map((kind, index) =>
-      own[index] === undefined ? { clientId, kind } : { clientId, kind, envelope: own[index] },
-    )
-  })
+export function groupEntry<T extends { clientId: string; kind: MailKind }>(items: readonly T[]): EntryGroup<T>[] {
+  const groups = new Map<string, EntryGroup<T>>()
+  for (const item of items) {
+    let group = groups.get(item.clientId)
+    if (!group) {
+      group = {
+        clientId: item.clientId,
+        items: [],
+        byKind: Object.fromEntries(mailKinds.map((kind) => [kind, 0])) as Record<MailKind, number>,
+        phrase: '',
+      }
+      groups.set(item.clientId, group)
+    }
+    group.items.push(item)
+    group.byKind[item.kind]++
+  }
+  return [...groups.values()].map((group) => ({ ...group, phrase: mailKindsPhrase(group.byKind) }))
+}
+
+/** Les plis dans l'ordre du récapitulatif (`groupEntry`) : celui de leur enregistrement. */
+export const inEntryOrder = <T extends { clientId: string; kind: MailKind }>(items: readonly T[]): T[] =>
+  groupEntry(items).flatMap((group) => group.items)
+
+/**
+ * Identifiants des plis d'un envoi, dans l'ordre de la saisie. Un UUID v7 ne
+ * porte que la milliseconde : deux identifiants tirés dans la même sont
+ * ordonnés au hasard. Triés, ils suivent l'ordre où on les attribue, et le
+ * rang du pli dans sa journée, qui départage par l'identifiant les plis reçus
+ * à la même heure (ADR 057), suit l'ordre des photos.
+ */
+export function orderedIds(count: number, next: () => string): string[] {
+  return Array.from({ length: count }, next).sort()
 }
