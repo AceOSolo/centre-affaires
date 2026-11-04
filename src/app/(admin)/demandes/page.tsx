@@ -4,9 +4,7 @@ import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   formatDateTime,
-  formatDuration,
   formatLongDate,
-  formatTime,
   toIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
@@ -25,7 +23,9 @@ import {
   confirmBookingAction,
   refuseBookingAction,
 } from '../../../modules/reservations/actions.ts'
+import { formatBookingHours } from '../../../modules/reservations/affichage.ts'
 import { ChannelLabel } from '../../../modules/reservations/canal.tsx'
+import { periodDuration } from '../../../modules/reservations/periode.ts'
 import { listPendingRequests } from '../../../modules/reservations/demandes-queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
 import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
@@ -126,9 +126,7 @@ export default async function DemandesPage({
                       {formatLongDate(isoDate, timeZone)}
                     </p>
                     <p className="text-sm text-muted-foreground tabular">
-                      {formatTime(booking.startsAt, timeZone)} –{' '}
-                      {formatTime(booking.endsAt, timeZone)} ({' '}
-                      {formatDuration(booking.startsAt, booking.endsAt)} ) ·{' '}
+                      {formatBookingHours(booking, timeZone)} ({periodDuration(booking, timeZone)}) ·{' '}
                       {booking.resource.name} ({resourceTypeLabels[booking.resource.resourceType]})
                     </p>
 

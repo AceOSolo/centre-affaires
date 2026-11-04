@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
+import type { OpeningRule } from '../ressources/ouverture.ts'
+import { periodAvailability } from './periode.ts'
 import {
   expectedPortalOutcome,
   isPortalBookable,
@@ -8,6 +10,8 @@ import {
   portalBookingTitle,
   portalOutcomeMessage,
   portalOutcomeNotice,
+  portalRejectionMessage,
+  type PortalPeriod,
 } from './portail-regles.ts'
 
 /**
@@ -19,11 +23,28 @@ const at = (iso: string) => new Date(iso)
 const range = (start: string, end: string) => ({ startsAt: at(start), endsAt: at(end) })
 const now = at('2026-10-05T06:00:00Z')
 const policy = { bookingLeadHours: 2, bookingHorizonDays: 30 }
+const RESOURCE = 'salle'
+/** Ouverte en semaine de 9 h à 12 h et de 14 h à 18 h (UTC). */
+const OUVERTURE: OpeningRule[] = [1, 2, 3, 4, 5].flatMap((weekday) => [
+  { resourceId: RESOURCE, weekday, opensAt: '09:00', closesAt: '12:00' },
+  { resourceId: RESOURCE, weekday, opensAt: '14:00', closesAt: '18:00' },
+])
+/** La ressource à partir du mardi 6 octobre, sur `days` jours, sans réservation. */
+const periodOf = (rules: OpeningRule[], days: number): PortalPeriod => ({
+  availability: periodAvailability({
+    firstDate: '2026-10-06',
+    dayCount: days,
+    timeZone: 'UTC',
+    resourceId: RESOURCE,
+    rules,
+    closures: [],
+    busy: [],
+  }),
+  timeZone: 'UTC',
+  maxDays: days,
+})
 /** Libre de 9 h à 12 h et de 14 h à 18 h (UTC), le 6 octobre. */
-const free = [
-  range('2026-10-06T09:00:00Z', '2026-10-06T12:00:00Z'),
-  range('2026-10-06T14:00:00Z', '2026-10-06T18:00:00Z'),
-]
+const free = periodOf(OUVERTURE, 1)
 
 describe('réglage par ressource', () => {
   it('ne propose pas une ressource fermée au portail', () => {
@@ -68,7 +89,7 @@ describe('créneau demandé depuis l’espace client', () => {
   })
 
   it('va jusqu’à la fin d’une plage libre, sans le plafond de huit heures de la page publique', () => {
-    const longue = [range('2026-10-06T07:00:00Z', '2026-10-06T19:00:00Z')]
+    const longue = periodOf([{ resourceId: RESOURCE, weekday: 2, opensAt: '07:00', closesAt: '19:00' }], 1)
     assert.equal(
       portalBookingRejection(range('2026-10-06T07:00:00Z', '2026-10-06T19:00:00Z'), longue, policy, now),
       undefined,
@@ -103,6 +124,24 @@ describe('créneau demandé depuis l’espace client', () => {
       portalBookingRejection(range('2026-10-06T11:00:00Z', '2026-10-06T15:00:00Z'), free, policy, now),
       'creneau-indisponible',
     )
+  })
+
+  it('accepte une période sur plusieurs jours, dans la durée maximale du produit (ADR 061)', () => {
+    const troisJours = periodOf(OUVERTURE, 3)
+    assert.equal(
+      portalBookingRejection(range('2026-10-06T09:00:00Z', '2026-10-08T18:00:00Z'), troisJours, policy, now),
+      undefined,
+    )
+    assert.equal(
+      portalBookingRejection(range('2026-10-06T09:00:00Z', '2026-10-08T18:00:00Z'), { ...troisJours, maxDays: 2 }, policy, now),
+      'duree-trop-longue',
+    )
+    assert.equal(
+      portalBookingRejection(range('2026-10-06T09:00:00Z', '2026-10-08T19:00:00Z'), troisJours, policy, now),
+      'fin-hors-ouverture',
+    )
+    assert.match(portalRejectionMessage('duree-trop-longue', 2), /2 jours d’affilée au plus/)
+    assert.match(portalRejectionMessage('preavis-insuffisant', 2), /préavis minimum/)
   })
 })
 

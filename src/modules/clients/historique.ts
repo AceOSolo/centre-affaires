@@ -1,9 +1,8 @@
 import { and, asc, desc, eq, gt, lte, sql } from 'drizzle-orm'
 
 import { withTenant } from '../../db/index.ts'
-import { formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
-import { bookings, isOpenEndedBooking, type Booking } from '../reservations/schema.ts'
+import { bookings, type Booking } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 
 /**
@@ -130,30 +129,8 @@ export function formatBookingDay(startsAt: Date, timeZone: string): string {
 }
 
 /**
- * Horaire d'une réservation dans le fuseau du centre (décision 4).
- *
- * - Sur une journée : « 09:00 – 10:30 ». Une fin à minuit appartient encore
- *   à la journée commencée : « 08:00 – 24:00 ».
- * - Sur plusieurs : « 09:00 → 14 oct. 18:00 ».
- * - Sans terme : « depuis 09:00, sans terme ».
+ * Horaire d'une réservation dans le fuseau du centre : la règle vit avec les
+ * autres libellés des réservations (`reservations/affichage.ts`), qui servent
+ * aussi la fiche, les demandes et l'espace client (ADR 061).
  */
-export function formatBookingHours(
-  booking: { startsAt: Date; endsAt: Date },
-  timeZone: string,
-): string {
-  const start = formatTime(booking.startsAt, timeZone)
-  if (isOpenEndedBooking(booking)) return `depuis ${start}, sans terme`
-
-  const end = formatTime(booking.endsAt, timeZone)
-  // La dernière milliseconde occupée, pour qu'une fin à minuit reste du jour.
-  const lastInstant = new Date(booking.endsAt.getTime() - 1)
-  if (toIsoDate(lastInstant, timeZone) === toIsoDate(booking.startsAt, timeZone)) {
-    return `${start} – ${end === '00:00' ? '24:00' : end}`
-  }
-  const endDay = new Intl.DateTimeFormat('fr-FR', {
-    timeZone,
-    day: 'numeric',
-    month: 'short',
-  }).format(booking.endsAt)
-  return `${start} → ${endDay} ${end}`
-}
+export { formatBookingHours } from '../reservations/affichage.ts'

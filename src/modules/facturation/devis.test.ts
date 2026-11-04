@@ -169,6 +169,44 @@ describe('quoteBooking : durée en heure murale du centre', () => {
     assert.equal(quote.quantity, 3)
   })
 
+  it('sur plusieurs jours, ne chiffre qu’à la journée ou à la semaine (ADR 061)', () => {
+    const complete = grille('complete', [
+      prix('salle', 'hour', 2_500),
+      prix('salle', 'half_day', 9_000),
+      prix('salle', 'day', 13_000),
+      prix('salle', 'week', 50_000),
+    ])
+    const plans = [{ plan: complete, source: { kind: 'default' as const } }]
+    // De 22 h à 2 h : quatre heures (100 €) seraient moins chères qu'une journée.
+    const nuit = retenu(devis({ ...creneau('2026-10-05T22:00', '2026-10-06T02:00'), plans }))
+    assert.equal(nuit.unit, 'day')
+    assert.deepEqual(nuit.options.map((option) => option.unit), ['day', 'week'])
+    // Le jour même, l'heure reste proposée ; une fin à minuit pile reste du jour.
+    assert.equal(retenu(devis({ ...creneau('2026-10-05T22:00', '2026-10-06T00:00'), plans })).unit, 'hour')
+    // Une grille sans journée ni semaine ne chiffre pas la période.
+    const heures = grille('heures', [prix('salle', 'hour', 2_500), prix('salle', 'half_day', 9_000)])
+    assert.deepEqual(
+      devis({ ...creneau('2026-10-05T09:00', '2026-10-06T18:00'), plans: [{ plan: heures, source: { kind: 'default' } }] }),
+      { ok: false, reason: 'aucun-tarif' },
+    )
+  })
+
+  it('compte les journées de 24 heures entamées, et retient la semaine dès qu’elle coûte moins', () => {
+    const plans = [
+      {
+        plan: grille('jour-semaine', [prix('salle', 'day', 13_000), prix('salle', 'week', 50_000)]),
+        source: { kind: 'default' as const },
+      },
+    ]
+    const troisJours = retenu(devis({ ...creneau('2026-10-05T09:00', '2026-10-07T18:00'), plans }))
+    assert.deepEqual([troisJours.unit, troisJours.quantity, troisJours.netCents], ['day', 3, 39_000])
+    const cinqJours = retenu(devis({ ...creneau('2026-10-05T09:00', '2026-10-09T18:00'), plans }))
+    assert.deepEqual([cinqJours.unit, cinqJours.quantity, cinqJours.netCents], ['week', 1, 50_000])
+    // 24 heures pile : une journée ; un quart d'heure de plus en entame une seconde.
+    assert.equal(retenu(devis({ ...creneau('2026-10-05T09:00', '2026-10-06T09:00'), plans })).quantity, 1)
+    assert.equal(retenu(devis({ ...creneau('2026-10-05T09:00', '2026-10-06T09:15'), plans })).quantity, 2)
+  })
+
   it('refuse un créneau vide ou inversé', () => {
     const { startsAt } = creneau('2026-10-06T09:00', '2026-10-06T09:00')
     assert.deepEqual(devis({ startsAt, endsAt: startsAt }), { ok: false, reason: 'creneau-invalide' })

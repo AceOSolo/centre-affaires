@@ -90,6 +90,7 @@ export async function createBookingAction(
     [
       'date',
       'startTime',
+      'endDate',
       'endTime',
       'title',
       'clientId',
@@ -113,10 +114,11 @@ export async function createBookingAction(
   let startsAt: Date | undefined
   let endsAt: Date | undefined
   try {
-    // Le staff saisit une date et deux heures murales ; la base reçoit deux
-    // instants UTC (décision 4).
+    // Le staff saisit deux jours et deux heures murales — le jour de fin est
+    // celui du début sauf période sur plusieurs jours (ADR 061) ; la base
+    // reçoit deux instants UTC (décision 4).
     startsAt = wallClockToUtc(`${values.date}T${values.startTime}`, timeZone)
-    endsAt = wallClockToUtc(`${values.date}T${values.endTime}`, timeZone)
+    endsAt = wallClockToUtc(`${values.endDate || values.date}T${values.endTime}`, timeZone)
   } catch {
     fieldErrors.date = 'Date ou horaires illisibles.'
   }
@@ -200,7 +202,8 @@ export async function moveBookingAction(
   let endsAt: Date
   try {
     startsAt = wallClockToUtc(`${date}T${text(formData, 'startTime')}`, timeZone)
-    endsAt = wallClockToUtc(`${date}T${text(formData, 'endTime')}`, timeZone)
+    // Jour de fin d'une période sur plusieurs jours (ADR 061) ; absent, le jour même.
+    endsAt = wallClockToUtc(`${text(formData, 'endDate') || date}T${text(formData, 'endTime')}`, timeZone)
   } catch {
     return { error: 'Date ou horaires illisibles.' }
   }

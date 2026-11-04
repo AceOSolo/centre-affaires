@@ -1,6 +1,6 @@
 import type { ClientBookingMode } from '../ressources/schema.ts'
 import type { TimeRange } from './availability.ts'
-import { fitsFreeRange } from './public-selection.ts'
+import { periodRejection, periodRejectionMessage, type PeriodAvailability, type PeriodRejection } from './periode.ts'
 import { requestTimingRejection, type RequestPolicy } from './request-policy.ts'
 import { MIN_REQUEST_MINUTES } from './requests.ts'
 
@@ -74,31 +74,39 @@ export function portalOutcomeMessage(
 /** Raisons de refuser une réservation du portail avant de l'écrire. */
 export type PortalBookingRejection =
   | 'creneau-illisible'
-  | 'duree-trop-courte'
   | 'creneau-passe'
   | 'preavis-insuffisant'
   | 'creneau-trop-lointain'
-  | 'creneau-indisponible'
+  | PeriodRejection
 
-export const portalRejectionMessages: Record<PortalBookingRejection, string> = {
+const portalTimingMessages = {
   'creneau-illisible': 'Choisissez une date, puis une heure de début et une heure de fin.',
-  'duree-trop-courte': `La durée minimale est de ${MIN_REQUEST_MINUTES} minutes.`,
   'creneau-passe': 'Ce créneau est déjà passé.',
   'preavis-insuffisant': 'Ce créneau ne respecte pas le préavis minimum de réservation du centre.',
   'creneau-trop-lointain': 'Ce créneau est au-delà de l’horizon de réservation du centre.',
-  'creneau-indisponible': 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.',
+} as const
+
+/** Le message d'un refus ; `maxDays` : la durée maximale du produit, en jours (ADR 061). */
+export function portalRejectionMessage(rejection: PortalBookingRejection, maxDays: number): string {
+  return rejection in portalTimingMessages
+    ? portalTimingMessages[rejection as keyof typeof portalTimingMessages]
+    : periodRejectionMessage(rejection as PeriodRejection, maxDays)
 }
+
+/** La ressource sur les jours que la demande peut couvrir, et la durée maximale de son produit. */
+export type PortalPeriod = { availability: PeriodAvailability; timeZone: string; maxDays: number }
 
 /**
  * Première raison de refuser le créneau, ou `undefined`. Mêmes règles que la
- * page publique (durée minimale, préavis et horizon du centre), sans la durée
- * maximale de huit heures : un client réserve jusqu'à la fin d'une plage
- * d'ouverture. Le créneau doit tenir dans une plage libre (`free`, déjà
- * coupée par le préavis) : il n'enjambe ni une fermeture ni une réservation.
+ * page publique : durée minimale, préavis et horizon du centre sur le début,
+ * puis la période (`periodRejection`, ADR 061) — le jour même, elle tient dans
+ * une plage libre ; sur plusieurs jours, elle commence et finit dans les
+ * heures d'ouverture, sans enjamber une réservation ni une fermeture
+ * exceptionnelle, et ne dépasse pas la durée maximale du produit.
  */
 export function portalBookingRejection(
   range: TimeRange | undefined,
-  free: readonly TimeRange[],
+  period: PortalPeriod,
   policy: RequestPolicy,
   now: Date,
 ): PortalBookingRejection | undefined {
@@ -110,8 +118,7 @@ export function portalBookingRejection(
   }
   const timing = requestTimingRejection(range.startsAt, policy, now)
   if (timing) return timing
-  if (!fitsFreeRange(range, free)) return 'creneau-indisponible'
-  return undefined
+  return periodRejection(range, period.availability, period.timeZone, period.maxDays)
 }
 
 /** Objet affiché au planning de l'équipe : celui saisi, ou le nom de l'entreprise. */

@@ -6,7 +6,7 @@ import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
-import { formatMinutes, formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
+import { formatTime, toIsoDate } from '../../lib/dates.ts'
 import { formatContractDays, lastContractDay } from '../contrats/occupation.ts'
 import { QuoteSummary, quotePlanLabel } from '../facturation/devis-resume.tsx'
 import type { Resource } from '../ressources/schema.ts'
@@ -14,9 +14,10 @@ import { createBookingAction, type FormState } from './actions.ts'
 import { overlaps, type TimeRange } from './availability.ts'
 import { previewBookingQuoteAction, type BookingQuotePreview } from './devis-actions.ts'
 import { describeBusyBooking } from './occupation.ts'
+import { adminSelection, periodDuration, periodLabel, spansSeveralDays } from './periode.ts'
 import { bookingContractProblem, type AttachableContract } from './rattachement.ts'
 import type { BookingKind } from './schema.ts'
-import { isSelectable, rangeMinutes } from './selection.ts'
+import { isSelectable } from './selection.ts'
 import { WeekCalendar, type CalendarDay } from './week-calendar.tsx'
 
 const fieldClass =
@@ -25,9 +26,10 @@ const labelClass = 'block text-sm font-medium text-foreground'
 
 /** Libellés repris par le résumé d'erreurs, identiques à ceux des champs. */
 const fieldLabels: Record<string, string> = {
-  date: 'Jour',
-  startTime: 'Début',
-  endTime: 'Fin',
+  date: 'Jour du début',
+  startTime: 'Heure du début',
+  endDate: 'Jour de fin',
+  endTime: 'Heure de fin',
   title: 'Objet',
   clientId: 'Client',
   contractId: 'Contrat',
@@ -96,6 +98,8 @@ export function BookingForm({
   const [state, formAction, pending] = useActionState<FormState, FormData>(createBookingAction, null)
   const [date, setDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState(defaultStartTime ?? '09:00')
+  // Jour de fin : le jour même, ou un jour suivant pour une période (ADR 061).
+  const [endDate, setEndDate] = useState(defaultDate)
   const [endTime, setEndTime] = useState(addMinutes(defaultStartTime ?? '09:00', 60))
   // Le contrat dépend du client : les deux sont tenus ici pour que la liste
   // des contrats suive le client choisi.
@@ -111,19 +115,17 @@ export function BookingForm({
   const clientContracts = contracts.filter((contract) => contract.clientId === clientId)
   const contract = clientContracts.find((candidate) => candidate.id === contractId)
 
-  const selection = useMemo<TimeRange | undefined>(() => {
-    if (!date || !startTime || !endTime || endTime <= startTime) return undefined
-    return {
-      startsAt: wallClockToUtc(`${date}T${startTime}`, timeZone),
-      endsAt: wallClockToUtc(`${date}T${endTime}`, timeZone),
-    }
-  }, [date, startTime, endTime, timeZone])
+  const selection = useMemo(
+    () => adminSelection(date, startTime, endDate, endTime, timeZone),
+    [date, startTime, endDate, endTime, timeZone],
+  )
 
   const preview = useQuotePreview({
     enabled: Boolean(selection) && !internal,
     resourceId: resource.id,
     date,
     startTime,
+    endDate,
     endTime,
     clientId,
     contractId,
@@ -138,6 +140,7 @@ export function BookingForm({
     if (!range) return
     setDate(toIsoDate(range.startsAt, timeZone))
     setStartTime(formatTime(range.startsAt, timeZone))
+    setEndDate(toIsoDate(range.endsAt, timeZone))
     setEndTime(formatTime(range.endsAt, timeZone))
   }
 
@@ -179,28 +182,34 @@ export function BookingForm({
 
         <AvailabilityVerdict selection={selection} days={days} busy={busy} timeZone={timeZone} />
 
-        <div>
-          <label className={labelClass} htmlFor="date">
-            Jour
-          </label>
-          <input
-            id="date"
-            name="date"
-            type="date"
-            required
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-            aria-invalid={errors.date ? true : undefined}
-            aria-describedby={errors.date ? 'date-error' : undefined}
-            className={`${fieldClass} mt-1`}
-          />
-          <FieldError name="date" error={errors.date} />
-        </div>
-
+        {/* Début et fin, chacun son jour et son heure : une réservation peut
+            durer plusieurs jours d'affilée, nuits comprises (ADR 061). */}
         <div className="grid grid-cols-2 gap-4">
           <div>
+            <label className={labelClass} htmlFor="date">
+              Jour du début
+            </label>
+            <input
+              id="date"
+              name="date"
+              type="date"
+              required
+              value={date}
+              onChange={(event) => {
+                const value = event.target.value
+                // La fin suit le début quand elle était le même jour, ou qu'elle le précéderait.
+                setEndDate((current) => (current === date || current < value ? value : current))
+                setDate(value)
+              }}
+              aria-invalid={errors.date ? true : undefined}
+              aria-describedby={errors.date ? 'date-error' : undefined}
+              className={`${fieldClass} mt-1`}
+            />
+            <FieldError name="date" error={errors.date} />
+          </div>
+          <div>
             <label className={labelClass} htmlFor="startTime">
-              Début
+              Heure du début
             </label>
             <input
               id="startTime"
@@ -214,14 +223,32 @@ export function BookingForm({
                 setStartTime(value)
                 // La fin suit le début tant qu'elle lui est antérieure : la base
                 // refuserait un intervalle vide, autant ne pas le proposer.
-                if (value && value >= endTime) setEndTime(addMinutes(value, 60))
+                if (value && endDate === date && value >= endTime) setEndTime(addMinutes(value, 60))
               }}
               className={`${fieldClass} mt-1 tabular`}
             />
           </div>
           <div>
+            <label className={labelClass} htmlFor="endDate">
+              Jour de fin
+            </label>
+            <input
+              id="endDate"
+              name="endDate"
+              type="date"
+              required
+              min={date}
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              aria-invalid={errors.endDate ? true : undefined}
+              aria-describedby={errors.endDate ? 'endDate-error' : undefined}
+              className={`${fieldClass} mt-1`}
+            />
+            <FieldError name="endDate" error={errors.endDate} />
+          </div>
+          <div>
             <label className={labelClass} htmlFor="endTime">
-              Fin
+              Heure de fin
             </label>
             <input
               id="endTime"
@@ -239,7 +266,8 @@ export function BookingForm({
           </div>
         </div>
         <p className="-mt-2 text-xs text-muted-foreground">
-          Fin exclue : une réservation qui finit à 10h00 laisse le créneau de 10h00 libre.
+          Fin exclue : une réservation qui finit à 10h00 laisse le créneau de 10h00 libre. Sur
+          plusieurs jours, la ressource est tenue nuits comprises.
         </p>
 
         <div>
@@ -412,6 +440,7 @@ function useQuotePreview(input: {
   resourceId: string
   date: string
   startTime: string
+  endDate: string
   endTime: string
   clientId: string
   contractId: string
@@ -623,8 +652,9 @@ export function AvailabilityVerdict({
 
   const conflicts = busy.filter((booking) => overlaps(selection, booking))
   const cells = days.find((day) => day.isoDate === toIsoDate(selection.startsAt, timeZone))?.cells
+  const severalDays = spansSeveralDays(selection, timeZone)
 
-  const duree = formatMinutes(rangeMinutes(selection))
+  const duree = periodDuration(selection, timeZone)
 
   if (conflicts.length > 0) {
     return (
@@ -635,9 +665,10 @@ export function AvailabilityVerdict({
           {conflicts
             .map((booking) =>
               // Une occupation de contrat se dit par sa période, pas par
-              // « 00:00 à 00:00 » (ADR 018).
-              booking.kind === 'contract'
-                ? describeBusyBooking({ ...booking, kind: 'contract' }, timeZone)
+              // « 00:00 à 00:00 » (ADR 018) ; une réservation d'un autre jour,
+              // par ses jours.
+              booking.kind === 'contract' || severalDays
+                ? describeBusyBooking({ ...booking, kind: booking.kind ?? 'booking' }, timeZone)
                 : `« ${booking.title} » de ${formatTime(booking.startsAt, timeZone)} à ${formatTime(
                     booking.endsAt,
                     timeZone,
@@ -645,6 +676,21 @@ export function AvailabilityVerdict({
             )
             .join(', ')}
           .
+        </span>
+      </p>
+    )
+  }
+
+  // Sur plusieurs jours, la période enjambe forcément des heures fermées : la
+  // grille d'un jour n'en dit rien (ADR 061). Le planning chargé couvre
+  // quelques semaines ; au-delà, la base tranche à l'enregistrement.
+  if (severalDays) {
+    return (
+      <p aria-live="polite" className={`${box} bg-primary/10 text-foreground`}>
+        <CheckIcon size={20} />
+        <span>
+          <strong className="font-medium">Période libre</strong> {periodLabel(selection, timeZone)} ·{' '}
+          {duree}, nuits comprises.
         </span>
       </p>
     )

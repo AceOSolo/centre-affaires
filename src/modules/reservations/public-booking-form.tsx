@@ -6,7 +6,7 @@ import { useActionState, useEffect, useRef, useState, type FormEvent, type React
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
 import { BuildingIcon, CarIcon, CheckIcon } from '../../components/ui/icons.tsx'
-import { addDaysToIsoDate, formatLongDate, formatMinutes, formatTime } from '../../lib/dates.ts'
+import { addDaysToIsoDate, formatLongDate, formatTime } from '../../lib/dates.ts'
 import { QuoteSummary } from '../facturation/devis-resume.tsx'
 import { rateUnitSuffixes } from '../facturation/labels.ts'
 import type { ProposalStatus } from '../facturation/schema-devis.ts'
@@ -14,11 +14,13 @@ import { formatCents, type RateCandidate } from '../facturation/tarifs.ts'
 import { resourceTypePluralLabels } from '../ressources/labels.ts'
 import type { Resource, ResourceType } from '../ressources/schema.ts'
 import { ChampPiege, chipClass, fieldClass, focusClass, primaryClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
+import { formatDays } from './durees.ts'
+import { periodDuration, periodEndDates, periodEnds, periodLabel, periodRejection, spansSeveralDays } from './periode.ts'
 import { loadPublicDayAction, loadPublicQuoteAction, requestBookingAction, type PublicDayAvailability, type PublicFormState, type PublicQuote } from './public-actions.ts'
-import { availableEnds, availableStarts, fitsFreeRange, publicSelection } from './public-selection.ts'
+import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
 import { errorsByField, QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
 import { ANSWER_FIELD_PREFIX, describeAnswers, parseAnswers, type Answers } from './questionnaires.ts'
-import { contactRejections, MAX_REQUEST_MINUTES, MIN_REQUEST_MINUTES, rejectionMessages } from './requests.ts'
+import { contactRejections, MIN_REQUEST_MINUTES, rejectionMessages } from './requests.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
 
 /** Produits réservés sur un créneau du calendrier (ADR 043). */
@@ -31,6 +33,8 @@ const wording = {
     pick: 'Choisissez un espace pour continuer.',
     closed: 'Le centre est fermé ce jour-là.',
     titlePlaceholder: 'Réunion d’équipe, formation…',
+    /** Ce que veut dire une période de plusieurs jours (ADR 061). */
+    nights: 'sur plusieurs jours, l’espace vous est réservé nuits comprises',
     Icon: BuildingIcon,
   },
   vehicule: {
@@ -38,6 +42,7 @@ const wording = {
     pick: 'Choisissez un véhicule pour continuer.',
     closed: 'Le véhicule n’est pas disponible ce jour-là.',
     titlePlaceholder: 'Déménagement, livraison…',
+    nights: 'sur plusieurs jours, vous gardez le véhicule nuits comprises',
     Icon: CarIcon,
   },
 } as const
@@ -77,6 +82,11 @@ const QUICK_DAYS = 6
 /** Le jour d'une date murale, lu sans fuseau : midi UTC ne change jamais de date. */
 const weekdayFormat = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', timeZone: 'UTC' })
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
+/** « mer. 4 nov. » : un jour de fin, dans la liste et dans le résumé. */
+const shortDay = (isoDate: string) => {
+  const at = new Date(`${isoDate}T12:00:00Z`)
+  return `${weekdayFormat.format(at)} ${dayFormat.format(at)}`
+}
 
 /** Erreurs rangées par nom de champ (`q.participants`) ramenées au nom de la question. */
 function byQuestion(fieldErrors: Record<string, string> | undefined): Record<string, string> {
@@ -117,6 +127,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const [step, setStep] = useState<Step>(1)
   const [date, setDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState(defaultStartTime)
+  // Jour de la fin : le jour même, sauf demande sur plusieurs jours (ADR 061).
+  const [endDate, setEndDate] = useState(defaultDate)
   const [endTime, setEndTime] = useState(defaultEndTime)
   const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>({ name: '', email: '', phone: '', company: '', title: '', notes: '' })
   // Réponses validées au passage de l'étape « Votre besoin ». Les questions sont
@@ -137,20 +149,31 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const resource = resources.find((item) => item.id === resourceId)
   const availabilityKey = `${resourceId}/${date}/${revision}`
   const availability = loaded?.key === availabilityKey ? loaded.result : undefined
-  const free = availability?.status === 'ready' ? availability.free : []
-  const selection = publicSelection(date, startTime, endTime, timeZone)
-  const duration = selection ? (selection.endsAt.getTime() - selection.startsAt.getTime()) / 60_000 : 0
-  const latestStart = availability?.status === 'ready' ? availability.latestStart : undefined
-  const validSlot = Boolean(selection && loaded && latestStart && selection.startsAt <= latestStart && selection.startsAt > loaded.now && fitsFreeRange(selection, free) && duration >= MIN_REQUEST_MINUTES && duration <= MAX_REQUEST_MINUTES)
+  const ready = availability?.status === 'ready' ? availability : undefined
+  const free = ready?.free ?? []
+  // Jours d'affilée permis pour ce produit : 1, et le formulaire reste celui d'une journée.
+  const maxDays = ready?.maxDays ?? 1
+  const selection = periodSelection(date, startTime, endDate, endTime, timeZone)
+  const latestStart = ready?.latestStart
   const starts = availableStarts(free, loaded?.now ?? new Date(0), latestStart)
-  const start = startTime && publicSelection(date, startTime, '23:59', timeZone)?.startsAt
-  const ends = start ? availableEnds(start, free, timeZone) : []
+  const start = startTime ? publicSelection(date, startTime, '23:59', timeZone)?.startsAt : undefined
+  const endDates = start && ready ? periodEndDates(start, ready.period, timeZone, maxDays) : []
+  const ends = start && ready ? periodEnds(start, endDate, ready.period, timeZone, maxDays) : []
+  // Les règles du serveur (`periodRejection`), avant l'envoi : il les revérifie.
+  const validSlot = Boolean(
+    selection && ready &&
+    starts.some((at) => at.getTime() === selection.startsAt.getTime()) &&
+    !periodRejection(selection, ready.period, timeZone, maxDays),
+  )
+  const multiDay = Boolean(selection && spansSeveralDays(selection, timeZone))
+  const slotText = multiDay ? `${shortDay(date)} ${startTime} → ${shortDay(endDate)} ${endTime}` : `${startTime} – ${endTime}`
+  const duration = selection ? periodDuration(selection, timeZone) : ''
   const serverError = showServerError && state.status === 'error' ? state : undefined
   const serverStep = fromServerStep(serverError?.step)
   // Les erreurs par champ ont leur propre résumé : pas de double annonce.
   const error = localError || (serverError && !serverError.fieldErrors ? serverError.message : '')
   // Montant du créneau choisi (R11), demandé au moteur de devis du serveur : le même qui le figera sur la demande.
-  const quoteKey = validSlot ? `${resourceId}/${date}/${startTime}/${endTime}` : ''
+  const quoteKey = validSlot ? `${resourceId}/${date}/${startTime}/${endDate}/${endTime}` : ''
   const [quoteLoaded, setQuoteLoaded] = useState<{ key: string; result: PublicQuote }>()
   const quote = quoteKey && quoteLoaded?.key === quoteKey ? quoteLoaded.result : undefined
   const describedAnswers = describeAnswers(product, answers)
@@ -182,12 +205,12 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   useEffect(() => {
     if (!quoteKey) return
     let cancelled = false
-    loadPublicQuoteAction(resourceId, date, startTime, endTime).then(
+    loadPublicQuoteAction(resourceId, date, startTime, endTime, endDate).then(
       (result) => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result }) },
       () => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result: { status: 'unpriced', message: 'Le montant n’a pas pu être calculé. Notre équipe vous le précisera.' } }) },
     )
     return () => { cancelled = true }
-  }, [quoteKey, resourceId, date, startTime, endTime])
+  }, [quoteKey, resourceId, date, startTime, endTime, endDate])
 
   // À l'ouverture, le focus va au titre : le bouton qui a choisi le produit
   // vient de disparaître, le lecteur d'écran annonce où l'on arrive.
@@ -208,6 +231,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
 
   function resetSlot() {
     setStartTime('')
+    setEndDate(date)
     setEndTime('')
     setLocalError('')
     setShowServerError(false)
@@ -228,6 +252,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   function changeDate(value: string) {
     setDate(value)
     resetSlot()
+    setEndDate(value)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -284,6 +309,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
         <input type="hidden" name="resourceId" value={resourceId} />
         <input type="hidden" name="date" value={date} />
         <input type="hidden" name="startTime" value={startTime} />
+        <input type="hidden" name="endDate" value={endDate} />
         <input type="hidden" name="endTime" value={endTime} />
         <input type="hidden" name="paymentMethod" value="quote" />
         <ChampPiege />
@@ -348,29 +374,43 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
                 <div className="rounded-md border border-border p-4 text-sm"><p>{availability.message}</p><button type="button" onClick={() => setRevision((value) => value + 1)} className={`mt-2 min-h-11 text-primary underline ${focusClass}`}>Réessayer</button></div>
               ) : !starts.length ? (
                 <div className="min-h-24 rounded-md border border-dashed border-border bg-muted p-5"><p className="font-medium text-primary">{availability.closed ? words.closed : 'Plus de créneau libre ce jour-là.'}</p>{date < maxDate && <button type="button" onClick={() => changeDate(addDaysToIsoDate(date, 1))} className={`mt-2 min-h-11 text-sm font-medium text-primary underline ${focusClass}`}>Voir le jour suivant</button>}</div>
-              ) : <div className="grid gap-4 sm:grid-cols-2">
+              ) : <div className={`grid gap-4 ${maxDays > 1 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
                 <div>
                   <label htmlFor="booking-start" className="block text-sm font-medium">Arrivée</label>
-                  <select id="booking-start" value={startTime} onChange={(event) => { setStartTime(event.target.value); setEndTime(''); setLocalError('') }} className={`${fieldClass} mt-2`}>
+                  <select id="booking-start" value={startTime} onChange={(event) => { setStartTime(event.target.value); setEndDate(date); setEndTime(''); setLocalError('') }} className={`${fieldClass} mt-2`}>
                     <option value="">Choisir une heure</option>
                     {starts.map((at) => <option key={at.toISOString()} value={formatTime(at, timeZone)}>{formatTime(at, timeZone)}</option>)}
                   </select>
                 </div>
+                {/* Plusieurs jours d'affilée (ADR 061) : le jour du départ, puis son heure. */}
+                {maxDays > 1 && (
+                  <div>
+                    <label htmlFor="booking-end-date" className="block text-sm font-medium">Jour du départ</label>
+                    <select id="booking-end-date" value={endDate} disabled={!startTime} onChange={(event) => { setEndDate(event.target.value); setEndTime(''); setLocalError('') }} className={`${fieldClass} mt-2 disabled:bg-muted disabled:text-muted-foreground`}>
+                      {(endDates.length > 0 ? endDates : [date]).map((day) => <option key={day} value={day}>{day === date ? 'Le même jour' : shortDay(day)}</option>)}
+                    </select>
+                  </div>
+                )}
                 <div>
-                  <label htmlFor="booking-end" className="block text-sm font-medium">Départ</label>
+                  <label htmlFor="booking-end" className="block text-sm font-medium">{maxDays > 1 ? 'Heure du départ' : 'Départ'}</label>
                   <select id="booking-end" value={endTime} disabled={!startTime} onChange={(event) => { setEndTime(event.target.value); setLocalError('') }} className={`${fieldClass} mt-2 disabled:bg-muted disabled:text-muted-foreground`}>
                     <option value="">{startTime ? 'Choisir une heure' : 'Choisissez d’abord l’arrivée'}</option>
-                    {ends.map((at) => <option key={at.toISOString()} value={formatTime(at, timeZone)}>{formatTime(at, timeZone)} · {formatMinutes((at.getTime() - (start ? start.getTime() : 0)) / 60_000)}</option>)}
+                    {ends.map((at) => <option key={at.toISOString()} value={formatTime(at, timeZone)}>{formatTime(at, timeZone)} · {start ? periodDuration({ startsAt: start, endsAt: at }, timeZone) : ''}</option>)}
                   </select>
                 </div>
-                <p className="text-xs text-muted-foreground sm:col-span-2">Seuls les horaires libres sont proposés, de 30 minutes à 8 heures. {requestPolicyMessage(policy)}</p>
+                <p className="text-xs text-muted-foreground sm:col-span-full">
+                  {maxDays > 1
+                    ? `Seuls les horaires libres sont proposés, jusqu’à ${formatDays(maxDays)} d’affilée : ${words.nights}.`
+                    : `Seuls les horaires libres sont proposés, ${MIN_REQUEST_MINUTES} minutes au moins.`}{' '}
+                  {requestPolicyMessage(policy)}
+                </p>
               </div>}
             </div>
             {!!startTime && !!endTime && availability?.status === 'ready' && !validSlot && <p role="alert" className="mt-3 text-sm text-destructive">Ces horaires ne sont plus disponibles. Choisissez un autre créneau.</p>}
           </div>}
 
           {validSlot && <div className="rounded-lg bg-muted p-5">
-            <p className="flex items-center gap-2 font-medium text-primary"><CheckIcon size={20} className="shrink-0" />{resource?.name} · <span className="tabular">{startTime} – {endTime}</span> · {formatMinutes(duration)}</p>
+            <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-medium text-primary"><CheckIcon size={20} className="shrink-0" />{resource?.name} · <span className="tabular">{slotText}</span> · {duration}</p>
             <div className="mt-3 border-t border-border pt-3"><QuoteAmount quote={quote} /></div>
           </div>}
         </div>}
@@ -383,8 +423,14 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
         {step === CONTACT_STEP && <div className="mt-6 space-y-6">
           <RecapBlock title="Votre créneau" onEdit={() => goTo(1)} pending={pending}>
             <p className="font-semibold text-primary">{resource?.name}</p>
-            <p className="mt-1 first-letter:uppercase">{formatLongDate(date, timeZone)}</p>
-            <p className="mt-0.5 tabular">{startTime} – {endTime} · {formatMinutes(duration)}</p>
+            {multiDay && selection ? (
+              <p className="mt-1 first-letter:uppercase">{periodLabel(selection, timeZone)} · {duration}</p>
+            ) : (
+              <>
+                <p className="mt-1 first-letter:uppercase">{formatLongDate(date, timeZone)}</p>
+                <p className="mt-0.5 tabular">{startTime} – {endTime} · {duration}</p>
+              </>
+            )}
             <div className="mt-3 border-t border-border pt-3"><QuoteAmount quote={quote} live={false} /></div>
           </RecapBlock>
           {describedAnswers.length > 0 && (

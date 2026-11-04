@@ -7,6 +7,7 @@ import { currentTimeZone } from '../../../../../lib/tenant.ts'
 import { occupiesResource } from '../../../../../modules/reservations/availability.ts'
 import { loadWeekCalendar } from '../../../../../modules/reservations/calendar-data.ts'
 import { MoveForm } from '../../../../../modules/reservations/move-form.tsx'
+import { periodLabel } from '../../../../../modules/reservations/periode.ts'
 import { findBooking, listBookingsBetween } from '../../../../../modules/reservations/queries.ts'
 import { weekDays, weekStart } from '../../../../../modules/reservations/semaine.ts'
 import { resourceTypeLabels } from '../../../../../modules/ressources/labels.ts'
@@ -101,7 +102,9 @@ export default async function MoveBookingPage({
       timeZone,
       excludeBookingId: booking.id,
     }),
-    listBookingsBetween(jours[0], jours[6], timeZone),
+    // Quatre semaines de plus que la semaine affichée : le verdict d'une
+    // période sur plusieurs jours voit ce qui la suit (ADR 061).
+    listBookingsBetween(jours[0], addDaysToIsoDate(jours[6], 28), timeZone),
   ])
 
   const busy = bookings
@@ -193,10 +196,11 @@ export default async function MoveBookingPage({
         origin={{
           resourceId: booking.resourceId,
           resourceName: booking.resource.name,
-          label: `${formatTime(booking.startsAt, timeZone)} – ${formatTime(booking.endsAt, timeZone)} le ${origineIso.slice(8, 10)}/${origineIso.slice(5, 7)}`,
+          label: periodLabel(booking, timeZone),
         }}
         defaultDate={origineIso}
         defaultStartTime={formatTime(booking.startsAt, timeZone)}
+        defaultEndDate={toIsoDate(booking.endsAt, timeZone)}
         defaultEndTime={formatTime(booking.endsAt, timeZone)}
       />
     </div>

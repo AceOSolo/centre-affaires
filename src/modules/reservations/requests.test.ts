@@ -80,12 +80,12 @@ describe('recevabilité d’une demande publique', () => {
       assert.equal(rejectRequest(valide({ range }), NOW), 'duree-trop-courte')
     })
 
-    it('refuse une durée trop longue', () => {
+    it('ne plafonne plus la durée à huit heures : la durée maximale est celle du produit, en jours (ADR 061)', () => {
       const range = {
         startsAt: new Date(NOW.getTime() + minutes(120)),
-        endsAt: new Date(NOW.getTime() + minutes(120 + 9 * 60)),
+        endsAt: new Date(NOW.getTime() + minutes(120 + 3 * 24 * 60)),
       }
-      assert.equal(rejectRequest(valide({ range }), NOW), 'duree-trop-longue')
+      assert.equal(rejectRequest(valide({ range }), NOW), undefined)
     })
 
     it('refuse un intervalle inversé sans le confondre avec le passé', () => {

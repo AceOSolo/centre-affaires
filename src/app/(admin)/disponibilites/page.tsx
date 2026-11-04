@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../lib/dates.ts'
 import { currentTenant } from '../../../lib/tenant.ts'
+import { defaultMaxRequestDays, maxRequestDays, periodProducts } from '../../../modules/reservations/durees.ts'
 import { RequestPolicyForm } from '../../../modules/reservations/policy-form.tsx'
 import {
   formatWallTime,
@@ -64,8 +65,16 @@ export default async function DisponibilitesPage() {
       </div>
 
       <section className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4">
-        <h2 className="text-sm font-semibold">Délai des demandes de réservation</h2>
-        <RequestPolicyForm policy={{ bookingLeadHours: tenant.bookingLeadHours, bookingHorizonDays: tenant.bookingHorizonDays }} />
+        <h2 className="text-sm font-semibold">Délais et durée des demandes de réservation</h2>
+        <RequestPolicyForm
+          policy={{ bookingLeadHours: tenant.bookingLeadHours, bookingHorizonDays: tenant.bookingHorizonDays }}
+          maxDays={periodProducts().map((product) => ({
+            key: product.key,
+            label: product.label,
+            value: maxRequestDays(tenant.bookingMaxDays, product.key),
+            defaultValue: defaultMaxRequestDays[product.key] ?? 1,
+          }))}
+        />
       </section>
 
       <section className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">

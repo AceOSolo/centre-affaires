@@ -6,8 +6,16 @@ import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
-import { formatMinutes, formatTime } from '../../lib/dates.ts'
+import { formatTime } from '../../lib/dates.ts'
 import { QuoteSummary } from '../facturation/devis-resume.tsx'
+import { formatDays } from './durees.ts'
+import {
+  periodDuration,
+  periodEndDates,
+  periodEnds,
+  revivePeriod,
+  type SerializedPeriodAvailability,
+} from './periode.ts'
 import {
   bookFromPortalAction,
   previewPortalBookingAction,
@@ -20,7 +28,7 @@ import {
   portalModeLabels,
   type PortalBookingMode,
 } from './portail-regles.ts'
-import { availableEnds, availableStarts, publicSelection } from './public-selection.ts'
+import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
 import type { ProposalProduct } from '../facturation/schema-devis.ts'
 import { QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
 
@@ -35,8 +43,15 @@ export type PortalBookingFormProps = {
   date: string
   dateLabel: string
   timeZone: string
-  /** Plages libres, en instants ISO (sérialisables). */
+  /** Plages libres du jour, coupées par le préavis, en instants ISO (sérialisables) : les départs. */
   free: { startsAt: string; endsAt: string }[]
+  /**
+   * La ressource sur les jours qu'une demande peut couvrir, à partir de ce
+   * jour (ADR 061) : les fins se proposent jusqu'au bout de la période libre.
+   */
+  period: SerializedPeriodAvailability
+  /** Jours d'affilée permis pour ce produit ; 1 : le formulaire d'une journée, comme avant. */
+  maxDays: number
   /** Instant de référence du serveur, et dernier départ permis par l'horizon du centre. */
   now: string
   latestStart: string
@@ -51,8 +66,11 @@ const fieldLabels: Record<string, string> = {
   notes: 'Précisions',
 }
 
-/** Une journée d'heure murale ne se réserve qu'à l'intérieur d'une plage libre : pas de plafond de huit heures. */
-const PORTAL_MAX_MINUTES = 24 * 60
+/** « mer. 4 nov. » : un jour de fin dans la liste ; midi UTC ne change jamais de date. */
+const shortDay = (isoDate: string) =>
+  new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(
+    new Date(`${isoDate}T12:00:00Z`),
+  )
 
 /**
  * Formulaire de réservation de l'espace client (R23) : l'entreprise (si le
@@ -62,13 +80,15 @@ const PORTAL_MAX_MINUTES = 24 * 60
  * confirmation immédiate ou demande à l'accueil (ADR 036).
  */
 export function PortalBookingForm(props: PortalBookingFormProps) {
-  const { resource, date, dateLabel, timeZone, accounts } = props
+  const { resource, date, dateLabel, timeZone, accounts, maxDays } = props
   const [state, formAction, pending] = useActionState<PortalBookingFormState, FormData>(
     bookFromPortalAction,
     { status: 'idle' },
   )
   const [clientId, setClientId] = useState(accounts.length === 1 ? accounts[0].clientId : '')
   const [startTime, setStartTime] = useState('')
+  // Jour de la fin : le jour même, sauf demande sur plusieurs jours (ADR 061).
+  const [endDate, setEndDate] = useState(date)
   const [endTime, setEndTime] = useState('')
   // Contrôlés : React réinitialise le formulaire après chaque envoi, un échec
   // ne doit rien faire retaper.
@@ -78,18 +98,20 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   const free = props.free.map((range) => ({ startsAt: new Date(range.startsAt), endsAt: new Date(range.endsAt) }))
+  const period = revivePeriod(props.period)
   const starts = availableStarts(free, new Date(props.now), new Date(props.latestStart))
   const start = startTime ? publicSelection(date, startTime, '23:59', timeZone)?.startsAt : undefined
-  const ends = start ? availableEnds(start, free, timeZone, PORTAL_MAX_MINUTES) : []
-  const selection = startTime && endTime ? publicSelection(date, startTime, endTime, timeZone) : undefined
+  const endDates = start ? periodEndDates(start, period, timeZone, maxDays) : []
+  const ends = start ? periodEnds(start, endDate, period, timeZone, maxDays) : []
+  const selection = startTime && endTime ? periodSelection(date, startTime, endDate, endTime, timeZone) : undefined
 
-  const previewKey = selection && clientId ? `${resource.id}/${clientId}/${date}/${startTime}/${endTime}` : ''
+  const previewKey = selection && clientId ? `${resource.id}/${clientId}/${date}/${startTime}/${endDate}/${endTime}` : ''
   const quote = previewKey && preview?.key === previewKey ? preview.result : undefined
 
   useEffect(() => {
     if (!previewKey) return
     let cancelled = false
-    previewPortalBookingAction({ resourceId: resource.id, clientId, date, startTime, endTime }).then(
+    previewPortalBookingAction({ resourceId: resource.id, clientId, date, startTime, endDate, endTime }).then(
       (result) => {
         if (!cancelled) setPreview({ key: previewKey, result })
       },
@@ -105,7 +127,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
     return () => {
       cancelled = true
     }
-  }, [previewKey, resource.id, clientId, date, startTime, endTime])
+  }, [previewKey, resource.id, clientId, date, startTime, endDate, endTime])
 
   useEffect(() => {
     if (state.status === 'done') headingRef.current?.focus()
@@ -227,7 +249,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
           Plus aucun créneau libre ce jour-là. Choisissez une autre date ou un autre espace.
         </p>
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className={`grid gap-4 ${maxDays > 1 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
           <div>
             <label htmlFor="startTime" className={labelClass}>
               Heure de début
@@ -239,6 +261,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
               required
               onChange={(event) => {
                 setStartTime(event.target.value)
+                setEndDate(date)
                 setEndTime('')
               }}
               aria-invalid={errors.startTime ? true : undefined}
@@ -254,6 +277,33 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
             </select>
             <FieldError name="startTime" error={errors.startTime} />
           </div>
+          {/* Plusieurs jours d'affilée (ADR 061) : le jour de fin, puis son heure. */}
+          {maxDays > 1 ? (
+            <div>
+              <label htmlFor="endDate" className={labelClass}>
+                Jour de fin
+              </label>
+              <select
+                id="endDate"
+                name="endDate"
+                value={endDate}
+                disabled={!startTime}
+                onChange={(event) => {
+                  setEndDate(event.target.value)
+                  setEndTime('')
+                }}
+                className={`${fieldClass} tabular`}
+              >
+                {(endDates.length > 0 ? endDates : [date]).map((day) => (
+                  <option key={day} value={day}>
+                    {day === date ? 'Le même jour' : shortDay(day)}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <input type="hidden" name="endDate" value={endDate} />
+          )}
           <div>
             <label htmlFor="endTime" className={labelClass}>
               Heure de fin
@@ -272,16 +322,17 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
               <option value="">{startTime ? 'Choisir' : 'Choisissez d’abord le début'}</option>
               {ends.map((at) => (
                 <option key={at.toISOString()} value={formatTime(at, timeZone)}>
-                  {formatTime(at, timeZone)} ·{' '}
-                  {formatMinutes((at.getTime() - (start ? start.getTime() : 0)) / 60_000)}
+                  {formatTime(at, timeZone)} · {start ? periodDuration({ startsAt: start, endsAt: at }, timeZone) : ''}
                 </option>
               ))}
             </select>
-            <p id="endTime-hint" className="mt-1 text-xs text-muted-foreground">
-              Seuls les horaires libres sont proposés, à l’heure du centre.
-            </p>
             <FieldError name="endTime" error={errors.endTime} />
           </div>
+          <p id="endTime-hint" className="text-xs text-muted-foreground sm:col-span-full">
+            Seuls les horaires libres sont proposés, à l’heure du centre.
+            {maxDays > 1 &&
+              ` Jusqu’à ${formatDays(maxDays)} d’affilée : sur plusieurs jours, la réservation court nuits comprises.`}
+          </p>
         </div>
       )}
 

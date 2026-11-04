@@ -25,6 +25,9 @@ import { closures, openingHours, resources, type Resource } from '../ressources/
 import { isValidRange } from './availability.ts'
 import { listBusyRanges } from './creneaux-occupes.ts'
 import { dayAvailability, type BusyRange, type DayAvailabilityOf } from './disponibilites.ts'
+import { maxRequestDaysFor, type MaxRequestDaysSettings } from './durees.ts'
+import type { PeriodAvailability } from './periode.ts'
+import { loadPeriodAvailability } from './periode-queries.ts'
 import {
   isPortalBookable,
   type PortalBookingMode,
@@ -115,6 +118,32 @@ export async function listPortalDayAvailability(
       .where(and(lte(closures.startsOn, isoDate), gte(closures.endsOn, isoDate)))
     const busy = await busyRanges(tx, isoDate, timeZone)
     return dayAvailability(isoDate, timeZone, list, busy, { rules, closures: periods })
+  })
+}
+
+/**
+ * Une ressource ouverte au portail sur plusieurs jours, à partir d'un jour
+ * (ADR 061) : ses horaires et ses plages libres en continu, par le calcul de
+ * la page publique (`periode.ts`). `undefined` : la ressource ne se réserve
+ * pas depuis l'espace client.
+ */
+export async function loadPortalPeriodAvailability(
+  accounts: readonly ClientAccount[],
+  request: { resourceId: string; firstDate: string; timeZone: string; maxDaysSettings: MaxRequestDaysSettings },
+): Promise<{ resource: PortalResource; period: PeriodAvailability; maxDays: number } | undefined> {
+  if (accounts.length === 0 || !isUuid(request.resourceId)) return undefined
+  return inClientSpace(accounts, async (tx) => {
+    const resource = (await portalResources(tx)).find((candidate) => candidate.id === request.resourceId)
+    if (!resource) return undefined
+    // Autant de jours que la demande peut en couvrir pour ce produit.
+    const maxDays = maxRequestDaysFor(request.maxDaysSettings, resource.resourceType)
+    const period = await loadPeriodAvailability(tx, {
+      resourceId: resource.id,
+      firstDate: request.firstDate,
+      dayCount: maxDays,
+      timeZone: request.timeZone,
+    })
+    return { resource, period, maxDays }
   })
 }
 

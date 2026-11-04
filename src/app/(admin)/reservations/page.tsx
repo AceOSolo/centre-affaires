@@ -4,9 +4,7 @@ import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
   addDaysToIsoDate,
-  formatDuration,
   formatLongDate,
-  formatTime,
   todayIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
@@ -15,9 +13,11 @@ import {
   bookingHref,
   bookingLabel,
   bookingStateLabel,
+  bookingTimeLabel,
   isContractOccupation,
   occupationPeriodLabel,
 } from '../../../modules/reservations/affichage.ts'
+import { periodDuration } from '../../../modules/reservations/periode.ts'
 import { DayPlanning } from '../../../modules/reservations/day-planning.tsx'
 import {
   filterBookings,
@@ -207,10 +207,10 @@ export default async function PlanningPage({
                           </>
                         ) : (
                           <>
-                            {formatTime(booking.startsAt, timeZone)} –{' '}
-                            {formatTime(booking.endsAt, timeZone)}
+                            {/* Sur plusieurs jours : « dès 09:00 », « jusqu'à 18:00 » (ADR 061). */}
+                            {bookingTimeLabel(booking, isoDate, timeZone)}
                             <span className="ml-2 text-xs text-muted-foreground">
-                              {formatDuration(booking.startsAt, booking.endsAt)}
+                              {periodDuration(booking, timeZone)}
                             </span>
                           </>
                         )}

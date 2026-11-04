@@ -115,6 +115,37 @@ export function bookingTimeLabel(
   return `${formatTime(booking.startsAt, timeZone)} – ${formatTime(booking.endsAt, timeZone)}`
 }
 
+/**
+ * Horaire d'une réservation dans le fuseau du centre (décision 4), vu en
+ * entier — sur une fiche ou dans une liste, pas depuis une journée du
+ * planning (`bookingTimeLabel`).
+ *
+ * - Sur une journée : « 09:00 – 10:30 ». Une fin à minuit appartient encore
+ *   à la journée commencée : « 08:00 – 24:00 ».
+ * - Sur plusieurs : « 09:00 → 14 oct. 18:00 » (ADR 061).
+ * - Sans terme : « depuis 09:00, sans terme ».
+ */
+export function formatBookingHours(
+  booking: { startsAt: Date; endsAt: Date },
+  timeZone: string,
+): string {
+  const start = formatTime(booking.startsAt, timeZone)
+  if (isOpenEndedBooking(booking)) return `depuis ${start}, sans terme`
+
+  const end = formatTime(booking.endsAt, timeZone)
+  // La dernière milliseconde occupée, pour qu'une fin à minuit reste du jour.
+  const lastInstant = new Date(booking.endsAt.getTime() - 1)
+  if (toIsoDate(lastInstant, timeZone) === toIsoDate(booking.startsAt, timeZone)) {
+    return `${start} – ${end === '00:00' ? '24:00' : end}`
+  }
+  const endDay = new Intl.DateTimeFormat('fr-FR', {
+    timeZone,
+    day: 'numeric',
+    month: 'short',
+  }).format(booking.endsAt)
+  return `${start} → ${endDay} ${end}`
+}
+
 /** Vrai quand la réservation couvre toute la journée du centre. */
 export function coversDay(
   booking: Pick<DisplayableBooking, 'startsAt' | 'endsAt'>,

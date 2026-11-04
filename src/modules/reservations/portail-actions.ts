@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { after } from 'next/server'
 
-import { formatLongDate, formatTime, isCalendarDate, toIsoDate } from '../../lib/dates.ts'
+import { isCalendarDate } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
@@ -14,10 +14,11 @@ import {
   notifyBookingRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
+import { periodLabel } from './periode.ts'
 import {
   PortalBookingError,
   createPortalBooking,
-  listPortalDayAvailability,
+  loadPortalPeriodAvailability,
   previewPortalQuote,
 } from './portail-queries.ts'
 import {
@@ -28,13 +29,12 @@ import {
   portalBookingTitle,
   portalOutcomeMessage,
   portalOutcomeNotice,
-  portalRejectionMessages,
+  portalRejectionMessage,
   type PortalBookingOutcome,
 } from './portail-regles.ts'
-import { publicSelection } from './public-selection.ts'
+import { periodSelection } from './public-selection.ts'
 import { errorsByField } from './questionnaire-fields.tsx'
 import { parseAnswers, productForResourceType, type Answers } from './questionnaires.ts'
-import { requestableRanges } from './request-policy.ts'
 
 /**
  * Réservation depuis l'espace client (R23, ADR 036). Chaque action revérifie
@@ -60,14 +60,16 @@ export type PortalQuoteInput = {
   clientId: string
   date: string
   startTime: string
+  /** Jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même. */
+  endDate?: string
   endTime: string
 }
 
 export async function previewPortalBookingAction(input: PortalQuoteInput): Promise<PortalQuoteState> {
   const { accounts } = await requireClientAccount()
   const tenant = await currentTenant()
-  const selection = publicSelection(input.date, input.startTime, input.endTime, tenant.timezone)
-  if (!selection) return { status: 'error', message: portalRejectionMessages['creneau-illisible'] }
+  const selection = periodSelection(input.date, input.startTime, input.endDate || input.date, input.endTime, tenant.timezone)
+  if (!selection) return { status: 'error', message: portalRejectionMessage('creneau-illisible', 1) }
   const preview = await previewPortalQuote(accounts, {
     clientId: input.clientId,
     resourceId: input.resourceId,
@@ -144,12 +146,17 @@ export async function bookFromPortalAction(
     return { status: 'error', message: 'Choisissez un espace dans la liste des disponibilités.' }
   }
 
-  const selection = publicSelection(date, text(formData, 'startTime'), text(formData, 'endTime'), timeZone)
-  // Les disponibilités sont relues : le formulaire a pu rester ouvert pendant
-  // qu'un autre client réservait.
-  const availability = (await listPortalDayAvailability(accounts, date, timeZone)).find(
-    ({ resource }) => resource.id === resourceId,
-  )
+  // Le jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même.
+  const endDate = text(formData, 'endDate') || date
+  const selection = periodSelection(date, text(formData, 'startTime'), endDate, text(formData, 'endTime'), timeZone)
+  // Les disponibilités sont relues, sur toute la période : le formulaire a pu
+  // rester ouvert pendant qu'un autre client réservait.
+  const availability = await loadPortalPeriodAvailability(accounts, {
+    resourceId,
+    firstDate: date,
+    timeZone,
+    maxDaysSettings: tenant.bookingMaxDays,
+  })
   if (!availability) {
     return {
       status: 'error',
@@ -158,13 +165,13 @@ export async function bookFromPortalAction(
   }
   const rejection = portalBookingRejection(
     selection,
-    requestableRanges(availability.free, tenant, now),
+    { availability: availability.period, timeZone, maxDays: availability.maxDays },
     tenant,
     now,
   )
   if (rejection) {
-    fieldErrors[rejection === 'duree-trop-courte' ? 'endTime' : 'startTime'] =
-      portalRejectionMessages[rejection]
+    const onEnd = rejection === 'duree-trop-courte' || rejection === 'duree-trop-longue' || rejection === 'fin-hors-ouverture'
+    fieldErrors[onEnd ? 'endTime' : 'startTime'] = portalRejectionMessage(rejection, availability.maxDays)
     // Pris entre-temps : les horaires proposés sont relus.
     if (rejection === 'creneau-indisponible') revalidatePath('/compte/reservations', 'layout')
   }
@@ -218,8 +225,7 @@ export async function bookFromPortalAction(
   revalidatePath('/devis')
   revalidatePath('/')
 
-  const day = formatLongDate(toIsoDate(selection.startsAt, timeZone), timeZone)
-  const when = `le ${day}, de ${formatTime(selection.startsAt, timeZone)} à ${formatTime(selection.endsAt, timeZone)}`
+  const when = periodLabel(selection, timeZone)
   const message = portalOutcomeMessage(created.status, {
     resourceName: availability.resource.name,
     when,

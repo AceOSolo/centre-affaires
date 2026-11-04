@@ -1,7 +1,8 @@
 import Link from 'next/link'
 
 import { CalendarIcon, CheckIcon, ClockIcon } from '../../../../components/ui/icons.tsx'
-import { formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
+import { formatLongDate, toIsoDate } from '../../../../lib/dates.ts'
+import { formatBookingHours } from '../../../../modules/reservations/affichage.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../modules/clients/session.ts'
 import { frozenQuoteDisplay } from '../../../../modules/facturation/devis.ts'
@@ -82,7 +83,7 @@ export default async function MesReservationsPage() {
               {formatLongDate(toIsoDate(booking.startsAt, timeZone), timeZone)}
             </p>
             <p className="text-sm text-muted-foreground tabular">
-              {formatTime(booking.startsAt, timeZone)} – {formatTime(booking.endsAt, timeZone)} ·{' '}
+              {formatBookingHours(booking, timeZone)} ·{' '}
               {booking.title}
             </p>
             {quote && (

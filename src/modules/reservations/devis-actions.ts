@@ -17,6 +17,8 @@ export type BookingQuotePreviewInput = {
   resourceId: string
   date: string
   startTime: string
+  /** Jour de fin d'une période sur plusieurs jours (ADR 061) ; absent, le jour même. */
+  endDate?: string
   endTime: string
   clientId: string
   contractId: string
@@ -41,7 +43,7 @@ export async function previewBookingQuoteAction(
   let endsAt: Date
   try {
     startsAt = wallClockToUtc(`${input.date}T${input.startTime}`, timeZone)
-    endsAt = wallClockToUtc(`${input.date}T${input.endTime}`, timeZone)
+    endsAt = wallClockToUtc(`${input.endDate || input.date}T${input.endTime}`, timeZone)
   } catch {
     return { status: 'invalid', message: 'Date ou horaires illisibles.' }
   }
