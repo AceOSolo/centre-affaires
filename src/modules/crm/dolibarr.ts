@@ -5,14 +5,15 @@ import { shortExternalText, type CrmConnector, type CrmTestOutcome } from './con
  *
  * Le site expose son API (`/api/dolibarr/*`, `docs/integrations/dolibarr.md`)
  * et le connecteur écrit par le développeur Dolibarr vient la chercher ; les
- * produits arrivent par le module Webhook. Le site n'appelle Dolibarr que pour
- * le test de connexion : les envois sortants sont à venir.
+ * produits arrivent par le module Webhook. Tiers et contrats, le connecteur
+ * les envoie ; consommations, il vient les chercher et en accuse réception
+ * (ADR 066). Le site n'appelle Dolibarr que pour le test de connexion.
  */
 
 export const dolibarrConnector: CrmConnector = {
   id: 'dolibarr',
   label: 'Dolibarr',
-  flows: ['quotes', 'products'],
+  flows: ['quotes', 'products', 'third_parties', 'contracts', 'consumptions'],
   routes: {
     quotes: [
       'GET /api/dolibarr/devis',
@@ -20,6 +21,10 @@ export const dolibarrConnector: CrmConnector = {
       'POST /api/dolibarr/devis/{id}/issue',
     ],
     products: ['POST /api/dolibarr/produits'],
+    // Seconde tranche (ADR 066).
+    third_parties: ['POST /api/dolibarr/tiers', 'GET /api/dolibarr/tiers'],
+    contracts: ['POST /api/dolibarr/contrats', 'GET /api/dolibarr/contrats'],
+    consumptions: ['GET /api/dolibarr/consommations', 'POST /api/dolibarr/consommations/{id}/transmis'],
   },
   notice: 'docs/integrations/dolibarr.md',
   legacyTokenEnv: 'DOLIBARR_API_TOKEN',

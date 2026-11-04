@@ -26,11 +26,14 @@ describe('catalogue des connecteurs', () => {
     }
   })
 
-  it('ouvre par défaut ce qui tournait avant l’écran, et rien de la seconde tranche', () => {
+  it('ouvre par défaut ce qui tournait avant l’écran ; la seconde tranche est servie, mais naît coupée', () => {
     assert.deepEqual(defaultEnabledFlows, ['quotes', 'products'])
+    // ADR 066 : Dolibarr sert les trois flux ; la direction les ouvre à
+    // l'écran, une fois le connecteur prêt.
     for (const flow of ['third_parties', 'contracts', 'consumptions'] as const) {
       assert.equal(crmFlowDefinitions[flow].enabledByDefault, false)
-      assert.equal(crmConnectors.dolibarr.flows.includes(flow), false, `${flow} servi trop tôt`)
+      assert.equal(crmConnectors.dolibarr.flows.includes(flow), true, `${flow} pas servi`)
+      assert.ok((crmConnectors.dolibarr.routes[flow] ?? []).length > 0, `${flow} sans route`)
     }
   })
 

@@ -499,6 +499,8 @@ END;
 -- - hors brouillon, prix, TVA, période, devise et engagement sont figés : ils
 --   changent par avenant (CA004) ;
 -- - un contrat qui a des avenants signés ne change plus de date de début.
+-- La copie d'un contrat tenu par le CRM suit son prix (ADR 066) : seul
+-- `contrats-crm-queries.ts` pose `@app_crm_sync`, le temps de sa transaction.
 CREATE TRIGGER contracts_before_update
 BEFORE UPDATE ON contracts
 FOR EACH ROW
@@ -507,7 +509,8 @@ BEGIN
   DECLARE v_message varchar(255);
 
   IF OLD.status <> 'draft' THEN
-    IF NOT (NEW.amount_cents <=> OLD.amount_cents
+    IF COALESCE(@app_crm_sync, '') <> 'on'
+       AND NOT (NEW.amount_cents <=> OLD.amount_cents
             AND NEW.vat_rate_bp <=> OLD.vat_rate_bp
             AND NEW.billing_period <=> OLD.billing_period
             AND NEW.currency <=> OLD.currency

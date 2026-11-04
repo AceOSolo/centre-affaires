@@ -348,12 +348,28 @@ export type CrmFlowOption = {
   enabled: boolean
 }
 
-export function CrmFlowsForm({ flows }: { flows: CrmFlowOption[] }) {
+export function CrmFlowsForm({
+  flows,
+  consumptionsFrom,
+}: {
+  flows: CrmFlowOption[]
+  /** Premier jour des consommations transmises (ADR 066) ; nul tant que le flux n'a pas été ouvert. */
+  consumptionsFrom: string | null
+}) {
   const [state, formAction, pending] = useActionState<CrmFormState, FormData>(saveCrmFlowsAction, null)
+  const fromError = state?.fieldErrors?.consumptionsFrom
   return (
     <div className="flex flex-col gap-3">
-      <form action={formAction} className="flex flex-col gap-3">
-        <fieldset className="flex flex-col gap-2" aria-describedby={state?.fieldErrors?.flows ? 'flux-erreur' : undefined}>
+      <form action={formAction} className="flex flex-col gap-3" noValidate>
+        <ErrorSummary
+          errors={state?.fieldErrors as Record<string, string> | undefined}
+          labels={{ flows: 'Flux', consumptionsFrom: 'Date de départ des consommations' }}
+        />
+        <fieldset
+          id="flows"
+          className="flex flex-col gap-2"
+          aria-describedby={state?.fieldErrors?.flows ? 'flux-erreur' : undefined}
+        >
           <legend className="sr-only">Flux activés</legend>
           {flows.map((flow) => (
             <div
@@ -389,6 +405,31 @@ export function CrmFlowsForm({ flows }: { flows: CrmFlowOption[] }) {
                     <span className="mt-0.5 block text-xs break-words">{flow.routes.join(' · ')}</span>
                   )}
                 </p>
+                {flow.id === 'consumptions' && flow.available && (
+                  <div className="mt-2 max-w-xs">
+                    <label className={labelClass} htmlFor="consumptionsFrom">
+                      Transmettre les consommations faites à partir du
+                    </label>
+                    <input
+                      id="consumptionsFrom"
+                      name="consumptionsFrom"
+                      type="date"
+                      defaultValue={consumptionsFrom ?? ''}
+                      aria-invalid={fromError ? true : undefined}
+                      aria-describedby={['consumptionsFrom-aide', fromError ? 'consumptionsFrom-erreur' : ''].filter(Boolean).join(' ')}
+                      className={`${fieldClass} mt-1 tabular`}
+                    />
+                    <p id="consumptionsFrom-aide" className={helpClass}>
+                      Rien d’antérieur ne part : ce que le centre a déjà facturé à la main ne l’est pas deux fois.
+                      Vide : à partir d’aujourd’hui.
+                    </p>
+                    {fromError && (
+                      <p id="consumptionsFrom-erreur" role="alert" className="mt-1 text-xs text-destructive">
+                        {fromError}
+                      </p>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}

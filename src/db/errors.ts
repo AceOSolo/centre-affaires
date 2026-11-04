@@ -185,3 +185,9 @@ export const DB_PROPOSAL_REFUSED = 'CA016'
  * d'une numérisation déjà facturée.
  */
 export const DB_MAIL_REFUSED = 'CA017'
+/**
+ * Consommation transmise au CRM refusée par la base (ADR 066,
+ * `58-consommations.sql`) : instantané réécrit, passage d'état impossible,
+ * suppression.
+ */
+export const DB_CONSUMPTION_REFUSED = 'CA018'

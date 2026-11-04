@@ -3,6 +3,7 @@ import {
   boolean,
   char,
   check,
+  date,
   index,
   int,
   json,
@@ -63,6 +64,13 @@ export const crmConnections = mysqlTable(
       .$type<CrmFlowId[]>()
       .notNull()
       .default(sql.raw(`(JSON_ARRAY(${defaultEnabledFlows.map((flow) => `'${flow}'`).join(', ')}))`)),
+    /**
+     * Premier jour (calendrier du centre) des consommations facturables
+     * transmises au CRM (ADR 066). Rien d'antérieur n'est transmis : ce que le
+     * centre facturait avant à la main ne part pas une seconde fois. Posée à
+     * l'activation du flux, réglable par la direction.
+     */
+    consumptionsFrom: date('consumptions_from', { mode: 'string' }),
     updatedBy: char('updated_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     ...timestamps(),
   },

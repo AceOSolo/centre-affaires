@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 
 import { parseKey } from '../../lib/chiffrement.ts'
+import { isCalendarDate, todayIsoDate } from '../../lib/dates.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { parseCrmBaseUrl } from './adresse.ts'
@@ -34,7 +35,7 @@ const PAGE = '/reglages/crm'
 export type CrmFormState = {
   ok?: string
   message?: string
-  fieldErrors?: Partial<Record<'connector' | 'baseUrl' | 'key' | 'flows', string>>
+  fieldErrors?: Partial<Record<'connector' | 'baseUrl' | 'key' | 'flows' | 'consumptionsFrom', string>>
   values?: { connector: string; baseUrl: string }
 } | null
 
@@ -136,7 +137,18 @@ export async function saveCrmFlowsAction(_previous: CrmFormState, formData: Form
   // Un flux à venir n'est jamais coché à l'écran : il garde son état.
   const kept = view.enabledFlows.filter((flow) => !served.includes(flow))
   const flows = crmFlows.filter((flow) => asked.includes(flow) || kept.includes(flow))
-  await saveCrmFlows(flows, member.id)
+
+  // Les consommations partent à partir d'un jour (ADR 066) : celui saisi,
+  // celui déjà réglé, sinon aujourd'hui. Couper le flux garde la date.
+  const fromInput = String(formData.get('consumptionsFrom') ?? '').trim()
+  if (fromInput && !isCalendarDate(fromInput)) {
+    return { fieldErrors: { consumptionsFrom: 'Une date, au format jour/mois/année.' } }
+  }
+  const consumptionsFrom = flows.includes('consumptions')
+    ? fromInput || view.consumptionsFrom || todayIsoDate(await currentTimeZone())
+    : fromInput || view.consumptionsFrom
+
+  await saveCrmFlows(flows, member.id, consumptionsFrom)
   revalidatePath(PAGE)
   return { ok: flows.length > 0 ? 'Flux enregistrés.' : 'Flux enregistrés : tous sont coupés, le CRM ne reçoit et n’envoie plus rien.' }
 }

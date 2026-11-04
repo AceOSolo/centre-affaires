@@ -18,6 +18,7 @@ describe('test de connexion au CRM', () => {
     hasKey: true,
     keySetAt: new Date('2026-11-04T09:00:00Z'),
     enabledFlows: ['quotes', 'products'],
+    consumptionsFrom: null,
     updatedAt: new Date('2026-11-04T09:00:00Z'),
   }
   const dernierAppel: CrmExchangeRow = {
