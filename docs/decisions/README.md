@@ -71,6 +71,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 054 | [La direction, au-dessus des exploitants](054-direction-au-dessus-des-exploitants.md) | 2026-10-22 | accepté ; complète l'ADR 019 (troisième rôle `super_admin`, droit `equipe.exploitants`, migration 0006) et l'ADR 008 (amorçage en `--role super_admin`) |
 | 055 | [Photos du courrier à chaque étape du back-office](055-photos-du-courrier-a-chaque-etape.md) | 2026-10-22 | accepté ; complète les ADR 015, 037 et 044 : photos à l'enregistrement, dans la saisie groupée (une par pli), à l'ouverture, à la numérisation demandée, enveloppe ajoutée après coup depuis la fiche ou la tournée ; plusieurs photos réunies en un PDF d'une page par photo, sans migration ni dépendance |
 | 056 | [Des PDF avec les photos des états des lieux](056-pdf-dans-les-etats-des-lieux.md) | 2026-10-22 | accepté ; amende l'ADR 039 : un PDF se joint comme une photo, sur un brouillon, figé à la clôture ; dimensions facultatives (migration 0007) |
+| 064 | [Menu pliable par rayon, et l'agenda du camion dans Dolibarr](064-menu-pliable-et-agenda-du-camion-dans-dolibarr.md) | 2026-11-04 | accepté ; lot 8 de la recette du 04/11 ; complète l'ADR 053 (chaque rayon se plie, tiré de `menu.ts`, état dans un cookie lu au rendu serveur ; « Réglages », seul lien, ne se plie pas) et l'ADR 014 (code d'intégration de chaque agenda à l'écran, marche à suivre `docs/exploitation/agenda-google-dans-dolibarr.md`, agenda jamais public) ; sans migration |
 
 ## Numéros en double et numéro manquant
 
