@@ -288,6 +288,24 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
     { name: 'numero', label: 'Numéro du devis né de la demande', example: 'DV-2026-0012' },
     { ...lienCentre('le devis à relire'), example: 'https://centre.exemple/devis' },
   ],
+  // Message libre de l'équipe (ADR 060) : le modèle l'entoure, il ne le réécrit pas.
+  client_broadcast: [
+    centre,
+    client,
+    { name: 'objet', label: 'Objet saisi par l’équipe', example: 'Fermeture du centre le 11 novembre' },
+    {
+      name: 'message',
+      label: 'Texte saisi par l’équipe',
+      example:
+        'Le centre sera fermé le mercredi 11 novembre. Le courrier reçu ce jour-là sera distribué le lendemain.',
+    },
+    {
+      name: 'lien',
+      label: 'Lien vers les préférences des messages de l’espace client',
+      example: 'https://centre.exemple/compte/preferences',
+      optional: true,
+    },
+  ],
 }
 
 export type DefaultTemplate = { subject: string; body: string }
@@ -473,6 +491,15 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       '\n{{lien}}' +
       signature,
   },
+  client_broadcast: {
+    subject: '{{objet}}',
+    body:
+      'Bonjour,\n\n{{message}}' +
+      signature +
+      '\n\nVous recevez ce message en tant que client de {{centre}}. Pour ne plus recevoir ses informations, ' +
+      'décochez « Informations du centre » dans les préférences de votre espace client.' +
+      '\n{{lien}}',
+  },
 }
 
 /** Nom de l'événement à l'écran. */
@@ -497,6 +524,7 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   member_invited: 'Accès à l’espace client ouvert',
   offer_requested: 'Offre demandée depuis l’espace client',
   domiciliation_request_submitted: 'Demande de domiciliation déposée',
+  client_broadcast: 'Message du centre aux clients',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -526,6 +554,8 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
   offer_requested: 'Quand un client demande une offre depuis son espace.',
   domiciliation_request_submitted:
     'Quand une demande de domiciliation est déposée sur la page publique : son devis attend la relecture de l’accueil.',
+  client_broadcast:
+    'Quand l’équipe envoie un message libre aux domiciliés, aux clients des bureaux ou à une sélection (« Messages aux domiciliés ») : une fermeture, des travaux, un nouveau service.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {
@@ -541,6 +571,7 @@ export const notificationCategoryLabels: Record<NotificationCategory, string> = 
   contracts: 'Contrats',
   inspections: 'États des lieux',
   mail_none: 'Avis « pas de courrier »',
+  centre_info: 'Informations du centre',
 }
 
 /** Ce que chaque catégorie couvre, dit à la personne qui règle ses préférences. */
@@ -551,6 +582,7 @@ export const notificationCategoryDescriptions: Record<NotificationCategory, stri
   contracts: 'Activation d’un contrat.',
   inspections: 'État des lieux à valider.',
   mail_none: 'Un avis les jours où aucun courrier n’est arrivé pour vous.',
+  centre_info: 'Messages de l’équipe du centre : fermeture, travaux, nouveau service.',
 }
 
 export const notificationDeliveryStatusLabels: Record<NotificationDeliveryStatus, string> = {
@@ -571,4 +603,5 @@ export const notificationRelatedTypeLabels: Record<NotificationRelatedType, stri
   offer: 'Offre',
   mail_batch: 'Tournée du courrier',
   proposal: 'Devis',
+  client_broadcast: 'Message aux clients',
 }

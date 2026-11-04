@@ -28,6 +28,18 @@ DROP TRIGGER IF EXISTS notification_preferences_before_update;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS notification_preferences_before_delete;
 --> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcasts_before_insert;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcasts_before_update;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcasts_before_delete;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcast_recipients_before_insert;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcast_recipients_before_update;
+--> statement-breakpoint
+DROP TRIGGER IF EXISTS client_broadcast_recipients_before_delete;
+--> statement-breakpoint
 DROP PROCEDURE IF EXISTS purge_expired_notification_deliveries;
 --> statement-breakpoint
 DROP FUNCTION IF EXISTS notification_event_audience;
@@ -81,6 +93,7 @@ BEGIN
     WHEN 'mail_batch_received' THEN 'client'
     WHEN 'mail_none' THEN 'client'
     WHEN 'domiciliation_request_submitted' THEN 'centre'
+    WHEN 'client_broadcast' THEN 'client'
     ELSE notification_event_unknown(p_event)
   END;
 END
@@ -106,6 +119,7 @@ BEGIN
     WHEN 'inspection_to_sign' THEN 'inspections'
     WHEN 'mail_batch_received' THEN 'mail'
     WHEN 'mail_none' THEN 'mail_none'
+    WHEN 'client_broadcast' THEN 'centre_info'
     WHEN 'mail_request_submitted' THEN NULL
     WHEN 'booking_request_submitted' THEN NULL
     WHEN 'inspection_signed' THEN NULL
@@ -273,5 +287,86 @@ BEGIN
   IF @app_notification_purge IS NULL AND COALESCE(@app_anonymization, '') <> 'on' THEN
     SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
       MESSAGE_TEXT = 'Une préférence se change, elle ne se supprime pas.';
+  END IF;
+END
+--> statement-breakpoint
+
+-- ---------------------------------------------------------------------------
+-- 5. Messages groupés aux clients (ADR 060) : back-office seul, sans suppression
+-- ---------------------------------------------------------------------------
+-- Ce que l'équipe a dit à ses clients, et à qui : l'historique se garde
+-- (décision 6). Une entreprise servie ne se remet pas en attente.
+CREATE TRIGGER client_broadcasts_before_insert
+BEFORE INSERT ON client_broadcasts
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Les messages aux clients sont réservés au back-office.';
+  END IF;
+END
+--> statement-breakpoint
+
+CREATE TRIGGER client_broadcasts_before_update
+BEFORE UPDATE ON client_broadcasts
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Les messages aux clients sont réservés au back-office.';
+  END IF;
+  IF NOT (NEW.subject <=> OLD.subject) OR NOT (NEW.body <=> OLD.body)
+     OR NOT (NEW.target <=> OLD.target) OR NOT (NEW.created_by <=> OLD.created_by) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CA017: Un message envoyé ne se réécrit pas.';
+  END IF;
+END
+--> statement-breakpoint
+
+CREATE TRIGGER client_broadcasts_before_delete
+BEFORE DELETE ON client_broadcasts
+FOR EACH ROW
+BEGIN
+  IF COALESCE(@app_anonymization, '') <> 'on' THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Un message envoyé reste dans l''historique : il ne se supprime pas.';
+  END IF;
+END
+--> statement-breakpoint
+
+CREATE TRIGGER client_broadcast_recipients_before_insert
+BEFORE INSERT ON client_broadcast_recipients
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Les messages aux clients sont réservés au back-office.';
+  END IF;
+END
+--> statement-breakpoint
+
+CREATE TRIGGER client_broadcast_recipients_before_update
+BEFORE UPDATE ON client_broadcast_recipients
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Les messages aux clients sont réservés au back-office.';
+  END IF;
+  IF NOT (NEW.broadcast_id <=> OLD.broadcast_id) OR NOT (NEW.client_id <=> OLD.client_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CA017: Un destinataire reste celui de son message.';
+  END IF;
+  IF OLD.status <> 'pending' AND NOT (NEW.status <=> OLD.status) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'CA017: Une entreprise servie ne se remet pas en attente.';
+  END IF;
+END
+--> statement-breakpoint
+
+CREATE TRIGGER client_broadcast_recipients_before_delete
+BEFORE DELETE ON client_broadcast_recipients
+FOR EACH ROW
+BEGIN
+  IF COALESCE(@app_anonymization, '') <> 'on' THEN
+    SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Un message envoyé reste dans l''historique : il ne se supprime pas.';
   END IF;
 END

@@ -791,3 +791,52 @@ BEGIN
       MESSAGE_TEXT = 'Écriture refusée : ce courrier n''appartient pas à votre entreprise.';
   END IF;
 END;
+--> statement-breakpoint
+
+-- Catégories personnelles du classement (ADR 060) : même portée que le
+-- classement. La clé étrangère tient la personne dans son entreprise ; les
+-- triggers refusent une entreprise hors de la portée, et une catégorie reste
+-- celle de sa personne (le classement la vise par cette personne).
+DROP TRIGGER IF EXISTS mail_member_categories_before_insert;
+--> statement-breakpoint
+CREATE TRIGGER mail_member_categories_before_insert
+BEFORE INSERT ON mail_member_categories
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND NOT FIND_IN_SET(NEW.client_id, @app_client_ids) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : cette catégorie n''appartient pas à votre entreprise.';
+  END IF;
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_member_categories_before_update;
+--> statement-breakpoint
+CREATE TRIGGER mail_member_categories_before_update
+BEFORE UPDATE ON mail_member_categories
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND (
+       NOT FIND_IN_SET(OLD.client_id, @app_client_ids)
+       OR NOT FIND_IN_SET(NEW.client_id, @app_client_ids)) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : cette catégorie n''appartient pas à votre entreprise.';
+  END IF;
+  IF NOT (NEW.client_id <=> OLD.client_id) OR NOT (NEW.client_member_id <=> OLD.client_member_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA017: Une catégorie reste celle de sa personne.';
+  END IF;
+END;
+--> statement-breakpoint
+
+DROP TRIGGER IF EXISTS mail_member_categories_before_delete;
+--> statement-breakpoint
+CREATE TRIGGER mail_member_categories_before_delete
+BEFORE DELETE ON mail_member_categories
+FOR EACH ROW
+BEGIN
+  IF @app_client_ids IS NOT NULL AND NOT FIND_IN_SET(OLD.client_id, @app_client_ids) THEN
+    SIGNAL SQLSTATE '42501' SET MYSQL_ERRNO = 1142,
+      MESSAGE_TEXT = 'Écriture refusée : cette catégorie n''appartient pas à votre entreprise.';
+  END IF;
+END;

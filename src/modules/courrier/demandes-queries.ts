@@ -31,6 +31,7 @@ import {
   type ForwardAddress,
   type PagePricing,
 } from './demandes-regles.ts'
+import { isCustomCategoryId } from './categories-perso-regles.ts'
 import type { MailClassification } from './classement-regles.ts'
 import type { ScanFile } from './fichiers.ts'
 import { discard, scanRows, store, type StoredScan } from './queries.ts'
@@ -252,6 +253,7 @@ function cardSelection() {
     stateReadAt: mailItemMemberStates.readAt,
     stateHandledAt: mailItemMemberStates.handledAt,
     stateCategory: mailItemMemberStates.category,
+    stateCustomCategoryId: mailItemMemberStates.customCategoryId,
     stateTags: mailItemMemberStates.tags,
     envelopeScanId: latestScan('envelope', 'id'),
     envelopeContentType: latestScan('envelope', 'content_type'),
@@ -268,10 +270,18 @@ type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'conten
   stateReadAt: Date | null
   stateHandledAt: Date | null
   stateCategory: MailCategory | null
+  stateCustomCategoryId: string | null
   stateTags: string[] | null
 }
 
-const toCard = ({ stateReadAt, stateHandledAt, stateCategory, stateTags, ...row }: CardRow): ClientMailCard => {
+const toCard = ({
+  stateReadAt,
+  stateHandledAt,
+  stateCategory,
+  stateCustomCategoryId,
+  stateTags,
+  ...row
+}: CardRow): ClientMailCard => {
   const requests = splitPending(row.pendingRequests)
   return {
     ...row,
@@ -282,6 +292,7 @@ const toCard = ({ stateReadAt, stateHandledAt, stateCategory, stateTags, ...row 
       readAt: stateReadAt,
       handledAt: stateHandledAt,
       category: stateCategory,
+      customCategoryId: stateCustomCategoryId,
       tags: Array.isArray(stateTags) ? stateTags : [],
     },
   }
@@ -304,12 +315,16 @@ function mailFilterWhere(
     'a-traiter': sql`not ${classified(sql`s.handled_at is not null`)}`,
     traites: classified(sql`s.handled_at is not null`),
   } as const
+  // Une catégorie de départ par sa clé, une catégorie personnelle par son
+  // identifiant (ADR 060) ; « non classé » : ni l'une ni l'autre.
   const category =
     filters.category === 'non-classe'
-      ? sql`not ${classified(sql`s.category is not null`)}`
-      : filters.category
-        ? classified(sql`s.category = ${filters.category}`)
-        : undefined
+      ? sql`not ${classified(sql`(s.category is not null or s.custom_category_id is not null)`)}`
+      : filters.category && isCustomCategoryId(filters.category)
+        ? classified(sql`s.custom_category_id = ${filters.category}`)
+        : filters.category
+          ? classified(sql`s.category = ${filters.category}`)
+          : undefined
   const forwarded = sql`exists (
     select 1 from mail_requests as r
      where r.tenant_id = ${mailItems.tenantId} and r.mail_item_id = ${mailItems.id}

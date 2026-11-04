@@ -41,8 +41,10 @@ import {
   classificationDoneMessage,
   followUpFilters,
   followUpLabels,
+  type CategoryFilter,
 } from '../../../../modules/courrier/classement-regles.ts'
 import { mailCategories } from '../../../../modules/courrier/categories.ts'
+import { categoryName } from '../../../../modules/courrier/categories-perso-regles.ts'
 import { mailKinds, type MailStatus } from '../../../../modules/courrier/schema.ts'
 
 export const metadata = { title: 'Ma boîte aux lettres' }
@@ -93,6 +95,7 @@ export default async function BoiteAuxLettresPage({
   const done = typeof params.classe === 'string' ? /^([a-z-]+)-(\d+)$/.exec(params.classe) : null
   const retention = tenant.mailScanRetentionMonths
   const several = accounts.length > 1
+  const clientNames = new Map(accounts.map((account) => [account.clientId, account.clientName]))
   const pages = pageCount(mail.total, CLIENT_MAIL_PAGE_SIZE)
   const filtered = Boolean(
     filters.kind || filters.from || filters.to || filters.state || filters.category || filters.followUp || filters.tag,
@@ -134,7 +137,7 @@ export default async function BoiteAuxLettresPage({
       )}
 
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-      <MailFolders folders={folders} filters={filters} />
+      <MailFolders folders={folders} filters={filters} clientNames={several ? clientNames : undefined} />
       <div className="flex min-w-0 flex-col gap-6">
       {/* Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
       <form className="grid max-w-3xl gap-3 rounded-lg border border-border bg-muted p-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Filtrer le courrier">
@@ -218,6 +221,10 @@ export default async function BoiteAuxLettresPage({
           <SelectionBar
             returnQuery={clientMailQuery(filters, page)}
             knownTags={folders.tags.map((entry) => entry.tag)}
+            customCategories={folders.custom.map((entry) => ({
+              id: entry.id,
+              name: several ? `${entry.name} (${clientNames.get(entry.clientId) ?? ''})` : entry.name,
+            }))}
           />
           <ul className="flex max-w-3xl flex-col gap-4">
             {mail.rows.map((item) => (
@@ -227,6 +234,7 @@ export default async function BoiteAuxLettresPage({
                   timeZone={timeZone}
                   showClient={several}
                   openingAnnouncement={openingAnnouncement(item.clientId)}
+                  category={categoryName(item.classification, folders.custom)}
                 />
               </li>
             ))}
@@ -273,7 +281,16 @@ export default async function BoiteAuxLettresPage({
  * la personne, chacune avec son nombre de plis. Liens simples : la rubrique
  * est dans l'URL, la page se partage et se recharge.
  */
-function MailFolders({ folders, filters }: { folders: MailFolderCounts; filters: ClientMailFilters }) {
+function MailFolders({
+  folders,
+  filters,
+  clientNames,
+}: {
+  folders: MailFolderCounts
+  filters: ClientMailFilters
+  /** Plusieurs entreprises : chaque catégorie personnelle dit la sienne. */
+  clientNames?: Map<string, string>
+}) {
   const base = { kind: filters.kind, from: filters.from, to: filters.to, state: filters.state }
   const link = (next: ClientMailFilters) => `/compte/courrier${clientMailQuery({ ...base, ...next })}`
   const all = !filters.category && !filters.followUp && !filters.tag
@@ -297,20 +314,52 @@ function MailFolders({ folders, filters }: { folders: MailFolderCounts; filters:
         ))}
       </FolderGroup>
       <FolderGroup title="Catégories">
-        {categories.length === 0 ? (
+        {categories.length === 0 && folders.custom.length === 0 ? (
           <li className="px-3 text-muted-foreground">Rangez vos courriers : cochez-les, puis « Classer ».</li>
         ) : (
-          categories.map((category) => (
-            <FolderLink
-              key={category}
-              href={link({ category, followUp: filters.followUp })}
-              active={filters.category === category}
-              label={category === 'non-classe' ? 'Non classé' : mailCategoryLabels[category]}
-              count={folders.byCategory[category].total}
-              unread={folders.byCategory[category].unread}
-            />
-          ))
+          <>
+            {categories
+              .filter((category) => category !== 'non-classe')
+              .map((category) => (
+                <FolderLink
+                  key={category}
+                  href={link({ category, followUp: filters.followUp })}
+                  active={filters.category === category}
+                  label={mailCategoryLabels[category]}
+                  count={folders.byCategory[category].total}
+                  unread={folders.byCategory[category].unread}
+                />
+              ))}
+            {/* Les catégories de la personne (ADR 060), toujours montrées : elle les a créées. */}
+            {folders.custom.map((entry) => (
+              <FolderLink
+                key={entry.id}
+                href={link({ category: entry.id as CategoryFilter, followUp: filters.followUp })}
+                active={filters.category === entry.id}
+                label={clientNames ? `${entry.name} (${clientNames.get(entry.clientId) ?? ''})` : entry.name}
+                count={entry.total}
+                unread={entry.unread}
+              />
+            ))}
+            {categories.includes('non-classe') && (
+              <FolderLink
+                href={link({ category: 'non-classe', followUp: filters.followUp })}
+                active={filters.category === 'non-classe'}
+                label="Non classé"
+                count={folders.byCategory['non-classe'].total}
+                unread={folders.byCategory['non-classe'].unread}
+              />
+            )}
+          </>
         )}
+        <li>
+          <Link
+            href="/compte/courrier/categories"
+            className="flex min-h-11 items-center gap-2 rounded-md px-3 font-medium text-primary underline-offset-2 hover:underline"
+          >
+            Gérer mes catégories
+          </Link>
+        </li>
       </FolderGroup>
       {folders.tags.length > 0 && (
         <FolderGroup title="Étiquettes">
@@ -375,11 +424,14 @@ function MailCard({
   timeZone,
   showClient,
   openingAnnouncement,
+  category,
 }: {
   item: ClientMailCard
   timeZone: string
   showClient: boolean
   openingAnnouncement: string
+  /** Nom de la catégorie du pli, de départ ou personnelle ; nul : non classé. */
+  category: string | null
 }) {
   const StatusIcon = statusIcons[item.status]
   const KindIcon = mailKindIcons[item.kind]
@@ -445,11 +497,9 @@ function MailCard({
             {item.sender ?? 'Expéditeur non précisé'}
           </h2>
           <p className="text-sm text-muted-foreground tabular">Reçu le {formatDateTime(item.receivedAt, timeZone)}</p>
-          {(item.classification.category || item.classification.tags.length > 0) && (
+          {(category || item.classification.tags.length > 0) && (
             <p className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
-              {item.classification.category && (
-                <span className="font-medium text-primary">{mailCategoryLabels[item.classification.category]}</span>
-              )}
+              {category && <span className="font-medium text-primary">{category}</span>}
               {item.classification.tags.map((tag) => (
                 <span key={tag} className="rounded-full bg-muted px-2 py-0.5 text-foreground">
                   {tag}

@@ -53,6 +53,7 @@ export const config = {
     '/etats-des-lieux/:path*',
     '/indicateurs/:path*',
     '/notifications/:path*',
+    '/messages/:path*',
     '/equipe/:path*',
     '/comptes/:path*',
     '/configuration/:path*',

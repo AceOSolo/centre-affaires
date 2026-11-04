@@ -89,7 +89,13 @@ describe('classement du courrier côté client', { skip: raisonDeSaut }, () => {
     assert.deepEqual(vuParJeanne?.classification.tags, ['à payer'])
 
     const vuParJules = await findMailForAccounts(impots, jules)
-    assert.deepEqual(vuParJules?.classification, { readAt: null, handledAt: null, category: null, tags: [] })
+    assert.deepEqual(vuParJules?.classification, {
+      readAt: null,
+      handledAt: null,
+      category: null,
+      customCategoryId: null,
+      tags: [],
+    })
   })
 
   it('ignore le courrier d’une autre entreprise, même désigné par son identifiant', async () => {

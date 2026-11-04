@@ -611,6 +611,12 @@ BEGIN
      SET tags = JSON_ARRAY()
    WHERE tenant_id = v_tenant AND client_id = p_client_id AND JSON_LENGTH(tags) > 0;
 
+  -- Noms des catégories personnelles (ADR 060) : texte libre, comme les
+  -- étiquettes. Le classement reste, sous un nom neutre et unique.
+  UPDATE mail_member_categories
+     SET name = CONCAT('Catégorie ', RIGHT(id, 12))
+   WHERE tenant_id = v_tenant AND client_id = p_client_id;
+
   UPDATE mail_requests
      SET client_note = NULL,
          forward_recipient = CASE WHEN kind = 'forward' THEN 'Destinataire anonymisé' END,
@@ -835,6 +841,10 @@ BEGIN
       UPDATE mail_item_member_states
          SET tags = JSON_ARRAY()
        WHERE tenant_id = v_ctx AND client_member_id = p_id AND JSON_LENGTH(tags) > 0;
+      -- Et les noms de ses catégories personnelles (ADR 060).
+      UPDATE mail_member_categories
+         SET name = CONCAT('Catégorie ', RIGHT(id, 12))
+       WHERE tenant_id = v_ctx AND client_member_id = p_id;
     END IF;
   ELSE
     UPDATE staff_members
