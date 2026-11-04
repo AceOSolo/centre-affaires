@@ -5,7 +5,7 @@
 (un produit de devis de plus), 049 (`tarif.materiel.<unité>`), 053 (un rayon
 de plus), 061 (le matériel se demande sur plusieurs jours) et 063 (une option
 est une occupation comme une autre) ; tient les décisions 2 et 3 de
-`CLAUDE.md`. Migration de structure 0010 (numéro à reprendre à la fusion).
+`CLAUDE.md`. Migration de structure 0011.
 Prix, durée maximale, questionnaire et modèle d'état des lieux **à valider
 par l'exploitation**.
 
@@ -24,7 +24,7 @@ Chaque appareil a son planning : jamais loué deux fois.
 part**). Il est ajouté **en fin de liste** : MySQL allonge l'enum sans
 réécrire les tables. La même liste sert aux cinq colonnes qui portent un type
 de ressource (`resources`, `rate_plan_items`, `offer_items`,
-`contract_lines`, `inspection_templates`) : la migration 0010 les modifie
+`contract_lines`, `inspection_templates`) : la migration 0011 les modifie
 toutes.
 
 Ses attributs (`attributes`, validés par `ressources/attributs.ts`) :
@@ -52,7 +52,7 @@ réglable dans Disponibilités, où le réglage apparaît seul.
 ### 3. Seul : un produit de devis à lui
 
 Le matériel loué seul passe par **son propre produit de devis**,
-`materiel` (`proposals.product`, migration 0010), et non par « espace » ou
+`materiel` (`proposals.product`, migration 0011), et non par « espace » ou
 « véhicule » : leurs questions (participants, permis B) n'ont pas de sens
 pour une télévision, et Dolibarr doit pouvoir le ranger à part. Ses
 questions (`questionnaires.ts`, à valider) : où il sert (dans le centre ou
@@ -201,7 +201,7 @@ code ne la ferme que par une liste d'un élément.
 
 ## Conséquences
 
-- **Migration 0010** (structure, drizzle-kit) : l'enum des types de ressource
+- **Migration 0011** (structure, drizzle-kit) : l'enum des types de ressource
   (cinq colonnes) et celui des produits de devis s'allongent ;
   `bookings.parent_booking_id`, sa clé étrangère, son index et sa
   contrainte. Éprouvée sur une base neuve et sur une base migrée avec des

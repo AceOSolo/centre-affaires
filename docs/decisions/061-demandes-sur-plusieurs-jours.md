@@ -2,7 +2,7 @@
 
 **Date** : 2026-11-04
 **Statut** : accepté — complète les ADR 005, 023 et 036 ; remplace la limite
-de huit heures de la page publique ; migration 0008. Règle tarifaire et
+de huit heures de la page publique ; migration 0009. Règle tarifaire et
 valeurs par défaut **à valider par l'exploitation**.
 
 ## Contexte
@@ -226,7 +226,7 @@ formulaire montre (jour du début, jour de fin).
 
 ## Conséquences
 
-- **Migration 0008** : `tenants.booking_max_days`, JSON, `{}` par défaut. Sans
+- **Migration 0009** : `tenants.booking_max_days`, JSON, `{}` par défaut. Sans
   réglage, les valeurs par défaut s'appliquent.
 - Une salle demandée du vendredi au lundi paie le week-end (quatre journées,
   ou la semaine si elle est moins chère). Le client qui n'en veut pas fait deux

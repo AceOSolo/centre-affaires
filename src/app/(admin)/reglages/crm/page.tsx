@@ -16,6 +16,7 @@ import {
 } from '../../../../modules/crm/connexion-crm-forms.tsx'
 import { crmFlowDefinitions, crmFlowDirectionLabels, crmFlows } from '../../../../modules/crm/flux.ts'
 import { CrmExchangesTable } from '../../../../modules/crm/journal-echanges.tsx'
+import { consumptionCounts } from '../../../../modules/crm/consommations-queries.ts'
 import { crmConnectionView, listCrmExchanges } from '../../../../modules/crm/queries.ts'
 
 export const metadata = { title: 'Connexion au CRM' }
@@ -28,10 +29,11 @@ export const metadata = { title: 'Connexion au CRM' }
  */
 export default async function ConnexionCrmPage() {
   await requirePermission('crm.gerer')
-  const [view, exchanges, timeZone] = await Promise.all([
+  const [view, exchanges, timeZone, counts] = await Promise.all([
     crmConnectionView(),
     listCrmExchanges(30),
     currentTimeZone(),
+    consumptionCounts(),
   ])
   const connector = crmConnectors[view.connector]
   const serverTokenSet = Boolean(connector.legacyTokenEnv && process.env[connector.legacyTokenEnv])
@@ -136,11 +138,17 @@ export default async function ConnexionCrmPage() {
             Flux échangés
           </h2>
           <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-            Un flux coupé est refusé au CRM, avec un message qui dit où le rouvrir. Les flux « à venir »
-            s’ouvriront quand le site saura les servir.
+            Un flux coupé est refusé au CRM, avec un message qui dit où le rouvrir. N’ouvrez un flux
+            qu’une fois le connecteur du CRM prêt à le servir : le développeur du CRM le dit.
           </p>
         </div>
-        <CrmFlowsForm flows={flows} />
+        <CrmFlowsForm flows={flows} consumptionsFrom={view.consumptionsFrom} />
+        {counts.ready + counts.sent + counts.cancelled > 0 && (
+          <p className="text-sm text-muted-foreground tabular">
+            Consommations : {counts.ready} prête{counts.ready > 1 ? 's' : ''} à reprendre, {counts.sent} reprise
+            {counts.sent > 1 ? 's' : ''} par le CRM, {counts.cancelled} annulée{counts.cancelled > 1 ? 's' : ''}.
+          </p>
+        )}
       </section>
 
       <section aria-labelledby="crm-test" className={section}>

@@ -53,6 +53,8 @@ import {
   bookingStatusLabels,
 } from '../../../../modules/reservations/labels.ts'
 import { formatCentreDay } from '../../../../modules/rgpd/affichage.ts'
+import { crmOriginOf } from '../../../../modules/crm/liens.ts'
+import { CrmOriginRow } from '../../../../modules/crm/origine-crm.tsx'
 import { ClientRetentionSection } from '../../../../modules/rgpd/client-section.tsx'
 
 export const metadata = { title: 'Client' }
@@ -87,7 +89,7 @@ export default async function ClientPage({
   const client = await findClient(id)
   if (!client) notFound()
 
-  const [contracts, members, contacts, history, timeZone, clientProposals] = await Promise.all([
+  const [contracts, members, contacts, history, timeZone, clientProposals, crmOrigin] = await Promise.all([
     listContracts({ clientId: client.id }),
     listClientMembers(client.id),
     listClientContacts(client.id),
@@ -95,6 +97,8 @@ export default async function ClientPage({
     currentTimeZone(),
     // La commande du client, de son devis à son contrat (ADR 048).
     can(staff.role, 'demandes.traiter') ? listProposals({ clientId: client.id, limit: 20 }) : null,
+    // Fiche tenue par le CRM (ADR 066).
+    crmOriginOf('client', client.id),
   ])
   // État de chaque accès : actif, ou invité et ce qu'est devenue l'invitation (ADR 059).
   const invitations = await latestInvitations(members.filter((member) => !member.authUserId).map((member) => member.id))
@@ -184,6 +188,13 @@ export default async function ClientPage({
 
         <dt className="text-muted-foreground">Téléphone</dt>
         <dd>{client.phone ?? '—'}</dd>
+
+        <CrmOriginRow
+          origin={crmOrigin}
+          timeZone={timeZone}
+          object="Tiers"
+          held="Raison sociale, SIRET, coordonnées, adresse, statut et contacts reçus"
+        />
 
         {client.notes && (
           <>

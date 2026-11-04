@@ -44,7 +44,8 @@ src/
     courrier/
     etats-des-lieux/
     crm/            connexion au CRM du centre : connecteurs (Dolibarr d'abord),
-                    jeton, flux, journal (ADR 065) ; le format de chaque
+                    jeton, flux, journal (ADR 065), liens des fiches reçues et
+                    registre des consommations (ADR 066) ; le format de chaque
                     échange reste dans le domaine de ses données
   db/
     migrations/
@@ -132,7 +133,8 @@ prélèvements, relances et export comptable sont dans Dolibarr ; le site garde
 l'opérationnel et fait la passerelle, par une API à lui que le connecteur
 Dolibarr appelle (`/api/dolibarr/*`, `docs/integrations/dolibarr.md`) :
 devis vers Dolibarr (ADR 043), produits et tarifs depuis Dolibarr (ADR 049) ;
-consommations facturables, tiers et contrats sont la seconde tranche, à venir.
+tiers et contrats depuis Dolibarr, consommations facturables vers Dolibarr
+(seconde tranche, ADR 066 : des données transmises, jamais des factures).
 Jeton, flux et journal se règlent par centre dans Réglages > Connexion au CRM
 (direction, ADR 065) ; toute route d'un CRM passe par `serveCrmCall`.
 Les droits de facturation ne sont accordés à aucun rôle et

@@ -183,6 +183,8 @@ export type CrmConnectionView = {
   hasKey: boolean
   keySetAt: Date | null
   enabledFlows: CrmFlowId[]
+  /** Premier jour des consommations transmises (ADR 066), jour du centre. */
+  consumptionsFrom: string | null
   updatedAt: Date | null
 }
 
@@ -200,6 +202,7 @@ export async function crmConnectionView(): Promise<CrmConnectionView> {
         hasKey: sql<number>`${crmConnections.outboundKeySealed} is not null`,
         keySetAt: crmConnections.outboundKeySetAt,
         enabledFlows: crmConnections.enabledFlows,
+        consumptionsFrom: crmConnections.consumptionsFrom,
         updatedAt: crmConnections.updatedAt,
       })
       .from(crmConnections)
@@ -221,6 +224,7 @@ export async function crmConnectionView(): Promise<CrmConnectionView> {
       hasKey: false,
       keySetAt: null,
       enabledFlows: readEnabledFlows(undefined),
+      consumptionsFrom: null,
       updatedAt: null,
     }
   }
@@ -235,6 +239,7 @@ export async function crmConnectionView(): Promise<CrmConnectionView> {
     hasKey: Boolean(Number(row.hasKey)),
     keySetAt: row.keySetAt,
     enabledFlows: readEnabledFlows(row.enabledFlows),
+    consumptionsFrom: row.consumptionsFrom,
     updatedAt: row.updatedAt,
   }
 }
@@ -301,8 +306,19 @@ export async function removeCrmToken(staffMemberId: string): Promise<void> {
   })
 }
 
-export async function saveCrmFlows(flows: readonly CrmFlowId[], staffMemberId: string): Promise<void> {
-  await upsertConnection(staffMemberId, { enabledFlows: [...flows] })
+/**
+ * Flux activés et, si elle est donnée, date de départ des consommations
+ * (ADR 066). `consumptionsFrom` : `undefined` la garde telle quelle.
+ */
+export async function saveCrmFlows(
+  flows: readonly CrmFlowId[],
+  staffMemberId: string,
+  consumptionsFrom?: string | null,
+): Promise<void> {
+  await upsertConnection(staffMemberId, {
+    enabledFlows: [...flows],
+    ...(consumptionsFrom === undefined ? {} : { consumptionsFrom }),
+  })
 }
 
 /** Adresse et clé en clair, pour le test de connexion. Jamais pour l'affichage. */

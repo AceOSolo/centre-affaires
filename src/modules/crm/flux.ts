@@ -14,9 +14,8 @@
 /**
  * Identifiants techniques, en anglais comme les autres valeurs de la base.
  * L'ordre est celui de l'écran. Les trois derniers sont la seconde tranche de
- * la passerelle (ADR 046 § 5, lot 10 de la recette du 04/11) : présents dès
- * maintenant dans l'énumération du journal, pour que leur arrivée ne demande
- * pas de migration.
+ * la passerelle (ADR 046 § 5, ADR 066) : coupés tant que la direction ne les
+ * ouvre pas à l'écran, une fois le connecteur du CRM prêt.
  */
 export const crmFlows = ['quotes', 'products', 'third_parties', 'contracts', 'consumptions'] as const
 export type CrmFlowId = (typeof crmFlows)[number]
@@ -53,19 +52,22 @@ export const crmFlowDefinitions: Record<CrmFlowId, CrmFlowDefinition> = {
   },
   third_parties: {
     label: 'Tiers',
-    description: 'Les entreprises clientes et leurs contacts, tenus dans le CRM.',
+    description:
+      'Les entreprises clientes et leurs contacts, tenus dans le CRM : le site crée ou rapproche ses fiches (même SIRET), et reprend raison sociale, coordonnées et statut.',
     direction: 'from_crm',
     enabledByDefault: false,
   },
   contracts: {
     label: 'Contrats',
-    description: 'Les contrats en cours : qui occupe quel bureau, qui est domicilié.',
+    description:
+      'Les contrats du CRM : qui occupe quel bureau ou quelle boîte aux lettres, qui est domicilié, du … au …. L’occupation suit au planning.',
     direction: 'from_crm',
     enabledByDefault: false,
   },
   consumptions: {
     label: 'Consommations facturables',
-    description: 'Les actes du courrier, les pages en plus et les réservations hors contrat, à facturer dans le CRM.',
+    description:
+      'Ce que le centre a fait pour ses clients, que le CRM facture : réservations sans devis (salles, bureaux, camion, matériel…), ouvertures, numérisations, réexpéditions et pages en plus du courrier. Le site ne facture rien.',
     direction: 'to_crm',
     enabledByDefault: false,
   },

@@ -192,3 +192,10 @@ export const DB_MAIL_REFUSED = 'CA017'
  * principale annulée avant son matériel.
  */
 export const DB_OPTION_REFUSED = 'CA018'
+
+/**
+ * Consommation transmise au CRM refusée par la base (ADR 066,
+ * `58-consommations.sql`) : instantané réécrit, passage d'état impossible,
+ * suppression.
+ */
+export const DB_CONSUMPTION_REFUSED = 'CA019'

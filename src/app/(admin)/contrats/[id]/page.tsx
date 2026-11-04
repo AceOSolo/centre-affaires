@@ -45,6 +45,8 @@ import {
 import { findContract, findContractOccupation } from '../../../../modules/contrats/queries.ts'
 import { listContractRenewals } from '../../../../modules/contrats/reconduction-queries.ts'
 import { listContractSubscriptions } from '../../../../modules/contrats/souscriptions.ts'
+import { crmOriginOf } from '../../../../modules/crm/liens.ts'
+import { CrmOriginRow } from '../../../../modules/crm/origine-crm.tsx'
 import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
 import { TerminateForm } from '../../../../modules/contrats/terminate-form.tsx'
 import {
@@ -84,7 +86,7 @@ export default async function ContractPage({
   const { id } = await params
   const { fait } = await searchParams
   if (!isUuid(id)) notFound()
-  const [contract, occupation, tenant, terms, amendments, documents, subscriptions, occupations, renewals] =
+  const [contract, occupation, tenant, terms, amendments, documents, subscriptions, occupations, renewals, crmOrigin] =
     await Promise.all([
       findContract(id),
       findContractOccupation(id),
@@ -95,6 +97,8 @@ export default async function ContractPage({
       listContractSubscriptions(id),
       listContractOccupations(id),
       listContractRenewals(id),
+      // Contrat tenu par le CRM (ADR 066).
+      crmOriginOf('contract', id),
     ])
   if (!contract) notFound()
   const timeZone = tenant.timezone
@@ -328,6 +332,13 @@ export default async function ContractPage({
             <dd className="whitespace-pre-line">{contract.notes}</dd>
           </>
         )}
+
+        <CrmOriginRow
+          origin={crmOrigin}
+          timeZone={timeZone}
+          object="Contrat"
+          held="Type, période, résiliation, ressource et prix"
+        />
       </dl>
 
       <section aria-labelledby="lignes-title" className="flex flex-col gap-3">
