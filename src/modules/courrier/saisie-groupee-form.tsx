@@ -1,40 +1,48 @@
 'use client'
 
-import { useActionState, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react'
+import {
+  startTransition,
+  useActionState,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type DragEvent,
+  type KeyboardEvent,
+} from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
-import { useTransferSupport, type PhotoPage } from './photos-field.tsx'
+import { SenderDatalist } from './expediteur-form.tsx'
+import { MAX_SENDER_LENGTH, senderListId, suggestionsFor, type SenderSuggestions } from './expediteurs.ts'
+import { CameraIcon, mailKindIcons } from './icones.tsx'
+import { mailKindLabels } from './labels.ts'
+import { preparePhoto, type PhotoPage } from './photos-field.tsx'
 import type { MailRecipient } from './saisie-groupee.ts'
-import { registerMailCountsAction, type MailCountsFormState } from './saisie-groupee-actions.ts'
-import { RowPhotos } from './saisie-groupee-photos.tsx'
-import {
-  countFieldName,
-  envelopeSlots,
-  MAX_ENTRY_PHOTOS_BYTES,
-  MAX_PER_CELL,
-  photoFieldName,
-  type MailCount,
-} from './saisie-groupee-regles.ts'
+import { registerMailEntryAction, type MailEntryFormState } from './saisie-groupee-actions.ts'
+import { entryFieldName, groupEntry, MAX_ENTRY_PHOTOS_BYTES, MAX_PER_ENTRY } from './saisie-groupee-regles.ts'
 import { mailKinds, type MailKind } from './schema.ts'
+import { mailKindsPhrase } from './tournees-regles.ts'
+
+/** Un pli de la saisie, tant qu'il n'est pas enregistré. */
+type Draft = {
+  key: number
+  clientId: string
+  kind: MailKind
+  sender: string
+  /** Photo de l'enveloppe, déjà compressée ; nulle pour un pli sans photo. */
+  photo: PhotoPage | null
+}
+
+/** Entreprises proposées à la fois : au-delà, la recherche se précise. */
+const MAX_RESULTS = 6
 
 const fieldClass =
-  'rounded-sm border border-border bg-white px-3 py-2 text-sm outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive'
-const cellClass =
-  'w-14 rounded-sm border border-border bg-white px-2 py-1 text-right text-sm tabular outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive'
-
-const columnLabels: Record<MailKind, string> = {
-  lettre: 'Lettres',
-  recommande: 'Recommandés',
-  colis: 'Colis',
-  autre: 'Autres',
-}
-
-const pluralKind: Record<MailKind, [string, string]> = {
-  lettre: ['lettre', 'lettres'],
-  recommande: ['recommandé', 'recommandés'],
-  colis: ['colis', 'colis'],
-  autre: ['autre', 'autres'],
-}
+  'rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive sm:text-sm'
+// Cibles de 44 px : l'écran sert au téléphone et à la tablette, pendant le tri.
+const choiceClass =
+  'flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border bg-white px-3 py-2 text-sm hover:bg-muted has-[:checked]:border-primary has-[:checked]:bg-accent/10 has-[:checked]:font-medium has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring'
+const actionClass =
+  'relative inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring disabled:cursor-not-allowed disabled:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50'
 
 const fold = (value: string) =>
   value
@@ -42,413 +50,573 @@ const fold = (value: string) =>
     .replace(/[̀-ͯ]/g, '')
     .toLowerCase()
 
-const countOf = (value: string | undefined) => {
-  const n = Number(value)
-  return Number.isInteger(n) && n > 0 ? n : 0
-}
+const plural = (count: number, word: string, many = `${word}s`) => `${count} ${count > 1 ? many : word}`
+
+/** « 2 lettres », « 1 colis » : un seul type. */
+const kindPhrase = (kind: MailKind, count: number) =>
+  mailKindsPhrase({ ...(Object.fromEntries(mailKinds.map((k) => [k, 0])) as Record<MailKind, number>), [kind]: count })
 
 /**
- * Saisie groupée de la tournée : une ligne par entreprise, une case par type
- * de pli. Pensée pour le clavier : taper le nom ou la boîte, Entrée, le
- * nombre, Entrée — et l'on revient à la recherche pour l'entreprise suivante.
- * Les flèches haut et bas passent d'une ligne à l'autre dans la même colonne.
+ * Saisie groupée du courrier (ADR 058) : **une photo = un pli**, sans double
+ * saisie. Entreprise, type, puis les photos des enveloppes — chacune crée un
+ * pli de ce type pour cette entreprise —, et ainsi de suite pour la suivante.
+ * Le récapitulatif dit « ACME : 3 lettres et 1 colis », permet de retirer un
+ * pli et de préciser son expéditeur ; tout part en un seul envoi.
+ *
+ * Les photos sont compressées dans le navigateur (`preparePhoto`, ADR 055)
+ * et gardées ici jusqu'à l'envoi : un envoi refusé ne perd rien. Au clavier :
+ * le nom ou le numéro de boîte, `Entrée` choisit la première entreprise et
+ * passe au type, `Tab` mène aux photos, `Ctrl`+`Entrée` enregistre tout.
  */
-export function MailCountsForm({
+export function MailEntryForm({
   recipients,
+  suggestions,
   defaultReceivedAt,
 }: {
   recipients: MailRecipient[]
+  suggestions: SenderSuggestions
   /** Heure murale du centre, au format `datetime-local`. */
   defaultReceivedAt: string
 }) {
-  const [state, formAction, pending] = useActionState<MailCountsFormState, FormData>(
-    registerMailCountsAction,
-    null,
-  )
-  // Photos des enveloppes, par entreprise (ADR 055) : gardées ici, hors du
-  // tableau remonté après un échec, pour ne pas les reprendre.
-  const [photos, setPhotos] = useState<Record<string, PhotoPage[]>>({})
-  const [preparing, setPreparing] = useState<Set<string>>(() => new Set())
-  const photosRef = useRef(photos)
+  const [state, formAction, pending] = useActionState<MailEntryFormState, FormData>(registerMailEntryAction, null)
+  const [receivedAt, setReceivedAt] = useState(defaultReceivedAt)
+  const [query, setQuery] = useState('')
+  const [clientId, setClientId] = useState<string | null>(null)
+  const [kind, setKind] = useState<MailKind>('lettre')
+  const [drafts, setDrafts] = useState<Draft[]>([])
+  const [preparing, setPreparing] = useState(0)
+  const [status, setStatus] = useState('')
+  const [failures, setFailures] = useState<string[]>([])
+  const [dragging, setDragging] = useState(false)
+
+  const searchRef = useRef<HTMLInputElement>(null)
+  const recapRef = useRef<HTMLHeadingElement>(null)
+  const lastKey = useRef(0)
+  const draftsRef = useRef(drafts)
   useEffect(() => {
-    photosRef.current = photos
-  }, [photos])
+    draftsRef.current = drafts
+  }, [drafts])
+  // Les aperçus locaux se libèrent quand l'écran se démonte (enregistrement fait).
   useEffect(
     () => () => {
-      for (const pages of Object.values(photosRef.current)) {
-        for (const page of pages) if (page.preview) URL.revokeObjectURL(page.preview)
-      }
+      for (const draft of draftsRef.current) if (draft.photo?.preview) URL.revokeObjectURL(draft.photo.preview)
     },
     [],
   )
-  const changePhotos = useCallback((clientId: string, update: (current: PhotoPage[]) => PhotoPage[]) => {
-    setPhotos((current) => ({ ...current, [clientId]: update(current[clientId] ?? []) }))
-  }, [])
-  const markPreparing = useCallback((clientId: string, busy: boolean) => {
-    setPreparing((current) => {
-      const next = new Set(current)
-      if (busy) next.add(clientId)
-      else next.delete(clientId)
-      return next
+
+  const names = useMemo(() => new Map(recipients.map((r) => [r.id, r.name])), [recipients])
+  const nameOf = (id: string) => names.get(id) ?? 'Entreprise archivée'
+  const selected = recipients.find((r) => r.id === clientId)
+
+  const matches = useMemo(() => {
+    const terms = fold(query).split(/\s+/).filter(Boolean)
+    return recipients.filter((r) => {
+      const haystack = fold(`${r.name} ${r.mailbox ?? ''}`)
+      return terms.every((term) => haystack.includes(term))
     })
-  }, [])
+  }, [query, recipients])
+  const shown = matches.slice(0, MAX_RESULTS)
+  // L'entreprise choisie reste visible, même hors de la recherche en cours.
+  const options = selected && !shown.some((r) => r.id === selected.id) ? [selected, ...shown] : shown
 
-  return (
-    // Remonté après un échec pour reprendre la saisie renvoyée par le serveur.
-    <MailCountsTable
-      key={JSON.stringify(state?.values ?? {})}
-      recipients={recipients}
-      defaultReceivedAt={defaultReceivedAt}
-      state={state}
-      formAction={formAction}
-      pending={pending}
-      photos={photos}
-      preparing={preparing.size > 0}
-      onPhotosChange={changePhotos}
-      onPreparing={markPreparing}
-    />
-  )
-}
-
-function MailCountsTable({
-  recipients,
-  defaultReceivedAt,
-  state,
-  formAction,
-  pending,
-  photos,
-  preparing,
-  onPhotosChange,
-  onPreparing,
-}: {
-  recipients: MailRecipient[]
-  defaultReceivedAt: string
-  state: MailCountsFormState
-  formAction: (formData: FormData) => void
-  pending: boolean
-  photos: Record<string, PhotoPage[]>
-  /** Une photo au moins est en cours de préparation. */
-  preparing: boolean
-  onPhotosChange: (clientId: string, update: (current: PhotoPage[]) => PhotoPage[]) => void
-  onPreparing: (clientId: string, busy: boolean) => void
-}) {
-  const enhanced = useTransferSupport()
-  const [counts, setCounts] = useState<Record<string, string>>(() => {
-    const initial: Record<string, string> = {}
-    for (const [name, value] of Object.entries(state?.values ?? {})) {
-      if (name.startsWith('n.')) initial[name] = value
-    }
-    return initial
-  })
-  const [query, setQuery] = useState('')
-  const formRef = useRef<HTMLFormElement>(null)
-  const searchRef = useRef<HTMLInputElement>(null)
+  const groups = groupEntry(drafts)
+  const total = drafts.length
+  const photoCount = drafts.filter((draft) => draft.photo).length
+  const photoBytes = drafts.reduce((sum, draft) => sum + (draft.photo?.file.size ?? 0), 0)
+  const tooHeavy = photoBytes > MAX_ENTRY_PHOTOS_BYTES
+  const tooMany = total > MAX_PER_ENTRY
+  const blocked = pending || preparing > 0 || total === 0 || tooHeavy || tooMany
   const errors = state?.fieldErrors ?? {}
 
-  const visible = useMemo(() => {
-    const terms = fold(query).split(/\s+/).filter(Boolean)
-    if (terms.length === 0) return new Set(recipients.map((r) => r.id))
-    return new Set(
-      recipients
-        .filter((r) => {
-          const haystack = fold(`${r.name} ${r.mailbox ?? ''}`)
-          return terms.every((term) => haystack.includes(term))
-        })
-        .map((r) => r.id),
-    )
-  }, [query, recipients])
+  const nextKey = () => (lastKey.current += 1)
 
-  const visibleOrder = recipients.filter((r) => visible.has(r.id))
-
-  const entered = recipients
-    .map((recipient) => {
-      const perKind = mailKinds
-        .map((kind) => [kind, countOf(counts[countFieldName(recipient.id, kind)])] as const)
-        .filter(([, n]) => n > 0)
-      const photoCount = photos[recipient.id]?.length ?? 0
-      return { recipient, perKind, photoCount, total: perKind.reduce((sum, [, n]) => sum + n, 0) }
-    })
-    .filter((entry) => entry.total > 0 || entry.photoCount > 0)
-  const total = entered.reduce((sum, entry) => sum + entry.total, 0)
-
-  // Les plis de chaque ligne, dans l'ordre où ses photos leur vont (ADR 055).
-  const slotsOf = (clientId: string) =>
-    envelopeSlots(
-      mailKinds.map((kind): MailCount => ({ clientId, kind, count: countOf(counts[countFieldName(clientId, kind)]) })),
-      clientId,
-    )
-  const excess = entered.filter((entry) => entry.photoCount > entry.total)
-  const photoBytes = Object.values(photos)
-    .flat()
-    .reduce((sum, page) => sum + page.file.size, 0)
-  const tooHeavy = photoBytes > MAX_ENTRY_PHOTOS_BYTES
-  const blocked = preparing || excess.length > 0 || tooHeavy
-
-  const labels: Record<string, string> = { receivedAt: 'Reçu le' }
-  for (const recipient of recipients) {
-    for (const kind of mailKinds) {
-      labels[countFieldName(recipient.id, kind)] = `${recipient.name} — ${columnLabels[kind]}`
-    }
-    labels[photoFieldName(recipient.id)] = `${recipient.name} — Photos`
+  function choose(id: string) {
+    setClientId(id)
+    setStatus(`Entreprise choisie : ${nameOf(id)}.`)
   }
 
-  const focusCell = (clientId: string, kind: MailKind) => {
-    const input = document.getElementById(countFieldName(clientId, kind)) as HTMLInputElement | null
-    input?.focus()
-    input?.select()
-  }
+  const focusKind = () => requestAnimationFrame(() => document.getElementById(`type-${kind}`)?.focus())
 
-  const backToSearch = () => {
-    searchRef.current?.focus()
-    searchRef.current?.select()
-  }
-
-  const onSearchKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+  function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== 'Enter' || event.ctrlKey || event.metaKey) return
+    // Entrée ne soumet pas : elle choisit la première entreprise et passe au type.
     event.preventDefault()
-    const first = visibleOrder[0]
-    if (first) focusCell(first.id, 'lettre')
+    const first = matches[0]
+    if (!first) return
+    choose(first.id)
+    setQuery('')
+    focusKind()
   }
 
-  const onCellKeyDown = (event: KeyboardEvent<HTMLInputElement>, clientId: string, kind: MailKind) => {
-    if (event.key === 'Enter' && !event.ctrlKey && !event.metaKey) {
-      // Entrée ne soumet pas : elle ramène à la recherche, pour l'entreprise suivante.
-      event.preventDefault()
-      backToSearch()
-      return
-    }
-    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-      event.preventDefault()
-      const index = visibleOrder.findIndex((r) => r.id === clientId)
-      const next = visibleOrder[index + (event.key === 'ArrowDown' ? 1 : -1)]
-      if (next) focusCell(next.id, kind)
-    }
+  function nextCompany() {
+    setQuery('')
+    searchRef.current?.focus()
   }
 
-  const onFormKeyDown = (event: KeyboardEvent<HTMLFormElement>) => {
+  async function addPhotos(files: File[]) {
+    if (!clientId || files.length === 0) return
+    // Pour l'entreprise et le type choisis à cet instant, même s'ils changent pendant la préparation.
+    const target = { clientId, kind }
+    setFailures([])
+    setPreparing(files.length)
+    const refused: string[] = []
+    let added = 0
+    for (const [index, file] of files.entries()) {
+      setStatus(`Préparation de la photo${files.length > 1 ? ` ${index + 1} sur ${files.length}` : ''}…`)
+      const key = nextKey()
+      const result = await preparePhoto(file, `enveloppe-${key}.jpg`)
+      setPreparing(files.length - index - 1)
+      if (result.page) {
+        const draft: Draft = { key, ...target, sender: '', photo: result.page }
+        added += 1
+        // Chaque pli paraît au récapitulatif dès que sa photo est prête.
+        setDrafts((current) => [...current, draft])
+      } else {
+        refused.push(result.failure)
+      }
+    }
+    setFailures(refused)
+    setStatus(
+      added === 0
+        ? 'Aucune photo n’a pu être préparée.'
+        : `Ajouté pour ${nameOf(target.clientId)} : ${kindPhrase(target.kind, added)}, une photo par pli.`,
+    )
+  }
+
+  function addWithoutPhoto() {
+    if (!clientId) return
+    setDrafts((current) => [...current, { key: nextKey(), clientId, kind, sender: '', photo: null }])
+    setStatus(`Ajouté pour ${nameOf(clientId)} : ${kindPhrase(kind, 1)}, sans photo.`)
+  }
+
+  /** Retire des plis du récapitulatif : un seul, ou tous ceux d'une entreprise. */
+  function remove(removed: Draft[], message: string) {
+    const keys = new Set(removed.map((draft) => draft.key))
+    for (const draft of removed) if (draft.photo?.preview) URL.revokeObjectURL(draft.photo.preview)
+    setDrafts((current) => current.filter((other) => !keys.has(other.key)))
+    setStatus(message)
+    // Le bouton disparaît avec son pli : le focus revient au récapitulatif.
+    recapRef.current?.focus()
+  }
+
+  function changeSender(key: number, sender: string) {
+    setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, sender } : draft)))
+  }
+
+  function onDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault()
+    setDragging(false)
+    if (!clientId || preparing > 0) return
+    void addPhotos([...event.dataTransfer.files].filter((file) => file.type.startsWith('image/')))
+  }
+
+  function submit() {
+    if (blocked) return
+    // Dans l'ordre du récapitulatif : c'est celui de l'enregistrement, donc du
+    // rang de chaque pli dans sa journée (ADR 057).
+    const data = new FormData()
+    data.set('receivedAt', receivedAt)
+    for (const draft of groups.flatMap((group) => group.items)) {
+      data.append(entryFieldName(draft.key, 'client'), draft.clientId)
+      data.append(entryFieldName(draft.key, 'kind'), draft.kind)
+      data.append(entryFieldName(draft.key, 'sender'), draft.sender)
+      if (draft.photo) data.append(entryFieldName(draft.key, 'photo'), draft.photo.file)
+    }
+    startTransition(() => formAction(data))
+  }
+
+  function onFormKeyDown(event: KeyboardEvent<HTMLFormElement>) {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
       event.preventDefault()
-      if (!pending && !blocked) formRef.current?.requestSubmit()
+      submit()
     }
   }
 
-  const showAll = (clientId: string) => {
-    setQuery('')
-    // Après le rendu sans filtre, la ligne est de nouveau visible.
-    requestAnimationFrame(() => focusCell(clientId, 'lettre'))
+  // Libellés du résumé d'erreurs : chaque pli par son entreprise et son rang.
+  const labels: Record<string, string> = { receivedAt: 'Reçu le' }
+  for (const group of groups) {
+    group.items.forEach((draft, index) => {
+      const subject = `${nameOf(group.clientId)} — pli ${index + 1} (${mailKindLabels[draft.kind].toLowerCase()})`
+      labels[entryFieldName(draft.key, 'sender')] = `${subject}, expéditeur`
+      labels[entryFieldName(draft.key, 'photo')] = `${subject}, photo`
+      labels[entryFieldName(draft.key, 'client')] = subject
+      labels[entryFieldName(draft.key, 'kind')] = subject
+    })
   }
 
-  const groups = [
-    { key: 'domicilies', title: 'Domiciliés', rows: recipients.filter((r) => r.domiciled) },
-    { key: 'autres', title: 'Autres entreprises', rows: recipients.filter((r) => !r.domiciled) },
-  ].filter((group) => group.rows.length > 0)
+  const submitLabel = pending
+    ? 'Enregistrement…'
+    : preparing > 0
+      ? 'Préparation des photos…'
+      : total <= 1
+        ? 'Enregistrer le pli dans la tournée'
+        : `Enregistrer les ${total} plis dans la tournée`
 
   return (
-    <form
-      ref={formRef}
-      action={formAction}
-      onKeyDown={onFormKeyDown}
-      className="flex flex-col gap-5"
-      aria-describedby="saisie-aide"
-    >
+    // Pas de bouton d'envoi : `Entrée` dans un champ (un expéditeur choisi dans
+    // la liste, l'heure) n'enregistre jamais toute la saisie par mégarde. On
+    // enregistre par le bouton, ou par `Ctrl`+`Entrée`.
+    <form onSubmit={(event) => event.preventDefault()} onKeyDown={onFormKeyDown} className="flex flex-col gap-6">
       <ErrorSummary errors={state?.fieldErrors} labels={labels} message={state?.error} />
 
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="min-w-64 flex-1">
-          <label htmlFor="recherche" className="block text-sm font-medium text-foreground">
-            Trouver une entreprise
-          </label>
-          <input
-            ref={searchRef}
-            id="recherche"
-            type="search"
-            autoFocus
-            autoComplete="off"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            onKeyDown={onSearchKeyDown}
-            aria-describedby="saisie-aide"
-            aria-controls="saisie-tableau"
-            className={`${fieldClass} mt-1 w-full`}
-          />
-        </div>
+      <div className="flex flex-wrap items-end gap-x-4 gap-y-1">
         <div>
           <label htmlFor="receivedAt" className="block text-sm font-medium text-foreground">
             Reçu le
           </label>
           <input
             id="receivedAt"
-            name="receivedAt"
             type="datetime-local"
             required
-            defaultValue={state?.values?.receivedAt ?? defaultReceivedAt}
+            value={receivedAt}
+            onChange={(event) => setReceivedAt(event.target.value)}
             aria-invalid={errors.receivedAt ? true : undefined}
-            aria-describedby={errors.receivedAt ? 'receivedAt-error' : undefined}
+            aria-describedby={`receivedAt-aide${errors.receivedAt ? ' receivedAt-error' : ''}`}
             className={`${fieldClass} mt-1 tabular`}
           />
-          {errors.receivedAt && (
-            <p id="receivedAt-error" className="mt-1 text-xs text-destructive">
-              {errors.receivedAt}
-            </p>
-          )}
         </div>
-      </div>
-      <p id="saisie-aide" className="-mt-3 text-xs text-muted-foreground">
-        Nom ou numéro de boîte, <kbd>Entrée</kbd>, le nombre de plis, <kbd>Entrée</kbd> : retour à la
-        recherche. <kbd>Tab</kbd> passe au type suivant, <kbd>↑</kbd> <kbd>↓</kbd> à l’entreprise voisine,{' '}
-        <kbd>Ctrl</kbd>+<kbd>Entrée</kbd> enregistre tout. Photos : une par pli, celle de l’enveloppe ;
-        elles vont aux plis de la ligne dans l’ordre des colonnes.
-      </p>
-
-      <p className="sr-only" aria-live="polite">
-        {query ? `${visibleOrder.length} entreprise${visibleOrder.length > 1 ? 's' : ''} affichée${visibleOrder.length > 1 ? 's' : ''}` : ''}
-      </p>
-
-      <div className="overflow-x-auto rounded-lg border border-border bg-white">
-        <table id="saisie-tableau" className="w-full text-left text-sm">
-          <caption className="sr-only">Nombre de plis reçus par entreprise et par type</caption>
-          <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-            <tr>
-              {/* Fixée à gauche : sur un téléphone, le tableau défile jusqu'aux photos sans perdre l'entreprise. */}
-              <th scope="col" className="sticky left-0 z-10 bg-white px-4 py-2 font-medium">Entreprise</th>
-              <th scope="col" className="px-4 py-2 font-medium">Boîte</th>
-              {mailKinds.map((kind) => (
-                <th key={kind} id={`col-${kind}`} scope="col" className="px-2 py-2 text-right font-medium">
-                  {columnLabels[kind]}
-                </th>
-              ))}
-              <th scope="col" className="px-4 py-2 font-medium">Photos</th>
-            </tr>
-          </thead>
-          {groups.map((group) => {
-            const shown = group.rows.some((r) => visible.has(r.id))
-            return (
-              <tbody key={group.key} className="divide-y divide-border" hidden={!shown}>
-                {groups.length > 1 && (
-                  <tr className="bg-muted">
-                    <th
-                      scope="colgroup"
-                      colSpan={3 + mailKinds.length}
-                      className="px-4 py-1.5 text-xs font-semibold text-muted-foreground"
-                    >
-                      <span className="sticky left-4">{group.title}</span>
-                    </th>
-                  </tr>
-                )}
-                {group.rows.map((recipient) => (
-                  // Une ligne filtrée reste dans le formulaire : sa saisie part avec le reste.
-                  <tr key={recipient.id} hidden={!visible.has(recipient.id)}>
-                    <th
-                      scope="row"
-                      id={`ligne-${recipient.id}`}
-                      className="sticky left-0 z-10 max-w-36 bg-white px-4 py-1.5 font-medium sm:max-w-none"
-                    >
-                      {recipient.name}
-                    </th>
-                    <td className="px-4 py-1.5 text-muted-foreground tabular">{recipient.mailbox ?? '—'}</td>
-                    {mailKinds.map((kind) => {
-                      const name = countFieldName(recipient.id, kind)
-                      return (
-                        <td key={kind} className="px-2 py-1.5 text-right align-top">
-                          <input
-                            id={name}
-                            name={name}
-                            inputMode="numeric"
-                            pattern="[0-9]*"
-                            maxLength={String(MAX_PER_CELL).length}
-                            autoComplete="off"
-                            value={counts[name] ?? ''}
-                            onChange={(event) =>
-                              setCounts((current) => ({ ...current, [name]: event.target.value }))
-                            }
-                            onKeyDown={(event) => onCellKeyDown(event, recipient.id, kind)}
-                            aria-labelledby={`ligne-${recipient.id} col-${kind}`}
-                            aria-invalid={errors[name] ? true : undefined}
-                            aria-describedby={errors[name] ? `${name}-error` : undefined}
-                            className={cellClass}
-                          />
-                          {errors[name] && (
-                            <p id={`${name}-error`} className="mt-1 max-w-32 text-xs text-destructive">
-                              {errors[name]}
-                            </p>
-                          )}
-                        </td>
-                      )
-                    })}
-                    <td className="px-4 py-1.5 align-top">
-                      <RowPhotos
-                        clientId={recipient.id}
-                        clientName={recipient.name}
-                        slots={slotsOf(recipient.id)}
-                        pages={photos[recipient.id] ?? []}
-                        enhanced={enhanced}
-                        error={errors[photoFieldName(recipient.id)]}
-                        onChange={onPhotosChange}
-                        onBusy={onPreparing}
-                      />
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            )
-          })}
-        </table>
-        {visibleOrder.length === 0 && (
-          <p className="px-4 py-6 text-sm text-muted-foreground">
-            Aucune entreprise ne correspond à « {query} ». Vérifiez l’orthographe, ou cherchez par
-            numéro de boîte.
+        <p id="receivedAt-aide" className="pb-2 text-xs text-muted-foreground">
+          Pour tous les plis de cet envoi.
+        </p>
+        {errors.receivedAt && (
+          <p id="receivedAt-error" className="w-full text-xs text-destructive">
+            {errors.receivedAt}
           </p>
         )}
       </div>
 
-      {/* Au-dessus de la colonne Entreprise, fixée elle aussi. */}
-      <div className="sticky bottom-0 z-20 -mx-1 flex flex-col gap-3 rounded-lg border border-border bg-white px-4 py-3 shadow-sm">
-        {entered.length > 0 && (
-          <ul aria-label="Saisie en cours" className="flex flex-wrap gap-2 text-xs">
-            {entered.map(({ recipient, perKind, photoCount }) => (
-              <li key={recipient.id}>
-                <button
-                  type="button"
-                  onClick={() => showAll(recipient.id)}
-                  className="rounded-full bg-muted px-3 py-1 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                >
-                  <span className="font-medium">{recipient.name}</span> :{' '}
-                  {perKind.length > 0
-                    ? perKind.map(([kind, n]) => `${n} ${pluralKind[kind][n > 1 ? 1 : 0]}`).join(', ')
-                    : 'aucun pli'}
-                  {photoCount > 0 && ` · ${photoCount} photo${photoCount > 1 ? 's' : ''}`}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-        {(excess.length > 0 || tooHeavy) && (
-          <p className="text-sm text-destructive" aria-live="polite">
-            {tooHeavy
-              ? `Les photos pèsent ${(photoBytes / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo : au-delà de ${MAX_ENTRY_PHOTOS_BYTES / 1024 / 1024} Mo, enregistrez la tournée en deux envois.`
-              : `Plus de photos que de plis pour ${excess.map((entry) => entry.recipient.name).join(', ')} : une photo par pli.`}
+      {/* `grid-cols-1` et `min-w-0` : un nom d'entreprise long ne fait pas défiler la page de côté. */}
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
+        <div className="flex min-w-0 flex-col gap-6">
+          {/* 1. Entreprise */}
+          <fieldset className="flex min-w-0 flex-col gap-2">
+            <legend className="text-base font-semibold tracking-tight">1. Entreprise</legend>
+            <label htmlFor="recherche" className="text-sm font-medium text-foreground">
+              Rechercher : nom ou numéro de boîte
+            </label>
+            <input
+              ref={searchRef}
+              id="recherche"
+              type="search"
+              autoFocus
+              autoComplete="off"
+              enterKeyHint="go"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              onKeyDown={onSearchKeyDown}
+              aria-describedby="recherche-aide"
+              aria-controls="entreprises"
+              className={`${fieldClass} w-full`}
+            />
+            <p id="recherche-aide" className="text-xs text-muted-foreground">
+              <kbd>Entrée</kbd> choisit la première entreprise de la liste. Les domiciliés d’abord.
+            </p>
+            <div id="entreprises" role="radiogroup" aria-label="Entreprise du pli" className="flex flex-col gap-2">
+              {options.map((recipient) => (
+                <label key={recipient.id} className={choiceClass}>
+                  <input
+                    type="radio"
+                    name="entreprise"
+                    value={recipient.id}
+                    checked={recipient.id === clientId}
+                    onChange={() => choose(recipient.id)}
+                    className="size-4 shrink-0 accent-primary"
+                  />
+                  <span className="min-w-0 flex-1 truncate">{recipient.name}</span>
+                  {recipient.mailbox && (
+                    <span className="shrink-0 text-xs text-muted-foreground tabular">{recipient.mailbox}</span>
+                  )}
+                  {recipient.domiciled && (
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                      Domicilié
+                    </span>
+                  )}
+                </label>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground" aria-live="polite">
+              {matches.length === 0
+                ? `Aucune entreprise ne correspond à « ${query} ». Vérifiez l’orthographe, ou cherchez par numéro de boîte.`
+                : matches.length > MAX_RESULTS
+                  ? `${plural(matches.length - MAX_RESULTS, 'autre entreprise')} : précisez la recherche.`
+                  : ''}
+            </p>
+          </fieldset>
+
+          {/* 2. Type */}
+          <fieldset className="flex min-w-0 flex-col gap-2">
+            <legend className="text-base font-semibold tracking-tight">2. Type de pli</legend>
+            {/* Quatre de front sur tablette ; deux sur deux dans la colonne de l'ordinateur. */}
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
+              {mailKinds.map((option) => {
+                const Icon = mailKindIcons[option]
+                return (
+                  <label key={option} className={choiceClass}>
+                    <input
+                      id={`type-${option}`}
+                      type="radio"
+                      name="type"
+                      value={option}
+                      checked={kind === option}
+                      onChange={() => setKind(option)}
+                      className="sr-only"
+                    />
+                    <Icon size={20} className="shrink-0 text-primary" />
+                    {mailKindLabels[option]}
+                  </label>
+                )
+              })}
+            </div>
+          </fieldset>
+
+          {/* 3. Photos */}
+          <fieldset
+            className={`flex min-w-0 flex-col gap-3 rounded-lg border border-dashed px-4 py-3 transition-colors duration-150 ease-out ${dragging ? 'border-accent bg-accent/5' : 'border-border'}`}
+            onDragOver={(event) => {
+              if (!clientId) return
+              event.preventDefault()
+              setDragging(true)
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={onDrop}
+          >
+            <legend className="px-1 text-base font-semibold tracking-tight">3. Photos des enveloppes</legend>
+            <p id="photos-aide" className="text-sm text-muted-foreground">
+              {selected ? (
+                <>
+                  Pour <span className="font-medium text-foreground">{selected.name}</span>,{' '}
+                  {mailKindLabels[kind].toLowerCase()} : <strong className="font-medium text-foreground">chaque photo est un pli</strong>.
+                  Plusieurs photos d’un coup, ou déposez-les ici.
+                </>
+              ) : (
+                'Choisissez d’abord l’entreprise (étape 1) : chaque photo sera un pli pour elle.'
+              )}
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {/* Téléphone ou tablette : l'appareil photo s'ouvre directement, un pli après l'autre. */}
+              <label className={`${actionClass} hidden pointer-coarse:inline-flex`}>
+                <CameraIcon size={20} />
+                {drafts.some((draft) => draft.clientId === clientId && draft.kind === kind && draft.photo)
+                  ? 'Photographier le pli suivant'
+                  : 'Prendre une photo'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  capture="environment"
+                  disabled={!clientId || preparing > 0}
+                  aria-describedby="photos-aide"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const picked = [...(event.currentTarget.files ?? [])]
+                    // Vidé aussitôt : la même photo peut être reprise.
+                    event.currentTarget.value = ''
+                    void addPhotos(picked)
+                  }}
+                />
+              </label>
+              <label className={actionClass}>
+                {preparing > 0 ? 'Préparation…' : 'Choisir des photos'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  disabled={!clientId || preparing > 0}
+                  aria-describedby="photos-aide"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const picked = [...(event.currentTarget.files ?? [])]
+                    event.currentTarget.value = ''
+                    void addPhotos(picked)
+                  }}
+                />
+              </label>
+              <button
+                type="button"
+                onClick={addWithoutPhoto}
+                // Pendant la préparation, un pli sans photo s'intercalerait entre les photos.
+                disabled={!clientId || preparing > 0}
+                aria-describedby="sans-photo-aide"
+                className={actionClass}
+              >
+                + Pli sans photo
+              </button>
+            </div>
+            <p id="sans-photo-aide" className="text-xs text-muted-foreground">
+              Sans photo : appareil absent, enveloppe abîmée. La photo s’ajoute ensuite depuis la tournée.
+            </p>
+            {failures.length > 0 && (
+              <ul role="alert" className="list-disc pl-5 text-xs text-destructive">
+                {failures.map((failure, index) => (
+                  <li key={`${index}-${failure}`}>{failure}</li>
+                ))}
+              </ul>
+            )}
+            {selected && (
+              <button
+                type="button"
+                onClick={nextCompany}
+                className="self-start text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-h-11"
+              >
+                Entreprise suivante
+              </button>
+            )}
+          </fieldset>
+          <p aria-live="polite" className="-mt-3 min-h-5 text-sm text-foreground">
+            {status}
+          </p>
+        </div>
+
+        {/* 4. Récapitulatif */}
+        <section aria-labelledby="recapitulatif" className="flex min-w-0 flex-col gap-3">
+          <h2
+            id="recapitulatif"
+            ref={recapRef}
+            tabIndex={-1}
+            className="text-base font-semibold tracking-tight focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            4. Récapitulatif
+          </h2>
+          {groups.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-white px-4 py-6 text-sm text-muted-foreground">
+              Aucun pli pour l’instant. Choisissez une entreprise et un type, puis prenez ou déposez les photos
+              des enveloppes : chaque photo devient un pli.
+            </p>
+          ) : (
+            groups.map((group) => {
+              const name = nameOf(group.clientId)
+              const listId = senderListId(group.clientId)
+              return (
+                <div key={group.clientId} className="rounded-lg border border-border bg-white">
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 border-b border-border px-4 py-1">
+                    <h3 className="py-1 text-sm font-semibold">
+                      {name} : <span className="font-normal tabular">{group.phrase}</span>
+                    </h3>
+                    {group.items.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() =>
+                          remove(group.items, `Les ${group.items.length} plis de ${name} sont retirés du récapitulatif.`)
+                        }
+                        className="min-h-11 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                      >
+                        Retirer les {group.items.length} plis
+                        <span className="sr-only"> de {name}</span>
+                      </button>
+                    )}
+                  </div>
+                  <SenderDatalist id={listId} senders={suggestionsFor(suggestions, group.clientId)} />
+                  <ul className="divide-y divide-border">
+                    {group.items.map((draft, index) => {
+                      const subject = `pli ${index + 1} (${mailKindLabels[draft.kind].toLowerCase()}) — ${name}`
+                      const senderField = entryFieldName(draft.key, 'sender')
+                      const photoField = entryFieldName(draft.key, 'photo')
+                      const itemErrors = [
+                        errors[photoField],
+                        errors[entryFieldName(draft.key, 'client')],
+                        errors[entryFieldName(draft.key, 'kind')],
+                      ].filter(Boolean)
+                      return (
+                        // Cible des liens du résumé d'erreurs pour la photo d'un pli : focalisable, focus visible.
+                        <li
+                          key={draft.key}
+                          id={photoField}
+                          tabIndex={-1}
+                          className="flex gap-3 px-4 py-3 focus:outline-2 focus:-outline-offset-2 focus:outline-ring"
+                        >
+                          {draft.photo?.preview ? (
+                            // eslint-disable-next-line @next/next/no-img-element -- aperçu local du navigateur, avant tout envoi
+                            <img
+                              src={draft.photo.preview}
+                              alt={`Enveloppe du ${subject}`}
+                              className="h-16 w-12 shrink-0 rounded-sm border border-border bg-muted object-cover"
+                            />
+                          ) : (
+                            <span className="flex h-16 w-12 shrink-0 items-center justify-center rounded-sm bg-muted px-1 text-center text-[11px] leading-tight text-muted-foreground">
+                              Sans photo
+                            </span>
+                          )}
+                          <div className="flex min-w-0 flex-1 flex-col gap-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <p className="text-sm font-medium">
+                                Pli {index + 1} · {mailKindLabels[draft.kind]}
+                              </p>
+                              <button
+                                type="button"
+                                onClick={() => remove([draft], `Le ${subject} est retiré du récapitulatif.`)}
+                                aria-label={`Retirer le ${subject}`}
+                                className="min-h-11 shrink-0 rounded-md px-3 text-sm font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                              >
+                                Retirer
+                              </button>
+                            </div>
+                            <label htmlFor={senderField} className="text-xs font-medium text-foreground">
+                              Expéditeur <span className="font-normal text-muted-foreground">(facultatif)</span>
+                            </label>
+                            <input
+                              id={senderField}
+                              list={listId}
+                              value={draft.sender}
+                              onChange={(event) => changeSender(draft.key, event.target.value)}
+                              autoComplete="off"
+                              maxLength={MAX_SENDER_LENGTH}
+                              aria-invalid={errors[senderField] ? true : undefined}
+                              aria-describedby={errors[senderField] ? `${senderField}-error` : undefined}
+                              className={`${fieldClass} w-full`}
+                            />
+                            {errors[senderField] && (
+                              <p id={`${senderField}-error`} className="text-xs text-destructive">
+                                {errors[senderField]}
+                              </p>
+                            )}
+                            {itemErrors.map((error) => (
+                              <p key={error} className="text-xs text-destructive">
+                                {error}
+                              </p>
+                            ))}
+                          </div>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )
+            })
+          )}
+        </section>
+      </div>
+
+      {/* Toujours à portée, au pouce comme au clavier. */}
+      <div className="sticky bottom-0 z-20 -mx-1 flex flex-col gap-2 rounded-lg border border-border bg-white px-4 py-3 shadow-sm">
+        {(tooHeavy || tooMany) && (
+          <p className="text-sm text-destructive" role="alert">
+            {tooMany
+              ? `${total} plis en une fois : au-delà de ${MAX_PER_ENTRY}, enregistrez la tournée en deux envois.`
+              : `Les photos pèsent ${(photoBytes / 1024 / 1024).toLocaleString('fr-FR', { maximumFractionDigits: 1 })} Mo : au-delà de ${MAX_ENTRY_PHOTOS_BYTES / 1024 / 1024} Mo, enregistrez la tournée en deux envois.`}
           </p>
         )}
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm tabular" aria-live="polite">
+          <p className="text-sm tabular">
             {total === 0
               ? 'Aucun pli saisi.'
-              : `${total} pli${total > 1 ? 's' : ''} pour ${entered.length} entreprise${entered.length > 1 ? 's' : ''}.`}
+              : `${plural(total, 'pli', 'plis')} pour ${plural(groups.length, 'entreprise')}, ${
+                  total === 1
+                    ? photoCount === 1
+                      ? 'avec photo'
+                      : 'sans photo'
+                    : photoCount === total
+                      ? 'tous avec photo'
+                      : photoCount === 0
+                        ? 'aucun avec photo'
+                        : `dont ${photoCount} avec photo`
+                }.`}
           </p>
           <button
-            type="submit"
-            disabled={pending || total === 0 || blocked}
-            className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
+            type="button"
+            onClick={submit}
+            disabled={blocked}
+            className="min-h-11 rounded-md bg-primary px-5 py-2 text-sm font-medium text-white hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
           >
-            {pending
-              ? 'Enregistrement…'
-              : preparing
-                ? 'Préparation des photos…'
-                : total === 0
-                ? 'Enregistrer dans la tournée'
-                : total === 1
-                  ? 'Enregistrer le pli dans la tournée'
-                  : `Enregistrer les ${total} plis dans la tournée`}
+            {submitLabel}
           </button>
         </div>
       </div>

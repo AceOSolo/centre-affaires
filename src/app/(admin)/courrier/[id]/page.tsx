@@ -9,6 +9,9 @@ import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
 import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
 import { listRequestsForMail } from '../../../../modules/courrier/demandes-queries.ts'
 import { EnvelopeForm } from '../../../../modules/courrier/enveloppe-form.tsx'
+import { SenderDatalist, SenderForm } from '../../../../modules/courrier/expediteur-form.tsx'
+import { senderListId, suggestionsFor } from '../../../../modules/courrier/expediteurs.ts'
+import { findSenderSuggestions } from '../../../../modules/courrier/expediteurs-queries.ts'
 import { EnvelopeZoom } from '../../../../modules/courrier/enveloppe-zoom.tsx'
 import { spotLabel } from '../../../../modules/courrier/reperage.ts'
 import {
@@ -65,6 +68,9 @@ export default async function CourrierDetailPage({
   if (!mail) notFound()
 
   const withdrawn = Boolean(mail.deletedAt)
+  // L'expéditeur se précise après coup (ADR 058), sauf pli retiré ou expéditeur anonymisé (ADR 040).
+  const senderEditable = !withdrawn && !mail.senderAnonymizedAt
+  const suggestions = senderEditable ? await findSenderSuggestions([mail.clientId]) : undefined
   const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
   const scanOrigin = new Map(requests.map((request) => [request.id, request]))
   // La plus récente : une enveloppe ajoutée après coup remplace la première à l'écran.
@@ -141,7 +147,21 @@ export default async function CourrierDetailPage({
         <dd>{mailKindLabels[mail.kind]}</dd>
 
         <dt className="text-muted-foreground">Expéditeur</dt>
-        <dd>{mail.sender ?? <span className="text-muted-foreground">non précisé</span>}</dd>
+        <dd>
+          {mail.sender ?? (
+            <span className="text-muted-foreground">
+              {mail.senderAnonymizedAt ? 'effacé avec les données du client' : 'non précisé'}
+            </span>
+          )}
+          {senderEditable && (
+            <a
+              href="#expediteur"
+              className="ml-2 text-xs font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {mail.sender ? 'Corriger' : 'Préciser'}
+            </a>
+          )}
+        </dd>
 
         <dt className="text-muted-foreground">Reçu le</dt>
         <dd className="tabular">
@@ -193,6 +213,23 @@ export default async function CourrierDetailPage({
         </dd>
       </dl>
       </div>
+
+      {senderEditable && suggestions && (
+        <section
+          id="expediteur"
+          aria-labelledby="expediteur-titre"
+          className="flex flex-col gap-2 rounded-lg border border-border bg-white px-5 py-4"
+        >
+          <h2 id="expediteur-titre" className="text-sm font-semibold tracking-tight">
+            {mail.sender ? 'Corriger l’expéditeur' : 'Préciser l’expéditeur'}
+          </h2>
+          <SenderDatalist
+            id={senderListId(mail.clientId)}
+            senders={suggestionsFor(suggestions, mail.clientId)}
+          />
+          <SenderForm mailItemId={mail.id} sender={mail.sender} listId={senderListId(mail.clientId)} layout="fiche" />
+        </section>
+      )}
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Numérisations</h2>

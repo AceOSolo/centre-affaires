@@ -90,8 +90,13 @@ export async function inOpenBatch<T>(
 
 export type OpenBatchItem = {
   id: string
+  clientId: string
   clientName: string
   kind: MailKind
+  /** Expéditeur, précisé à la saisie ou ensuite depuis la tournée (ADR 058). */
+  sender: string | null
+  /** Expéditeur effacé avec les données du client (ADR 040) : il ne se ressaisit pas. */
+  senderAnonymized: boolean
   receivedAt: Date
   opened: boolean
   /** Photo de l'enveloppe jointe : sinon, elle s'ajoute depuis la fiche du pli (ADR 055). */
@@ -126,6 +131,8 @@ export async function findOpenBatch(): Promise<OpenBatch | undefined> {
         clientId: mailItems.clientId,
         clientName: clients.name,
         kind: mailItems.kind,
+        sender: mailItems.sender,
+        senderAnonymizedAt: mailItems.senderAnonymizedAt,
         receivedAt: mailItems.receivedAt,
         openedAt: mailItems.openedAt,
         envelope: sql<number>`exists (
@@ -136,13 +143,17 @@ export async function findOpenBatch(): Promise<OpenBatch | undefined> {
       .from(mailItems)
       .innerJoin(clients, eq(clients.id, mailItems.clientId))
       .where(and(eq(mailItems.batchId, batch.id), isNull(mailItems.deletedAt)))
-      .orderBy(asc(clients.name), asc(mailItems.receivedAt))
+      // L'ordre de la pile de chaque entreprise, celui du repère (ADR 057).
+      .orderBy(asc(clients.name), asc(mailItems.clientId), asc(mailItems.receivedAt), asc(mailItems.id))
     return {
       ...batch,
       items: items.map((item) => ({
         id: item.id,
+        clientId: item.clientId,
         clientName: item.clientName,
         kind: item.kind,
+        sender: item.sender,
+        senderAnonymized: item.senderAnonymizedAt !== null,
         receivedAt: item.receivedAt,
         opened: item.openedAt !== null,
         envelope: Number(item.envelope) === 1,

@@ -2,7 +2,9 @@
 
 **Date** : 2026-10-22 (§ 5 ajouté le même jour)
 **Statut** : accepté — complète les ADR 015 (numérisations), 044 (tournée,
-pages comptées, saisie groupée) et 037 (numérisation demandée)
+pages comptées, saisie groupée) et 037 (numérisation demandée) ; **§ 5 amendé
+par l'ADR 058** (une photo = un pli : les photos créent les plis de la saisie
+groupée)
 
 ## Contexte
 
@@ -26,7 +28,7 @@ Jusqu'ici, chaque étape avait un champ de fichier unique (PDF, JPEG ou PNG de
 | Étape | Écran | Photos |
 |---|---|---|
 | Enregistrement d'un pli | `/courrier/nouveau` | enveloppe (une) et contenu (plusieurs) |
-| Saisie groupée | `/courrier/tournee/saisie` | colonne « Photos » : une photo d'enveloppe par pli, sur la ligne de l'entreprise (§ 5) |
+| Saisie groupée | `/courrier/tournee/saisie` | colonne « Photos » : une photo d'enveloppe par pli, sur la ligne de l'entreprise (§ 5) — depuis l'ADR 058, chaque photo crée son pli |
 | Tournée | `/courrier/tournee` | colonne « Enveloppe » : « Photo jointe », ou lien « Ajouter la photo » vers la fiche |
 | Fiche du pli | `/courrier/[id]` | « Ajouter la photo de l'enveloppe », tant que le pli n'en a pas et n'est pas retiré, quel que soit son état |
 | Ouverture | fiche du pli | contenu (plusieurs) |
@@ -83,6 +85,12 @@ Le client voit la photo aussitôt dans son espace, **sans nouveau message** :
 il a déjà été prévenu à la fin de la tournée.
 
 ### 5. Photos dans la saisie groupée
+
+> **Amendé par l'ADR 058** (recette du 04/11/2026) : une photo = un pli. La
+> grille de nombres, la colonne « Photos » et `checkPhotoCounts` sont
+> supprimées ; chaque photo crée un pli, « + Pli sans photo » couvre le pli
+> sans image. Le tout ou rien, les 20 Mo par envoi et la conservation des
+> photos après un refus restent. Le texte ci-dessous décrit l'état d'avant.
 
 Précision de l'exploitation, le même jour : la saisie groupée est l'endroit
 où joindre les photos. « Entreprise Y : 2 courriers » se saisit avec ses deux

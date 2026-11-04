@@ -5,6 +5,7 @@ import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { toWallClock } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
+import { findSenderSuggestions } from '../../../../modules/courrier/expediteurs-queries.ts'
 import { MailForm } from '../../../../modules/courrier/mail-form.tsx'
 import { findMail } from '../../../../modules/courrier/queries.ts'
 import { BatchBanner } from '../../../../modules/courrier/tournee-bandeau.tsx'
@@ -25,6 +26,7 @@ export default async function NouveauCourrierPage({
     enregistre ? findMail(enregistre) : undefined,
     findOpenBatch(),
   ])
+  const suggestions = await findSenderSuggestions(clients.map((client) => client.id))
 
   return (
     <div className="flex flex-col gap-6">
@@ -73,6 +75,7 @@ export default async function NouveauCourrierPage({
           // Remonté après chaque enregistrement : formulaire vide, heure du moment.
           key={registered?.id ?? 'nouveau'}
           clients={clients.map((client) => ({ id: client.id, name: client.name }))}
+          suggestions={suggestions}
           defaultClientId={clients.some((client) => client.id === clientId) ? clientId : undefined}
           defaultReceivedAt={toWallClock(new Date(), timeZone)}
         />

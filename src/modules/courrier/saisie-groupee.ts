@@ -8,15 +8,16 @@ import { contracts } from '../contrats/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import type { ScanFile } from './fichiers.ts'
 import { discard, scanRows, store, type StoredScan } from './queries.ts'
-import { pairEnvelopes, type MailCount } from './saisie-groupee-regles.ts'
+import { orderedIds, type EntryItem } from './saisie-groupee-regles.ts'
 import { mailItems, mailScans } from './schema.ts'
 import { inOpenBatch } from './tournees.ts'
 
 /**
- * Saisie groupée du courrier : l'accueil trie la tournée, puis dit en un seul
- * envoi combien de plis chaque entreprise a reçus. Les plis entrent dans la
- * tournée ouverte comme ceux du formulaire pli par pli (ADR 044) : personne
- * n'est prévenu avant la fin de la tournée.
+ * Saisie groupée du courrier : l'accueil trie la tournée, puis enregistre en
+ * un seul envoi les plis de chaque entreprise, une photo d'enveloppe par pli
+ * (ADR 058). Les plis entrent dans la tournée ouverte comme ceux du
+ * formulaire pli par pli (ADR 044) : personne n'est prévenu avant la fin de
+ * la tournée.
  */
 
 export type MailRecipient = {
@@ -93,59 +94,72 @@ export class EnvelopeStorageError extends Error {
 }
 
 /**
- * Saisie avec les photos des enveloppes (ADR 055) : chaque photo est déposée,
+ * Saisie avec les photos des enveloppes (ADR 058) : chaque photo est déposée,
  * chiffrée, avant toute écriture en base, comme à l'enregistrement d'un pli.
- * Si l'enregistrement échoue ensuite, les fichiers déposés sont effacés.
+ * Si l'enregistrement échoue ensuite, les fichiers déposés sont effacés : tout
+ * ou rien (ADR 055).
  */
-export async function registerMailCountsWithEnvelopes(
-  counts: MailCount[],
+export async function registerMailEntryWithEnvelopes(
+  entry: EntryItem<ScanFile>[],
   receivedAt: Date,
   staffMemberId: string,
-  photos: Map<string, ScanFile[]>,
+  options: { storage?: EnvelopeStorage; database?: Database } = {},
 ): Promise<{ items: number; clients: number; envelopes: number }> {
+  const { storage = envelopeStorage, database } = options
   const tenantId = currentTenantId()
-  const envelopes = new Map<string, StoredScan[]>()
   const stored: StoredScan[] = []
   try {
-    for (const [clientId, files] of photos) {
-      const own: StoredScan[] = []
-      for (const envelope of files) {
-        let scan: StoredScan
-        try {
-          ;[scan] = await store(tenantId, { envelope })
-        } catch (error) {
-          throw new EnvelopeStorageError(error)
-        }
-        stored.push(scan)
-        own.push(scan)
+    const deposited: EntryItem<StoredScan>[] = []
+    for (const { envelope, ...item } of entry) {
+      if (!envelope) {
+        deposited.push(item)
+        continue
       }
-      envelopes.set(clientId, own)
+      let scan: StoredScan
+      try {
+        ;[scan] = await storage.store(tenantId, { envelope })
+      } catch (error) {
+        throw new EnvelopeStorageError(error)
+      }
+      stored.push(scan)
+      deposited.push({ ...item, envelope: scan })
     }
-    return await registerMailCounts(counts, receivedAt, staffMemberId, undefined, envelopes)
+    return await registerMailEntry(deposited, receivedAt, staffMemberId, database)
   } catch (error) {
-    await discard(stored)
+    await storage.discard(stored)
     throw error
   }
 }
 
+/** Dépôt et effacement des photos : le stockage chiffré, ou un faux dans les tests. */
+export type EnvelopeStorage = {
+  store: (tenantId: string, scans: { envelope: ScanFile }) => Promise<StoredScan[]>
+  discard: (stored: StoredScan[]) => Promise<void>
+}
+const envelopeStorage: EnvelopeStorage = { store, discard }
+
 /**
  * Enregistre tous les plis de la saisie dans la tournée ouverte, en une seule
  * transaction : tout entre, ou rien. Rend le nombre de plis, d'entreprises et
- * de photos d'enveloppe. Les plis sont fermés, sans expéditeur ; chacun reçoit
- * la photo de son enveloppe si elle a été jointe (`pairEnvelopes`), déjà
- * déposée au stockage. La fiche de chacun se complète ensuite si besoin.
+ * de photos d'enveloppe. Les plis sont fermés ; chacun porte son expéditeur
+ * s'il a été saisi, et la photo de son enveloppe s'il en a une, déjà déposée
+ * au stockage.
+ *
+ * Les plis sont créés dans l'ordre reçu, avec des identifiants croissants
+ * (`orderedIds`) : reçus à la même heure, ils gardent dans la pile du jour
+ * l'ordre de leurs photos (« pli 2 sur 3 du 04/11 », ADR 057).
  */
-export async function registerMailCounts(
-  counts: MailCount[],
+export async function registerMailEntry(
+  entry: EntryItem<StoredScan>[],
   receivedAt: Date,
   staffMemberId: string,
   database?: Database,
-  envelopes: Map<string, StoredScan[]> = new Map(),
 ): Promise<{ items: number; clients: number; envelopes: number }> {
   const tenantId = currentTenantId()
-  const clientIds = [...new Set(counts.map((entry) => entry.clientId))]
-  const items = pairEnvelopes(counts, envelopes).map((item) => ({ ...item, id: uuidv7() }))
-  if (items.length === 0) return { items: 0, clients: 0, envelopes: 0 }
+  if (entry.length === 0) return { items: 0, clients: 0, envelopes: 0 }
+  const clientIds = [...new Set(entry.map((item) => item.clientId))]
+  const ids = orderedIds(entry.length, uuidv7)
+  const items = entry.map((item, index) => ({ ...item, id: ids[index] }))
   const photographed = items.filter((item) => item.envelope !== undefined)
 
   return inOpenBatch(
@@ -164,7 +178,7 @@ export async function registerMailCounts(
           id: item.id,
           clientId: item.clientId,
           kind: item.kind,
-          sender: null,
+          sender: item.sender,
           note: null,
           receivedAt,
           batchId,
