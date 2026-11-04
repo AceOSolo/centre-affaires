@@ -5,6 +5,8 @@ import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
+import { UnreturnedNotice } from '../../../../modules/etats-des-lieux/non-restituees.tsx'
+import { listUnreturnedOccupations, markConflicts } from '../../../../modules/etats-des-lieux/restitution.ts'
 import {
   filterBookings,
   firstParam,
@@ -56,12 +58,15 @@ export default async function WeekPage({
   const jours = weekDays(anchor)
   const lundi = weekStart(anchor)
 
-  const [allBookings, bookable, contexte, clients] = await Promise.all([
+  const [weekBookings, bookable, contexte, clients, unreturned] = await Promise.all([
     listBookingsBetween(jours[0], jours[6], timeZone),
     listBookableResources(),
     loadOpeningContext(jours[0], jours[6]),
     listClients(),
+    listUnreturnedOccupations(),
   ])
+  // Ressource non restituée (ADR 063) : ses réservations suivantes sont en conflit.
+  const allBookings = markConflicts(weekBookings, unreturned)
   const filters = parsePlanningFilters(
     params,
     clients.map((client) => client.id),
@@ -104,6 +109,13 @@ export default async function WeekPage({
       next={{ date: addDaysToIsoDate(lundi, 7), label: 'Semaine suivante' }}
     />
   )
+  const notice = (
+    <UnreturnedNotice
+      occupations={unreturned}
+      timeZone={timeZone}
+      canInspect={can(member.role, 'etats-des-lieux.gerer')}
+    />
+  )
 
   const header = (
     <div className="flex flex-wrap items-end justify-between gap-4">
@@ -137,6 +149,7 @@ export default async function WeekPage({
       <div className="flex flex-col gap-6">
         {header}
         {toolbar}
+        {notice}
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
           <p className="text-sm text-muted-foreground">
             {filters.type
@@ -166,6 +179,7 @@ export default async function WeekPage({
       <div className="flex flex-col gap-6">
         {header}
         {toolbar}
+        {notice}
         <WeekPlanning
           resource={resource}
           timeZone={timeZone}
@@ -192,6 +206,7 @@ export default async function WeekPage({
     <div className="flex flex-col gap-6">
       {header}
       {toolbar}
+      {notice}
       <WeekResources
         rows={rows}
         columns={columns}

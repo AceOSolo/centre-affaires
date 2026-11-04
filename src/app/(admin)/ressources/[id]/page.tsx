@@ -3,11 +3,18 @@ import { Fragment } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { TriangleAlertIcon } from '../../../../components/ui/icons.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate, toIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
-import { InspectionsSection } from '../../../../modules/etats-des-lieux/inspections-section.tsx'
+import { ResourceTimeline } from '../../../../modules/etats-des-lieux/chronologie-ressource.tsx'
+import { UnreturnedNotice } from '../../../../modules/etats-des-lieux/non-restituees.tsx'
+import {
+  listUnreturnedOccupations,
+  markConflicts,
+  unreturnedFor,
+} from '../../../../modules/etats-des-lieux/restitution.ts'
 import {
   bookingHref,
   bookingLabel,
@@ -62,8 +69,15 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
   const timeZone = await currentTimeZone()
   const today = todayIsoDate(timeZone)
   const last = addDaysToIsoDate(today, HORIZON_DAYS - 1)
-  const upcoming = (await listBookingsBetween(today, last, timeZone)).filter(
-    (booking) => booking.resourceId === resource.id && booking.status !== 'cancelled',
+  const [between, allUnreturned] = await Promise.all([
+    listBookingsBetween(today, last, timeZone),
+    listUnreturnedOccupations(),
+  ])
+  // Non restituée (ADR 063) : ses réservations suivantes sont en conflit.
+  const unreturned = unreturnedFor(allUnreturned, resource.id)
+  const upcoming = markConflicts(
+    between.filter((booking) => booking.resourceId === resource.id && booking.status !== 'cancelled'),
+    unreturned,
   )
 
   const archived = Boolean(resource.deletedAt)
@@ -122,6 +136,12 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
           </Link>
         )}
       </div>
+
+      <UnreturnedNotice
+        occupations={unreturned}
+        timeZone={timeZone}
+        canInspect={can(member.role, 'etats-des-lieux.gerer')}
+      />
 
       <dl className="grid grid-cols-[10rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
         <dt className="text-muted-foreground">Type</dt>
@@ -215,8 +235,13 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${bookingStatusBadgeStyles[booking.status]}`}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                            booking.conflict
+                              ? 'border border-statut-conflit bg-white text-statut-conflit'
+                              : bookingStatusBadgeStyles[booking.status]
+                          }`}
                         >
+                          {booking.conflict && <TriangleAlertIcon size={14} />}
                           {bookingStateLabel(booking)}
                         </span>
                       </td>
@@ -229,11 +254,10 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
         )}
       </section>
 
-      {/* États des lieux d'entrée et de sortie de la ressource (R06, ADR 039). */}
+      {/* Chronologie des états des lieux, par occupation (R06, ADR 039, ADR 063). */}
       {can(member.role, 'etats-des-lieux.gerer') && (
-        <InspectionsSection
-          filter={{ resourceId: resource.id }}
-          context={{ ressource: resource.id }}
+        <ResourceTimeline
+          resourceId={resource.id}
           timeZone={timeZone}
           unavailable={archived ? 'Ressource archivée : plus d’état des lieux à ouvrir.' : undefined}
         />

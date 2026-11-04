@@ -7,6 +7,7 @@ import {
   ClockIcon,
   FileTextIcon,
   MailIcon,
+  TriangleAlertIcon,
 } from '../../../components/ui/icons.tsx'
 import { can } from '../../../lib/auth/permissions.ts'
 import { requireAnyPermission } from '../../../lib/auth/staff.ts'
@@ -14,7 +15,9 @@ import { formatDateTime, formatLongDate, formatTime, toIsoDate, todayIsoDate } f
 import { currentTenant } from '../../../lib/tenant.ts'
 import { listClients } from '../../../modules/clients/queries.ts'
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
+import { UnreturnedNotice } from '../../../modules/etats-des-lieux/non-restituees.tsx'
 import { listInspections } from '../../../modules/etats-des-lieux/queries.ts'
+import { conflictingBookingIds, listUnreturnedOccupations } from '../../../modules/etats-des-lieux/restitution.ts'
 import { listOfferRequests } from '../../../modules/facturation/offres-portail.ts'
 import { awaitsReception } from '../../../modules/facturation/propositions.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
@@ -65,6 +68,10 @@ export default async function AujourdhuiPage() {
     allowed('etats-des-lieux.gerer') ? listInspections({ stage: 'draft' }) : [],
     allowed('etats-des-lieux.gerer') ? listInspections({ stage: 'to_sign' }) : [],
   ])
+  // Alerte à l'équipe : ressources non restituées et réservations en conflit (ADR 063).
+  const unreturned =
+    allowed('reservations.gerer') || allowed('etats-des-lieux.gerer') ? await listUnreturnedOccupations() : []
+  const inConflict = conflictingBookingIds(unreturned)
 
   const tiles = todoTiles(
     {
@@ -93,6 +100,13 @@ export default async function AujourdhuiPage() {
         <h1 className="text-2xl font-semibold tracking-tight text-primary">Aujourd’hui</h1>
         <p className="mt-1 text-sm text-muted-foreground first-letter:uppercase">{formatLongDate(today, timeZone)}</p>
       </div>
+
+      <UnreturnedNotice
+        occupations={unreturned}
+        timeZone={timeZone}
+        now={now}
+        canInspect={allowed('etats-des-lieux.gerer')}
+      />
 
       {tiles.length > 0 && (
         <section aria-labelledby="a-traiter">
@@ -171,10 +185,17 @@ export default async function AujourdhuiPage() {
                       <td className="px-4 py-2.5">{booking.title}</td>
                       <td className="px-4 py-2.5">{who(booking) ?? <span className="text-muted-foreground">Sans client</span>}</td>
                       <td className="whitespace-nowrap px-4 py-2.5">
-                        <span className="inline-flex items-center gap-1.5">
-                          {booking.status === 'confirmed' ? <CheckIcon size={16} className="text-primary" /> : <ClockIcon size={16} className="text-primary" />}
-                          {bookingStatusLabels[booking.status]}
-                        </span>
+                        {inConflict.has(booking.id) ? (
+                          <span className="inline-flex items-center gap-1.5 font-medium text-statut-conflit">
+                            <TriangleAlertIcon size={16} />
+                            Conflit — ressource non restituée
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5">
+                            {booking.status === 'confirmed' ? <CheckIcon size={16} className="text-primary" /> : <ClockIcon size={16} className="text-primary" />}
+                            {bookingStatusLabels[booking.status]}
+                          </span>
+                        )}
                       </td>
                     </tr>
                   ))}

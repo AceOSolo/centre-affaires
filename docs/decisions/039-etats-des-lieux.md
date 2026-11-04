@@ -4,7 +4,9 @@
 **Statut** : accepté — met en œuvre la décision D8 de l'ADR 016, sauf la
 compression par `sharp`, remplacée par une compression dans le navigateur ;
 rechiffrement des photos à la rotation de clé et nom du modèle figé avec sa
-version par l'ADR 041 ; les choix marqués « à valider » attendent le centre
+version par l'ADR 041 ; une entrée par occupation, ressource occupée
+jusqu'à la sortie et historique par l'ADR 063 ; les choix marqués « à
+valider » attendent le centre
 
 ## Contexte
 

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { TriangleAlertIcon } from '../../../components/ui/icons.tsx'
 import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import {
@@ -11,6 +12,8 @@ import {
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { listClients } from '../../../modules/clients/queries.ts'
+import { UnreturnedNotice } from '../../../modules/etats-des-lieux/non-restituees.tsx'
+import { listUnreturnedOccupations, markConflicts } from '../../../modules/etats-des-lieux/restitution.ts'
 import {
   bookingHref,
   bookingLabel,
@@ -48,12 +51,15 @@ export default async function PlanningPage({
   const today = todayIsoDate(timeZone)
   const isoDate = planningDate(params.date, today)
 
-  const [allBookings, bookable, contexte, clients] = await Promise.all([
+  const [dayBookings, bookable, contexte, clients, unreturned] = await Promise.all([
     listBookingsForDay(isoDate, timeZone),
     listBookableResources(),
     loadOpeningContext(isoDate, isoDate),
     listClients(),
+    listUnreturnedOccupations(),
   ])
+  // Ressource non restituée (ADR 063) : ses réservations suivantes sont en conflit.
+  const allBookings = markConflicts(dayBookings, unreturned)
   const filters = parsePlanningFilters(
     params,
     clients.map((client) => client.id),
@@ -124,6 +130,12 @@ export default async function PlanningPage({
         previous={{ date: addDaysToIsoDate(isoDate, -1), label: 'Veille' }}
         current={{ date: today, label: 'Aujourd’hui', active: isoDate === today }}
         next={{ date: addDaysToIsoDate(isoDate, 1), label: 'Lendemain' }}
+      />
+
+      <UnreturnedNotice
+        occupations={unreturned}
+        timeZone={timeZone}
+        canInspect={can(member.role, 'etats-des-lieux.gerer')}
       />
 
       {columns.length === 0 ? (
@@ -239,8 +251,13 @@ export default async function PlanningPage({
                       </td>
                       <td className="px-4 py-3">
                         <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${bookingStatusBadgeStyles[booking.status]}`}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${
+                            booking.conflict
+                              ? 'border border-statut-conflit bg-white text-statut-conflit'
+                              : bookingStatusBadgeStyles[booking.status]
+                          }`}
                         >
+                          {booking.conflict && <TriangleAlertIcon size={14} />}
                           {bookingStateLabel(booking)}
                         </span>
                       </td>

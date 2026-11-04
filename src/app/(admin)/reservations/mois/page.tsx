@@ -5,6 +5,8 @@ import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addMonthsToIsoMonth, formatIsoMonth, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
+import { UnreturnedNotice } from '../../../../modules/etats-des-lieux/non-restituees.tsx'
+import { listUnreturnedOccupations, markConflicts } from '../../../../modules/etats-des-lieux/restitution.ts'
 import {
   filterBookings,
   parsePlanningFilters,
@@ -43,12 +45,15 @@ export default async function MonthPage({
   const first = days[0]
   const last = days[days.length - 1]
 
-  const [allBookings, bookable, contexte, clients] = await Promise.all([
+  const [monthBookings, bookable, contexte, clients, unreturned] = await Promise.all([
     listBookingsBetween(first, last, timeZone),
     listBookableResources(),
     loadOpeningContext(first, last),
     listClients(),
+    listUnreturnedOccupations(),
   ])
+  // Ressource non restituée (ADR 063) : ses réservations suivantes sont en conflit.
+  const allBookings = markConflicts(monthBookings, unreturned)
   const filters = parsePlanningFilters(
     params,
     clients.map((client) => client.id),
@@ -101,6 +106,12 @@ export default async function MonthPage({
         previous={{ date: `${addMonthsToIsoMonth(month, -1)}-01`, label: 'Mois précédent' }}
         current={{ date: today, label: 'Ce mois-ci', active: monthOfDate(today) === month }}
         next={{ date: `${addMonthsToIsoMonth(month, 1)}-01`, label: 'Mois suivant' }}
+      />
+
+      <UnreturnedNotice
+        occupations={unreturned}
+        timeZone={timeZone}
+        canInspect={can(member.role, 'etats-des-lieux.gerer')}
       />
 
       {resources.length === 0 ? (

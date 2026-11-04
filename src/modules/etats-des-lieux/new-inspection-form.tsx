@@ -14,6 +14,16 @@ export type CandidateOption = {
   detail: string
   /** Entrées closes sans sortie, pour la même ressource et le même client. */
   openEntries: { id: string; label: string }[]
+  /**
+   * Ce que l'occupation permet encore (ADR 063) : une entrée seulement si elle
+   * n'en a pas, une sortie si son entrée est close sans sortie, ou sans entrée.
+   */
+  canEntry: boolean
+  canExit: boolean
+  /** Pourquoi l'une ou l'autre ne s'ouvre pas, dit à côté de l'occupation. */
+  hint: string | null
+  /** L'entrée close de l'occupation : la sortie la clôt, sans choix. */
+  ownEntry: { id: string; label: string } | null
 }
 
 const labels: Record<string, string> = {
@@ -48,13 +58,18 @@ export function NewInspectionForm({
     createInspectionAction,
     null,
   )
-  const [candidateKey, setCandidateKey] = useState(
-    state?.values?.candidate ?? (candidates.length === 1 ? candidates[0].key : ''),
-  )
   const [kind, setKind] = useState(state?.values?.kind ?? defaultKind)
+  // Une occupation qui ne permet pas l'étape choisie ne se coche pas : une
+  // entrée déjà faite, une sortie déjà ouverte (ADR 063).
+  const allows = (option: CandidateOption, step: string) => (step === 'exit' ? option.canExit : option.canEntry)
+  const [chosenKey, setCandidateKey] = useState(state?.values?.candidate ?? '')
+  const open = candidates.filter((option) => allows(option, kind))
+  // Une seule occupation possible pour l'étape : elle est choisie d'office.
+  const candidateKey = chosenKey || (open.length === 1 ? open[0].key : '')
   const errors = state?.fieldErrors ?? {}
-  const candidate = candidates.find((option) => option.key === candidateKey)
+  const candidate = open.find((option) => option.key === candidateKey)
   const entries = candidate?.openEntries ?? []
+  const noneOpen = open.length === 0
 
   return (
     <form action={formAction} className="flex max-w-2xl flex-col gap-6">
@@ -94,26 +109,48 @@ export function NewInspectionForm({
       <fieldset aria-describedby={errors.candidate ? 'candidate-error' : undefined}>
         <legend className={labelClass}>Occupation</legend>
         <ul className="mt-2 flex flex-col gap-2">
-          {candidates.map((option, index) => (
-            <li key={option.key}>
-              <label className="flex cursor-pointer items-start gap-3 rounded-md border border-border bg-white px-4 py-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent">
-                <input
-                  id={index === 0 ? 'candidate' : `candidate-${index}`}
-                  type="radio"
-                  name="candidate"
-                  value={option.key}
-                  checked={candidateKey === option.key}
-                  onChange={() => setCandidateKey(option.key)}
-                  className="mt-0.5 size-4 accent-primary"
-                />
-                <span>
-                  <span className="font-medium">{option.label}</span>
-                  <span className="block text-muted-foreground">{option.detail}</span>
-                </span>
-              </label>
-            </li>
-          ))}
+          {candidates.map((option, index) => {
+            const allowed = allows(option, kind)
+            const hintId = `candidate-hint-${index}`
+            return (
+              <li key={option.key}>
+                <label
+                  className={`flex items-start gap-3 rounded-md border border-border px-4 py-3 text-sm has-[:checked]:border-primary has-[:checked]:bg-primary/5 has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-accent ${
+                    allowed ? 'cursor-pointer bg-white' : 'cursor-not-allowed bg-muted'
+                  }`}
+                >
+                  <input
+                    id={index === 0 ? 'candidate' : `candidate-${index}`}
+                    type="radio"
+                    name="candidate"
+                    value={option.key}
+                    checked={allowed && candidateKey === option.key}
+                    disabled={!allowed}
+                    onChange={() => setCandidateKey(option.key)}
+                    aria-describedby={option.hint ? hintId : undefined}
+                    className="mt-0.5 size-4 accent-primary"
+                  />
+                  <span>
+                    <span className="font-medium">{option.label}</span>
+                    <span className="block text-muted-foreground">{option.detail}</span>
+                    {option.hint && (
+                      <span id={hintId} className="mt-1 block text-foreground">
+                        {option.hint}
+                      </span>
+                    )}
+                  </span>
+                </label>
+              </li>
+            )
+          })}
         </ul>
+        {noneOpen && (
+          <p className={hintClass} role="status">
+            {kind === 'entry'
+              ? 'Aucune de ces occupations n’attend d’état des lieux d’entrée : chacune a déjà le sien.'
+              : 'Aucune de ces occupations ne peut recevoir de sortie pour l’instant.'}
+          </p>
+        )}
         {errors.candidate && (
           <p id="candidate-error" className={errorClass}>
             {errors.candidate}
@@ -121,7 +158,18 @@ export function NewInspectionForm({
         )}
       </fieldset>
 
-      {kind === 'exit' && (
+      {kind === 'exit' && candidate?.ownEntry && (
+        <div className="max-w-xl">
+          <input type="hidden" name="entry" value={candidate.ownEntry.id} />
+          <p className={labelClass}>État des lieux d’entrée</p>
+          <p className="mt-1 text-sm">
+            {candidate.ownEntry.label} — la sortie clôt cette entrée, et se compare à elle champ par champ.
+            Une fois close, elle rend la ressource.
+          </p>
+        </div>
+      )}
+
+      {kind === 'exit' && !candidate?.ownEntry && (
         <div className="max-w-xl">
           <label className={labelClass} htmlFor="entry">
             État des lieux d’entrée
@@ -174,7 +222,7 @@ export function NewInspectionForm({
       </div>
 
       <div className="flex flex-wrap items-center gap-4">
-        <button type="submit" disabled={pending || candidates.length === 0} className={primaryButton}>
+        <button type="submit" disabled={pending || noneOpen} className={primaryButton}>
           {pending ? 'Ouverture…' : 'Commencer la saisie'}
         </button>
         <Link href={cancelHref} className="text-sm text-muted-foreground hover:underline">
