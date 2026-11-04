@@ -3,6 +3,8 @@ import Link from 'next/link'
 import { CalendarIcon, CheckIcon } from '../../components/ui/icons.tsx'
 import { formatDateTime } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
+import { calendarEmbedCode } from './agenda-google.ts'
+import { CopyField } from './agenda-google-copie.tsx'
 import {
   connectGoogleCalendarAction,
   createResourceCalendarsAction,
@@ -308,5 +310,58 @@ export function ResourceCalendarsTable({
       </div>
       {table}
     </form>
+  )
+}
+
+/**
+ * Code d'intégration de chaque agenda relié, pour l'afficher dans une autre
+ * page — la page « aide outils » de Dolibarr (ADR 064). Marche à suivre :
+ * `docs/exploitation/agenda-google-dans-dolibarr.md`.
+ */
+export function ResourceCalendarsEmbed({ links, timeZone }: { links: ResourceCalendarLink[]; timeZone: string }) {
+  const linked = links.flatMap((link) => (link.calendarId ? [{ ...link, calendarId: link.calendarId }] : []))
+  if (linked.length === 0) return null
+
+  return (
+    <section aria-labelledby="integration-titre" className="flex flex-col gap-3">
+      <div>
+        <h2 id="integration-titre" className="text-sm font-semibold">
+          Intégrer un agenda dans une autre page
+        </h2>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+          Pour l’afficher dans Dolibarr, page « aide outils », ou ailleurs. Partagez d’abord
+          l’agenda, depuis Google Agenda, avec le compte Google de chaque membre de l’équipe : la
+          page ne montre les réservations qu’à eux. Ne le rendez jamais public, l’objet d’une
+          réservation peut porter le nom d’un client.
+        </p>
+      </div>
+      <ul className="flex flex-col gap-2">
+        {linked.map((link) => (
+          <li key={link.id}>
+            <details className="rounded-lg border border-border bg-white">
+              <summary className={`cursor-pointer rounded-lg px-4 py-3 text-sm font-medium ${focus}`}>
+                {link.name}{' '}
+                <span className="font-normal text-muted-foreground">
+                  — {resourceTypeLabels[link.resourceType]}
+                </span>
+              </summary>
+              <div className="flex flex-col gap-4 border-t border-border px-4 py-4">
+                <CopyField
+                  id={`agenda-${link.id}-code`}
+                  label="Code d’intégration, à coller dans la page"
+                  value={calendarEmbedCode({ calendarId: link.calendarId, resourceName: link.name }, timeZone)}
+                  rows={4}
+                />
+                <CopyField
+                  id={`agenda-${link.id}-identifiant`}
+                  label="Identifiant de l’agenda, pour l’ajouter à un agenda déjà intégré"
+                  value={link.calendarId}
+                />
+              </div>
+            </details>
+          </li>
+        ))}
+      </ul>
+    </section>
   )
 }

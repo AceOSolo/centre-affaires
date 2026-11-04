@@ -5,6 +5,7 @@ import { googleConfig } from '../../../../modules/reservations/agenda-google.ts'
 import {
   FlashMessage,
   GoogleAccountPanel,
+  ResourceCalendarsEmbed,
   ResourceCalendarsTable,
   flashFor,
 } from '../../../../modules/reservations/agenda-google-panel.tsx'
@@ -75,6 +76,9 @@ export default async function AgendasPage({
           timeZone={timeZone}
         />
       </section>
+
+      {/* Pour la page « aide outils » de Dolibarr (ADR 064). */}
+      <ResourceCalendarsEmbed links={links} timeZone={timeZone} />
     </div>
   )
 }
