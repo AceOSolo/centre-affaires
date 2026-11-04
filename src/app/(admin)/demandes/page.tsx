@@ -143,7 +143,9 @@ export default async function DemandesPage({
               return (
                 <li
                   key={booking.id}
-                  className="flex flex-col gap-4 rounded-lg border border-border bg-white p-5 lg:flex-row lg:items-start lg:justify-between"
+                  // Ancre de la cloche de l'équipe (ADR 059) : la demande ciblée est cerclée.
+                  id={`demande-${booking.id}`}
+                  className="flex scroll-mt-4 flex-col gap-4 rounded-lg border border-border bg-white p-5 target:ring-2 target:ring-accent lg:flex-row lg:items-start lg:justify-between"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -379,7 +381,11 @@ export default async function DemandesPage({
               </thead>
               <tbody>
                 {proposalsToComplete.map((proposal) => (
-                  <tr key={proposal.id} className="border-b border-border last:border-0">
+                  <tr
+                    key={proposal.id}
+                    id={`devis-${proposal.id}`}
+                    className="scroll-mt-4 border-b border-border last:border-0 target:bg-accent/10"
+                  >
                     <td className="px-4 py-3">
                       <Link
                         href={`/devis/${proposal.id}`}
@@ -444,7 +450,7 @@ export default async function DemandesPage({
               </thead>
               <tbody className="divide-y divide-border">
                 {offerRequests.map((request) => (
-                  <tr key={request.id} className="align-top">
+                  <tr key={request.id} id={`offre-${request.id}`} className="scroll-mt-4 align-top target:bg-accent/10">
                     <td className="whitespace-nowrap px-4 py-3 tabular">
                       {formatDateTime(request.requestedAt, timeZone)}
                     </td>

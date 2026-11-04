@@ -71,6 +71,13 @@
       "when": 1793803845378,
       "tag": "0009_duree_max_demandes",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "5",
+      "when": 1793803959163,
+      "tag": "0010_cloche_equipe",
+      "breakpoints": true
     }
   ]
 }

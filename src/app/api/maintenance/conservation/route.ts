@@ -7,9 +7,10 @@ import { runNightlyConservation } from '../../../../modules/rgpd/tache-de-nuit.t
  * Purge planifiée de ce qui est arrivé au terme de sa conservation : le
  * courrier et son journal d'accès (ADR 015), les coordonnées des demandeurs de
  * la page publique (ADR 020), les entreprises et les personnes retirées à
- * anonymiser (R29, ADR 040), le journal des messages envoyés (ADR 038), les
- * photos d'états des lieux et le journal de leurs consultations (R33,
- * ADR 039). Les durées sont celles du centre (`tenants`).
+ * anonymiser (R29, ADR 040), le journal des messages envoyés (ADR 038) et la
+ * cloche de l'équipe (ADR 059), les photos d'états des lieux et le journal de
+ * leurs consultations (R33, ADR 039). Les durées sont celles du centre
+ * (`tenants`).
  *
  * Chaque purge et chaque anonymisation a sa propre transaction et son propre
  * filet (`runNightlyConservation`) : l'échec de l'une (le stockage

@@ -2,6 +2,7 @@ import { betterAuth } from 'better-auth'
 import { drizzleAdapter } from 'better-auth/adapters/drizzle'
 import { APIError, createAuthMiddleware } from 'better-auth/api'
 import { nextCookies } from 'better-auth/next-js'
+import { eq } from 'drizzle-orm'
 
 import { createDatabase, databaseOptionsFromEnv, withTenant, type Database } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
@@ -111,6 +112,14 @@ export function createAuth(
       // Une réinitialisation suit souvent un doute sur le compte : les
       // sessions ouvertes avec l'ancien mot de passe sont fermées.
       revokeSessionsOnPasswordReset: true,
+      // Le lien est parti à l'adresse du compte : l'avoir ouvert prouve qu'on
+      // la reçoit. C'est ce qui confirme l'adresse d'une personne invitée par
+      // l'accueil (`invitation.ts`, ADR 059), qui choisit son mot de passe
+      // sans second courriel de confirmation.
+      async onPasswordReset({ user }) {
+        if (user.emailVerified) return
+        await db.update(authUsers).set({ emailVerified: true, updatedAt: new Date() }).where(eq(authUsers.id, user.id))
+      },
     },
     emailVerification: {
       sendOnSignUp: verify,

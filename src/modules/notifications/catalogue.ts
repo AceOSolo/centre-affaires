@@ -242,7 +242,25 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
     centre,
     client,
     { name: 'adresse', label: 'Adresse de la personne invitée', example: 'camille@exemple.fr' },
-    { ...lienEspace('la page de connexion'), example: 'https://centre.exemple/auth/connexion' },
+    // Le lien de l'invitation (ADR 059) : il ouvre le choix du mot de passe.
+    {
+      name: 'lien',
+      label: 'Lien pour choisir son mot de passe, valable une fois',
+      example: 'https://centre.exemple/api/auth/reset-password/…',
+      optional: true,
+    },
+    {
+      name: 'echeance',
+      label: 'Fin de validité du lien, à l’heure du centre',
+      example: 'mercredi 11 novembre 2026 à 10:00',
+      optional: true,
+    },
+    {
+      name: 'connexion',
+      label: 'Lien vers la page de connexion de l’espace client',
+      example: 'https://centre.exemple/auth/connexion',
+      optional: true,
+    },
   ],
   offer_requested: [
     centre,
@@ -425,9 +443,13 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
     subject: 'Votre espace client {{centre}}',
     body:
       'Bonjour,\n\n{{centre}} vous a ouvert un accès à l’espace client de {{client}} : le courrier reçu à son nom, et ses réservations.' +
-      '\n\nPour l’activer, créez votre accès avec cette adresse ({{adresse}}) depuis la page de connexion, puis confirmez-la.' +
-      '\n\n{{lien}}' +
-      '\n\nSi vous n’attendiez pas ce message, ignorez-le : rien n’est ouvert tant que l’adresse n’est pas confirmée.' +
+      '\n\nPour y entrer, choisissez votre mot de passe en ouvrant ce lien, valable une fois, jusqu’au {{echeance}} :' +
+      '\n{{lien}}' +
+      '\n\nVotre identifiant est votre adresse : {{adresse}}.' +
+      '\nEnsuite, connectez-vous depuis {{connexion}}' +
+      '\n\nVous avez déjà un mot de passe pour {{centre}} ? Connectez-vous simplement avec lui : l’espace de {{client}} s’y ajoute.' +
+      '\n\nLien expiré ? Demandez à {{centre}} de vous renvoyer l’invitation, ou choisissez « Mot de passe oublié » sur la page de connexion.' +
+      '\n\nSi vous n’attendiez pas ce message, ignorez-le : rien n’est ouvert tant qu’aucun mot de passe n’est choisi.' +
       signature,
   },
   offer_requested: {
@@ -499,7 +521,8 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
   contract_activated: 'À l’activation d’un contrat.',
   inspection_to_sign: 'À la clôture d’un état des lieux, pour que le client le valide.',
   inspection_signed: 'Quand le client valide un état des lieux depuis son espace.',
-  member_invited: 'Quand l’équipe ouvre un accès à l’espace client.',
+  member_invited:
+    'Quand l’équipe ouvre un accès à l’espace client, ou renvoie l’invitation : le lien pour choisir son mot de passe.',
   offer_requested: 'Quand un client demande une offre depuis son espace.',
   domiciliation_request_submitted:
     'Quand une demande de domiciliation est déposée sur la page publique : son devis attend la relecture de l’accueil.',

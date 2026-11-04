@@ -104,7 +104,7 @@ export function MailRequestQueue({
                 ...(spot ? [spotLabel(spot, today)] : []),
               ]
               return (
-                <tr key={row.id} className="align-top">
+                <tr key={row.id} id={`courrier-${row.id}`} className="scroll-mt-4 align-top target:bg-accent/10">
                   <td className="px-4 py-3">
                     {row.status === 'requested' && (
                       <input
