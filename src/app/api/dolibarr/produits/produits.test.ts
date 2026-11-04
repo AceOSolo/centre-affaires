@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
 import { afterEach, beforeEach, describe, it, mock } from 'node:test'
 
+import { passerelleDeTest } from '../../../../modules/crm/test-support.ts'
 import { receiveDolibarrProduct, webhookLogLine } from './recevoir.ts'
 
 /**
  * Webhook des produits de Dolibarr (ADR 049), pour ce qui se décide avant la
  * base : jeton, envoi illisible, produit sans place sur le site. Les écritures
- * sont éprouvées dans `produits.db.test.ts`.
+ * sont éprouvées dans `produits.db.test.ts`, les jetons réglés à l'écran dans
+ * `../acces.db.test.ts` (ADR 065). Ici, aucun réglage : le jeton du serveur
+ * vaut, comme avant l'écran.
  */
 describe('webhook des produits Dolibarr', () => {
   const JETON = 'jeton+de/test='
@@ -26,12 +29,15 @@ describe('webhook des produits Dolibarr', () => {
     mock.restoreAll()
   })
 
+  const passerelle = passerelleDeTest({ serveur: () => process.env.DOLIBARR_API_TOKEN })
+
   const appeler = (corps: unknown, jeton: string | null = JETON) =>
     receiveDolibarrProduct(
       new Request(
         `http://127.0.0.1:3100/api/dolibarr/produits${jeton === null ? '' : `?jeton=${encodeURIComponent(jeton)}`}`,
         { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(corps) },
       ),
+      passerelle,
     )
 
   const service = (object: Record<string, unknown>, triggercode = 'PRODUCT_MODIFY') => ({
@@ -67,6 +73,7 @@ describe('webhook des produits Dolibarr', () => {
         method: 'POST',
         body: 'triggercode=PRODUCT_MODIFY',
       }),
+      passerelle,
     )
     assert.equal(response.status, 400)
   })

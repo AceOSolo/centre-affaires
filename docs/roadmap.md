@@ -159,6 +159,14 @@ virement et prélèvement suivis à la main.
 | D10 | Demandes par produit et devis Dolibarr (20/10/2026) | ADR 005 (une seule demande, pour les salles) ; ADR 016 et D1 (facturation dans l'application) | **ADR 043.** Trois produits — salle ou bureau, camion, domiciliation — chacun avec ses questions ; chaque demande produit un devis structuré (`DV-AAAA-NNNN`) que Dolibarr vient chercher par une API (`docs/integrations/dolibarr.md`). **Dolibarr fera aussi les factures** : D1 est amendée, la bascule (lot, contrats, actes du courrier, relances, SEPA, FEC, plateforme agréée) est à trancher avec le développeur Dolibarr dans un ADR suivant. En attendant, le lot de l'application ne facture plus une réservation qui a un devis vivant. |
 | D11 | Commercial et facturation dans Dolibarr ; rangement du back-office (20/10/2026) | ADR 016 et D1 (facturation dans l'application) ; ADR 006, 023, 024 (clients, tarifs, offres dans l'application) | **ADR 046.** Tiers, contrats, offres, services, tarifs, factures, règlements et export comptable passent dans Dolibarr ; le site fait la passerelle. Première tranche : droits de facturation retirés à tous les rôles, lot planifié arrêté. **Menu** : d'abord rangé en rayons par produit (ADR 046), puis par le parcours d'une demande (ADR 048), précédé de l'écran « Aujourd'hui » (ADR 050), enfin **par service vendu** (ADR 053 : un rayon Salles, Bureaux, Domiciliation, Camion sans répétition, « Demandes » unique en tête, « Tous les services », « Réglages ») ; les pastilles par produit des pages restent (filtres `?type=`, `?produit=`). Passerelle entrante : produits et tarifs reçus (ADR 049) ; réception des tiers et des contrats, envoi des consommations, écrans commerciaux en lecture seule : seconde tranche, avec le développeur Dolibarr. |
 
+## Recette du 04/11/2026
+
+Lots de `docs/recette/2026-11-04.md`.
+
+| Lot | Note de recette | État |
+|---|---|---|
+| 9 | Mode SaaS : chaque centre branche son CRM depuis son espace admin ; connexion avec Dolibarr (première partie) | ✅ **ADR 065** : écran Réglages > Connexion au CRM (direction seule) — choix du CRM, adresse, clé d'appel chiffrée, jeton généré à l'écran et montré une fois, qui désigne le centre, flux activés, « Tester la connexion », journal des échanges. Module `crm/`, interface de connecteur, Dolibarr premier branchement ; `/api/dolibarr/*` inchangées, `DOLIBARR_API_TOKEN` accepté tant qu'aucun jeton n'est réglé. Migration 0008. Reste : les flux de la seconde tranche (lot 10), prévus « à venir » et coupés |
+
 ## Phases
 
 Une phase = des tranches livrables, de la base à l'écran, déployées.

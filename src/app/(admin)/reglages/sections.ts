@@ -72,6 +72,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Identité du centre, règles de réservation, durées de conservation.',
         permission: 'centre.configurer',
       },
+      // Réservé à la direction (ADR 065).
+      {
+        href: '/reglages/crm',
+        label: 'Connexion au CRM',
+        description: 'Le CRM du centre, son jeton d’accès, les flux échangés et le journal des échanges.',
+        permission: 'crm.gerer',
+      },
     ],
   },
 ]

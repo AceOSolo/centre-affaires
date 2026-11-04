@@ -57,8 +57,8 @@ describe('matrice des droits', () => {
     // Bannir ferme l'accès d'une personne au centre (ADR 045).
     'comptes.gerer',
   ]
-  /** La tenue des exploitants : la direction seule (ADR 054). */
-  const direction: Permission[] = ['equipe.exploitants']
+  /** La tenue des exploitants (ADR 054) et la connexion au CRM (ADR 065) : la direction seule. */
+  const direction: Permission[] = ['equipe.exploitants', 'crm.gerer']
 
   it('couvre chaque rôle de l’équipe', () => {
     assert.deepEqual(Object.keys(rolePermissions).sort(), [...staffRoles].sort())
@@ -85,7 +85,7 @@ describe('matrice des droits', () => {
     }
   })
 
-  it('réserve à la direction la nomination et le retrait des exploitants', () => {
+  it('réserve à la direction la nomination des exploitants et la connexion au CRM', () => {
     for (const permission of direction) {
       assert.deepEqual(rolesAllowed(permission), ['Direction'], permission)
     }

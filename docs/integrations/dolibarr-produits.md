@@ -44,8 +44,11 @@ devis est décrite à part : [dolibarr.md](dolibarr.md).
    | Statut | Déclenchement automatique (valeur 1) |
    | Type | selon la version, ci-dessous (le champ n'existe qu'à partir de la 22) |
 
-   Le jeton est celui de l'API des devis (`DOLIBARR_API_TOKEN`, dans le `.env`
-   du serveur du site). Le module ne sait poser aucun en-tête : le jeton passe
+   Le jeton est celui de l'API des devis : le jeton du centre, généré par la
+   direction dans Réglages > Connexion au CRM, qui affiche aussi l'adresse
+   complète à recopier ; à défaut, l'ancien `DOLIBARR_API_TOKEN` du `.env` du
+   serveur, tant qu'aucun jeton n'est réglé à l'écran (ADR 065,
+   [dolibarr.md](dolibarr.md#accès)). Le module ne sait poser aucun en-tête : le jeton passe
    dans l'adresse ; un `+` peut être collé tel quel. L'adresse, jeton compris,
    se lit dans la fiche de la cible, dans les messages d'échec de Dolibarr,
    dans son historique des triggers et dans le journal d'accès du serveur du

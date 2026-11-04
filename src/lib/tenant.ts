@@ -1,9 +1,17 @@
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { cache } from 'react'
 
 import { eq } from 'drizzle-orm'
 
 import { withTenant } from '../db/index.ts'
 import { DEFAULT_TENANT_ID, tenants, type Tenant } from '../db/tenants.ts'
+import { isUuid } from './uuid.ts'
+
+/**
+ * Centre désigné par l'appelant d'une API, le temps de son appel : le jeton
+ * d'un CRM désigne son centre (ADR 065, `modules/crm/appels.ts`).
+ */
+const callerTenant = new AsyncLocalStorage<string>()
 
 /**
  * Centre courant.
@@ -12,9 +20,22 @@ import { DEFAULT_TENANT_ID, tenants, type Tenant } from '../db/tenants.ts'
  * tout passe par le centre unique. Ce module est le seul endroit à reprendre le
  * jour où le centre viendra de la session : aucune page, aucune action ne cite
  * `DEFAULT_TENANT_ID` directement.
+ *
+ * Une API appelée par un CRM est servie pour le centre de son jeton
+ * (`runForTenant`) : c'est la première porte qui ne passe pas par le centre
+ * unique.
  */
 export function currentTenantId(): string {
-  return DEFAULT_TENANT_ID
+  return callerTenant.getStore() ?? DEFAULT_TENANT_ID
+}
+
+/**
+ * Exécute `run` pour un centre désigné par l'appelant : tout ce qui lit
+ * `currentTenantId()` pendant l'appel — requêtes, fuseau, devise — le sert.
+ */
+export function runForTenant<T>(tenantId: string, run: () => T): T {
+  if (!isUuid(tenantId)) throw new Error('Centre invalide : identifiant mal formé.')
+  return callerTenant.run(tenantId, run)
 }
 
 /**

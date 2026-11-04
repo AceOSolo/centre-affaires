@@ -35,10 +35,24 @@ main). Un devis **à compléter** n'apparaît jamais dans l'API.
 
 - Base : l'adresse publique de l'application (`APP_URL`), par exemple
   `https://reservation.exemple.fr`.
-- Jeton : `Authorization: Bearer <DOLIBARR_API_TOKEN>`. L'exploitant le génère
-  (`openssl rand -base64 32`), le pose dans le `.env` du VPS et vous le remet.
-- Sans jeton valide, ou si le jeton n'est pas configuré, **toutes les routes
+- Jeton : `Authorization: Bearer <jeton>`. **D'où il vient** (ADR 065) :
+  - **le jeton du centre**, généré par la direction dans le back-office
+    (Réglages > Connexion au CRM), affiché une seule fois et remis par elle.
+    Il désigne le centre : chaque centre a le sien, et un appel est servi pour
+    le centre de son jeton ;
+  - **à défaut, l'ancien jeton du serveur** (`DOLIBARR_API_TOKEN`, dans le
+    `.env` du VPS), tant qu'aucun jeton n'est réglé à l'écran. C'est celui que
+    vous avez aujourd'hui : **rien à changer tant que la direction n'en génère
+    pas un nouveau.** Le jour où elle le fait, l'ancien cesse aussitôt :
+    remplacez-le dans votre connecteur **et** dans l'adresse de la cible du
+    module Webhook (produits, `?jeton=`), en même temps.
+- Sans jeton valide, ou si aucun jeton n'est configuré, **toutes les routes
   répondent 404** : c'est voulu, elles n'existent pas pour les autres.
+- Un flux coupé par le centre (Réglages > Connexion au CRM, « Flux échangés »)
+  répond **403** sur les routes des devis, **400** au webhook des produits,
+  avec `{ "erreur": "Flux « Devis » désactivé dans les réglages du centre (…)" }`.
+  Chaque appel au jeton valide, réussi ou non, est inscrit au journal des
+  échanges que le centre lit sur le même écran.
 - Réponses en JSON, UTF-8. Instants en UTC, ISO 8601 (`2026-11-03T08:00:00.000Z`).
 
 ## `GET /api/dolibarr/devis`
@@ -238,7 +252,9 @@ réservation au devis signé se facture dans Dolibarr, à partir du devis.
 | application → Dolibarr | consommations facturables : réservations hors contrat, actes du courrier (ouvertures, numérisations, réexpéditions, pages en sus), services ponctuels | **à venir** (seconde tranche) |
 
 Les trois dernières n'existent pas encore dans l'application : aucune route
-`/api/dolibarr/*` ne les sert. Restent à trancher ensemble pour elles : le
+`/api/dolibarr/*` ne les sert. L'écran « Connexion au CRM » les montre déjà,
+« à venir » et coupées ; chacune s'y ouvrira, centre par centre, avec le même
+jeton (ADR 065). Restent à trancher ensemble pour elles : le
 format des tiers et des contrats, la référence commune d'un tiers (SIREN ou
 identifiant Dolibarr), la fréquence des échanges, et qui envoie au client
 l'avis d'une facture.
