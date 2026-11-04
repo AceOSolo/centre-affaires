@@ -5,6 +5,8 @@ import {
   GOOGLE_SCOPES,
   authorizationUrl,
   calendarActionFor,
+  calendarEmbedCode,
+  calendarEmbedUrl,
   calendarEventFor,
   calendarOperationsFor,
   emailFromIdToken,
@@ -113,6 +115,54 @@ describe('Google Agenda : ce qui y est écrit', () => {
       timeZone: 'Europe/Paris',
       appUrl: 'https://centre.exemple.fr',
     }).id, id)
+  })
+})
+
+describe('Google Agenda : le camion, et son agenda dans une autre page (ADR 064)', () => {
+  // Rien n'est propre aux salles : le camion (type `vehicule`) a son agenda
+  // comme toute ressource, y compris pour une location de plusieurs jours.
+  const location = {
+    ...demande,
+    resourceId: 'camion',
+    title: 'Déménagement',
+    startsAt: new Date('2026-10-23T06:00:00Z'),
+    endsAt: new Date('2026-10-26T17:00:00Z'),
+  }
+
+  it('écrit la location du camion dans l’agenda du camion, et la retire à l’annulation', () => {
+    const calendars = new Map([['camion', 'agenda-camion']])
+    assert.deepEqual(calendarOperationsFor(location, calendars), [{ type: 'write', calendarId: 'agenda-camion' }])
+    assert.deepEqual(calendarOperationsFor({ ...location, status: 'cancelled' }, calendars), [
+      { type: 'remove', calendarId: 'agenda-camion' },
+    ])
+  })
+
+  it('garde d’un bloc une location de plusieurs jours, changement d’heure compris', () => {
+    const event = calendarEventFor(location, { name: 'Camion 20 m³' }, {
+      timeZone: 'Europe/Paris',
+      appUrl: 'https://centre.exemple.fr',
+    })
+    assert.deepEqual(event.start, { dateTime: '2026-10-23T06:00:00.000Z', timeZone: 'Europe/Paris' })
+    assert.deepEqual(event.end, { dateTime: '2026-10-26T17:00:00.000Z', timeZone: 'Europe/Paris' })
+  })
+
+  const calendarId = 'c0ffee42@group.calendar.google.com'
+
+  it('donne l’adresse d’intégration de l’agenda, à l’heure du centre', () => {
+    const url = new URL(calendarEmbedUrl(calendarId, 'Europe/Paris'))
+    assert.equal(url.origin + url.pathname, 'https://calendar.google.com/calendar/embed')
+    assert.equal(url.searchParams.get('src'), calendarId)
+    assert.equal(url.searchParams.get('ctz'), 'Europe/Paris')
+  })
+
+  it('écrit un code d’intégration titré, sans rien rendre public', () => {
+    const code = calendarEmbedCode({ calendarId, resourceName: 'Camion "20 m³" <utilitaire>' }, 'Europe/Paris')
+    assert.match(code, /^<iframe src="https:\/\/calendar\.google\.com\/calendar\/embed\?src=c0ffee42%40group\.calendar\.google\.com&amp;ctz=Europe%2FParis" /)
+    // Un nom de ressource ne casse pas l'attribut.
+    assert.ok(code.includes('title="Agenda Google — Camion &quot;20 m³&quot; &lt;utilitaire&gt;"'))
+    assert.ok(code.endsWith('></iframe>'))
+    // Aucun paramètre ne touche au partage : il se règle dans Google Agenda.
+    assert.deepEqual([...new URL(calendarEmbedUrl(calendarId, 'Europe/Paris')).searchParams.keys()], ['src', 'ctz'])
   })
 })
 

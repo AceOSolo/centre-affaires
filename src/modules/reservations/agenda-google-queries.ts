@@ -167,6 +167,9 @@ export async function listResourceCalendarLinks() {
         code: resources.code,
         resourceType: resources.resourceType,
         linkedAt: resourceGoogleCalendars.createdAt,
+        // Pour le code d'intégration dans une autre page (ADR 064). Ce n'est
+        // pas un secret : l'agenda ne s'affiche qu'aux comptes avec qui il est partagé.
+        calendarId: resourceGoogleCalendars.calendarId,
       })
       .from(resources)
       .leftJoin(resourceGoogleCalendars, eq(resourceGoogleCalendars.resourceId, resources.id))

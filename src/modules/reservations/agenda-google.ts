@@ -117,6 +117,38 @@ export function calendarSummaryFor(resourceName: string, tenantName: string): st
   return `${resourceName} — ${tenantName}`
 }
 
+const EMBED_URL = 'https://calendar.google.com/calendar/embed'
+
+/**
+ * Adresse d'intégration de l'agenda d'une ressource dans une autre page (la
+ * page « aide outils » de Dolibarr, ADR 064), à l'heure du centre.
+ *
+ * Elle ne rend pas l'agenda public : la page intégrée ne montre les
+ * événements qu'à un compte Google avec qui l'agenda est partagé.
+ */
+export function calendarEmbedUrl(calendarId: string, timeZone: string): string {
+  const url = new URL(EMBED_URL)
+  url.search = new URLSearchParams({ src: calendarId, ctz: timeZone }).toString()
+  return url.toString()
+}
+
+const escapeAttribute = (value: string) =>
+  value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+
+/**
+ * Code à coller dans la page qui intègre l'agenda : celui que donne Google
+ * Agenda (Paramètres de l'agenda > Intégrer l'agenda), avec un titre pour les
+ * lecteurs d'écran et une largeur qui suit la page.
+ */
+export function calendarEmbedCode(
+  { calendarId, resourceName }: { calendarId: string; resourceName: string },
+  timeZone: string,
+): string {
+  const src = escapeAttribute(calendarEmbedUrl(calendarId, timeZone))
+  const title = escapeAttribute(`Agenda Google — ${resourceName}`)
+  return `<iframe src="${src}" title="${title}" style="border: 0" width="100%" height="600" frameborder="0" scrolling="no"></iframe>`
+}
+
 /**
  * Identifiant de l'événement Google, dérivé de celui de la réservation.
  *
