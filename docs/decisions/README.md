@@ -73,7 +73,8 @@ renuméroter casserait ces renvois sans rien gagner.
 | 056 | [Des PDF avec les photos des états des lieux](056-pdf-dans-les-etats-des-lieux.md) | 2026-10-22 | accepté ; amende l'ADR 039 : un PDF se joint comme une photo, sur un brouillon, figé à la clôture ; dimensions facultatives (migration 0007) |
 | 057 | [Courrier côté équipe : « Prendre en charge » sans page d'erreur, la photo du pli, les demandes dans « Demandes »](057-courrier-cote-equipe-prise-en-charge-photo-et-demandes.md) | 2026-11-04 | accepté ; lot 1 de la recette du 04/11 ; complète les ADR 037, 048, 050 et 055 : erreurs de la base dites en français, filet `error.tsx` du back-office, photo de l'enveloppe agrandissable et repère « pli 3 sur 5 du 04/11 » côté équipe, demandes de courrier dans « Demandes » et son compteur, `/courrier/demandes` en vue filtrée ; sans migration |
 | 063 | [Historique des états des lieux, une entrée par occupation, ressource occupée jusqu'à la sortie](063-historique-des-etats-des-lieux-et-restitution.md) | 2026-11-04 | accepté ; complète l'ADR 039, tient la décision 3 : historique filtré et paginé, chronologie par ressource ; seconde entrée refusée en base (`CA011`) ; passé la fin prévue sans sortie close, la base refuse toute réservation qui finirait après (`CA000`), les suivantes sont en conflit au planning et sur « Aujourd'hui » ; sans migration de structure (recette du 04/11, lot 7) |
-| 064 | [Menu pliable par rayon, et l'agenda du camion dans Dolibarr](064-menu-pliable-et-agenda-du-camion-dans-dolibarr.md) | 2026-11-04 | accepté ; lot 8 de la recette du 04/11 ; complète l'ADR 053 (chaque rayon se plie, tiré de `menu.ts`, état dans un cookie lu au rendu serveur ; « Réglages », seul lien, ne se plie pas) et l'ADR 014 (code d'intégration de chaque agenda à l'écran, marche à suivre `docs/exploitation/agenda-google-dans-dolibarr.md`, agenda jamais public) ; sans migration |
+| 064 | [Menu pliable par rayon, et l'agenda du camion dans Dolibarr](064-menu-pliable-et-agenda-du-camion-dans-dolibarr.md) | 2026-11-04 | accepté ; lot 8 de la recette du 04/11 ; complète l'ADR 053 (chaque rayon se plie, tiré de `menu.ts`, état dans un cookie lu au rendu serveur ; « Réglages », seul lien, ne se plie pas) et l'ADR 014 (code d'intégration de chaque agenda à l'écran, marche à suivre `docs/exploitation/agenda-google-dans-dolibarr.md`, agenda jamais public) ; sans migration ; tout ouvert par défaut amendé par l'ADR 067 |
+| 067 | [Rayons du menu pliés par défaut](067-rayons-du-menu-plies-par-defaut.md) | 2026-11-04 | accepté ; amende l'ADR 064 : tout rayon pliable est plié tant qu'on ne l'a pas ouvert, le rayon de la page en cours reste ouvert ; cookie `menu_ouvert` (rayons ouverts) à la place de `menu_plie` ; sans migration |
 
 ## Numéros en double et numéro manquant
 
@@ -121,7 +122,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **058** (055 pris par les photos du courrier, 056 par les PDF des états des lieux, 057 par le courrier côté équipe ; 058 à 066 sont réservés aux lots 2 à 10 de la recette du 04/11, `docs/recette/2026-11-04.md`).
+   `ListAgents`. Le prochain numéro libre est **058** (055 pris par les photos du courrier, 056 par les PDF des états des lieux, 057 par le courrier côté équipe ; 058 à 066 sont réservés aux lots 2 à 10 de la recette du 04/11, `docs/recette/2026-11-04.md` ; 067 pris par les rayons du menu pliés par défaut).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

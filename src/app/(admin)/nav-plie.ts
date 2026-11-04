@@ -1,19 +1,23 @@
 /**
- * Rayons pliés du menu du back-office (ADR 064), sans rendu : `nav.tsx`
- * l'affiche, `nav-plie.test.ts` vérifie les règles.
+ * Rayons pliés du menu du back-office (ADR 064 ; pliés par défaut, ADR 067),
+ * sans rendu : `nav.tsx` l'affiche, `nav-plie.test.ts` vérifie les règles.
  *
  * Le pliage est tiré des données de `menu.ts`, sans liste de rayons écrite
  * ici : un rayon ajouté au menu se plie comme les autres.
  */
 
 /**
- * Rayons pliés, retenus par navigateur. Un cookie et non le stockage local :
- * le serveur le lit au rendu, la barre latérale arrive déjà pliée, sans saut
- * de mise en page au chargement.
+ * Rayons ouverts, retenus par navigateur : tout rayon est plié tant qu'on ne
+ * l'a pas ouvert (ADR 067). Un cookie et non le stockage local : le serveur le
+ * lit au rendu, la barre latérale arrive telle qu'on l'a laissée, sans saut de
+ * mise en page au chargement.
+ *
+ * Pas `menu_plie`, l'ancien cookie de l'ADR 064 : il listait les rayons pliés,
+ * relu ici il ouvrirait justement ceux-là. Il est ignoré et expire seul.
  */
-export const FOLDED_COOKIE = 'menu_plie'
+export const OPENED_COOKIE = 'menu_ouvert'
 /** Un an : c'est une préférence d'affichage, pas une session. */
-export const FOLDED_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
+export const OPENED_COOKIE_MAX_AGE = 365 * 24 * 60 * 60
 
 /** Une clé : minuscules, chiffres et tirets, ce qu'un cookie porte sans encodage. */
 const KEY = /^[a-z0-9-]{1,40}$/
@@ -46,33 +50,33 @@ export function groupKey(label: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-/** Rayons pliés lus dans le cookie. Ce qui n'est pas une clé est ignoré, sans erreur. */
-export function parseFolded(value: string | undefined): string[] {
+/** Rayons ouverts lus dans le cookie. Ce qui n'est pas une clé est ignoré, sans erreur. */
+export function parseOpened(value: string | undefined): string[] {
   if (!value) return []
   return [...new Set(value.split('.').filter((key) => KEY.test(key)))].sort().slice(0, MAX_KEYS)
 }
 
 /** Valeur du cookie, la même pour le même ensemble : le serveur et le navigateur la comparent. */
-export function serializeFolded(keys: readonly string[]): string {
-  return parseFolded(keys.join('.')).join('.')
+export function serializeOpened(keys: readonly string[]): string {
+  return parseOpened(keys.join('.')).join('.')
 }
 
-/** Rayons pliés après un clic sur le titre d'un rayon, ouvert (`open`) ou plié. */
-export function toggleFolded(folded: readonly string[], key: string, open: boolean): string[] {
-  return open ? parseFolded([...folded, key].join('.')) : folded.filter((candidate) => candidate !== key)
+/** Rayons ouverts après un clic sur le titre d'un rayon, ouvert (`open`) ou plié. */
+export function toggleOpened(opened: readonly string[], key: string, open: boolean): string[] {
+  return open ? opened.filter((candidate) => candidate !== key) : parseOpened([...opened, key].join('.'))
 }
 
 /**
- * Un rayon est ouvert s'il ne se plie pas, s'il n'est pas plié, ou s'il
- * contient la page en cours (`active`) : on ne perd jamais de vue où l'on est.
- * Ce dernier reste pliable à la main ; plié sur cette page (`dismissed`), il
- * se rouvre à la page suivante du même rayon.
+ * Un rayon est ouvert s'il ne se plie pas, si on l'a ouvert, ou s'il contient
+ * la page en cours (`active`) : on ne perd jamais de vue où l'on est. Ce
+ * dernier reste pliable à la main ; plié sur cette page (`dismissed`), il se
+ * rouvre à la page suivante du même rayon.
  */
 export function isGroupOpen(
   group: { key: string; foldable: boolean },
-  { folded, active, dismissed }: { folded: readonly string[]; active?: string; dismissed?: string },
+  { opened, active, dismissed }: { opened: readonly string[]; active?: string; dismissed?: string },
 ): boolean {
   if (!group.foldable) return true
   if (group.key === active && group.key !== dismissed) return true
-  return !folded.includes(group.key)
+  return opened.includes(group.key)
 }

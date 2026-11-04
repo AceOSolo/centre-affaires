@@ -18,7 +18,7 @@ import { SignOutButton } from '../(auth)/sign-out-button.tsx'
 import { inboxCount as countInbox } from './aujourdhui/journee.ts'
 import { MobileMenu } from './mobile-menu.tsx'
 import { Nav } from './nav.tsx'
-import { FOLDED_COOKIE, parseFolded } from './nav-plie.ts'
+import { OPENED_COOKIE, parseOpened } from './nav-plie.ts'
 
 /**
  * Rien n'est prérendu au build dans le back-office.
@@ -87,16 +87,16 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     mailRequests,
   })
 
-  // Rayons pliés du menu, lus dès le rendu serveur : la barre latérale arrive
-  // telle que le membre l'a laissée, sans saut au chargement (ADR 064).
-  const folded = parseFolded((await cookies()).get(FOLDED_COOKIE)?.value)
+  // Rayons ouverts du menu, lus dès le rendu serveur : la barre latérale arrive
+  // telle que le membre l'a laissée, sans saut au chargement (ADR 064, 067).
+  const opened = parseOpened((await cookies()).get(OPENED_COOKIE)?.value)
 
   const nav = (
     <Nav
       inboxCount={inboxCount}
       mailRequestCount={mailRequests}
       allowed={permissionsOf(member.role)}
-      folded={folded}
+      opened={opened}
     />
   )
 

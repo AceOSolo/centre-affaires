@@ -3,7 +3,9 @@
 **Date** : 2026-11-04
 **Statut** : accepté — complète l'ADR 053 (menu par service vendu) et
 l'ADR 014 (un agenda Google par ressource) ; lot 8 de la recette du 04/11/2026
-(`docs/recette/2026-11-04.md`)
+(`docs/recette/2026-11-04.md`) ; « tout ouvert par défaut » et le cookie
+`menu_plie` amendés par l'ADR 067 (rayons pliés par défaut, cookie
+`menu_ouvert`)
 
 ## Contexte
 

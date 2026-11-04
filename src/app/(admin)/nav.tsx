@@ -7,21 +7,22 @@ import { useId, useState, useSyncExternalStore } from 'react'
 import type { Permission } from '../../lib/auth/permissions.ts'
 import { activeEntry } from './nav-actif.ts'
 import {
-  FOLDED_COOKIE,
-  FOLDED_COOKIE_MAX_AGE,
   groupKey,
   isFoldable,
   isGroupOpen,
-  parseFolded,
-  serializeFolded,
-  toggleFolded,
+  OPENED_COOKIE,
+  OPENED_COOKIE_MAX_AGE,
+  parseOpened,
+  serializeOpened,
+  toggleOpened,
 } from './nav-plie.ts'
 import { menuGroups as groups, type MenuEntry as Entry } from './menu.ts'
 
 /*
- * Rayons pliés (ADR 064) : le cookie fait foi. Les deux rendus de la
- * navigation (barre latérale, menu des écrans étroits) le lisent par le même
- * magasin : un rayon plié dans l'un l'est aussi dans l'autre.
+ * Rayons pliés (ADR 064), sauf ceux que le cookie dit ouverts (ADR 067). Les
+ * deux rendus de la navigation (barre latérale, menu des écrans étroits) le
+ * lisent par le même magasin : un rayon ouvert dans l'un l'est aussi dans
+ * l'autre.
  */
 const listeners = new Set<() => void>()
 
@@ -32,16 +33,16 @@ function subscribe(listener: () => void) {
   }
 }
 
-function readFoldedCookie(): string {
-  const prefix = `${FOLDED_COOKIE}=`
+function readOpenedCookie(): string {
+  const prefix = `${OPENED_COOKIE}=`
   const raw = document.cookie.split('; ').find((part) => part.startsWith(prefix))
-  return serializeFolded(parseFolded(raw?.slice(prefix.length)))
+  return serializeOpened(parseOpened(raw?.slice(prefix.length)))
 }
 
-function writeFoldedCookie(keys: readonly string[]) {
-  const value = serializeFolded(keys)
+function writeOpenedCookie(keys: readonly string[]) {
+  const value = serializeOpened(keys)
   const secure = window.location.protocol === 'https:' ? '; secure' : ''
-  document.cookie = `${FOLDED_COOKIE}=${value}; path=/; max-age=${value ? FOLDED_COOKIE_MAX_AGE : 0}; samesite=lax${secure}`
+  document.cookie = `${OPENED_COOKIE}=${value}; path=/; max-age=${value ? OPENED_COOKIE_MAX_AGE : 0}; samesite=lax${secure}`
   for (const listener of listeners) listener()
 }
 
@@ -59,23 +60,23 @@ export function Nav({
   inboxCount = 0,
   mailRequestCount = 0,
   allowed,
-  folded: foldedOnServer = [],
+  opened: openedOnServer = [],
 }: {
   /** Demandes à traiter : réservations en attente et devis à compléter. */
   inboxCount?: number
   mailRequestCount?: number
   /** Droits du membre connecté (`permissionsOf`). */
   allowed: readonly Permission[]
-  /** Rayons pliés, lus dans le cookie par la coque : le premier rendu est déjà le bon. */
-  folded?: readonly string[]
+  /** Rayons ouverts, lus dans le cookie par la coque : le premier rendu est déjà le bon. */
+  opened?: readonly string[]
 }) {
   const pathname = usePathname()
   const searchParams = useSearchParams()
   // La navigation est rendue deux fois (barre latérale, menu des écrans
   // étroits) : les identifiants des titres doivent rester uniques.
   const prefix = useId()
-  const serverSnapshot = serializeFolded(foldedOnServer)
-  const folded = parseFolded(useSyncExternalStore(subscribe, readFoldedCookie, () => serverSnapshot))
+  const serverSnapshot = serializeOpened(openedOnServer)
+  const opened = parseOpened(useSyncExternalStore(subscribe, readOpenedCookie, () => serverSnapshot))
   // Le rayon de la page en cours, plié à la main sur cette page : il le reste
   // jusqu'à la page suivante, où il se rouvre.
   const [dismissed, setDismissed] = useState<{ key: string; at: string }>()
@@ -110,7 +111,7 @@ export function Nav({
   const counts = { inbox: inboxCount, mail: mailRequestCount }
 
   const toggle = (key: string, open: boolean) => {
-    writeFoldedCookie(toggleFolded(folded, key, open))
+    writeOpenedCookie(toggleOpened(opened, key, open))
     if (key === activeKey) setDismissed(open ? { key, at: here } : undefined)
   }
 
@@ -120,7 +121,7 @@ export function Nav({
         const titleId = `${prefix}-${group.key}`
         const listId = `${titleId}-liste`
         const last = index === visibles.length - 1 && group.label === 'Réglages'
-        const open = isGroupOpen(group, { folded, active: activeKey, dismissed: dismissedKey })
+        const open = isGroupOpen(group, { opened, active: activeKey, dismissed: dismissedKey })
         // Plié, le rayon garde à son titre les compteurs de ses entrées.
         const folderCounts = group.entries.flatMap((entry) =>
           entry.counter && counts[entry.counter] > 0 ? [{ counter: entry.counter, count: counts[entry.counter] }] : [],
