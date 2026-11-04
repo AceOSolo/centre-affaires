@@ -128,6 +128,16 @@ export function CarIcon(props: IconProps) {
   )
 }
 
+/** Lucide « tv » : le matériel en location (ADR 062). */
+export function TvIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2" y="7" width="20" height="15" rx="2" />
+      <path d="m17 2-5 5-5-5" />
+    </Svg>
+  )
+}
+
 export function SparkleIcon(props: IconProps) {
   return (
     <Svg {...props}>

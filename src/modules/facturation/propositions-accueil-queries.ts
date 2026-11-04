@@ -5,6 +5,7 @@ import { withTenant } from '../../db/index.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { dbRefusalMessage } from '../contrats/erreurs.ts'
+import { optionLinesInTransaction } from '../reservations/options-queries.ts'
 import { productForResourceType, questionnaires, type Answers } from '../reservations/questionnaires.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
@@ -41,7 +42,8 @@ export type StaffProposalInput = {
 /**
  * Crée le devis en brouillon (canal `staff`, jamais validé à la création :
  * l'accueil le relit). Avec une réservation, sa ligne est son prix figé
- * (`bookingLineInTransaction`), s'il existe.
+ * (`bookingLineInTransaction`), s'il existe, suivie d'une ligne par appareil
+ * loué en option (ADR 062).
  */
 export async function createStaffProposal(input: StaffProposalInput): Promise<Pick<Proposal, 'id' | 'number'>> {
   const tenantId = currentTenantId()
@@ -63,6 +65,7 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
             status: bookings.status,
             quoteCurrency: bookings.quoteCurrency,
             resourceType: resources.resourceType,
+            parentBookingId: bookings.parentBookingId,
           })
           .from(bookings)
           .innerJoin(resources, and(eq(resources.tenantId, bookings.tenantId), eq(resources.id, bookings.resourceId)))
@@ -71,6 +74,8 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
         if (!row) throw new StaffProposalError('Cette réservation n’existe plus.')
         if (row.kind !== 'booking') throw new StaffProposalError('Seule une réservation se chiffre en devis.')
         if (row.status === 'cancelled') throw new StaffProposalError('Cette réservation est annulée : elle ne se chiffre plus.')
+        // Le matériel loué avec une salle n'a pas de devis à lui (ADR 062).
+        if (row.parentBookingId) throw new StaffProposalError('Ce matériel est en option d’une salle : son prix est au devis de la salle.')
         if (productForResourceType(row.resourceType) !== input.product) {
           throw new StaffProposalError(`Cette réservation ne porte pas sur : ${questionnaires[input.product].label.toLowerCase()}.`)
         }
@@ -86,7 +91,11 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
           )
         if (existing) throw new StaffProposalError(`Cette réservation a déjà son devis : ${existing.number}.`)
         currency = row.quoteCurrency ?? currency
-        lines = [await bookingLineInTransaction(tx, input.bookingId, input.timeZone)]
+        // La réservation, puis son matériel en option : une ligne par appareil (ADR 062).
+        lines = [
+          await bookingLineInTransaction(tx, input.bookingId, input.timeZone),
+          ...(await optionLinesInTransaction(tx, input.bookingId, input.timeZone)),
+        ]
       }
       const proposal = await createProposalInTransaction(tx, {
         product: input.product,
@@ -161,6 +170,8 @@ export async function listBookingsForNewProposal(product: ProposalProduct, from:
           eq(bookings.tenantId, tenantId),
           eq(bookings.kind, 'booking'),
           ne(bookings.status, 'cancelled'),
+          // Le matériel en option est chiffré au devis de sa salle (ADR 062).
+          isNull(bookings.parentBookingId),
           gte(bookings.endsAt, from),
           inArray(resources.resourceType, [...types]),
           isNull(proposals.id),

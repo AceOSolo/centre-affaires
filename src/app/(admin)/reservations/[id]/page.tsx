@@ -21,6 +21,7 @@ import { AssignClientForm } from '../../../../modules/reservations/assign-client
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
 import { findBookingAuthors } from '../../../../modules/reservations/demandes-queries.ts'
 import { productForResourceType } from '../../../../modules/reservations/questionnaires.ts'
+import { OptionsSection } from '../../../../modules/reservations/options-section.tsx'
 import { findBooking, findBookingClientLock } from '../../../../modules/reservations/queries.ts'
 import { bookingClientLockMessages } from '../../../../modules/reservations/rattachement.ts'
 import { resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
@@ -37,16 +38,20 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   // `findClient` et non la liste : une fiche archivée reste nommée ici.
   // Devis de la réservation (ADR 043), pour qui traite les demandes.
   const canQuote = can(member.role, 'demandes.traiter')
-  const [clients, client, authors, clientLock, proposal] = await Promise.all([
+  // Matériel en option d'une salle (ADR 062) : il suit sa réservation
+  // principale — période, client, devis — et ne se règle que par elle.
+  const option = Boolean(booking.parentBookingId)
+  const [clients, client, authors, clientLock, proposal, parent] = await Promise.all([
     listClients(),
     booking.clientId ? findClient(booking.clientId) : undefined,
     // Auteur de la réservation et de l'annulation (ADR 036).
     findBookingAuthors(booking.id),
     // Client figé par l'espace client, un état des lieux ou une facture (ADR 041).
-    booking.kind === 'booking' ? findBookingClientLock(booking.id) : undefined,
-    canQuote ? findProposalForBooking(booking.id) : undefined,
+    booking.kind === 'booking' && !option ? findBookingClientLock(booking.id) : undefined,
+    canQuote && !option ? findProposalForBooking(booking.id) : undefined,
+    booking.parentBookingId ? findBooking(booking.parentBookingId) : undefined,
   ])
-  const quoteProduct = productForResourceType(booking.resource.resourceType)
+  const quoteProduct = option ? undefined : productForResourceType(booking.resource.resourceType)
 
   const isoDate = toIsoDate(booking.startsAt, timeZone)
   const cancelled = booking.status === 'cancelled'
@@ -67,6 +72,15 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bookingLabel(booking)}</h1>
         {booking.seriesId && <Link href={`/reservations/series/${booking.seriesId}`} className="mt-2 inline-block text-sm text-primary underline underline-offset-2">Voir la série et gérer les occurrences à venir</Link>}
+        {parent && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            En option de{' '}
+            <Link href={`/reservations/${parent.id}`} className="text-primary underline underline-offset-2">
+              « {parent.title} », {parent.resource.name}
+            </Link>{' '}
+            : même période, même client, annulé avec elle ; son prix est au devis de la salle.
+          </p>
+        )}
         {cancelled && (
           <p className="mt-2 inline-block rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-foreground">
             {occupation ? 'Occupation levée — la ressource est libre' : 'Annulée — le créneau est libre'}
@@ -260,7 +274,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         )}
       </dl>
 
-      {!cancelled && !occupation && (
+      {!cancelled && !occupation && !option && (
         <div>
           <Link
             href={`/reservations/${booking.id}/modifier`}
@@ -293,6 +307,9 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         </section>
       )}
 
+      {/* Matériel loué avec la salle (ADR 062). */}
+      <OptionsSection booking={booking} />
+
       {/* États des lieux au titre de cette réservation (R06, ADR 039). */}
       {can(member.role, 'etats-des-lieux.gerer') && (
         <InspectionsSection
@@ -309,7 +326,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
         />
       )}
 
-      {booking.kind === 'booking' &&
+      {booking.kind === 'booking' && !option &&
         (clientLock ? (
           <section
             aria-labelledby="client-fige"

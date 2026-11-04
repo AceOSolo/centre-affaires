@@ -32,6 +32,10 @@ export const resourceTypes = [
   'casier',
   'vehicule',
   'boite_aux_lettres',
+  // Location de matériel : télévision, climatisation, vidéoprojecteur… loué
+  // seul ou en option d'une salle (ADR 062). Ajouté en fin de liste : l'enum
+  // MySQL s'allonge sans réécrire les tables.
+  'materiel',
 ] as const
 export type ResourceType = (typeof resourceTypes)[number]
 export const resourceTypeEnum = (name: string) => mysqlEnum(name, resourceTypes)
@@ -73,6 +77,17 @@ export type ResourceAttributes = {
   casier: { numero?: string; taille?: 'S' | 'M' | 'L' }
   vehicule: { immatriculation?: string; kilometrage?: number; places?: number }
   boite_aux_lettres: Record<string, never>
+  /**
+   * Un appareil = une ressource (ADR 062). `nature` le range (télévision,
+   * climatisation…) ; `accessoires` dit ce qui part avec lui et doit revenir.
+   */
+  materiel: {
+    nature?: string
+    marque?: string
+    modele?: string
+    numeroSerie?: string
+    accessoires?: string[]
+  }
 }
 
 export const resources = mysqlTable(
@@ -85,7 +100,7 @@ export const resources = mysqlTable(
     code: varchar('code', { length: 64 }).notNull(),
     name: varchar('name', { length: 255 }).notNull(),
     description: text('description'),
-    /** Nombre de personnes ; nul pour un casier ou une boîte aux lettres. */
+    /** Nombre de personnes ; nul pour un casier, une boîte aux lettres ou un appareil. */
     capacity: int('capacity'),
     status: resourceStatusEnum('status').notNull().default('active'),
     /** Réservation depuis l'espace client (R23, ADR 036) : voir `clientBookingModes`. */

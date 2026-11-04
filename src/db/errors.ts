@@ -185,3 +185,10 @@ export const DB_PROPOSAL_REFUSED = 'CA016'
  * d'une numérisation déjà facturée.
  */
 export const DB_MAIL_REFUSED = 'CA017'
+/**
+ * Matériel en option refusé (ADR 062, `25-reservations-liees.sql`) : appareil
+ * qui n'est pas du matériel, hors de la période ou du client de la
+ * réservation principale, principale annulée ou elle-même une option, ou
+ * principale annulée avant son matériel.
+ */
+export const DB_OPTION_REFUSED = 'CA018'

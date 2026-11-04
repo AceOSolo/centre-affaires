@@ -14,6 +14,8 @@ import {
   notifyBookingRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
 import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
+import { describeAttributes } from '../ressources/labels.ts'
+import { parseEquipmentIds } from './options.ts'
 import { periodLabel } from './periode.ts'
 import {
   PortalBookingError,
@@ -43,6 +45,15 @@ import { parseAnswers, productForResourceType, type Answers } from './questionna
  * celle du formulaire doit être l'une du compte.
  */
 
+/** Un appareil proposé en option d'une salle (ADR 062), prêt à afficher. */
+export type PortalEquipmentChoice = {
+  id: string
+  name: string
+  detail: string
+  /** Nul : non chiffré sur ce créneau, l'accueil précisera. */
+  quote: QuoteDisplay | null
+}
+
 /** Montant et suite annoncés avant l'envoi. */
 export type PortalQuoteState =
   | {
@@ -51,8 +62,9 @@ export type PortalQuoteState =
       fromContract: boolean
       outcome: PortalBookingOutcome
       notice: string
+      equipment: PortalEquipmentChoice[]
     }
-  | { status: 'unpriced'; outcome: PortalBookingOutcome; notice: string }
+  | { status: 'unpriced'; outcome: PortalBookingOutcome; notice: string; equipment: PortalEquipmentChoice[] }
   | { status: 'error'; message: string }
 
 export type PortalQuoteInput = {
@@ -80,9 +92,17 @@ export async function previewPortalBookingAction(input: PortalQuoteInput): Promi
   }
   const outcome = expectedPortalOutcome(preview.mode, preview.quote !== null)
   const notice = portalOutcomeNotice(preview.mode, preview.quote !== null)
+  // Le matériel libre sur ce créneau, pour une salle (ADR 062) : son nom, ce
+  // qu'il est, son prix — rien de ce qui occupe les autres.
+  const equipment = preview.equipment.map((device) => ({
+    id: device.id,
+    name: device.name,
+    detail: describeAttributes(device.attributes ?? {}),
+    quote: device.quote,
+  }))
   return preview.quote
-    ? { status: 'priced', quote: preview.quote, fromContract: preview.fromContract, outcome, notice }
-    : { status: 'unpriced', outcome, notice }
+    ? { status: 'priced', quote: preview.quote, fromContract: preview.fromContract, outcome, notice, equipment }
+    : { status: 'unpriced', outcome, notice, equipment }
 }
 
 export type PortalBookingFields = 'clientId' | 'startTime' | 'endTime' | 'title' | 'notes'
@@ -106,6 +126,8 @@ export type PortalBookingFormState =
       body: string
       /** Montant TTC figé, ou nul pour un créneau non chiffré. */
       amount: string | null
+      /** Le matériel réservé avec la salle (ADR 062), et ce que la base en a fait. */
+      options: { name: string; outcome: PortalBookingOutcome }[]
     }
 
 function text(formData: FormData, key: string): string {
@@ -184,6 +206,9 @@ export async function bookFromPortalAction(
     return { status: 'error', fieldErrors, answerErrors, answers: parsed?.answers }
   }
 
+  // Le matériel coché (ADR 062) ; la base dit s'il est encore libre.
+  const equipmentIds = parseEquipmentIds(formData.getAll('equipmentIds'))
+
   let created
   try {
     created = await createPortalBooking({
@@ -198,6 +223,7 @@ export async function bookFromPortalAction(
         product && parsed
           ? { product, answers: parsed.answers, requesterName: user.name, requesterEmail: user.email, timeZone }
           : undefined,
+      equipmentIds,
     })
   } catch (error) {
     if (error instanceof PortalBookingError) {
@@ -210,6 +236,10 @@ export async function bookFromPortalAction(
   }
 
   const bookingId = created.id
+  // Chaque appareil confirmé s'écrit dans son agenda Google (ADR 014).
+  for (const option of created.options) {
+    if (option.status === 'confirmed') after(() => syncBookingToGoogleCalendar(option.id))
+  }
   if (created.status === 'confirmed') {
     // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014),
     // et confirmée par courriel à la personne (`booking_confirmed`, ADR 038).
@@ -236,5 +266,9 @@ export async function bookFromPortalAction(
     outcome: created.status,
     ...message,
     amount: created.quote ? formatCents(created.quote.totalCents, created.quote.currency) : null,
+    options: created.options.map((option) => ({
+      name: option.name,
+      outcome: option.status,
+    })),
   }
 }

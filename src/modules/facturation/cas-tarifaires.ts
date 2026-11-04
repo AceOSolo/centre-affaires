@@ -38,9 +38,10 @@ export const GRILLE_REELLE: QuotePlan = {
 
 /**
  * Le centre ne publie ni prix à l'heure ni prix à la semaine, ni de prix du
- * camion. Les prix ci-dessous sont des **hypothèses de travail**, posées pour
- * éprouver ces unités (R08) et les périodes de plusieurs jours (ADR 061) : à
- * remplacer par les prix réels, ou à retirer.
+ * camion ou du matériel. Les prix ci-dessous sont des **hypothèses de
+ * travail**, posées pour éprouver ces unités (R08), les périodes de plusieurs
+ * jours (ADR 061) et le matériel en location (ADR 062) : à remplacer par les
+ * prix réels, ou à retirer.
  */
 export const GRILLE_AVEC_HYPOTHESES: QuotePlan = {
   ...GRILLE_REELLE,
@@ -53,6 +54,8 @@ export const GRILLE_AVEC_HYPOTHESES: QuotePlan = {
     { id: 'bureau-semaine', resourceType: 'bureau', resourceId: null, unit: 'week', amountCents: 15_000 },
     { id: 'camion-jour', resourceType: 'vehicule', resourceId: null, unit: 'day', amountCents: 8_000 },
     { id: 'camion-semaine', resourceType: 'vehicule', resourceId: null, unit: 'week', amountCents: 40_000 },
+    { id: 'materiel-jour', resourceType: 'materiel', resourceId: null, unit: 'day', amountCents: 3_000 },
+    { id: 'materiel-semaine', resourceType: 'materiel', resourceId: null, unit: 'week', amountCents: 12_000 },
   ],
 }
 
@@ -67,7 +70,7 @@ export type CasReservation = {
   id: string
   /** Ce que le cas éprouve, en une phrase. */
   libelle: string
-  ressource: { id: string; resourceType: 'salle' | 'bureau' | 'boite_aux_lettres' | 'vehicule' }
+  ressource: { id: string; resourceType: 'salle' | 'bureau' | 'boite_aux_lettres' | 'vehicule' | 'materiel' }
   /** Heure murale du centre : « 2026-10-06T09:00 ». */
   debut: string
   fin: string
@@ -91,6 +94,7 @@ export type CasReservation = {
 const SALLE = { id: 'salle-mont-blanc', resourceType: 'salle' as const }
 const POSTE = { id: 'bureau-03-p1', resourceType: 'bureau' as const }
 const CAMION = { id: 'camion-01', resourceType: 'vehicule' as const }
+const TELEVISION = { id: 'tv-55', resourceType: 'materiel' as const }
 
 export const casReservations: readonly CasReservation[] = [
   {
@@ -268,6 +272,45 @@ export const casReservations: readonly CasReservation[] = [
     fin: '2027-03-29T10:00',
     grille: GRILLE_AVEC_HYPOTHESES,
     attendu: { unit: 'day', quantity: 2, netCents: 16_000, vatCents: 3_200, totalCents: 19_200 },
+  },
+  // Matériel en location, seul ou en option d'une salle (ADR 062) : les
+  // règles de la salle et du camion, à ses propres prix (`tarif.materiel.*`).
+  {
+    id: 'materiel-grille-reelle',
+    libelle: 'Télévision, une matinée, sans prix du matériel dans la grille : non chiffrée, l’accueil fixe le prix',
+    ressource: TELEVISION,
+    debut: '2026-10-06T09:00',
+    fin: '2026-10-06T13:00',
+    attendu: { nonChiffre: 'aucun-tarif' },
+    question: 'Quels prix pour le matériel : à la demi-journée, à la journée, à la semaine ? Par appareil ou par nature ?',
+  },
+  {
+    id: 'materiel-matinee',
+    libelle: 'Télévision, une matinée, au prix hypothétique de 30 € la journée : sans demi-journée, la journée est due',
+    ressource: TELEVISION,
+    debut: '2026-10-06T09:00',
+    fin: '2026-10-06T13:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 1, netCents: 3_000, vatCents: 600, totalCents: 3_600 },
+    question: 'Le matériel loué avec une salle pour une matinée doit-il avoir un prix à la demi-journée ?',
+  },
+  {
+    id: 'materiel-trois-jours',
+    libelle: 'Télévision, du lundi 9 h au mercredi 18 h, avec la salle : trois journées',
+    ressource: TELEVISION,
+    debut: '2026-10-05T09:00',
+    fin: '2026-10-07T18:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 3, netCents: 9_000, vatCents: 1_800, totalCents: 10_800 },
+  },
+  {
+    id: 'materiel-plafond-semaine',
+    libelle: 'Télévision, du lundi 9 h au samedi 9 h : cinq journées (150 €) dépassent la semaine hypothétique de 120 €',
+    ressource: TELEVISION,
+    debut: '2026-10-05T09:00',
+    fin: '2026-10-10T09:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'week', quantity: 1, netCents: 12_000, vatCents: 2_400, totalCents: 14_400 },
   },
 ]
 

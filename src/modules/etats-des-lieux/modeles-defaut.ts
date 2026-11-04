@@ -158,4 +158,40 @@ export const defaultTemplates: Record<ResourceType, DefaultTemplate> = {
       },
     ],
   },
+  // Un appareil remis au client, seul ou avec une salle (ADR 062) : son état,
+  // ce qui part avec lui, et qu'il marche devant lui.
+  materiel: {
+    name: 'État des lieux — matériel',
+    fields: [
+      etatGeneral,
+      {
+        id: 'fonctionnement',
+        label: 'Fonctionnement vérifié',
+        type: 'choice',
+        options: ['Fonctionne', 'Défaut constaté'],
+        required: true,
+        help: 'Mis sous tension et essayé devant le client : image et son, froid ou chaud selon l’appareil.',
+      },
+      {
+        id: 'accessoires',
+        label: 'Accessoires remis',
+        type: 'text',
+        required: false,
+        help: 'Télécommande, câbles, pied, notice : ce qui part avec l’appareil et doit revenir.',
+      },
+      {
+        id: 'accessoires_complets',
+        label: 'Accessoires complets',
+        type: 'checkbox',
+        required: false,
+      },
+      {
+        id: 'dommages',
+        label: 'Dommages constatés',
+        type: 'text',
+        required: false,
+        help: 'Rayures, chocs, écran marqué : emplacement et taille. Joignez une photo de chacun.',
+      },
+    ],
+  },
 }

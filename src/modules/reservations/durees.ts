@@ -23,8 +23,9 @@ export const MAX_REQUEST_DAYS_LIMIT = 90
 
 /**
  * Valeurs par défaut, **à valider par l'exploitation** : une semaine ouvrée
- * pour une salle ou un bureau, une semaine pour le camion. `null` : le produit
- * ne se réserve pas sur une période (la domiciliation se souscrit).
+ * pour une salle ou un bureau, une semaine pour le camion et pour le matériel
+ * loué seul (ADR 062). `null` : le produit ne se réserve pas sur une période
+ * (la domiciliation se souscrit).
  *
  * `Record` exhaustif : un produit ajouté à `produits.ts` (le matériel, lot 6)
  * doit dire ici s'il se réserve sur plusieurs jours, et jusqu'où.
@@ -34,6 +35,7 @@ export const defaultMaxRequestDays: Record<ProductKey, number | null> = {
   bureaux: 5,
   domiciliation: null,
   vehicules: 7,
+  materiel: 7,
 }
 
 /** Ce que le centre a réglé (`tenants.booking_max_days`) : clé de produit → jours. */

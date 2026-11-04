@@ -7,8 +7,10 @@ import Link from 'next/link'
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
 import { formatTime } from '../../lib/dates.ts'
-import { QuoteSummary } from '../facturation/devis-resume.tsx'
+import { QuoteSummary, formatQuoteQuantity } from '../facturation/devis-resume.tsx'
+import { formatCents } from '../facturation/tarifs.ts'
 import { formatDays } from './durees.ts'
+import { totalWithOptions } from './options.ts'
 import {
   periodDuration,
   periodEndDates,
@@ -95,6 +97,9 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   const [title, setTitle] = useState('')
   const [notes, setNotes] = useState('')
   const [preview, setPreview] = useState<{ key: string; result: PortalQuoteState }>()
+  // Matériel coché en option d'une salle (ADR 062) : gardé d'un créneau à
+  // l'autre tant que l'appareil y reste libre.
+  const [equipmentIds, setEquipmentIds] = useState<string[]>([])
   const headingRef = useRef<HTMLHeadingElement>(null)
 
   const free = props.free.map((range) => ({ startsAt: new Date(range.startsAt), endsAt: new Date(range.endsAt) }))
@@ -107,6 +112,12 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
 
   const previewKey = selection && clientId ? `${resource.id}/${clientId}/${date}/${startTime}/${endDate}/${endTime}` : ''
   const quote = previewKey && preview?.key === previewKey ? preview.result : undefined
+  const equipment = quote && quote.status !== 'error' ? quote.equipment : []
+  const chosen = equipment.filter((device) => equipmentIds.includes(device.id))
+  const total =
+    quote?.status === 'priced' && chosen.length > 0
+      ? totalWithOptions([quote.quote, ...chosen.map((device) => device.quote)])
+      : undefined
 
   useEffect(() => {
     if (!previewKey) return
@@ -159,6 +170,26 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
             ? `Montant ${confirmed ? 'de la réservation' : 'retenu sur la demande'} : ${state.amount} TTC.`
             : 'Le montant vous sera précisé par l’accueil.'}
         </p>
+        {state.options.length > 0 && (
+          <div className="mt-3 text-sm">
+            <p className="font-medium">Matériel réservé avec la salle</p>
+            <ul className="mt-1 flex flex-col gap-1">
+              {state.options.map((option, index) => (
+                <li key={`${index}-${option.name}`} className="flex items-center gap-2">
+                  {option.outcome === 'confirmed' ? (
+                    <CheckIcon size={20} className="shrink-0 text-primary" />
+                  ) : (
+                    <ClockIcon size={20} className="shrink-0 text-primary" />
+                  )}
+                  <span>
+                    {option.name} : {option.outcome === 'confirmed' ? 'réservé' : 'en attente de validation'}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-1 text-muted-foreground">Il suit la salle : si elle est annulée, il l’est aussi.</p>
+          </div>
+        )}
         <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:gap-3">
           <Link
             href="/compte/reservations"
@@ -373,6 +404,46 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
         </fieldset>
       )}
 
+      {/* Matériel en option d'une salle (ADR 062) : les appareils libres sur le
+          créneau, chiffrés ; chacun est réservé avec la salle. */}
+      {equipment.length > 0 && (
+        <fieldset className="flex flex-col gap-2 rounded-md border border-border p-4">
+          <legend className="px-1 text-sm font-semibold">Matériel en option</legend>
+          <p className="text-sm text-muted-foreground">
+            Libre sur ce créneau. Réservé avec la salle, sur la même période, et annulé avec elle.
+          </p>
+          <ul className="flex flex-col gap-1">
+            {equipment.map((device) => (
+              <li key={device.id}>
+                <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-sm px-1 py-2 hover:bg-muted">
+                  <input
+                    type="checkbox"
+                    name="equipmentIds"
+                    value={device.id}
+                    checked={equipmentIds.includes(device.id)}
+                    onChange={(event) =>
+                      setEquipmentIds((current) =>
+                        event.target.checked ? [...current, device.id] : current.filter((id) => id !== device.id),
+                      )
+                    }
+                    className={`size-5 shrink-0 accent-primary ${focusClass}`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-medium">{device.name}</span>
+                    {device.detail && <span className="block text-xs text-muted-foreground">{device.detail}</span>}
+                  </span>
+                  <span className="shrink-0 text-right text-sm tabular text-muted-foreground">
+                    {device.quote
+                      ? <>{formatCents(device.quote.totalCents, device.quote.currency)} TTC<span className="block text-xs">{formatQuoteQuantity(device.quote.unit, device.quote.quantity)}</span></>
+                      : 'Prix précisé par l’accueil'}
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </fieldset>
+      )}
+
       <div>
         <label htmlFor="notes" className={labelClass}>
           Précisions pour l’accueil <span className="font-normal text-muted-foreground">(facultatif)</span>
@@ -415,6 +486,12 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
             {quote.status === 'priced' ? (
               <>
                 <QuoteSummary quote={quote.quote} />
+                {total && total.currency && (
+                  <p className="mt-2 text-sm tabular">
+                    Avec le matériel : <span className="font-semibold">{formatCents(total.totalCents, total.currency)} TTC</span>
+                    {total.unpriced > 0 && <span className="text-muted-foreground"> — hors appareil au prix précisé par l’accueil</span>}
+                  </p>
+                )}
                 <p className="mt-2 text-xs text-muted-foreground">
                   {quote.fromContract ? 'Tarif de votre contrat. ' : ''}Ce montant est figé sur votre
                   réservation dès l’envoi.

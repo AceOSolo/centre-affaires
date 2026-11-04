@@ -8,6 +8,7 @@ import { insertManyReturning, updateReturning } from '../../db/returning.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { resources } from '../ressources/schema.ts'
 import { overlaps } from './availability.ts'
+import { cancelOptionsInTransaction } from './options-cascade.ts'
 import { BookingConflictError, type BookingWithResource } from './queries.ts'
 import { expandRecurrence, MAX_BULK_BOOKINGS, RecurrenceError, type RecurrenceInput } from './recurrence.ts'
 import { bookings, type Booking } from './schema.ts'
@@ -78,10 +79,21 @@ export async function listBookingSeries(seriesId: string): Promise<BookingWithRe
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))
 }
 
-/** `staffId` : le membre de l'équipe qui annule, tracé sur chaque occurrence (ADR 036). */
+/**
+ * `staffId` : le membre de l'équipe qui annule, tracé sur chaque occurrence (ADR 036).
+ *
+ * Le matériel en option d'une occurrence est annulé avec elle, d'abord
+ * (ADR 062) : la base refuse l'inverse. Rend tout ce qui a été annulé,
+ * matériel compris, pour les agendas.
+ */
 export async function cancelFutureSeries(tx: Transaction, seriesId: string, staffId: string | null = null): Promise<Pick<Booking, 'id'>[]> {
-  return updateReturning(tx, bookings, {
-    status: 'cancelled', cancelledAt: maintenant(), cancellationReason: 'Annulation des occurrences à venir de la série',
+  const future = and(eq(bookings.seriesId, seriesId), ne(bookings.status, 'cancelled'), gt(bookings.startsAt, maintenant()))
+  const cancellation = {
+    cancelledAt: maintenant(), cancellationReason: 'Annulation des occurrences à venir de la série',
     cancelledByStaffId: staffId,
-  }, and(eq(bookings.seriesId, seriesId), ne(bookings.status, 'cancelled'), gt(bookings.startsAt, maintenant())))
+  }
+  const occurrences = await tx.select({ id: bookings.id }).from(bookings).where(future).for('update')
+  const options = await cancelOptionsInTransaction(tx, occurrences.map((occurrence) => occurrence.id), cancellation)
+  const cancelled = await updateReturning(tx, bookings, { status: 'cancelled', ...cancellation }, future)
+  return [...cancelled, ...options]
 }

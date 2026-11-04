@@ -11,6 +11,7 @@ export const resourceTypeLabels: Record<ResourceType, string> = {
   casier: 'Casier',
   vehicule: 'Véhicule',
   boite_aux_lettres: 'Boîte aux lettres',
+  materiel: 'Matériel',
 }
 
 /** Le type comme famille de produits, sur le site public : « Nos bureaux ». */
@@ -20,6 +21,7 @@ export const resourceTypePluralLabels: Record<ResourceType, string> = {
   casier: 'Casiers',
   vehicule: 'Véhicules',
   boite_aux_lettres: 'Domiciliation',
+  materiel: 'Matériel en location',
 }
 
 export const resourceStatusLabels: Record<ResourceStatus, string> = {
@@ -51,6 +53,12 @@ export function describeAttributes(attributes: Record<string, unknown>): string 
     kilometrage: (value) => `${Number(value).toLocaleString('fr-FR')} km`,
     places: (value) => `${value} place${Number(value) > 1 ? 's' : ''}`,
     equipements: (value) => (Array.isArray(value) ? value.join(', ') : String(value)),
+    // Un appareil (ADR 062) : « Télévision · Samsung · QE55 · n° de série X ».
+    nature: (value) => String(value),
+    marque: (value) => String(value),
+    modele: (value) => String(value),
+    numeroSerie: (value) => `n° de série ${value}`,
+    accessoires: (value) => `avec ${Array.isArray(value) ? value.join(', ') : String(value)}`,
   }
 
   return Object.entries(attributes)

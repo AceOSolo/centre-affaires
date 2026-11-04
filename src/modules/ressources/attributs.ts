@@ -80,6 +80,29 @@ export const attributeFields: Record<ResourceType, readonly AttributeField[]> = 
     { name: 'places', label: 'Places', kind: 'integer', min: 1, max: 99 },
   ],
   boite_aux_lettres: [],
+  // Un appareil = une ressource (ADR 062). La nature le range ; les
+  // accessoires disent ce qui part avec lui et doit revenir (état des lieux).
+  materiel: [
+    {
+      name: 'nature',
+      label: 'Nature',
+      kind: 'text',
+      required: true,
+      maxLength: 60,
+      hint: 'Télévision, climatisation, vidéoprojecteur, enceinte…',
+    },
+    { name: 'marque', label: 'Marque', kind: 'text', maxLength: 60 },
+    { name: 'modele', label: 'Modèle', kind: 'text', maxLength: 60 },
+    { name: 'numeroSerie', label: 'Numéro de série', kind: 'text', maxLength: 60 },
+    {
+      name: 'accessoires',
+      label: 'Accessoires fournis',
+      kind: 'list',
+      maxLength: 60,
+      max: 20,
+      hint: 'Séparés par des virgules : télécommande, câble HDMI, pied.',
+    },
+  ],
 }
 
 /** Libellés des champs communs et propres au type, pour le résumé des erreurs. */
@@ -98,11 +121,12 @@ export const resourceFieldLabels: Record<string, string> = {
 }
 
 /**
- * La capacité compte des personnes : elle n'a pas de sens pour un casier ou une
- * boîte aux lettres, qui la portent toujours à nul (schéma de `resources`).
+ * La capacité compte des personnes : elle n'a pas de sens pour un casier, une
+ * boîte aux lettres ou un appareil, qui la portent toujours à nul (schéma de
+ * `resources`).
  */
 export function hasCapacity(resourceType: ResourceType): boolean {
-  return resourceType !== 'casier' && resourceType !== 'boite_aux_lettres'
+  return resourceType !== 'casier' && resourceType !== 'boite_aux_lettres' && resourceType !== 'materiel'
 }
 
 /** Lecture d'un champ de formulaire, quelle que soit sa source. */

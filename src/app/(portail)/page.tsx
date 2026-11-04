@@ -8,6 +8,7 @@ import {
   ClockIcon,
   MapPinIcon,
   PhoneIcon,
+  TvIcon,
   UsersIcon,
 } from '../../components/ui/icons.tsx'
 import { todayIsoDate, toIsoDate } from '../../lib/dates.ts'
@@ -87,6 +88,14 @@ const familles: {
     texte: 'Un utilitaire pour un déménagement, une livraison ou un transport de marchandises.',
     action: 'Réserver un véhicule',
   },
+  {
+    // Loué seul ici ; avec une salle, il s'ajoute depuis l'espace client (ADR 062).
+    type: 'materiel',
+    ancre: 'materiel',
+    titre: 'Matériel',
+    texte: 'Une télévision, une climatisation, un vidéoprojecteur pour une présentation, un salon ou un événement.',
+    action: 'Louer du matériel',
+  },
 ]
 
 const espacesCommuns = [
@@ -159,6 +168,7 @@ export default async function PortailPage({
   const parProduit: Record<SlotProduct, PublicBookingResource[]> = {
     espace: bookable.filter((resource) => productForResourceType(resource.resourceType) === 'espace'),
     vehicule: bookable.filter((resource) => productForResourceType(resource.resourceType) === 'vehicule'),
+    materiel: bookable.filter((resource) => productForResourceType(resource.resourceType) === 'materiel'),
   }
 
   // La domiciliation, sans calendrier, est toujours proposée (ADR 043).
@@ -267,7 +277,7 @@ export default async function PortailPage({
                             {espace.photoPath ? (
                               <Image src={espace.photoPath} alt="" fill sizes="(max-width: 640px) calc(100vw - 40px), (max-width: 1024px) 50vw, 370px" className="object-cover transition-transform duration-[250ms] ease-out group-hover:scale-[1.02]" />
                             ) : (
-                              <span className="flex h-full items-center justify-center text-primary/40">{bloc.type === 'vehicule' ? <CarIcon size={48} /> : <BuildingIcon size={48} />}</span>
+                              <span className="flex h-full items-center justify-center text-primary/40">{bloc.type === 'vehicule' ? <CarIcon size={48} /> : bloc.type === 'materiel' ? <TvIcon size={48} /> : <BuildingIcon size={48} />}</span>
                             )}
                           </span>
                           <span className="mt-4 flex items-baseline justify-between gap-3">

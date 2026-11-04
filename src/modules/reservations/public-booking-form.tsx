@@ -5,7 +5,7 @@ import { useActionState, useEffect, useRef, useState, type FormEvent, type React
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
-import { BuildingIcon, CarIcon, CheckIcon } from '../../components/ui/icons.tsx'
+import { BuildingIcon, CarIcon, CheckIcon, TvIcon } from '../../components/ui/icons.tsx'
 import { addDaysToIsoDate, formatLongDate, formatTime } from '../../lib/dates.ts'
 import { QuoteSummary } from '../facturation/devis-resume.tsx'
 import { rateUnitSuffixes } from '../facturation/labels.ts'
@@ -23,8 +23,8 @@ import { ANSWER_FIELD_PREFIX, describeAnswers, parseAnswers, type Answers } from
 import { contactRejections, MIN_REQUEST_MINUTES, rejectionMessages } from './requests.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
 
-/** Produits réservés sur un créneau du calendrier (ADR 043). */
-export type SlotProduct = 'espace' | 'vehicule'
+/** Produits réservés sur un créneau du calendrier (ADR 043), le matériel loué seul compris (ADR 062). */
+export type SlotProduct = 'espace' | 'vehicule' | 'materiel'
 
 /** Ce qui change d'un produit à l'autre : les mots, l'icône. */
 const wording = {
@@ -44,6 +44,14 @@ const wording = {
     titlePlaceholder: 'Déménagement, livraison…',
     nights: 'sur plusieurs jours, vous gardez le véhicule nuits comprises',
     Icon: CarIcon,
+  },
+  materiel: {
+    legend: 'Appareil',
+    pick: 'Choisissez un appareil pour continuer.',
+    closed: 'L’appareil n’est pas disponible ce jour-là.',
+    titlePlaceholder: 'Salon, présentation, événement…',
+    nights: 'sur plusieurs jours, vous gardez l’appareil nuits comprises',
+    Icon: TvIcon,
   },
 } as const
 

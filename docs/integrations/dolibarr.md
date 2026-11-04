@@ -9,8 +9,8 @@ par le module Webhook de Dolibarr et sans code : voir
 
 ## Le principe
 
-L'application recueille les demandes (salle ou bureau, camion, domiciliation)
-et en fait des **devis structurés**. Elle **n'appelle pas Dolibarr** : c'est le
+L'application recueille les demandes (salle ou bureau, camion, matériel,
+domiciliation) et en fait des **devis structurés**. Elle **n'appelle pas Dolibarr** : c'est le
 connecteur qui vient chercher les devis prêts, les crée dans Dolibarr
 (proposition commerciale), puis le signale à l'application.
 
@@ -134,7 +134,20 @@ Champs à connaître :
   complété) — c'est lui qu'on renvoie à `/transmis` et `/issue`.
 - **`reference`** (`DV-…`) : numéro du centre, à mettre en **`ref_client`** de
   la proposition : l'accueil retrouve ainsi le devis des deux côtés.
-- **`produit`** : `espace` (salle ou bureau), `vehicule`, `domiciliation`.
+- **`produit`** : `espace` (salle ou bureau), `vehicule`, `materiel`
+  (location de matériel seul : télévision, climatisation, vidéoprojecteur…,
+  ADR 062), `domiciliation`. Un devis `materiel` passe toujours par l'accueil
+  avant de vous arriver, comme le camion.
+- **Matériel en option d'une salle** (ADR 062) : il ne fait pas de devis à
+  lui. Chaque appareil loué avec la salle est **une ligne de plus dans le
+  devis de la salle** (`produit` `espace`), sur la même période :
+  désignation « Télévision 55 pouces — mardi 3 novembre 2026, 09:00 – 13:00 »,
+  `ressourceId` celui de l'appareil, unité et prix de sa grille
+  (`tarif.materiel.<unité>`, [dolibarr-produits.md](dolibarr-produits.md)).
+  `reservation` reste celle de la salle. Un appareil ajouté après coup
+  remet le devis à jour tant qu'il n'est pas transmis ; transmis, il ne
+  change plus — l'accueil l'annule et le refait, vous le relisez dans les
+  devis annulés puis dans les devis prêts.
 - **`tiers.clientId`** non nul : entreprise déjà cliente du centre (fiche
   complète, SIRET, adresse). Nul : un **prospect** de la page publique, connu
   seulement par son nom, sa société, son adresse électronique et son

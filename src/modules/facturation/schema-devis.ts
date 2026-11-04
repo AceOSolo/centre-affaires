@@ -29,9 +29,12 @@ import { lineNetAmountSql, rateUnitEnum, ratePlanItems, services } from './schem
  *
  * - `espace` : salle de réunion ou bureau, sur un créneau du calendrier ;
  * - `vehicule` : camion ou utilitaire, sur un créneau, au temps comme une salle ;
- * - `domiciliation` : adresse et courrier, sans calendrier, par contrat.
+ * - `domiciliation` : adresse et courrier, sans calendrier, par contrat ;
+ * - `materiel` : un appareil loué seul (télévision, climatisation…), sur un
+ *   créneau comme le camion (ADR 062). Loué avec une salle, il n'a pas de
+ *   devis à lui : sa ligne s'ajoute au devis de la salle.
  */
-export const proposalProducts = ['espace', 'vehicule', 'domiciliation'] as const
+export const proposalProducts = ['espace', 'vehicule', 'domiciliation', 'materiel'] as const
 export type ProposalProduct = (typeof proposalProducts)[number]
 export const proposalProductEnum = (name: string) => mysqlEnum(name, proposalProducts)
 
@@ -82,7 +85,7 @@ export const proposals = mysqlTable(
     requesterEmail: varchar('requester_email', { length: 320 }),
     requesterPhone: varchar('requester_phone', { length: 40 }),
     requesterCompany: text('requester_company'),
-    /** Créneau tenu pour un espace ou un véhicule ; nul pour une domiciliation. */
+    /** Créneau tenu pour un espace, un véhicule ou du matériel ; nul pour une domiciliation. */
     bookingId: char('booking_id', { length: 36 }),
     /**
      * Réponses au questionnaire du produit, validées par le code

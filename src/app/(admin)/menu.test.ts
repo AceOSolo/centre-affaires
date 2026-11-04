@@ -88,7 +88,17 @@ describe('menu du back-office', () => {
   })
 
   it('reste court', () => {
-    assert.ok(entries.length <= 20, `${entries.length} entrées`)
+    // 21 depuis le rayon Matériel (ADR 062) : deux entrées de plus, dans un
+    // rayon plié tant qu'on ne l'ouvre pas (ADR 067).
+    assert.ok(entries.length <= 21, `${entries.length} entrées`)
+  })
+
+  it('range le matériel dans son rayon : planning et appareils (ADR 062)', () => {
+    const materiel = menuGroups.find((group) => group.label === 'Matériel')
+    assert.deepEqual(materiel?.entries.map((entry) => entry.href), [
+      '/reservations/semaine?type=materiel',
+      '/ressources?type=materiel',
+    ])
   })
 
   it('mène à des pages qui existent, réglages compris', () => {

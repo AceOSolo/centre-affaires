@@ -24,6 +24,12 @@ import { loadOpeningContext } from '../ressources/ouverture-queries.ts'
 import { listBookableResources } from '../ressources/queries.ts'
 import { resources, type Resource } from '../ressources/schema.ts'
 import { isValidRange, occupiesResource, type TimeRange } from './availability.ts'
+import {
+  cancelOptionsInTransaction,
+  confirmOptionsInTransaction,
+  moveOptionsInTransaction,
+  reassignOptionsInTransaction,
+} from './options-cascade.ts'
 import { dayAvailability } from './disponibilites.ts'
 import {
   BookingContractError,
@@ -397,6 +403,10 @@ export type MoveBookingInput = {
  * Une occupation de contrat ne se déplace pas ici : elle suit son contrat
  * (ADR 018). Une réservation rattachée à un contrat ne peut pas sortir de sa
  * période (R05) : la règle est revérifiée dans la transaction du déplacement.
+ *
+ * Le matériel en option la suit, dans la même transaction (ADR 062) : même
+ * nouvelle période, rechiffré ; un appareil déjà pris sur cette période fait
+ * refuser le déplacement entier.
  */
 export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
   if (!isValidRange(input)) throw new InvalidRangeError()
@@ -425,6 +435,9 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
         throw occupation ? new ContractOccupationLockedError() : new BookingNotMovableError()
       }
       if (row.contractId) await assertBookingContract(tx, row.contractId, row)
+      // Le matériel en option suit la salle sur sa nouvelle période (ADR 062),
+      // rechiffré comme elle ; un appareil pris fait tout refuser (CA000).
+      for (const option of await moveOptionsInTransaction(tx, row)) await requoteMovedBooking(tx, option)
       return requoteMovedBooking(tx, row)
     })
     return moved
@@ -451,29 +464,37 @@ export async function moveBooking(input: MoveBookingInput): Promise<Booking> {
  *
  * `staffId` : le membre de l'équipe qui annule (`cancelled_by_staff_id`,
  * ADR 036), que l'espace client dit « annulée par le centre ».
+ *
+ * Le matériel en option est annulé avec elle, dans la même transaction, avec
+ * le même motif (ADR 062) : il est rendu pour que l'appelant mette à jour les
+ * agendas.
  */
 export async function cancelBooking(
   id: string,
   reason?: string | null,
   staffId?: string | null,
-): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx
+): Promise<{ cancelledOptionIds: string[] }> {
+  return withTenant(currentTenantId(), async (tx) => {
+    const cancellation = {
+      cancelledAt: maintenant(),
+      cancellationReason: reason?.trim() || null,
+      cancelledByStaffId: staffId ?? null,
+    }
+    // Le matériel en option d'abord (ADR 062) : la base refuse d'annuler la
+    // salle tant qu'il vit. Une occupation de contrat n'en a jamais.
+    const options = await cancelOptionsInTransaction(tx, [id], cancellation)
+    await tx
       .update(bookings)
-      .set({
-        status: 'cancelled',
-        cancelledAt: maintenant(),
-        cancellationReason: reason?.trim() || null,
-        cancelledByStaffId: staffId ?? null,
-      })
+      .set({ status: 'cancelled', ...cancellation })
       .where(
         and(
           eq(bookings.id, id),
           ne(bookings.status, 'cancelled'),
           ne(bookings.kind, 'contract'),
         ),
-      ),
-  )
+      )
+    return { cancelledOptionIds: options.map((option) => option.id) }
+  })
 }
 
 
@@ -632,10 +653,28 @@ export async function listPendingBookings(): Promise<BookingWithResource[]> {
       .select({ booking: bookings, resource: resources })
       .from(bookings)
       .innerJoin(resources, and(eq(resources.tenantId, bookings.tenantId), eq(resources.id, bookings.resourceId)))
-      .where(and(eq(bookings.tenantId, tenantId), eq(bookings.status, 'pending'), isNull(resources.deletedAt)))
+      .where(
+        and(
+          eq(bookings.tenantId, tenantId),
+          eq(bookings.status, 'pending'),
+          isNull(resources.deletedAt),
+          notPendingOption(),
+        ),
+      )
       .orderBy(asc(bookings.startsAt)),
   )
   return rows.map(({ booking, resource }) => ({ ...booking, resource }))
+}
+
+/**
+ * Le matériel en option d'une demande en attente n'est pas une demande de
+ * plus (ADR 062) : il attend avec elle, se valide et se refuse avec elle, et
+ * figure sur sa carte. Une option en attente d'une réservation déjà
+ * confirmée, elle, se traite seule.
+ */
+export function notPendingOption() {
+  // Sous-requête corrélée à `bookings` de la requête qui l'emploie.
+  return sql`not exists (select 1 from ${bookings} as parent_bookings where parent_bookings.tenant_id = ${bookings.tenantId} and parent_bookings.id = ${bookings.parentBookingId} and parent_bookings.status = 'pending')`
 }
 
 /**
@@ -646,15 +685,23 @@ export async function listPendingBookings(): Promise<BookingWithResource[]> {
  * créneau par le statut `pending`.
  *
  * La base date la confirmation (`confirmed_at`, ADR 041) ; le code dit qui
- * l'a donnée, pour l'historique du client et la fiche.
+ * l'a donnée, pour l'historique du client et la fiche. Le matériel en option
+ * qui l'attendait est validé avec elle (ADR 062).
  */
-export async function confirmBooking(id: string, staffId: string | null = null): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx
+export async function confirmBooking(
+  id: string,
+  staffId: string | null = null,
+): Promise<{ confirmedOptionIds: string[] }> {
+  return withTenant(currentTenantId(), async (tx) => {
+    await tx
       .update(bookings)
       .set({ status: 'confirmed', confirmedByStaffId: staffId })
-      .where(and(eq(bookings.id, id), eq(bookings.status, 'pending'))),
-  )
+      .where(and(eq(bookings.id, id), eq(bookings.status, 'pending')))
+    // Puis son matériel en option, qui l'attendait (ADR 062) : la base refuse
+    // de le confirmer avant elle.
+    const options = await confirmOptionsInTransaction(tx, id, staffId)
+    return { confirmedOptionIds: options.map((option) => option.id) }
+  })
 }
 
 /**
@@ -665,18 +712,27 @@ export async function refuseBooking(
   id: string,
   reason?: string | null,
   staffId?: string | null,
-): Promise<void> {
-  await withTenant(currentTenantId(), (tx) =>
-    tx
+): Promise<{ cancelledOptionIds: string[] }> {
+  return withTenant(currentTenantId(), async (tx) => {
+    const [pending] = await tx
+      .select({ id: bookings.id })
+      .from(bookings)
+      .where(and(eq(bookings.id, id), eq(bookings.status, 'pending')))
+      .for('update')
+    if (!pending) return { cancelledOptionIds: [] }
+    const cancellation = {
+      cancelledAt: maintenant(),
+      cancellationReason: reason?.trim() || 'Demande refusée',
+      cancelledByStaffId: staffId ?? null,
+    }
+    // Le matériel demandé avec elle est refusé d'abord (ADR 062).
+    const options = await cancelOptionsInTransaction(tx, [id], cancellation)
+    await tx
       .update(bookings)
-      .set({
-        status: 'cancelled',
-        cancelledAt: maintenant(),
-        cancellationReason: reason?.trim() || 'Demande refusée',
-        cancelledByStaffId: staffId ?? null,
-      })
-      .where(and(eq(bookings.id, id), eq(bookings.status, 'pending'))),
-  )
+      .set({ status: 'cancelled', ...cancellation })
+      .where(and(eq(bookings.id, id), eq(bookings.status, 'pending')))
+    return { cancelledOptionIds: options.map((option) => option.id) }
+  })
 }
 
 /** Ce que la base sait du client d'une réservation : son auteur, ses états des lieux, sa facture. */
@@ -743,6 +799,8 @@ export async function assignBookingClient(id: string, clientId: string | null): 
           contractId: null,
         })
         .where(and(eq(bookings.id, id), ne(bookings.kind, 'contract')))
+      // Le matériel en option est au nom du client de la salle (ADR 062).
+      await reassignOptionsInTransaction(tx, id, clientId)
       return { ok: true }
     })
   } catch (error) {

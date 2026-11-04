@@ -1,9 +1,10 @@
-import { and, asc, eq, gte, isNull, lte, ne } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, isNull, lte, ne } from 'drizzle-orm'
 
 import {
   DB_CLIENT_BOOKING_REFUSED,
   DB_EXCLUSION_VIOLATION,
   DB_FOREIGN_KEY_VIOLATION,
+  DB_OPTION_REFUSED,
   dbErrorCode,
 } from '../../db/errors.ts'
 import type { Transaction } from '../../db/index.ts'
@@ -26,6 +27,13 @@ import { isValidRange } from './availability.ts'
 import { listBusyRanges } from './creneaux-occupes.ts'
 import { dayAvailability, type BusyRange, type DayAvailabilityOf } from './disponibilites.ts'
 import { maxRequestDaysFor, type MaxRequestDaysSettings } from './durees.ts'
+import { acceptsEquipmentOptions } from './options.ts'
+import {
+  insertOptionsInTransaction,
+  listFreeEquipmentInTransaction,
+  optionLinesInTransaction,
+  type EquipmentChoice,
+} from './options-queries.ts'
 import type { PeriodAvailability } from './periode.ts'
 import { loadPeriodAvailability } from './periode-queries.ts'
 import {
@@ -154,6 +162,8 @@ export type PortalQuotePreview = {
   quote: QuoteDisplay | null
   /** Le prix vient de la grille du contrat du client. */
   fromContract: boolean
+  /** Appareils libres sur le créneau, chiffrés, pour une salle (ADR 062) ; vide sinon. */
+  equipment: EquipmentChoice[]
 }
 
 /**
@@ -170,7 +180,12 @@ export async function previewPortalQuote(
   }
   return inClientSpace(accounts, async (tx) => {
     const [resource] = await tx
-      .select({ mode: resources.clientBookingMode, status: resources.status, deletedAt: resources.deletedAt })
+      .select({
+        mode: resources.clientBookingMode,
+        status: resources.status,
+        deletedAt: resources.deletedAt,
+        resourceType: resources.resourceType,
+      })
       .from(resources)
       .where(eq(resources.id, request.resourceId))
       .limit(1)
@@ -182,6 +197,9 @@ export async function previewPortalQuote(
       mode: resource.mode,
       quote: result.ok ? toQuoteDisplay(result.quote) : null,
       fromContract: result.ok && result.quote.source.kind === 'contract',
+      equipment: acceptsEquipmentOptions(resource.resourceType)
+        ? await listFreeEquipmentInTransaction(tx, { ...request, portal: true })
+        : [],
     }
   })
 }
@@ -210,6 +228,12 @@ export type PortalBookingInput = {
   notes: string | null
   /** Le devis de la réservation (ADR 043), écrit avec elle. */
   proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'requesterName' | 'requesterEmail'> & { timeZone: string }
+  /**
+   * Appareils loués en option d'une salle (ADR 062) : chacun devient une
+   * réservation liée, écrite dans la même transaction, dont la ligne entre au
+   * devis. Ignoré pour une ressource qui ne reçoit pas de matériel.
+   */
+  equipmentIds?: readonly string[]
 }
 
 export type CreatedPortalBooking = {
@@ -218,6 +242,8 @@ export type CreatedPortalBooking = {
   status: PortalBookingOutcome
   /** Le devis figé, ou `undefined` si le créneau n'a pas été chiffré. */
   quote: QuoteDisplay | undefined
+  /** Le matériel réservé avec elle, et le statut que la base lui a donné. */
+  options: { id: string; resourceId: string; name: string; status: PortalBookingOutcome; quote: QuoteDisplay | undefined }[]
 }
 
 /**
@@ -230,9 +256,10 @@ export type CreatedPortalBooking = {
  * écrit ici est ignoré : la base le pose selon le réglage de la ressource, et
  * c'est celui qu'elle rend qui est renvoyé.
  *
- * @throws PortalBookingError pour un créneau pris (CA000), une ressource
- * fermée au portail ou une écriture refusée (CA009), une personne qui n'est
- * plus de l'entreprise (23503).
+ * @throws PortalBookingError pour un créneau pris (CA000) — la salle ou un
+ * appareil demandé avec elle —, une ressource fermée au portail ou une
+ * écriture refusée (CA009, CA018), une personne qui n'est plus de
+ * l'entreprise (23503).
  */
 export async function createPortalBooking(input: PortalBookingInput): Promise<CreatedPortalBooking> {
   if (!isValidRange(input)) {
@@ -261,8 +288,20 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
         status: 'pending',
         ...(quote.ok ? bookingQuoteColumns(quote.quote, new Date()) : NO_BOOKING_QUOTE),
       })
+      // Le matériel en option d'une salle (ADR 062) : une réservation liée par
+      // appareil, au nom de la même personne ; la base pose leur statut et
+      // garde chaque appareil comme toute réservation (décision 3).
+      const [resource] = await tx
+        .select({ resourceType: resources.resourceType })
+        .from(resources)
+        .where(eq(resources.id, input.resourceId))
+      const options =
+        input.equipmentIds?.length && resource && acceptsEquipmentOptions(resource.resourceType)
+          ? await insertOptionsInTransaction(tx, booking, input.equipmentIds, { channel: 'client', memberId: account.memberId })
+          : []
       if (input.proposal) {
         const line = await bookingLineInTransaction(tx, booking.id, input.proposal.timeZone)
+        const optionLines = await optionLinesInTransaction(tx, booking.id, input.proposal.timeZone)
         await createProposalInTransaction(tx, {
           product: input.proposal.product,
           channel: 'client',
@@ -274,25 +313,40 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
           answers: input.proposal.answers,
           message: input.notes,
           currency: booking.quoteCurrency ?? 'EUR',
-          lines: line ? [line] : [],
+          lines: [...(line ? [line] : []), ...optionLines],
         })
       }
-      return booking
+      const names = options.length
+        ? await tx
+            .select({ id: resources.id, name: resources.name })
+            .from(resources)
+            .where(inArray(resources.id, options.map((option) => option.resourceId)))
+        : []
+      return { booking, options, names: new Map(names.map((row) => [row.id, row.name])) }
     })
     return {
-      id: created.id,
-      status: created.status === 'confirmed' ? 'confirmed' : 'pending',
-      quote: frozenQuoteDisplay(created),
+      id: created.booking.id,
+      status: created.booking.status === 'confirmed' ? 'confirmed' : 'pending',
+      quote: frozenQuoteDisplay(created.booking),
+      options: created.options.map((option) => ({
+        id: option.id,
+        resourceId: option.resourceId,
+        name: created.names.get(option.resourceId) ?? 'Matériel',
+        status: option.status === 'confirmed' ? 'confirmed' : 'pending',
+        quote: frozenQuoteDisplay(option),
+      })),
     }
   } catch (error) {
     const code = dbErrorCode(error)
     if (code === DB_EXCLUSION_VIOLATION) {
       throw new PortalBookingError(
         'conflit',
-        'Ce créneau vient d’être pris. Choisissez-en un autre parmi les créneaux libres.',
+        input.equipmentIds?.length
+          ? 'Ce créneau, ou un appareil choisi avec lui, vient d’être pris. Choisissez parmi ce qui reste libre.'
+          : 'Ce créneau vient d’être pris. Choisissez-en un autre parmi les créneaux libres.',
       )
     }
-    if (code === DB_CLIENT_BOOKING_REFUSED) {
+    if (code === DB_CLIENT_BOOKING_REFUSED || code === DB_OPTION_REFUSED) {
       throw new PortalBookingError(
         'refus',
         guardMessage(error) ?? 'Cette ressource ne se réserve pas depuis l’espace client : contactez le centre.',

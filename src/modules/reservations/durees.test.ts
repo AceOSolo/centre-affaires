@@ -19,7 +19,12 @@ import {
 describe('durée maximale d’une demande en ligne', () => {
   it('chaque produit dit s’il se réserve sur une période', () => {
     assert.deepEqual(Object.keys(defaultMaxRequestDays).sort(), products.map((product) => product.key).sort())
-    assert.deepEqual(periodProducts().map((product) => product.key), ['salles', 'bureaux', 'vehicules'])
+    assert.deepEqual(periodProducts().map((product) => product.key), ['salles', 'bureaux', 'vehicules', 'materiel'])
+  })
+
+  it('loue le matériel seul jusqu’à une semaine par défaut (ADR 062)', () => {
+    assert.equal(maxRequestDays({}, 'materiel'), 7)
+    assert.equal(maxRequestDaysFor({ materiel: 2 }, 'materiel'), 2)
   })
 
   it('prend le réglage du centre, sinon la valeur par défaut', () => {

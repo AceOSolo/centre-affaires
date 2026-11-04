@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
+import { DB_OPTION_REFUSED, dbErrorCode, dbSignalMessage } from '../../db/errors.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
 
 import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
@@ -16,8 +17,9 @@ import {
   notifyBookingRequestAccepted,
   notifyBookingRequestRefused,
 } from '../notifications/declencheurs-reservations.ts'
-import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
+import { syncBookingToGoogleCalendar, syncBookingsToGoogleCalendar } from './agenda-google-queries.ts'
 import { describeBusyBooking } from './occupation.ts'
+import { listOptionsOf, syncOptionLinesAfterCancel } from './options-queries.ts'
 import {
   BookingConflictError,
   BookingNotMovableError,
@@ -62,6 +64,8 @@ function describeBookingError(error: unknown, timeZone: string): string | undefi
   if (error instanceof BookingNotMovableError) return error.message
   if (error instanceof ContractOccupationLockedError) return error.message
   if (error instanceof BookingContractError) return error.message
+  // Matériel en option sorti de ses règles (ADR 062) : la base dit lesquelles.
+  if (dbErrorCode(error) === DB_OPTION_REFUSED) return dbSignalMessage(error)
   if (error instanceof BookingConflictError) {
     const occupied = error.conflicts
       .map((conflict) =>
@@ -220,6 +224,9 @@ export async function moveBookingAction(
   }
 
   after(() => syncBookingToGoogleCalendar(id, previousResourceId))
+  // Le matériel en option a suivi la salle (ADR 062) : ses agendas aussi.
+  const moved = (await listOptionsOf([id])).filter((option) => option.status !== 'cancelled')
+  if (moved.length > 0) after(() => syncBookingsToGoogleCalendar(moved.map((option) => option.id)))
   revalidatePath('/reservations', 'layout')
   revalidatePath('/')
   revalidatePath(`/reservations/${id}`)
@@ -234,10 +241,17 @@ export async function cancelBookingAction(formData: FormData): Promise<void> {
   // message d'annulation (ADR 038).
   const before = isUuid(id) ? await findBooking(id) : undefined
   // L'auteur est tracé (ADR 036) : l'espace client dit « annulée par le centre ».
-  await cancelBooking(id, text(formData, 'reason') || null, member.id)
+  // Le matériel en option est annulé avec la salle (ADR 062).
+  const { cancelledOptionIds } = await cancelBooking(id, text(formData, 'reason') || null, member.id)
   // Retire l'événement de l'agenda Google de la ressource, pour qu'il ne montre
   // pas un créneau libéré comme occupé (ADR 014).
   after(() => syncBookingToGoogleCalendar(id))
+  if (cancelledOptionIds.length > 0) after(() => syncBookingsToGoogleCalendar(cancelledOptionIds))
+  // Un appareil annulé seul quitte le devis de sa salle (ADR 062).
+  if (before?.parentBookingId && before.status !== 'cancelled') {
+    await syncOptionLinesAfterCancel(id, member.id, await currentTimeZone())
+    revalidatePath('/devis', 'layout')
+  }
   if (before && before.status !== 'cancelled' && before.clientId) after(() => notifyBookingCancelled(id))
   revalidatePath('/')
   // Portée `layout` : le planning et la fiche de la réservation doivent tous
@@ -257,8 +271,10 @@ export async function confirmBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   const before = isUuid(id) ? await findBooking(id) : undefined
-  await confirmBooking(id, member.id)
+  // Le matériel en option qui l'attendait est validé avec elle (ADR 062).
+  const { confirmedOptionIds } = await confirmBooking(id, member.id)
   after(() => syncBookingToGoogleCalendar(id))
+  if (confirmedOptionIds.length > 0) after(() => syncBookingsToGoogleCalendar(confirmedOptionIds))
   // Le client d'une demande validée en est prévenu (ADR 038).
   if (before?.status === 'pending') after(() => notifyBookingRequestAccepted(id))
   revalidatePath('/demandes')
@@ -271,7 +287,14 @@ export async function refuseBookingAction(formData: FormData): Promise<void> {
   const id = text(formData, 'id')
   if (!id) return
   const before = isUuid(id) ? await findBooking(id) : undefined
-  await refuseBooking(id, text(formData, 'reason') || null, member.id)
+  // Le matériel demandé avec elle est refusé aussi (ADR 062).
+  const { cancelledOptionIds } = await refuseBooking(id, text(formData, 'reason') || null, member.id)
+  if (cancelledOptionIds.length > 0) after(() => syncBookingsToGoogleCalendar(cancelledOptionIds))
+  // Un appareil refusé seul, sur une salle déjà validée, quitte son devis.
+  if (before?.parentBookingId && before.status === 'pending') {
+    await syncOptionLinesAfterCancel(id, member.id, await currentTimeZone())
+    revalidatePath('/devis', 'layout')
+  }
   if (before?.status === 'pending') after(() => notifyBookingRequestRefused(id))
   revalidatePath('/')
   revalidatePath('/demandes')

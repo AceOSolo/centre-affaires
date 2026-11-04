@@ -71,12 +71,16 @@ END;
 --     contrôle de chevauchement `[)`, annulées exclues.
 --  6. ressource non restituée (ADR 063) : `booking_assert_resource_returned`,
 --     sous le même verrou.
+-- Entre 3 et 4, le matériel en option (ADR 062) : `booking_assert_option`
+-- (`25-reservations-liees.sql`), qui ramène à `pending` l'option d'une
+-- demande en attente avant que la confirmation ne soit datée.
 CREATE TRIGGER bookings_before_insert
 BEFORE INSERT ON bookings
 FOR EACH ROW
 BEGIN
   DECLARE v_mode varchar(20);
   DECLARE v_status varchar(20);
+  DECLARE v_option_status varchar(20);
   DECLARE v_deleted datetime(3);
   DECLARE v_name text;
   DECLARE v_message varchar(128);
@@ -127,6 +131,15 @@ BEGIN
   IF NEW.kind = 'contract' AND COALESCE(@app_contract_occupation_sync, '') <> 'on' THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
       'CA001: Cette occupation est tenue par son contrat : elle ne se modifie qu''à travers lui.';
+  END IF;
+
+  -- 3 bis. Matériel en option d'une réservation (ADR 062).
+  IF NEW.parent_booking_id IS NOT NULL THEN
+    SET v_option_status = NEW.status;
+    CALL booking_assert_option(
+      NEW.tenant_id, NEW.parent_booking_id, NEW.kind, NEW.resource_id, NEW.client_id,
+      NEW.starts_at, NEW.ends_at, v_option_status, 1);
+    SET NEW.status = v_option_status;
   END IF;
 
   -- 4. Confirmation datée par la base.
@@ -192,6 +205,7 @@ BEFORE UPDATE ON bookings
 FOR EACH ROW
 BEGIN
   DECLARE v_count int;
+  DECLARE v_option_status varchar(20);
 
   -- Réservation du portail : l'auteur ne change pas, et le client n'annule
   -- lui-même qu'une demande en attente, pas commencée (`canClientCancel`).
@@ -261,6 +275,26 @@ BEGIN
      AND (OLD.kind = 'contract' OR NEW.kind = 'contract') THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
       'CA001: Cette occupation est tenue par son contrat : elle ne se modifie qu''à travers lui.';
+  END IF;
+
+  -- Matériel en option (ADR 062, `25-reservations-liees.sql`) : une option
+  -- ne change pas de réservation principale, et reste dans ses règles quand
+  -- elle bouge ; une principale ne s'annule pas tant qu'une option vit.
+  IF NOT (NEW.parent_booking_id <=> OLD.parent_booking_id) THEN
+    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
+      'CA018: Le matériel en option ne change pas de réservation principale.';
+  END IF;
+  IF NEW.parent_booking_id IS NOT NULL
+     AND NOT (NEW.resource_id <=> OLD.resource_id AND NEW.kind <=> OLD.kind
+              AND NEW.client_id <=> OLD.client_id AND NEW.status <=> OLD.status
+              AND NEW.starts_at <=> OLD.starts_at AND NEW.ends_at <=> OLD.ends_at) THEN
+    SET v_option_status = NEW.status;
+    CALL booking_assert_option(
+      NEW.tenant_id, NEW.parent_booking_id, NEW.kind, NEW.resource_id, NEW.client_id,
+      NEW.starts_at, NEW.ends_at, v_option_status, 0);
+  END IF;
+  IF NEW.status = 'cancelled' AND OLD.status <> 'cancelled' THEN
+    CALL booking_assert_no_live_option(NEW.tenant_id, NEW.id);
   END IF;
 
   -- Le devis d'une réservation facturée ne change plus (ADR 026) : une ligne

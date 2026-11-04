@@ -201,6 +201,16 @@ describe('prix de la grille', () => {
     assert.deepEqual(units, ['hour', 'half_day', 'day', 'week', 'month', 'unit'])
   })
 
+  it('lit le prix du matériel, par type et par appareil (ADR 062)', () => {
+    const journee = tarif('tarif.materiel.journee', '30')
+    assert.equal(journee.kind === 'tarif' && journee.resourceType, 'materiel')
+    assert.equal(journee.kind === 'tarif' && journee.unit, 'day')
+    assert.equal(journee.kind === 'tarif' && journee.amountCents, 3_000)
+    const appareil = tarif('TARIF.MATERIEL.TV-55.SEMAINE', '120')
+    assert.equal(appareil.kind === 'tarif' && appareil.resourceCode, 'tv-55')
+    assert.equal(appareil.kind === 'tarif' && appareil.unit, 'week')
+  })
+
   it('retire le prix d’un produit supprimé ou hors vente', () => {
     const supprime = readDolibarrProductEvent(envoi({ ref: 'tarif.salle.journee', price: '130' }, 'PRODUCT_DELETE'))
     assert.equal(supprime.kind === 'tarif' && supprime.removed, true)

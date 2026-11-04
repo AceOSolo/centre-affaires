@@ -77,8 +77,8 @@ risque sur toutes les tables.
 ### 2. Ressources polymorphes en une seule table
 
 Une table `resources` avec un `resource_type` (salle, bureau, casier, véhicule,
-boîte aux lettres) et une colonne `attributes` en JSONB pour les champs
-spécifiques (kilométrage, numéro de casier, superficie).
+boîte aux lettres, matériel — ADR 062) et une colonne `attributes` en JSONB
+pour les champs spécifiques (kilométrage, numéro de casier, superficie).
 
 **Jamais une table par type de ressource.** Le calendrier de disponibilité, les
 réservations et la facturation sont communs à tous les types ; les dupliquer
@@ -207,7 +207,7 @@ travail quotidien :
 ### Back-office rangé par service vendu
 
 Le menu a un rayon par produit (ADR 053) : Salles, Bureaux, Domiciliation,
-Camion, dans l'ordre de `src/modules/ressources/produits.ts`, chacun avec ses
+Camion, Matériel, dans l'ordre de `src/modules/ressources/produits.ts`, chacun avec ses
 seuls écrans (planning, parc, courrier, états des lieux) en adresses filtrées
 `?type=` ou `?produit=`. En tête, « Aujourd'hui » (ADR 050) et **une seule
 « Demandes »** (ADR 048) ; ce qui sert à tous les produits est sous « Tous les
