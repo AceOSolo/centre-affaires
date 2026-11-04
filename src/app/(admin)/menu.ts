@@ -101,6 +101,21 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
     ],
   },
   {
+    // Télévision, climatisation… loués seuls ou en option d'une salle
+    // (ADR 062) : chaque appareil a son planning, la semaine d'abord comme le
+    // camion. Ses états des lieux se trouvent par la pastille « Matériel ».
+    label: 'Matériel',
+    entries: [
+      {
+        href: '/reservations/semaine?type=materiel',
+        label: 'Planning du matériel',
+        permission: 'reservations.gerer',
+        also: ['/reservations?type=materiel'],
+      },
+      { href: '/ressources?type=materiel', label: 'Appareils', permission: 'ressources.gerer' },
+    ],
+  },
+  {
     label: 'Tous les services',
     entries: [
       { href: '/clients', label: 'Clients', permission: 'clients.gerer' },

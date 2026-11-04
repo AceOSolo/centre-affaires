@@ -5,7 +5,13 @@ import type { BookingChannel, BookingStatus } from './schema.ts'
  * framework, pour être éprouvées seules.
  */
 
-type ClientBooking = { status: BookingStatus; startsAt: Date; endsAt: Date }
+type ClientBooking = {
+  status: BookingStatus
+  startsAt: Date
+  endsAt: Date
+  /** Réservation principale du matériel en option (ADR 062) ; absente ou nulle sinon. */
+  parentBookingId?: string | null
+}
 
 /**
  * Le client annule lui-même une demande que le centre n'a pas encore validée,
@@ -16,7 +22,9 @@ type ClientBooking = { status: BookingStatus; startsAt: Date; endsAt: Date }
  * ici ; les inventer dans le code serait facturer à la place du centre.
  */
 export function canClientCancel(booking: ClientBooking, now: Date): boolean {
-  return booking.status === 'pending' && booking.startsAt > now
+  // Le matériel en option suit sa salle (ADR 062) : il s'annule avec elle, ou
+  // auprès du centre, jamais seul depuis l'espace.
+  return booking.status === 'pending' && booking.startsAt > now && !booking.parentBookingId
 }
 
 /**

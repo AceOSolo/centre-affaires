@@ -160,6 +160,7 @@ describe('devis dans « Demandes » (ADR 048)', () => {
     assert.equal(proposalProductKey({ product: 'espace', resourceType: 'bureau' }), 'bureaux')
     assert.equal(proposalProductKey({ product: 'espace', resourceType: 'salle' }), 'salles')
     assert.equal(proposalProductKey({ product: 'vehicule', resourceType: 'vehicule' }), 'vehicules')
+    assert.equal(proposalProductKey({ product: 'materiel', resourceType: 'materiel' }), 'materiel')
   })
 
   it('filtre les devis par les clés de produit des pastilles, comme partout ailleurs', async () => {
@@ -170,6 +171,7 @@ describe('devis dans « Demandes » (ADR 048)', () => {
       { id: 'bureau', product: 'espace' as const, resourceType: 'bureau' as const },
       { id: 'camion', product: 'vehicule' as const, resourceType: 'vehicule' as const },
       { id: 'domiciliation', product: 'domiciliation' as const, resourceType: null },
+      { id: 'tv', product: 'materiel' as const, resourceType: 'materiel' as const },
     ]
     const ids = (value: string | undefined) => proposalsOfProduct(devis, parseProduct(value)?.key).map((item) => item.id)
     // Chaque pastille de `ProductFilter` (`/devis?produit=…`) garde les siens.
@@ -180,6 +182,7 @@ describe('devis dans « Demandes » (ADR 048)', () => {
         ['bureaux', ['bureau']],
         ['domiciliation', ['domiciliation']],
         ['vehicules', ['camion']],
+        ['materiel', ['tv']],
       ],
     )
     // Sans produit, ou avec les anciennes valeurs (`espace`, `vehicule`) : tous,

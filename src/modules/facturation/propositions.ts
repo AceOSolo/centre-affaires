@@ -27,6 +27,7 @@ export const proposalProductLabels: Record<ProposalProduct, string> = {
   espace: 'Salle ou bureau',
   vehicule: 'Véhicule',
   domiciliation: 'Domiciliation',
+  materiel: 'Matériel',
 }
 
 export const proposalLineSourceLabels: Record<ProposalLineSource, string> = {
@@ -161,7 +162,7 @@ export function proposalProductKey(proposal: { product: ProposalProduct; resourc
 /**
  * Devis du produit choisi par les pastilles (`?produit=`, ADR 046 et 048),
  * avec les clés de partout ailleurs : `salles`, `bureaux`, `domiciliation`,
- * `vehicules`. Sans produit : tous.
+ * `vehicules`, `materiel`. Sans produit : tous.
  */
 export function proposalsOfProduct<T extends { product: ProposalProduct; resourceType: ResourceType | null }>(
   proposals: readonly T[],

@@ -91,6 +91,10 @@ export default async function MesReservationsPage() {
                 Montant : {formatCents(quote.totalCents, quote.currency)} TTC
               </p>
             )}
+            {/* Matériel loué avec une salle (ADR 062) : il la suit, annulé avec elle. */}
+            {booking.parentBookingId && (
+              <p className="text-sm text-muted-foreground">En option de votre réservation de salle, annulé avec elle.</p>
+            )}
             <p className="text-sm text-muted-foreground">{trace.origin}</p>
             {trace.cancellation && (
               <p className="text-sm text-muted-foreground">{trace.cancellation}</p>

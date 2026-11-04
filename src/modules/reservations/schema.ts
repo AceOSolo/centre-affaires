@@ -130,6 +130,17 @@ export const bookings = mysqlTable(
      * `apply_contract_occupation`, seulement sur `kind = 'contract'`.
      */
     contractAmendmentId: char('contract_amendment_id', { length: 36 }),
+    /**
+     * Réservation principale d'un appareil loué en option (ADR 062) : la
+     * salle avec laquelle la télévision ou la climatisation est réservée.
+     * L'option est une réservation à part entière — le trigger
+     * anti-chevauchement la garde, son prix est figé sur elle — qui suit la
+     * principale : même client, dans sa période, annulée avec elle. La base
+     * tient ces règles (`25-reservations-liees.sql`, `CA018`) ; la cascade se
+     * fait dans la transaction qui change la principale (`options-cascade.ts`).
+     * Nulle pour toute autre réservation.
+     */
+    parentBookingId: char('parent_booking_id', { length: 36 }),
 
     /*
      * Devis retenu (R11, ADR 023) : le prix figé au moment de la réservation,
@@ -254,6 +265,20 @@ export const bookings = mysqlTable(
     }).onDelete('restrict'),
     // Cible de la clé étrangère composite des lignes de facture (R15).
     unique('bookings_tenant_id_id_key').on(table.tenantId, table.id),
+    // L'option et sa réservation principale sont du même centre (ADR 062).
+    // `restrict` : une réservation ne se supprime pas (décision 6), et une
+    // action référentielle interdirait les CHECK sur la colonne.
+    foreignKey({
+      name: 'bookings_parent_fk',
+      columns: [table.tenantId, table.parentBookingId],
+      foreignColumns: [table.tenantId, table.id],
+    }).onDelete('restrict'),
+    // Les options d'une réservation : sa fiche, la cascade, le garde d'annulation.
+    index('bookings_parent_idx').on(table.tenantId, table.parentBookingId),
+    check(
+      'bookings_parent_consistent',
+      sql`${table.parentBookingId} is null or (${table.parentBookingId} <> ${table.id} and ${table.kind} = 'booking')`,
+    ),
     // Cible des clés étrangères qui exigent le client de la réservation : un
     // état des lieux est celui du client qui occupe (ADR 039).
     unique('bookings_tenant_id_client_key').on(table.tenantId, table.id, table.clientId),

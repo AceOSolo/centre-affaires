@@ -33,6 +33,7 @@ describe('questionnaires par produit', () => {
     assert.equal(productForResourceType('salle'), 'espace')
     assert.equal(productForResourceType('bureau'), 'espace')
     assert.equal(productForResourceType('vehicule'), 'vehicule')
+    assert.equal(productForResourceType('materiel'), 'materiel')
     assert.equal(productForResourceType('boite_aux_lettres'), undefined)
     assert.equal(productForResourceType('casier'), undefined)
   })
@@ -41,6 +42,22 @@ describe('questionnaires par produit', () => {
     assert.equal(questionnaires.espace.autoValidate, true)
     assert.equal(questionnaires.vehicule.autoValidate, false)
     assert.equal(questionnaires.domiciliation.autoValidate, false)
+    // Le matériel loué seul passe par l'accueil, comme le camion (ADR 062).
+    assert.equal(questionnaires.materiel.autoValidate, false)
+    assert.deepEqual(questionnaires.materiel.resourceTypes, ['materiel'])
+  })
+})
+
+describe('matériel loué seul (ADR 062)', () => {
+  it('demande où il sert, et la livraison en clair', () => {
+    const { answers, errors } = parseAnswers('materiel', form({ [q('lieu')]: 'exterieur', [q('installation')]: 'oui' }))
+    assert.deepEqual(errors, {})
+    assert.deepEqual(answers, { lieu: 'exterieur', installation: true })
+    assert.deepEqual(describeAnswers('materiel', answers), [
+      { label: 'Où le matériel sera-t-il utilisé ?', value: 'À l’extérieur du centre' },
+      { label: 'Souhaitez-vous la livraison ou l’installation ?', value: 'Oui' },
+    ])
+    assert.equal(parseAnswers('materiel', form({})).errors.lieu, 'Choisissez une réponse.')
   })
 })
 

@@ -78,6 +78,13 @@
       "when": 1793803959163,
       "tag": "0010_cloche_equipe",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "5",
+      "when": 1793808574145,
+      "tag": "0011_materiel_et_options",
+      "breakpoints": true
     }
   ]
 }

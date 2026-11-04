@@ -225,7 +225,8 @@ export async function requestBookingAction(
   const notes = text(formData, 'notes')
   const product = text(formData, 'product') as ProposalProduct
 
-  if (product !== 'espace' && product !== 'vehicule') {
+  // Les produits sur créneau ; la domiciliation a son propre formulaire.
+  if (product !== 'espace' && product !== 'vehicule' && product !== 'materiel') {
     return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
   }
   if (!UUID.test(resourceId)) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }

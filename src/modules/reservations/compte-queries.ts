@@ -7,6 +7,7 @@ import { isUuid } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { resources, type ResourceType } from '../ressources/schema.ts'
+import { cancelOptionsInTransaction } from './options-cascade.ts'
 import { bookings, type Booking } from './schema.ts'
 
 /**
@@ -36,6 +37,7 @@ export type ClientBookingRow = Pick<
   | 'quoteVatRateBp'
   | 'quoteCurrency'
   | 'quotedAt'
+  | 'parentBookingId'
 > & {
   resourceName: string
   resourceType: ResourceType
@@ -80,6 +82,7 @@ export async function listBookingsForAccounts(accounts: ClientAccount[]): Promis
         quoteVatRateBp: bookings.quoteVatRateBp,
         quoteCurrency: bookings.quoteCurrency,
         quotedAt: bookings.quotedAt,
+        parentBookingId: bookings.parentBookingId,
         resourceName: resources.name,
         resourceType: resources.resourceType,
         clientName: clients.name,
@@ -117,6 +120,9 @@ export async function listBookingsForAccounts(accounts: ClientAccount[]): Promis
  * qu'une validation simultanée par le centre l'emporte proprement. Elle porte
  * la personne qui annule (`cancelled_by_member_id`, ADR 036) ; la base refuse
  * toute autre annulation par le client (CA009).
+ *
+ * Le matériel en option ne s'annule pas seul (ADR 062) : il est annulé avec
+ * sa salle, d'abord, dans la même transaction et au nom de la même personne.
  */
 export async function cancelRequestForAccounts(
   id: string,
@@ -126,12 +132,18 @@ export async function cancelRequestForAccounts(
   const clientIds = accounts.map((account) => account.clientId)
   const updated = await inClientSpace(accounts, async (tx) => {
     const [booking] = await tx
-      .select({ clientId: bookings.clientId })
+      .select({ clientId: bookings.clientId, parentBookingId: bookings.parentBookingId, status: bookings.status, startsAt: bookings.startsAt })
       .from(bookings)
       .where(and(eq(bookings.id, id), inArray(bookings.clientId, clientIds)))
       .limit(1)
     const account = booking && accounts.find((candidate) => candidate.clientId === booking.clientId)
-    if (!account) return []
+    if (!account || booking.parentBookingId) return []
+    if (booking.status !== 'pending' || booking.startsAt <= new Date()) return []
+    await cancelOptionsInTransaction(tx, [id], {
+      cancelledAt: maintenant(),
+      cancellationReason: 'Annulée par le client',
+      cancelledByMemberId: account.memberId,
+    })
     return updateReturning(
       tx,
       bookings,

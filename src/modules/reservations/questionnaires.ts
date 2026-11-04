@@ -226,12 +226,42 @@ export const questionnaires: Record<ProposalProduct, Questionnaire> = {
       },
     ],
   },
+  // Le matériel loué seul (ADR 062) ; loué avec une salle, il s'ajoute au
+  // devis de la salle et ne pose pas ces questions. Passe par l'accueil, comme
+  // le camion : le matériel qui quitte le centre se remet en main propre.
+  materiel: {
+    product: 'materiel',
+    label: 'Location de matériel',
+    description: 'Une télévision, une climatisation, un vidéoprojecteur… à la journée ou sur plusieurs jours.',
+    resourceTypes: ['materiel'],
+    autoValidate: false,
+    questions: [
+      {
+        name: 'lieu',
+        label: 'Où le matériel sera-t-il utilisé ?',
+        kind: 'choice',
+        required: true,
+        choices: [
+          { value: 'centre', label: 'Dans le centre' },
+          { value: 'exterieur', label: 'À l’extérieur du centre' },
+        ],
+      },
+      {
+        name: 'installation',
+        label: 'Souhaitez-vous la livraison ou l’installation ?',
+        kind: 'yesno',
+        hint: 'Chiffrée par l’accueil en complément du devis.',
+      },
+      { name: 'usage', label: 'Pour quel usage ?', kind: 'text', maxLength: 200, hint: 'Présentation, salon, événement…' },
+    ],
+  },
 }
 
 /** Le produit d'une ressource réservable ; `undefined` pour un casier ou une boîte aux lettres. */
 export function productForResourceType(type: ResourceType): ProposalProduct | undefined {
   if (type === 'salle' || type === 'bureau') return 'espace'
   if (type === 'vehicule') return 'vehicule'
+  if (type === 'materiel') return 'materiel'
   return undefined
 }
 

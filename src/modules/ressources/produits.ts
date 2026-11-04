@@ -13,6 +13,8 @@ export const products = [
   { key: 'bureaux', label: 'Bureaux', types: ['bureau', 'casier'] },
   { key: 'domiciliation', label: 'Domiciliation', types: ['boite_aux_lettres'] },
   { key: 'vehicules', label: 'Camion', types: ['vehicule'] },
+  // Télévision, climatisation… loués seuls ou en option d'une salle (ADR 062).
+  { key: 'materiel', label: 'Matériel', types: ['materiel'] },
 ] as const satisfies readonly { key: string; label: string; types: readonly ResourceType[] }[]
 
 export type ProductKey = (typeof products)[number]['key']

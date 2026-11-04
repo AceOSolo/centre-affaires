@@ -33,6 +33,8 @@ import { formatBookingHours } from '../../../modules/reservations/affichage.ts'
 import { ChannelLabel } from '../../../modules/reservations/canal.tsx'
 import { periodDuration } from '../../../modules/reservations/periode.ts'
 import { listPendingRequests } from '../../../modules/reservations/demandes-queries.ts'
+import { totalWithOptions } from '../../../modules/reservations/options.ts'
+import { listOptionsOf } from '../../../modules/reservations/options-queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
 import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
 import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
@@ -86,10 +88,16 @@ export default async function DemandesPage({
       ? listMailRequests({ statuses: pendingRequestStatuses }, { number: 1, size: MAIL_REQUESTS_SHOWN })
       : { rows: [], total: 0 },
   ])
-  const mailSpots = await findMailSpots(
-    mailQueue.rows.map((row) => row.mailItemId),
-    timeZone,
-  )
+  const [mailSpots, options] = await Promise.all([
+    findMailSpots(
+      mailQueue.rows.map((row) => row.mailItemId),
+      timeZone,
+    ),
+    // Le matériel en option de chaque demande, sur sa carte (ADR 062).
+    listOptionsOf(pending.map((booking) => booking.id)),
+  ])
+  const optionsOf = (bookingId: string) =>
+    options.filter((option) => option.parentBookingId === bookingId && option.status !== 'cancelled')
   const mailNotice = groupStartNotice(params)
   const proposalOfBooking = new Map(
     openProposals.filter((proposal) => proposal.bookingId).map((proposal) => [proposal.bookingId, proposal]),
@@ -137,6 +145,8 @@ export default async function DemandesPage({
             {pending.map((booking) => {
               const isoDate = toIsoDate(booking.startsAt, timeZone)
               const quote = frozenQuoteDisplay(booking)
+              const equipment = optionsOf(booking.id)
+              const total = equipment.length > 0 ? totalWithOptions([quote, ...equipment.map((option) => option.quote)]) : undefined
               // Depuis l'espace client : la personne de l'entreprise ; depuis la
               // page publique : les coordonnées saisies (ADR 005).
               const email = booking.bookedBy?.email ?? booking.requesterEmail
@@ -154,6 +164,16 @@ export default async function DemandesPage({
                       </span>
                       <h2 className="font-medium">{booking.title}</h2>
                     </div>
+                    {/* Matériel demandé seul après une réservation déjà validée (ADR 062). */}
+                    {booking.parentBookingId && (
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        En option d’une{' '}
+                        <Link href={`/reservations/${booking.parentBookingId}`} className="underline-offset-2 hover:underline">
+                          réservation de salle déjà validée
+                        </Link>
+                        .
+                      </p>
+                    )}
 
                     <p className="mt-2 text-sm capitalize text-muted-foreground">
                       {formatLongDate(isoDate, timeZone)}
@@ -219,7 +239,33 @@ export default async function DemandesPage({
                         {quote
                           ? `${formatCents(quote.totalCents, quote.currency)} TTC, figé sur la demande`
                           : 'Non chiffrée : à préciser au client'}
+                        {total?.currency && quote && (
+                          <span className="block">
+                            {formatCents(total.totalCents, total.currency)} TTC avec le matériel
+                          </span>
+                        )}
                       </dd>
+                      {equipment.length > 0 && (
+                        <>
+                          <dt className="text-muted-foreground">Matériel</dt>
+                          <dd>
+                            <ul>
+                              {equipment.map((option) => (
+                                <li key={option.id}>
+                                  <Link href={`/reservations/${option.id}`} className="underline-offset-2 hover:underline">
+                                    {option.resource.name}
+                                  </Link>
+                                  <span className="text-muted-foreground tabular">
+                                    {' '}
+                                    — {option.quote ? `${formatCents(option.quote.totalCents, option.quote.currency)} TTC` : 'non chiffré'}
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+                            <span className="text-xs text-muted-foreground">Validé ou refusé avec la demande.</span>
+                          </dd>
+                        </>
+                      )}
                       {proposalOfBooking.get(booking.id) && (
                         <>
                           <dt className="text-muted-foreground">Devis</dt>

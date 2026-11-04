@@ -128,8 +128,17 @@ envoi et ne change plus.
 
 Le prix d'un espace à la réservation se nomme `tarif.<type>.<unité>` :
 
-- types : `salle`, `bureau`, `casier`, `vehicule`, `boite_aux_lettres` ;
+- types : `salle`, `bureau`, `casier`, `vehicule`, `boite_aux_lettres`,
+  `materiel` (télévision, climatisation, vidéoprojecteur… loués seuls ou avec
+  une salle, ADR 062) ;
 - unités : `heure`, `demi-journee`, `journee`, `semaine`, `mois`, `unite`.
+
+**Matériel** : déclarez au moins `tarif.materiel.journee`, et
+`tarif.materiel.semaine` si le centre fait un prix à la semaine. Un appareil
+loué sur plusieurs jours ne se chiffre qu'à la journée ou à la semaine
+(ADR 061) : sans l'un des deux, la demande arrive « à compléter » et l'accueil
+fixe le prix. Un appareil plus cher que les autres prend son propre prix,
+par son code : `tarif.materiel.tv-55.journee` pour l'appareil de code `TV-55`.
 
 Une ressource plus chère que son type se nomme
 `tarif.<type>.<code de la ressource>.<unité>` — par exemple

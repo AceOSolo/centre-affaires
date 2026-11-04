@@ -6,7 +6,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { resources, type ResourceType } from '../ressources/schema.ts'
-import type { BookingWithResource } from './queries.ts'
+import { notPendingOption, type BookingWithResource } from './queries.ts'
 import { bookings } from './schema.ts'
 
 /**
@@ -23,7 +23,9 @@ export type PendingRequest = BookingWithResource & {
 /**
  * Demandes en attente de validation, la plus proche d'abord ; limitées aux
  * types de ressource d'un produit quand `types` est donné (ADR 046). La
- * lecture porte son filtre `tenant_id` (décision 1).
+ * lecture porte son filtre `tenant_id` (décision 1). Le matériel en option
+ * d'une demande en attente n'en est pas une de plus : il figure sur sa carte
+ * (ADR 062).
  */
 export async function listPendingRequests(types?: readonly ResourceType[]): Promise<PendingRequest[]> {
   const tenantId = currentTenantId()
@@ -53,6 +55,7 @@ export async function listPendingRequests(types?: readonly ResourceType[]): Prom
           eq(bookings.status, 'pending'),
           isNull(resources.deletedAt),
           types ? inArray(resources.resourceType, [...types]) : undefined,
+          notPendingOption(),
         ),
       )
       .orderBy(asc(bookings.startsAt)),

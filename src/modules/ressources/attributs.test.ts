@@ -19,6 +19,38 @@ const form =
   (name: string): string =>
     values[name] ?? ''
 
+describe('attributs d’un appareil (ADR 062)', () => {
+  it('exige sa nature, garde marque, modèle, numéro de série et accessoires', () => {
+    assert.deepEqual(parseAttributes('materiel', form({ marque: 'Samsung' })).errors, {
+      nature: 'Ce champ est obligatoire.',
+    })
+    const parsed = parseAttributes(
+      'materiel',
+      form({
+        nature: 'Télévision',
+        marque: 'Samsung',
+        modele: 'QE55',
+        numeroSerie: 'SN-123',
+        accessoires: 'télécommande, câble HDMI, Télécommande',
+      }),
+    )
+    assert.deepEqual(parsed, {
+      attributes: {
+        nature: 'Télévision',
+        marque: 'Samsung',
+        modele: 'QE55',
+        numeroSerie: 'SN-123',
+        accessoires: ['télécommande', 'câble HDMI'],
+      },
+      errors: {},
+    })
+    assert.equal(
+      describeAttributes(parsed.attributes),
+      'Télévision · Samsung · QE55 · n° de série SN-123 · avec télécommande, câble HDMI',
+    )
+  })
+})
+
 describe('parseAttributes', () => {
   it('décrit des champs pour chaque type, aucun pour la boîte aux lettres', () => {
     for (const type of resourceTypes) assert.ok(Array.isArray(attributeFields[type]))
@@ -161,6 +193,7 @@ describe('parseResourceInput', () => {
   it('ne garde aucune capacité pour un casier ou une boîte aux lettres', () => {
     assert.equal(hasCapacity('casier'), false)
     assert.equal(hasCapacity('boite_aux_lettres'), false)
+    assert.equal(hasCapacity('materiel'), false)
     const parsed = parseResourceInput(
       form({ resourceType: 'boite_aux_lettres', code: 'DOM-01', name: 'Domiciliation 01', capacity: '3' }),
     )

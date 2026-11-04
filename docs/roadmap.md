@@ -60,7 +60,7 @@ installation des sauvegardes (R30).
 
 | Réf. | Exigence | Statut | Ce qui manque | Effort | Phase |
 |---|---|---|---|---|---|
-| R01 | Catalogue multi-types, attributs, capacité | ✅ | — (fiche et modification, attributs validés par type, numéro de casier unique par index, migration 0028) | — | 1 |
+| R01 | Catalogue multi-types, attributs, capacité | ✅ | — (fiche et modification, attributs validés par type, numéro de casier unique par index, migration 0028 ; recette 04/11 : type « matériel » — télévision, climatisation… —, loué seul ou en option d'une salle par une réservation liée, ADR 062) | — | 1 |
 | R02 | Calendrier par ressource, interne et client | ✅ | — (l'occupation par contrat apparaît au planning, sur la fiche ressource et sur la page publique : D6, ADR 018) | — | 1 |
 | R03 | Planning back-office | ✅ | Semaine toutes ressources, vue mois en taux, filtres par type et par client, bascule jour / semaine / mois (ADR 017) | L | 1 |
 | R04 | Anti-chevauchement | ✅ | Tests de charge. L'occupation par contrat est protégée par la même contrainte d'exclusion (ADR 018) ; un conflit à l'activation est nommé à l'écran | S | 1 |
@@ -165,6 +165,7 @@ Lots de `docs/recette/2026-11-04.md`.
 
 | Lot | Note de recette | État |
 |---|---|---|
+| 6 | Catégorie « matériel » en location : TV, clim | ✅ **ADR 062** : type de ressource `materiel` (nature, marque, modèle, numéro de série, accessoires), un appareil = une ressource ; rayon « Matériel » (planning, appareils) ; loué seul par son produit de devis `materiel` (page publique, espace client, back-office, sur plusieurs jours, par l'accueil) ; en option d'une salle depuis la fiche de la réservation et l'espace client : une réservation liée (`parent_booking_id`) que le trigger anti-chevauchement garde, au prix ajouté au devis de la salle, validée, déplacée et annulée avec elle — la base refuse le reste (`CA018`) ; modèle d'état des lieux du matériel ; prix par `tarif.materiel.<unité>` (Dolibarr). Migration 0010. À valider : prix, durée maximale (7 j), questionnaire, modèle d'état des lieux |
 | 9 | Mode SaaS : chaque centre branche son CRM depuis son espace admin ; connexion avec Dolibarr (première partie) | ✅ **ADR 065** : écran Réglages > Connexion au CRM (direction seule) — choix du CRM, adresse, clé d'appel chiffrée, jeton généré à l'écran et montré une fois, qui désigne le centre, flux activés, « Tester la connexion », journal des échanges. Module `crm/`, interface de connecteur, Dolibarr premier branchement ; `/api/dolibarr/*` inchangées, `DOLIBARR_API_TOKEN` accepté tant qu'aucun jeton n'est réglé. Migration 0008. Reste : les flux de la seconde tranche (lot 10), prévus « à venir » et coupés |
 
 ## Phases

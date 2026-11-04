@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 
-import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, XIcon } from '../../components/ui/icons.tsx'
+import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, TvIcon, XIcon } from '../../components/ui/icons.tsx'
 import type { ProposalProduct } from '../facturation/schema-devis.ts'
 import type { ResourceType } from '../ressources/schema.ts'
 import { focusClass, showStep } from './etapes-demande.tsx'
@@ -63,7 +63,7 @@ export function ReserveLink({ className, children }: { className?: string; child
   )
 }
 
-const productIcons = { espace: BuildingIcon, vehicule: CarIcon, domiciliation: MapPinIcon } as const
+const productIcons = { espace: BuildingIcon, vehicule: CarIcon, domiciliation: MapPinIcon, materiel: TvIcon } as const
 
 /**
  * Dialogue natif (`showModal`), comme `ConfirmDialog` : le navigateur rend la
@@ -190,7 +190,7 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
           </div>
         )}
         {target && product === 'domiciliation' && <PublicDomiciliationForm key={formKey} onClose={close} onSent={markSent} />}
-        {target && (product === 'espace' || product === 'vehicule') && (
+        {target && (product === 'espace' || product === 'vehicule' || product === 'materiel') && (
           <PublicBookingForm
             key={formKey}
             product={product}
