@@ -72,6 +72,8 @@ export default async function AujourdhuiPage() {
         pendingBookings: pending.length,
         proposalsToComplete: draftProposals.filter(awaitsReception).length,
         offerRequests,
+        // Les demandes de courrier sont dans « Demandes » (ADR 057).
+        mailRequests,
       }),
       mailRequests,
       inspectionsToFinish: toFinish.length,

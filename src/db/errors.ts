@@ -111,6 +111,10 @@ export const DB_FOREIGN_KEY_VIOLATION = '23503'
 export const DB_NOT_NULL_VIOLATION = '23502'
 /** Droit refusé à l'utilisateur applicatif : écrire un compteur de numérotation, par exemple. */
 export const DB_INSUFFICIENT_PRIVILEGE = '42501'
+/** Interblocage : deux écritures simultanées, l'une est annulée par MySQL et peut être rejouée. */
+export const DB_DEADLOCK = '40P01'
+/** Verrou attendu trop longtemps (`innodb_lock_wait_timeout`) : une autre écriture tient la ligne. */
+export const DB_LOCK_TIMEOUT = '55P03'
 /**
  * Écriture directe d'une occupation de contrat (`bookings.kind = 'contract'`),
  * refusée par le trigger `bookings_guard_contract_occupation` (ADR 018).

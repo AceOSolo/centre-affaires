@@ -7,6 +7,7 @@ import { isPermission } from '../../lib/auth/permissions.ts'
 import { productOf, products } from '../../modules/ressources/produits.ts'
 import { resourceTypes, type ResourceType } from '../../modules/ressources/schema.ts'
 import { menuGroups } from './menu.ts'
+import { activeEntry } from './nav-actif.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -66,6 +67,20 @@ describe('menu du back-office', () => {
       .filter((group) => !productLabels.includes(group.label))
       .flatMap((group) => group.entries.map((entry) => entry.href))
     assert.deepEqual(outside.filter((href) => href.includes('?')), [])
+  })
+
+  it('n’a qu’une « Demandes », que la file du courrier allume (ADR 048, ADR 057)', () => {
+    assert.deepEqual(
+      entries.filter((entry) => /demande/i.test(entry.label)).map((entry) => entry.href),
+      ['/demandes'],
+    )
+    const at = (pathname: string, query = '') => {
+      const href = activeEntry(addresses, pathname, new URLSearchParams(query))
+      return entries.find((entry) => [entry.href, ...(entry.also ?? [])].includes(href ?? ''))?.label
+    }
+    assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Demandes')
+    assert.equal(at('/demandes', 'produit=domiciliation'), 'Demandes')
+    assert.equal(at('/courrier/01a1'), 'Courrier')
   })
 
   it('ne montre aucune adresse deux fois', () => {

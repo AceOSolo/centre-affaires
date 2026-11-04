@@ -15,19 +15,30 @@ export const todayPermissions = [
 ] as const satisfies readonly Permission[]
 
 /**
+ * Droits qui ouvrent « Demandes » (ADR 048, ADR 057) : les réservations, devis
+ * et offres relèvent de `demandes.traiter`, le courrier de `courrier.gerer`.
+ * La page s'ouvre avec l'un des deux ; chaque section vérifie le sien.
+ */
+export const demandesPermissions = ['demandes.traiter', 'courrier.gerer'] as const satisfies readonly Permission[]
+
+/**
  * Ce qu'attend « Demandes » (ADR 048), compté une fois chacun : les
  * réservations en attente, les devis à compléter qui n'en accompagnent pas
- * une (`awaitsReception`, compté par l'appelant) et les offres demandées
- * depuis l'espace client, encore à traiter. Le compteur du menu et la tuile
- * d'« Aujourd'hui » (ADR 050) disent ce même nombre.
+ * une (`awaitsReception`, compté par l'appelant), les offres demandées
+ * depuis l'espace client, encore à traiter, et les demandes de courrier en
+ * cours — déposées ou prises en charge, pas encore faites (ADR 057). Chacun
+ * n'est compté que si le rôle peut le traiter (0 sinon, passé par
+ * l'appelant). Le compteur du menu et la tuile d'« Aujourd'hui » (ADR 050)
+ * disent ce même nombre.
  */
 export function inboxCount(inbox: {
   pendingBookings: number
   proposalsToComplete: number
   offerRequests: readonly { status: OfferRequestStatus }[]
+  mailRequests: number
 }): number {
   const openOfferRequests = inbox.offerRequests.filter((request) => request.status === 'requested').length
-  return inbox.pendingBookings + inbox.proposalsToComplete + openOfferRequests
+  return inbox.pendingBookings + inbox.proposalsToComplete + openOfferRequests + inbox.mailRequests
 }
 
 export type TodayCounts = {
@@ -54,10 +65,10 @@ const plural = (count: number, one: string, many: string) => (count > 1 ? many :
  * information, et la grille ne change pas de forme d'un jour à l'autre.
  */
 export function todoTiles(counts: TodayCounts, can: (permission: Permission) => boolean): TodoTile[] {
-  const tiles: (TodoTile & { permission: Permission })[] = [
+  const tiles: (TodoTile & { permission: Permission | readonly Permission[] })[] = [
     {
       key: 'requests',
-      permission: 'demandes.traiter',
+      permission: demandesPermissions,
       href: '/demandes',
       count: counts.requests,
       label: counts.requests
@@ -65,12 +76,16 @@ export function todoTiles(counts: TodayCounts, can: (permission: Permission) => 
         : 'Aucune demande en attente',
     },
     {
+      // Comprises dans « Demandes » (ADR 057) : la tuile en donne la part du
+      // courrier (« dont 2 demandes de courrier » ; le droit du courrier ouvre
+      // aussi « Demandes », sa tuile est donc là) et mène à « Demandes »
+      // filtrée sur la domiciliation.
       key: 'mailRequests',
       permission: 'courrier.gerer',
-      href: '/courrier/demandes',
+      href: '/demandes?produit=domiciliation#courrier',
       count: counts.mailRequests,
       label: counts.mailRequests
-        ? `${counts.mailRequests} ${plural(counts.mailRequests, 'demande de courrier', 'demandes de courrier')}`
+        ? `dont ${counts.mailRequests} ${plural(counts.mailRequests, 'demande de courrier', 'demandes de courrier')}`
         : 'Aucune demande de courrier',
     },
     {
@@ -93,7 +108,7 @@ export function todoTiles(counts: TodayCounts, can: (permission: Permission) => 
     },
   ]
   return tiles
-    .filter((tile) => can(tile.permission))
+    .filter((tile) => (typeof tile.permission === 'string' ? can(tile.permission) : tile.permission.some(can)))
     .map((tile) => ({ key: tile.key, href: tile.href, count: tile.count, label: tile.label }))
 }
 

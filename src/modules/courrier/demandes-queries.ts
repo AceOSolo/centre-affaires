@@ -3,7 +3,9 @@ import type { AnyMySqlColumn } from 'drizzle-orm/mysql-core'
 
 import {
   DB_CHECK_VIOLATION,
+  DB_DEADLOCK,
   DB_FOREIGN_KEY_VIOLATION,
+  DB_LOCK_TIMEOUT,
   DB_MAIL_REQUEST_REFUSED,
   DB_UNIQUE_VIOLATION,
   dbConstraintName,
@@ -81,7 +83,12 @@ const constraintMessages: Record<string, string> = {
   mail_requests_pending_key: 'Une demande de cette nature est déjà en cours pour ce courrier.',
   mail_requests_forward_address: 'L’adresse de réexpédition est incomplète.',
   mail_requests_postage_valid: 'Les frais d’affranchissement ne se notent que sur une réexpédition faite.',
-  mail_requests_status_consistent: 'Un refus porte toujours son motif.',
+  // Dates et auteurs des étapes : la base pose les dates elle-même
+  // (`mail_requests_before_update`). Si ce contrôle refuse, c'est que ses
+  // règles manquent sur ce serveur (ADR 057) — le motif d'un refus est
+  // vérifié avant d'arriver ici.
+  mail_requests_status_consistent:
+    'La base n’a pas pu dater cette étape de la demande : ses règles ne sont peut-être pas à jour sur ce serveur. Prévenez la personne qui administre l’application.',
   mail_requests_mail_item_fk: 'Ce courrier n’est pas adressé à cette entreprise.',
   mail_requests_requested_by_member_fk: 'Cette personne ne relève pas de l’entreprise destinataire.',
   mail_requests_cancelled_by_member_fk: 'Cette personne ne relève pas de l’entreprise destinataire.',
@@ -102,14 +109,26 @@ export function mailRequestRefusal(error: unknown): string | undefined {
   if (code === DB_UNIQUE_VIOLATION) return 'Une demande de cette nature est déjà en cours pour ce courrier.'
   if (code === DB_CHECK_VIOLATION) return 'La demande est incomplète.'
   if (code === DB_FOREIGN_KEY_VIOLATION) return 'Ce courrier n’est pas adressé à cette entreprise.'
+  // Deux écritures en même temps sur le même pli : rien n'est écrit, il suffit de recommencer.
+  if (code === DB_DEADLOCK || code === DB_LOCK_TIMEOUT) {
+    return 'Ce courrier est en cours de traitement par ailleurs : rien n’a été enregistré, réessayez dans un instant.'
+  }
   return undefined
 }
 
 /** Refus métier, côté centre : la demande a changé d'état entre-temps, ou la base l'a refusé. */
 export class MailRequestError extends Error {
-  constructor(message: string) {
+  /**
+   * `moved` : la demande n'était plus dans l'état attendu (prise, faite ou
+   * annulée entre-temps, introuvable) ; `refused` : la base a refusé l'écriture
+   * et dit pourquoi (ADR 057).
+   */
+  readonly reason: 'moved' | 'refused'
+
+  constructor(message: string, reason: 'moved' | 'refused' = 'refused') {
     super(message)
     this.name = 'MailRequestError'
+    this.reason = reason
   }
 }
 
@@ -449,6 +468,9 @@ export type StaffMailRequestRow = MailRequestRow & {
   refusedByName: string | null
   mailOpenedAt: Date | null
   mailDeletedAt: Date | null
+  /** Photo de l'enveloppe la plus récente : de quoi retrouver le pli (ADR 057). */
+  envelopeScanId: string | null
+  envelopeContentType: string | null
   /** Autres demandes en cours sur le même pli. */
   otherPending: number
   /** Une ligne de facture vivante tient la demande. */
@@ -501,6 +523,8 @@ function requestSelection(staff: boolean) {
     refusedByName: staffName(mailRequests.refusedByStaffId),
     mailOpenedAt: mailItems.openedAt,
     mailDeletedAt: mailItems.deletedAt,
+    envelopeScanId: latestScan('envelope', 'id'),
+    envelopeContentType: latestScan('envelope', 'content_type'),
     otherPending: sql<number>`(
       select count(*) from mail_requests as o
        where o.tenant_id = ${mailRequests.tenantId} and o.mail_item_id = ${mailRequests.mailItemId}
@@ -568,6 +592,8 @@ function toStaffRequestRow(row: RawRequest): StaffMailRequestRow {
     refusedByName: row.refusedByName as string | null,
     mailOpenedAt: row.mailOpenedAt as Date | null,
     mailDeletedAt: row.mailDeletedAt as Date | null,
+    envelopeScanId: (row.envelopeScanId as string | null) ?? null,
+    envelopeContentType: (row.envelopeContentType as string | null) ?? null,
     otherPending: Number(row.otherPending ?? 0),
     billed: Boolean(row.billed),
   }
@@ -1137,10 +1163,10 @@ async function transition(
   id: string,
   run: (tx: Transaction) => Promise<{ id: string; mailItemId: string }[]>,
 ): Promise<{ id: string; mailItemId: string }> {
-  if (!isUuid(id)) throw new MailRequestError('Demande introuvable.')
+  if (!isUuid(id)) throw new MailRequestError('Demande introuvable.', 'moved')
   return refusing(async () => {
     const [row] = await withTenant(currentTenantId(), run)
-    if (!row) throw new MailRequestError(MOVED)
+    if (!row) throw new MailRequestError(MOVED, 'moved')
     return row
   })
 }
@@ -1155,6 +1181,41 @@ export function startMailRequest(id: string, staffMemberId: string) {
       and(eq(mailRequests.id, id), eq(mailRequests.status, 'requested')),
     ),
   )
+}
+
+/** Bilan d'une prise en charge groupée. */
+export type GroupStartOutcome = {
+  started: number
+  /** Annulées, prises ou faites entre-temps, ou introuvables. */
+  skipped: number
+  /** Refusées par la base ou erreurs imprévues : la demande reste à prendre en charge. */
+  failed: number
+}
+
+/**
+ * Prise en charge groupée, depuis la file : chaque demande cochée pour son
+ * compte, dans sa propre transaction. Une demande annulée ou prise
+ * entre-temps est comptée à part ; un refus de la base ou une panne sur l'une
+ * n'arrête pas les autres (ADR 057) — journalisés, comptés en échec.
+ */
+export async function startMailRequests(ids: readonly string[], staffMemberId: string): Promise<GroupStartOutcome> {
+  const outcome: GroupStartOutcome = { started: 0, skipped: 0, failed: 0 }
+  for (const id of new Set(ids)) {
+    try {
+      await startMailRequest(id, staffMemberId)
+      outcome.started += 1
+    } catch (error) {
+      if (error instanceof MailRequestError && error.reason === 'moved') {
+        outcome.skipped += 1
+      } else {
+        // Un refus de la base ici n'est pas un changement d'état : des règles
+        // manquantes, par exemple. Journalisé, compté en échec (ADR 057).
+        console.error(`Prise en charge de la demande de courrier ${id} impossible`, error)
+        outcome.failed += 1
+      }
+    }
+  }
+  return outcome
 }
 
 /** Refus, avec son motif, montré au client. Le résumé du pli suit (base). */
@@ -1253,7 +1314,7 @@ export async function completeScanRequest(
   staffMemberId: string,
   content: ScanFile,
 ): Promise<{ id: string; mailItemId: string }> {
-  if (!isUuid(id)) throw new MailRequestError('Demande introuvable.')
+  if (!isUuid(id)) throw new MailRequestError('Demande introuvable.', 'moved')
   const stored = await store(currentTenantId(), { content })
   try {
     return await recordScanRequestDone(id, staffMemberId, stored)

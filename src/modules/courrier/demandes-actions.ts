@@ -1,7 +1,7 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { redirect } from 'next/navigation'
+import { redirect, unstable_rethrow } from 'next/navigation'
 import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
@@ -14,6 +14,7 @@ import {
   completeScanRequest,
   refuseMailRequest,
   startMailRequest,
+  startMailRequests,
   updateForwardShipping,
 } from './demandes-queries.ts'
 import {
@@ -33,7 +34,9 @@ import { notifyMailRequestDone, notifyMailRequestRefused } from './notifications
  * celui du courrier.
  *
  * Succès : retour au pli, avec une confirmation annoncée (`?fait=`). Échec :
- * l'état rendu au formulaire — un refus de la base (CA008) dit pourquoi.
+ * l'état rendu au formulaire — un refus de la base (CA008) dit pourquoi. Une
+ * erreur imprévue est journalisée pour l'exploitation et dite en français,
+ * jamais en page d'erreur du serveur (ADR 057).
  */
 export type RequestActionState = {
   error?: string
@@ -49,10 +52,20 @@ function done(mailItemId: string, notice: string): never {
   redirect(`/courrier/${mailItemId}?fait=${notice}`)
 }
 
-/** Refus métier rendu au formulaire ; une panne remonte. */
-function refusal(error: unknown): RequestActionState {
+const UNEXPECTED =
+  'Le serveur n’a pas pu enregistrer cette étape : rien n’a été modifié. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.'
+
+/**
+ * Refus métier rendu au formulaire. Une erreur imprévue — de la base ou
+ * d'ailleurs — est journalisée avec son contexte (`docker compose logs app`)
+ * et dite à l'écran : la transaction l'a annulée, rien n'est écrit.
+ */
+function refusal(error: unknown, context: string): RequestActionState {
+  // Une redirection de Next (session expirée, droit manquant) n'est pas une erreur.
+  unstable_rethrow(error)
   if (error instanceof MailRequestError) return { error: error.message }
-  throw error
+  console.error(`${context} : erreur imprévue`, error)
+  return { error: UNEXPECTED }
 }
 
 export async function startMailRequestAction(
@@ -60,33 +73,39 @@ export async function startMailRequestAction(
   formData: FormData,
 ): Promise<RequestActionState> {
   const { member } = await requirePermission('courrier.gerer')
+  const id = text(formData, 'id')
   let result
   try {
-    result = await startMailRequest(text(formData, 'id'), member.id)
+    result = await startMailRequest(id, member.id)
   } catch (error) {
-    return refusal(error)
+    return refusal(error, `Prise en charge de la demande de courrier ${id}`)
   }
   done(result.mailItemId, 'prise-en-charge')
 }
 
+/** Files d'où part une prise en charge groupée, et où elle revient. */
+const groupReturns = ['/courrier/demandes', '/demandes'] as const
+
 /**
- * Prise en charge groupée, depuis la file : chaque demande cochée pour son
- * compte — une demande annulée entre-temps par le client est comptée à part,
- * les autres passent. Retour à la file, filtres gardés, avec le bilan.
+ * Prise en charge groupée, depuis la file du courrier ou depuis « Demandes »
+ * (ADR 048, ADR 057) : chaque demande cochée pour son compte — une demande
+ * annulée entre-temps par le client est comptée à part, une panne sur l'une
+ * n'arrête pas les autres. Retour à la file d'origine, filtres gardés, avec
+ * le bilan.
  */
 export async function startMailRequestsAction(formData: FormData): Promise<void> {
   const { member } = await requirePermission('courrier.gerer')
   const ids = [...new Set(formData.getAll('ids').map(String))].slice(0, 200)
-  let started = 0
-  let skipped = 0
-  for (const id of ids) {
-    try {
-      await startMailRequest(id, member.id)
-      started += 1
-    } catch (error) {
-      if (!(error instanceof MailRequestError)) throw error
-      skipped += 1
-    }
+  const { started, skipped, failed } = await startMailRequests(ids, member.id)
+  const outcome = `prises=${started}&ignorees=${skipped}${failed > 0 ? `&echecs=${failed}` : ''}`
+  revalidatePath('/courrier', 'layout')
+  revalidatePath('/compte/courrier', 'layout')
+  revalidatePath('/demandes')
+
+  const back = groupReturns.find((path) => path === text(formData, 'retour')) ?? '/courrier/demandes'
+  if (back === '/demandes') {
+    const product = text(formData, 'produit') === 'domiciliation' ? 'produit=domiciliation&' : ''
+    redirect(`/demandes?${product}${outcome}#courrier`)
   }
   const filters = readRequestFilters({
     etat: text(formData, 'etat'),
@@ -98,9 +117,7 @@ export async function startMailRequestsAction(formData: FormData): Promise<void>
     { state: filters.state, kindSlug: filters.kindSlug, clientId: isUuid(client) ? client : undefined },
     filters.page,
   )
-  revalidatePath('/courrier', 'layout')
-  revalidatePath('/compte/courrier', 'layout')
-  redirect(`/courrier/demandes${query}${query ? '&' : '?'}prises=${started}&ignorees=${skipped}`)
+  redirect(`/courrier/demandes${query}${query ? '&' : '?'}${outcome}`)
 }
 
 export async function refuseMailRequestAction(
@@ -116,7 +133,7 @@ export async function refuseMailRequestAction(
   try {
     result = await refuseMailRequest(text(formData, 'id'), member.id, reason.value)
   } catch (error) {
-    return { ...refusal(error), values }
+    return { ...refusal(error, `Refus de la demande de courrier ${text(formData, 'id')}`), values }
   }
   after(() => notifyMailRequestRefused(result.id))
   done(result.mailItemId, 'refus')
@@ -131,7 +148,7 @@ export async function cancelMailRequestForClientAction(
   try {
     result = await cancelMailRequestForClient(text(formData, 'id'), member.id)
   } catch (error) {
-    return refusal(error)
+    return refusal(error, `Annulation de la demande de courrier ${text(formData, 'id')}`)
   }
   done(result.mailItemId, 'annulation')
 }
@@ -163,7 +180,7 @@ export async function completeForwardRequestAction(
   try {
     result = await completeForwardRequest(text(formData, 'id'), member.id, read.shipping)
   } catch (error) {
-    return { ...refusal(error), values: read.values }
+    return { ...refusal(error, `Réexpédition de la demande de courrier ${text(formData, 'id')}`), values: read.values }
   }
   after(() => notifyMailRequestDone(result.id))
   done(result.mailItemId, 'reexpediee')
@@ -181,7 +198,7 @@ export async function updateForwardShippingAction(
   try {
     result = await updateForwardShipping(text(formData, 'id'), read.shipping)
   } catch (error) {
-    return { ...refusal(error), values: read.values }
+    return { ...refusal(error, `Suivi de la réexpédition ${text(formData, 'id')}`), values: read.values }
   }
   done(result.mailItemId, 'envoi')
 }

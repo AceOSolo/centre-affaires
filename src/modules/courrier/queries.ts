@@ -17,6 +17,7 @@ import { isUuid, uuidv7 } from '../../lib/uuid.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import { scanExtensions, type ScanFile } from './fichiers.ts'
+import { spotsOfDay, type MailSpot } from './reperage.ts'
 import { inOpenBatch } from './tournees.ts'
 import {
   billablePages,
@@ -223,6 +224,44 @@ export async function findMail(id: string): Promise<MailDetail | undefined> {
       scans,
       views,
     }
+  })
+}
+
+/**
+ * Repère de chaque pli dans la pile de son entreprise, le jour de sa
+ * réception (« pli 3 sur 5 du 04/11 », ADR 057). Lu à la demande pour les plis
+ * affichés : les plis non retirés des mêmes entreprises, dans une fenêtre
+ * assez large pour couvrir le jour du centre quel que soit son fuseau. Un pli
+ * retiré n'a pas de repère.
+ */
+export async function findMailSpots(mailItemIds: readonly string[], timeZone: string): Promise<Map<string, MailSpot>> {
+  const ids = [...new Set(mailItemIds)].filter(isUuid)
+  if (ids.length === 0) return new Map()
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const targets = await tx
+      .select({ clientId: mailItems.clientId, receivedAt: mailItems.receivedAt })
+      .from(mailItems)
+      .where(and(eq(mailItems.tenantId, tenantId), inArray(mailItems.id, ids), isNull(mailItems.deletedAt)))
+    if (targets.length === 0) return new Map()
+    // Le jour d'un pli dure 25 heures au plus (changement d'heure) : à 26 h
+    // de part et d'autre, tous les plis de ce jour sont lus, quel que soit le fuseau.
+    const margin = 26 * 60 * 60 * 1000
+    const times = targets.map((target) => target.receivedAt.getTime())
+    const siblings = await tx
+      .select({ id: mailItems.id, clientId: mailItems.clientId, receivedAt: mailItems.receivedAt })
+      .from(mailItems)
+      .where(
+        and(
+          eq(mailItems.tenantId, tenantId),
+          inArray(mailItems.clientId, [...new Set(targets.map((target) => target.clientId))]),
+          isNull(mailItems.deletedAt),
+          gte(mailItems.receivedAt, new Date(Math.min(...times) - margin)),
+          lt(mailItems.receivedAt, new Date(Math.max(...times) + margin)),
+        ),
+      )
+    const spots = spotsOfDay(siblings, timeZone)
+    return new Map(ids.flatMap((id) => (spots.has(id) ? [[id, spots.get(id)!] as const] : [])))
   })
 }
 

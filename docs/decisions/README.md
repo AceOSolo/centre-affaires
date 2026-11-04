@@ -71,6 +71,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 054 | [La direction, au-dessus des exploitants](054-direction-au-dessus-des-exploitants.md) | 2026-10-22 | accepté ; complète l'ADR 019 (troisième rôle `super_admin`, droit `equipe.exploitants`, migration 0006) et l'ADR 008 (amorçage en `--role super_admin`) |
 | 055 | [Photos du courrier à chaque étape du back-office](055-photos-du-courrier-a-chaque-etape.md) | 2026-10-22 | accepté ; complète les ADR 015, 037 et 044 : photos à l'enregistrement, dans la saisie groupée (une par pli), à l'ouverture, à la numérisation demandée, enveloppe ajoutée après coup depuis la fiche ou la tournée ; plusieurs photos réunies en un PDF d'une page par photo, sans migration ni dépendance |
 | 056 | [Des PDF avec les photos des états des lieux](056-pdf-dans-les-etats-des-lieux.md) | 2026-10-22 | accepté ; amende l'ADR 039 : un PDF se joint comme une photo, sur un brouillon, figé à la clôture ; dimensions facultatives (migration 0007) |
+| 057 | [Courrier côté équipe : « Prendre en charge » sans page d'erreur, la photo du pli, les demandes dans « Demandes »](057-courrier-cote-equipe-prise-en-charge-photo-et-demandes.md) | 2026-11-04 | accepté ; lot 1 de la recette du 04/11 ; complète les ADR 037, 048, 050 et 055 : erreurs de la base dites en français, filet `error.tsx` du back-office, photo de l'enveloppe agrandissable et repère « pli 3 sur 5 du 04/11 » côté équipe, demandes de courrier dans « Demandes » et son compteur, `/courrier/demandes` en vue filtrée ; sans migration |
 
 ## Numéros en double et numéro manquant
 
@@ -118,7 +119,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **057** (053 pris par le menu par service vendu, 054 par la direction, 055 par les photos du courrier, 056 par les PDF des états des lieux).
+   `ListAgents`. Le prochain numéro libre est **058** (055 pris par les photos du courrier, 056 par les PDF des états des lieux, 057 par le courrier côté équipe ; 058 à 066 sont réservés aux lots 2 à 10 de la recette du 04/11, `docs/recette/2026-11-04.md`).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

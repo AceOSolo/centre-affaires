@@ -43,20 +43,24 @@ export function PendingSubmit({ label, pendingLabel }: { label: string; pendingL
   )
 }
 
-/** Coche ou décoche toutes les demandes de la file affichée. */
-export function SelectAllRequests({ label }: { label: string }) {
+/**
+ * Coche ou décoche toutes les demandes de la file affichée. Les cases sont
+ * rattachées au formulaire de l'action groupée par leur attribut `form` : la
+ * file garde un formulaire par ligne pour « Prendre en charge » sans
+ * imbriquer de formulaires.
+ */
+export function SelectAllRequests({ label, form }: { label: string; form: string }) {
   return (
     <input
       type="checkbox"
+      form={form}
       aria-label={label}
       className="size-4 accent-[var(--primary)]"
       onChange={(event) => {
-        const checked = event.currentTarget.checked
-        event.currentTarget.form
-          ?.querySelectorAll<HTMLInputElement>('input[name="ids"]')
-          .forEach((box) => {
-            box.checked = checked
-          })
+        const { checked, form: owner } = event.currentTarget
+        for (const element of Array.from(owner?.elements ?? [])) {
+          if (element instanceof HTMLInputElement && element.name === 'ids') element.checked = checked
+        }
       }}
     />
   )

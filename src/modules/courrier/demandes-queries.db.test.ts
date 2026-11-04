@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { after, before, beforeEach, describe, it } from 'node:test'
 
 import { sql } from 'drizzle-orm'
@@ -26,11 +28,20 @@ import {
   requestScan,
   searchMailForAccounts,
   startMailRequest,
+  startMailRequests,
   updateForwardShipping,
   type RequestOutcome,
 } from './demandes-queries.ts'
 import type { ForwardAddress } from './demandes-regles.ts'
-import { listMailForAccounts, recordOpening, requestOpening, type StoredScan } from './queries.ts'
+import {
+  findMailSpots,
+  listMailForAccounts,
+  recordEnvelope,
+  recordOpening,
+  requestOpening,
+  withdrawMail,
+  type StoredScan,
+} from './queries.ts'
 
 /**
  * Demandes de courrier par le code des écrans (R21, R24, ADR 037), sous
@@ -349,6 +360,98 @@ describe('demandes de courrier, par les écrans', { skip: raisonDeSaut }, () => 
       assert.equal(row.refused_by_staff_id, CAMILLE)
       assert.ok(row.started_at && row.refused_at)
       assert.match(await refus(() => refuseMailRequest(id, CAMILLE, 'Encore.')), /changé d’état/)
+    })
+
+    it('prend en charge une demande d’ouverture : le pli reste « ouverture demandée »', async () => {
+      const ferme = await pli(DURAND)
+      assert.equal(await requestOpening(ferme, durand), true)
+      const [ouverture] = await listRequestsForMail(ferme)
+      const { id, mailItemId } = await startMailRequest(ouverture.id, CAMILLE)
+      assert.deepEqual([id, mailItemId], [ouverture.id, ferme])
+      const row = await demande(id)
+      assert.deepEqual([row.status, row.started_by_staff_id], ['in_progress', CAMILLE])
+      assert.ok(row.started_at)
+      const [item] = await asTenant((tx) => lire(tx, sql`select status, opening_requested_at from mail_items where id = ${ferme}`))
+      assert.equal(item.status, 'opening_requested')
+      assert.ok(item.opening_requested_at)
+    })
+
+    it('prend en charge en groupe : chacune pour son compte, les autres comptées à part', async () => {
+      const ouverture = await pli(DURAND)
+      assert.equal(await requestOpening(ouverture, durand), true)
+      const [demandeOuverture] = await listRequestsForMail(ouverture)
+      const scan = ok(await requestScan(await pli(DURAND, { ouvert: true }), durand, null))
+      const annulee = ok(await requestScan(await pli(PETIT, { ouvert: true }), petit, null))
+      assert.ok((await cancelMailRequest(annulee, petit)).ok)
+      const dejaPrise = ok(await requestScan(await pli(PETIT, { ouvert: true, recu: '2026-09-02T08:00:00Z' }), petit, null))
+      await startMailRequest(dejaPrise, CAMILLE)
+
+      const bilan = await startMailRequests(
+        [demandeOuverture.id, scan, scan, annulee, dejaPrise, 'pas-un-identifiant'],
+        CAMILLE,
+      )
+      // Le doublon ne compte qu'une fois ; l'annulée, la déjà prise et l'identifiant bricolé sont ignorés.
+      assert.deepEqual(bilan, { started: 2, skipped: 3, failed: 0 })
+      for (const id of [demandeOuverture.id, scan]) {
+        const row = await demande(id)
+        assert.deepEqual([row.status, row.started_by_staff_id], ['in_progress', CAMILLE])
+        assert.ok(row.started_at)
+      }
+      assert.equal((await demande(annulee)).status, 'cancelled')
+      assert.deepEqual(await countPendingMailRequests(), { open_and_scan: 1, scan: 2, forward: 0, total: 3 })
+    })
+
+    it('dit, sans planter, une prise en charge que la base ne sait plus dater (règles absentes)', async () => {
+      // Hypothèse du bug du 04/11 (ADR 057) : un `migrer` interrompu laisse le
+      // trigger qui pose `started_at` supprimé et pas recréé.
+      const id = ok(await requestScan(await pli(DURAND, { ouvert: true }), durand, null))
+      const regles = readFileSync(join(process.cwd(), 'src', 'db', 'regles', '60-courrier.sql'), 'utf8')
+      const creation = regles
+        .split('--> statement-breakpoint')
+        .map((statement) => statement.trim())
+        .find((statement) => statement.startsWith('CREATE TRIGGER mail_requests_before_update'))
+      assert.ok(creation)
+      await bases.owner.client.query('drop trigger mail_requests_before_update')
+      try {
+        assert.match(await refus(() => startMailRequest(id, CAMILLE)), /règles ne sont peut-être pas à jour/)
+        // En groupe : compté en échec, pas comme une demande « prise entre-temps ».
+        assert.deepEqual(await startMailRequests([id], CAMILLE), { started: 0, skipped: 0, failed: 1 })
+      } finally {
+        await bases.owner.client.query(creation)
+      }
+      assert.equal((await demande(id)).status, 'requested')
+      await startMailRequest(id, CAMILLE)
+      assert.equal((await demande(id)).status, 'in_progress')
+    })
+
+    it('montre à l’équipe la photo de l’enveloppe et le repère du pli dans la journée', async () => {
+      const premier = await pli(DURAND, { recu: '2026-11-04T07:00:00Z' })
+      const second = await pli(DURAND, { recu: '2026-11-04T09:00:00Z' })
+      const retire = await pli(DURAND, { recu: '2026-11-04T08:00:00Z' })
+      const autre = await pli(PETIT, { recu: '2026-11-04T08:30:00Z' })
+      await withdrawMail(retire)
+      await recordEnvelope(second, CAMILLE, [
+        {
+          side: 'envelope',
+          key: 'courrier/test/enveloppe.jpg',
+          scan: { bytes: new Uint8Array([0xff, 0xd8, 0xff]), contentType: 'image/jpeg' },
+          encryptionKeyVersion: 1,
+        },
+      ])
+      assert.equal(await requestOpening(second, durand), true)
+
+      const [ligne] = await listRequestsForMail(second)
+      assert.ok(ligne.envelopeScanId)
+      assert.equal(ligne.envelopeContentType, 'image/jpeg')
+      const file = await listMailRequests({ statuses: ['requested'] }, { number: 1, size: 10 })
+      assert.equal(file.rows[0].envelopeScanId, ligne.envelopeScanId)
+
+      // Le pli retiré ne compte pas dans la pile ; celui d'une autre entreprise non plus.
+      const reperes = await findMailSpots([premier, second, retire, autre, 'pas-un-identifiant'], 'Europe/Paris')
+      assert.deepEqual(reperes.get(premier), { rank: 1, total: 2, day: '2026-11-04' })
+      assert.deepEqual(reperes.get(second), { rank: 2, total: 2, day: '2026-11-04' })
+      assert.deepEqual(reperes.get(autre), { rank: 1, total: 1, day: '2026-11-04' })
+      assert.equal(reperes.has(retire), false)
     })
 
     it('annule à la demande du client, au nom de l’accueil', async () => {

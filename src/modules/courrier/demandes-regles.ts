@@ -317,6 +317,35 @@ export function pageCount(total: number, pageSize: number): number {
   return Math.max(1, Math.ceil(total / pageSize))
 }
 
+/**
+ * Bilan d'une prise en charge groupée, lu dans l'URL de retour
+ * (`?prises=2&ignorees=1&echecs=1`) : la confirmation, et à part ce qui n'a
+ * pas pu se faire (ADR 057). `undefined` sans bilan dans l'adresse.
+ */
+export function groupStartNotice(params: SearchParams): { done: string; failure?: string } | undefined {
+  const count = (key: string) => {
+    const value = Number(first(params[key]) ?? 0)
+    return Number.isInteger(value) && value >= 0 ? value : 0
+  }
+  if (first(params.prises) === undefined) return undefined
+  const started = count('prises')
+  const skipped = count('ignorees')
+  const failed = count('echecs')
+  const plural = (n: number, word: string) => `${word}${n > 1 ? 's' : ''}`
+  const done =
+    (started === 0
+      ? 'Aucune demande prise en charge.'
+      : `${started} ${plural(started, 'demande')} ${plural(started, 'prise')} en charge.`) +
+    (skipped > 0
+      ? ` ${skipped} ${plural(skipped, 'ignorée')} : déjà ${plural(skipped, 'prise')} en charge, ${plural(skipped, 'faite')} ou ${plural(skipped, 'annulée')} entre-temps.`
+      : '')
+  const failure =
+    failed > 0
+      ? `${failed} ${plural(failed, 'demande')} n’${failed > 1 ? 'ont' : 'a'} pas pu être ${plural(failed, 'prise')} en charge : le serveur a rencontré une erreur, rien n’a été modifié pour ${failed > 1 ? 'elles' : 'elle'}. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.`
+      : undefined
+  return { done, failure }
+}
+
 /** Plis par page dans la boîte aux lettres du client. */
 export const CLIENT_MAIL_PAGE_SIZE = 20
 /** Demandes par page, côté client comme côté centre. */

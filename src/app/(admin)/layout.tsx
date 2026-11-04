@@ -40,15 +40,17 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // (ADR 008, ADR 019).
   const { user, member } = await requireStaff()
   const canHandleRequests = can(member.role, 'demandes.traiter')
+  const canHandleMail = can(member.role, 'courrier.gerer')
   const [tenant, pending, draftProposals, offerRequests, mailRequests, hasClientSpace] = await Promise.all([
     currentTenant(),
-    listPendingBookings(),
+    canHandleRequests ? listPendingBookings() : [],
     // Les devis à compléter entrent aussi dans « Demandes » (ADR 048).
     canHandleRequests ? listProposals({ statuses: ['draft'] }) : [],
     // Les offres demandées depuis l'espace client aussi.
     canHandleRequests ? listOfferRequests() : [],
-    // Demandes de courrier à traiter, toutes natures (ADR 037).
-    countPendingMailRequests().then((counts) => counts.total),
+    // Demandes de courrier à traiter, toutes natures (ADR 037) : dans
+    // « Demandes » aussi (ADR 057).
+    canHandleMail ? countPendingMailRequests().then((counts) => counts.total) : 0,
     withTenant(currentTenantId(), (tx) => staffHasClientSpace(tx, user)),
   ])
 
@@ -74,11 +76,13 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   // « Demandes » compte tout ce qui attend l'accueil, une fois chacun : les
   // réservations en attente, les devis à compléter qui n'en accompagnent pas
-  // une, les offres demandées (ADR 048) — le même nombre qu'« Aujourd'hui ».
+  // une, les offres demandées (ADR 048), les demandes de courrier (ADR 057) —
+  // le même nombre qu'« Aujourd'hui ».
   const inboxCount = countInbox({
     pendingBookings: pending.length,
     proposalsToComplete: draftProposals.filter(awaitsReception).length,
     offerRequests,
+    mailRequests,
   })
 
   const nav = (

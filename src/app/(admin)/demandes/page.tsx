@@ -1,15 +1,21 @@
 import Link from 'next/link'
 
+import { FlashNotice } from '../../../components/ui/flash-notice.tsx'
 import { can } from '../../../lib/auth/permissions.ts'
-import { requirePermission } from '../../../lib/auth/staff.ts'
+import { requireAnyPermission } from '../../../lib/auth/staff.ts'
 import {
   formatDateTime,
   formatDuration,
   formatLongDate,
   formatTime,
   toIsoDate,
+  todayIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { MailRequestQueue } from '../../../modules/courrier/demandes-file.tsx'
+import { listMailRequests } from '../../../modules/courrier/demandes-queries.ts'
+import { groupStartNotice, pendingRequestStatuses } from '../../../modules/courrier/demandes-regles.ts'
+import { findMailSpots } from '../../../modules/courrier/queries.ts'
 import { frozenQuoteDisplay } from '../../../modules/facturation/devis.ts'
 import { DismissOfferRequestForm } from '../../../modules/facturation/dismiss-offer-request-form.tsx'
 import {
@@ -30,8 +36,12 @@ import { listPendingRequests } from '../../../modules/reservations/demandes-quer
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
 import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
 import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
+import { demandesPermissions } from '../aujourdhui/journee.ts'
 
 export const metadata = { title: 'Demandes' }
+
+/** Demandes de courrier montrées ici ; au-delà, leur vue filtrée (`/courrier/demandes`). */
+const MAIL_REQUESTS_SHOWN = 25
 
 /**
  * File des demandes : réservations déposées depuis le site public (ADR 005)
@@ -42,30 +52,50 @@ export const metadata = { title: 'Demandes' }
  * Chaque demande de réservation bloque déjà son créneau : traiter la file vite
  * n'est pas une question de confort, c'est ce qui libère les salles que
  * personne ne prendra.
+ *
+ * Les demandes de courrier des domiciliés (ouverture, numérisation,
+ * réexpédition) y figurent aussi, sous la pastille Domiciliation (ADR 057) ;
+ * leur historique reste dans la vue filtrée `/courrier/demandes`.
  */
 export default async function DemandesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ produit?: string | string[] }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
 }) {
-  const { member } = await requirePermission('demandes.traiter')
+  // Une seule boîte de réception (ADR 048), des files de droits différents :
+  // la page s'ouvre avec l'un d'eux, chaque section vérifie le sien (ADR 057).
+  const { member } = await requireAnyPermission(demandesPermissions)
+  const canHandleRequests = can(member.role, 'demandes.traiter')
+  const canHandleMail = can(member.role, 'courrier.gerer')
+  const params = await searchParams
   // Le produit se choisit par les pastilles de la page (ADR 048) ; les
   // adresses filtrées (`?produit=bureaux`) restent valables (ADR 046).
-  const product = parseProduct((await searchParams).produit)
+  const product = parseProduct(params.produit)
+  // Le courrier est la file de la domiciliation (ADR 057).
+  const showsMail = canHandleMail && (!product || product.key === 'domiciliation')
   const timeZone = await currentTimeZone()
-  const [pending, offerRequests, openProposals] = await Promise.all([
-    listPendingRequests(product && typesOf(product)),
+  const [pending, offerRequests, openProposals, mailQueue] = await Promise.all([
+    canHandleRequests ? listPendingRequests(product && typesOf(product)) : [],
     // Les offres groupées ne relèvent d'aucun produit : file complète seulement.
-    product ? [] : listOfferRequests(),
+    product || !canHandleRequests ? [] : listOfferRequests(),
     // Tout ce qui arrive se traite ici (ADR 048) : les devis à compléter aussi,
     // dont la domiciliation, qui ne réserve pas de créneau.
-    listProposals({ statuses: ['draft', 'ready'] }),
+    canHandleRequests ? listProposals({ statuses: ['draft', 'ready'] }) : [],
+    // Les demandes de courrier à traiter, dans l'ordre d'arrivée (ADR 057).
+    showsMail
+      ? listMailRequests({ statuses: pendingRequestStatuses }, { number: 1, size: MAIL_REQUESTS_SHOWN })
+      : { rows: [], total: 0 },
   ])
+  const mailSpots = await findMailSpots(
+    mailQueue.rows.map((row) => row.mailItemId),
+    timeZone,
+  )
+  const mailNotice = groupStartNotice(params)
   const proposalOfBooking = new Map(
     openProposals.filter((proposal) => proposal.bookingId).map((proposal) => [proposal.bookingId, proposal]),
   )
   const proposalsToComplete = proposalsOfProduct(openProposals.filter(awaitsReception), product?.key)
-  const showsBookings = product?.key !== 'domiciliation'
+  const showsBookings = canHandleRequests && product?.key !== 'domiciliation'
   const canDrawContract = can(member.role, 'contrats.creer')
   const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
 
@@ -77,8 +107,9 @@ export default async function DemandesPage({
             Demandes{product && ` · ${product.label}`}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tout ce qui arrive des clients : réservations à valider, devis à compléter, offres
-            demandées. Une demande de réservation occupe déjà son créneau : la refuser le libère.
+            Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou
+            réexpédier, devis à compléter, offres demandées. Une demande de réservation occupe déjà
+            son créneau : la refuser le libère.
           </p>
         </div>
 
@@ -255,6 +286,67 @@ export default async function DemandesPage({
         )}
       </section>
 
+      {showsMail && (
+        <section id="courrier" aria-labelledby="courrier-titre" className="flex scroll-mt-24 flex-col gap-4">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="courrier-titre" className="text-lg font-semibold tracking-tight">
+                Courrier à traiter{' '}
+                <span className="font-normal text-muted-foreground">({mailQueue.total})</span>
+              </h2>
+              <span className="rounded-full bg-accent/15 px-2 py-0.5 text-xs font-medium text-primary">
+                Domiciliation
+              </span>
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Ouvertures, numérisations et réexpéditions demandées par les domiciliés, dans l’ordre
+              d’arrivée. La photo de l’enveloppe et le repère du pli aident à le retrouver ; chaque
+              demande se fait ensuite sur la fiche du pli.
+            </p>
+          </div>
+
+          {mailNotice && <FlashNotice key={mailNotice.done}>{mailNotice.done}</FlashNotice>}
+          {mailNotice?.failure && (
+            <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+              {mailNotice.failure}
+            </p>
+          )}
+
+          {mailQueue.rows.length === 0 ? (
+            <p className="rounded-lg border border-dashed border-border bg-white px-6 py-8 text-center text-sm text-muted-foreground">
+              Aucune demande de courrier à traiter. Les domiciliés demandent l’ouverture, la
+              numérisation ou la réexpédition d’un pli depuis leur espace ;{' '}
+              <Link href="/courrier/demandes?etat=toutes" className="underline underline-offset-2">
+                les demandes déjà traitées
+              </Link>{' '}
+              restent consultables.
+            </p>
+          ) : (
+            <MailRequestQueue
+              rows={mailQueue.rows}
+              spots={mailSpots}
+              timeZone={timeZone}
+              today={todayIsoDate(timeZone)}
+              formId="courrier-prise-en-charge"
+              hidden={{ retour: '/demandes', produit: product?.key ?? '' }}
+              caption="Demandes de courrier à traiter"
+              clientHref={(row) => `/clients/${row.clientId}`}
+            />
+          )}
+          {mailQueue.rows.length > 0 && (
+            <Link
+              href="/courrier/demandes"
+              className="inline-flex min-h-6 items-center gap-1.5 self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              {mailQueue.total > mailQueue.rows.length
+                ? `Voir les ${mailQueue.total} demandes de courrier, par nature et par client`
+                : 'Toutes les demandes de courrier, historique compris'}
+            </Link>
+          )}
+        </section>
+      )}
+
+      {canHandleRequests && (
       <section aria-labelledby="devis-titre" className="flex flex-col gap-4">
         <div>
           <h2 id="devis-titre" className="text-lg font-semibold tracking-tight">
@@ -321,8 +413,9 @@ export default async function DemandesPage({
           </div>
         )}
       </section>
+      )}
 
-      {!product && (
+      {!product && canHandleRequests && (
       <section aria-labelledby="offres-titre" className="flex flex-col gap-4">
         <div>
           <h2 id="offres-titre" className="text-lg font-semibold tracking-tight">

@@ -1,5 +1,5 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
-import { todayPermissions } from './aujourdhui/journee.ts'
+import { demandesPermissions, todayPermissions } from './aujourdhui/journee.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -37,8 +37,16 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
     entries: [
       { href: '/aujourdhui', label: 'Aujourd’hui', permission: todayPermissions },
       // Réservations à valider (elles bloquent un créneau, ADR 005), devis à
-      // compléter (ADR 043), offres demandées : un seul compteur.
-      { href: '/demandes', label: 'Demandes', permission: 'demandes.traiter', counter: 'inbox' },
+      // compléter (ADR 043), offres demandées, demandes de courrier (ADR 057) :
+      // un seul compteur. La file du courrier, historique compris, en est une
+      // vue filtrée : elle allume « Demandes », pas une seconde entrée.
+      {
+        href: '/demandes',
+        label: 'Demandes',
+        permission: demandesPermissions,
+        counter: 'inbox',
+        also: ['/courrier/demandes'],
+      },
     ],
   },
   {
@@ -72,7 +80,8 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
   {
     label: 'Domiciliation',
     entries: [
-      // Les demandes de courrier à traiter sont comptées : c'est une file (ADR 037).
+      // Les demandes de courrier à traiter sont comptées : c'est une file (ADR 037),
+      // la part du rayon dans « Demandes » (ADR 057).
       { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
     ],

@@ -3,12 +3,14 @@ import { notFound } from 'next/navigation'
 
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
-import { formatDateTime, formatIsoMonth, toIsoDate } from '../../../../lib/dates.ts'
+import { formatDateTime, formatIsoMonth, toIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
 import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
 import { listRequestsForMail } from '../../../../modules/courrier/demandes-queries.ts'
 import { EnvelopeForm } from '../../../../modules/courrier/enveloppe-form.tsx'
+import { EnvelopeZoom } from '../../../../modules/courrier/enveloppe-zoom.tsx'
+import { spotLabel } from '../../../../modules/courrier/reperage.ts'
 import {
   mailKindLabels,
   mailScanSideLabels,
@@ -18,7 +20,7 @@ import {
 } from '../../../../modules/courrier/labels.ts'
 import { OpenForm } from '../../../../modules/courrier/open-form.tsx'
 import { CorrectPagesForm } from '../../../../modules/courrier/pages-form.tsx'
-import { findMail } from '../../../../modules/courrier/queries.ts'
+import { findMail, findMailSpots } from '../../../../modules/courrier/queries.ts'
 import { canCorrectPages, canOpen, openingOrigin, scanReportedAt } from '../../../../modules/courrier/regles.ts'
 
 export const metadata = { title: 'Courrier' }
@@ -54,18 +56,24 @@ export default async function CourrierDetailPage({
 }) {
   await requirePermission('courrier.gerer')
   const [{ id }, { fait, pages }] = await Promise.all([params, searchParams])
-  const [mail, timeZone, requests] = await Promise.all([
+  const timeZone = await currentTimeZone()
+  const [mail, requests, spots] = await Promise.all([
     findMail(id),
-    currentTimeZone(),
     listRequestsForMail(id),
+    findMailSpots([id], timeZone),
   ])
   if (!mail) notFound()
 
   const withdrawn = Boolean(mail.deletedAt)
   const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
   const scanOrigin = new Map(requests.map((request) => [request.id, request]))
-  const hasEnvelope = mail.scans.some((scan) => scan.side === 'envelope')
+  // La plus récente : une enveloppe ajoutée après coup remplace la première à l'écran.
+  const envelope = mail.scans.filter((scan) => scan.side === 'envelope').at(-1)
+  const hasEnvelope = Boolean(envelope)
   const now = new Date()
+  const spot = spots.get(mail.id)
+  const spotText = spot ? spotLabel(spot, todayIsoDate(timeZone, now)) : null
+  const received = formatDateTime(mail.receivedAt, timeZone)
 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
@@ -106,7 +114,22 @@ export default async function CourrierDetailPage({
         <FlashNotice key="pages">Nombre de pages corrigé. Le relevé du mois en tient compte.</FlashNotice>
       )}
 
-      <dl className="grid grid-cols-[11rem_1fr] gap-y-3 rounded-lg border border-border bg-white px-5 py-4 text-sm">
+      {/* De quoi retrouver le pli dans la pile de l'entreprise (ADR 057). */}
+      <div className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4 sm:flex-row sm:items-start">
+        <div className="sm:w-64 sm:shrink-0">
+          <EnvelopeZoom
+            scanId={envelope?.id ?? null}
+            contentType={envelope?.contentType ?? null}
+            label={`Enveloppe du pli de ${mail.clientName}, reçu le ${received}`}
+            details={[
+              mailKindLabels[mail.kind],
+              mail.sender ? `de ${mail.sender}` : 'expéditeur non précisé',
+              ...(spotText ? [spotText] : []),
+            ]}
+            size="large"
+          />
+        </div>
+      <dl className="grid flex-1 grid-cols-[11rem_1fr] gap-y-3 text-sm">
         <dt className="text-muted-foreground">Destinataire</dt>
         <dd>
           <Link href={`/clients/${mail.clientId}`} className="underline-offset-2 hover:underline">
@@ -114,12 +137,30 @@ export default async function CourrierDetailPage({
           </Link>
         </dd>
 
+        <dt className="text-muted-foreground">Type</dt>
+        <dd>{mailKindLabels[mail.kind]}</dd>
+
+        <dt className="text-muted-foreground">Expéditeur</dt>
+        <dd>{mail.sender ?? <span className="text-muted-foreground">non précisé</span>}</dd>
+
         <dt className="text-muted-foreground">Reçu le</dt>
         <dd className="tabular">
-          {formatDateTime(mail.receivedAt, timeZone)}
+          {received}
           {mail.registeredByName && (
             <span className="text-muted-foreground"> · enregistré par {mail.registeredByName}</span>
           )}
+        </dd>
+
+        <dt className="text-muted-foreground">Repère</dt>
+        <dd className="tabular">
+          {spotText ? (
+            <span className="font-medium text-primary">{spotText}</span>
+          ) : (
+            <span className="text-muted-foreground">— (pli retiré)</span>
+          )}
+          <span className="block text-xs text-muted-foreground">
+            Rang du pli parmi ceux de l’entreprise reçus ce jour-là, dans l’ordre d’enregistrement.
+          </span>
         </dd>
 
         {mail.note && (
@@ -151,6 +192,7 @@ export default async function CourrierDetailPage({
           )}
         </dd>
       </dl>
+      </div>
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Numérisations</h2>

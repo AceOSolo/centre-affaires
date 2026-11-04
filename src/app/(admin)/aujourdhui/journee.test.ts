@@ -9,14 +9,24 @@ const counts = { requests: 3, mailRequests: 1, inspectionsToFinish: 0, inspectio
 describe('demandes à traiter (menu et tuile, ADR 048)', () => {
   it('compte les offres demandées encore à traiter, avec les réservations et les devis', () => {
     const offerRequests = [{ status: 'requested' as const }, { status: 'contracted' as const }, { status: 'dismissed' as const }]
-    assert.equal(inboxCount({ pendingBookings: 2, proposalsToComplete: 1, offerRequests }), 4)
+    assert.equal(inboxCount({ pendingBookings: 2, proposalsToComplete: 1, offerRequests, mailRequests: 0 }), 4)
   })
 
   it('ne dit pas « aucune demande » quand une offre seule attend', () => {
-    const requests = inboxCount({ pendingBookings: 0, proposalsToComplete: 0, offerRequests: [{ status: 'requested' }] })
+    const requests = inboxCount({ pendingBookings: 0, proposalsToComplete: 0, offerRequests: [{ status: 'requested' }], mailRequests: 0 })
     assert.equal(requests, 1)
     const [tile] = todoTiles({ requests, mailRequests: 0, inspectionsToFinish: 0, inspectionsToSign: 0 }, () => true)
     assert.equal(tile.label, '1 demande à traiter')
+  })
+
+  it('compte les demandes de courrier dans « Demandes » (ADR 057)', () => {
+    const requests = inboxCount({ pendingBookings: 1, proposalsToComplete: 0, offerRequests: [], mailRequests: 3 })
+    assert.equal(requests, 4)
+    const [demandes, courrier] = todoTiles({ requests, mailRequests: 3, inspectionsToFinish: 0, inspectionsToSign: 0 }, () => true)
+    assert.equal(demandes.label, '4 demandes à traiter')
+    // La tuile du courrier en dit la part, et mène à « Demandes » filtrée.
+    assert.equal(courrier.label, 'dont 3 demandes de courrier')
+    assert.match(courrier.href, /^\/demandes\?produit=domiciliation/)
   })
 })
 
@@ -25,7 +35,7 @@ describe('tuiles « à traiter »', () => {
     const labels = todoTiles(counts, () => true).map((tile) => tile.label)
     assert.deepEqual(labels, [
       '3 demandes à traiter',
-      '1 demande de courrier',
+      'dont 1 demande de courrier',
       'Aucun état des lieux en cours',
       '2 états des lieux à faire signer',
     ])
@@ -38,8 +48,13 @@ describe('tuiles « à traiter »', () => {
   })
 
   it('ne montre que les files que le rôle peut traiter', () => {
+    const keys = todoTiles(counts, (permission) => permission === 'etats-des-lieux.gerer').map((tile) => tile.key)
+    assert.deepEqual(keys, ['inspectionsToFinish', 'inspectionsToSign'])
+  })
+
+  it('ouvre « Demandes » au droit du courrier comme à celui des réservations (ADR 057)', () => {
     const keys = todoTiles(counts, (permission) => permission === 'courrier.gerer').map((tile) => tile.key)
-    assert.deepEqual(keys, ['mailRequests'])
+    assert.deepEqual(keys, ['requests', 'mailRequests'])
   })
 
   it('montre tout à l’accueil comme à l’exploitant et à la direction', () => {

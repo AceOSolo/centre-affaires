@@ -2,13 +2,14 @@ import Link from 'next/link'
 
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
-import { formatDateTime } from '../../../../lib/dates.ts'
+import { todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
 import { findClient } from '../../../../modules/clients/queries.ts'
-import { startMailRequestsAction } from '../../../../modules/courrier/demandes-actions.ts'
+import { MailRequestQueue } from '../../../../modules/courrier/demandes-file.tsx'
 import { countPendingMailRequests, listMailRequests } from '../../../../modules/courrier/demandes-queries.ts'
 import {
+  groupStartNotice,
   pageCount,
   readRequestFilters,
   REQUEST_PAGE_SIZE,
@@ -19,22 +20,18 @@ import {
   type RequestKindSlug,
   type RequestStateFilter,
 } from '../../../../modules/courrier/demandes-regles.ts'
-import { PendingSubmit, SelectAllRequests } from '../../../../modules/courrier/demandes-traitement.tsx'
-import { mailRequestKindIcons, mailRequestStatusIcons } from '../../../../modules/courrier/icones.tsx'
-import {
-  mailKindLabels,
-  mailRequestKindLabels,
-  mailRequestStatusLabels,
-  mailRequestStatusStyles,
-} from '../../../../modules/courrier/labels.ts'
+import { mailRequestKindLabels } from '../../../../modules/courrier/labels.ts'
+import { findMailSpots } from '../../../../modules/courrier/queries.ts'
 
 export const metadata = { title: 'Demandes de courrier' }
 
 /**
- * File des demandes de courrier (R21, ADR 037) : ce que les clients attendent
- * de l'accueil — ouvertures, numérisations, réexpéditions —, par nature et par
- * état. Les demandes à traiter se lisent dans l'ordre d'arrivée ; chacune se
- * traite sur la page de son pli.
+ * Vue filtrée de « Demandes » sur le courrier (R21, ADR 037, ADR 057) : ce
+ * que les domiciliés attendent de l'accueil — ouvertures, numérisations,
+ * réexpéditions —, par nature, par état et par client, historique compris.
+ * « Demandes » (ADR 048) en montre les demandes à traiter ; ici se lisent
+ * aussi celles déjà faites, refusées ou annulées. Pas d'entrée au menu :
+ * « Demandes » y reste allumée.
  */
 export default async function DemandesCourrierPage({
   searchParams,
@@ -55,10 +52,12 @@ export default async function DemandesCourrierPage({
     countPendingMailRequests(),
     clientParam ? findClient(clientParam) : undefined,
   ])
+  const spots = await findMailSpots(
+    result.rows.map((row) => row.mailItemId),
+    timeZone,
+  )
   const pages = pageCount(result.total, REQUEST_PAGE_SIZE)
-  const selectable = result.rows.filter((row) => row.status === 'requested').length
-  const started = Number(typeof params.prises === 'string' ? params.prises : NaN)
-  const skipped = Number(typeof params.ignorees === 'string' ? params.ignorees : 0)
+  const notice = groupStartNotice(params)
   const link = (
     change: { state?: RequestStateFilter; kindSlug?: RequestKindSlug | null; clientId?: string },
     page = 1,
@@ -75,26 +74,24 @@ export default async function DemandesCourrierPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/courrier" className="text-sm text-muted-foreground hover:underline">
-          ← Courrier
+        <Link href="/demandes?produit=domiciliation" className="text-sm text-muted-foreground hover:underline">
+          ← Demandes
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Demandes de courrier</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {counts.total === 0
             ? 'Aucune demande à traiter.'
             : `${counts.total} demande${counts.total > 1 ? 's' : ''} à traiter : ${counts.open_and_scan} ouverture${counts.open_and_scan > 1 ? 's' : ''}, ${counts.scan} numérisation${counts.scan > 1 ? 's' : ''}, ${counts.forward} réexpédition${counts.forward > 1 ? 's' : ''}.`}{' '}
-          Une réexpédition se fait en dernier : le pli quitte le centre.
+          Celles à traiter figurent aussi dans « Demandes » ; ici se retrouvent aussi celles déjà
+          traitées. Une réexpédition se fait en dernier : le pli quitte le centre.
         </p>
       </div>
 
-      {Number.isInteger(started) && started >= 0 && (
-        <FlashNotice key={`${started}-${skipped}`}>
-          {started === 0
-            ? 'Aucune demande prise en charge.'
-            : `${started} demande${started > 1 ? 's' : ''} prise${started > 1 ? 's' : ''} en charge.`}
-          {Number.isInteger(skipped) && skipped > 0 &&
-            ` ${skipped} ignorée${skipped > 1 ? 's' : ''} : déjà prise${skipped > 1 ? 's' : ''} en charge, faite${skipped > 1 ? 's' : ''} ou annulée${skipped > 1 ? 's' : ''} entre-temps.`}
-        </FlashNotice>
+      {notice && <FlashNotice key={notice.done}>{notice.done}</FlashNotice>}
+      {notice?.failure && (
+        <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {notice.failure}
+        </p>
       )}
 
       <div className="flex flex-col gap-2">
@@ -143,107 +140,22 @@ export default async function DemandesCourrierPage({
           </Link>
         </div>
       ) : (
-        // Une seule action se répète d'une ligne à l'autre sans pièce à joindre :
-        // la prise en charge. Elle se fait aussi en groupe (`CLAUDE.md`).
-        <form action={startMailRequestsAction} className="flex flex-col gap-3">
-          <input type="hidden" name="etat" value={filters.state} />
-          <input type="hidden" name="nature" value={filters.kindSlug ?? ''} />
-          <input type="hidden" name="page" value={String(filters.page)} />
-          <input type="hidden" name="client" value={clientParam ?? ''} />
-          {selectable > 0 && (
-            <div className="flex flex-wrap items-center gap-3">
-              <PendingSubmit label="Prendre en charge la sélection" pendingLabel="Prise en charge…" />
-              <p className="text-xs text-muted-foreground">
-                Le client voit que le centre s’en occupe ; il ne peut plus l’annuler.
-              </p>
-            </div>
-          )}
-        <div className="overflow-x-auto rounded-lg border border-border bg-white">
-          <table className="w-full text-left text-sm">
-            <caption className="sr-only">
-              Demandes de courrier — {requestStateFilterLabels[filters.state].toLowerCase()}
-            </caption>
-            <thead className="border-b border-border text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th scope="col" className="w-10 px-4 py-3 font-medium">
-                  {selectable > 0 && <SelectAllRequests label="Sélectionner toutes les demandes pas encore prises en charge" />}
-                </th>
-                <th scope="col" className="px-4 py-3 font-medium">Demandée le</th>
-                <th scope="col" className="px-4 py-3 font-medium">Nature</th>
-                <th scope="col" className="px-4 py-3 font-medium">Client</th>
-                <th scope="col" className="px-4 py-3 font-medium">Pli</th>
-                <th scope="col" className="px-4 py-3 font-medium">Par</th>
-                <th scope="col" className="px-4 py-3 font-medium">État</th>
-                <th scope="col" className="px-4 py-3 font-medium">
-                  <span className="sr-only">Action</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {result.rows.map((row) => {
-                const KindIcon = mailRequestKindIcons[row.kind]
-                const StatusIcon = mailRequestStatusIcons[row.status]
-                const lastStep = row.completedAt ?? row.refusedAt ?? row.cancelledAt ?? row.startedAt
-                return (
-                  <tr key={row.id}>
-                    <td className="px-4 py-3">
-                      {row.status === 'requested' && (
-                        <input
-                          type="checkbox"
-                          name="ids"
-                          value={row.id}
-                          aria-label={`Sélectionner la demande de ${mailRequestKindLabels[row.kind].toLowerCase()} de ${row.clientName} du ${formatDateTime(row.requestedAt, timeZone)}`}
-                          className="size-4 accent-[var(--primary)]"
-                        />
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 tabular">{formatDateTime(row.requestedAt, timeZone)}</td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1.5">
-                        <KindIcon size={16} className="text-primary" />
-                        {mailRequestKindLabels[row.kind]}
-                      </span>
-                      {row.clientNote && <span className="block text-xs text-muted-foreground">« {row.clientNote} »</span>}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Link href={link({ clientId: row.clientId })} className="underline-offset-2 hover:underline">
-                        {row.clientName}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {mailKindLabels[row.mailKind]} — {row.mailSender ?? 'expéditeur non précisé'}
-                      <span className="block text-xs tabular">reçu le {formatDateTime(row.mailReceivedAt, timeZone)}</span>
-                    </td>
-                    <td className="px-4 py-3 text-muted-foreground">{row.requestedByName ?? '—'}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${mailRequestStatusStyles[row.status]}`}
-                      >
-                        <StatusIcon size={14} />
-                        {mailRequestStatusLabels[row.status]}
-                      </span>
-                      {lastStep && row.status !== 'requested' && (
-                        <span className="block text-xs text-muted-foreground tabular">
-                          le {formatDateTime(lastStep, timeZone)}
-                        </span>
-                      )}
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3">
-                      <Link
-                        href={`/courrier/${row.mailItemId}#demande-${row.id}`}
-                        aria-label={`${row.status === 'requested' || row.status === 'in_progress' ? 'Traiter' : 'Voir'} la demande de ${mailRequestKindLabels[row.kind].toLowerCase()} de ${row.clientName}`}
-                        className="rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted"
-                      >
-                        {row.status === 'requested' || row.status === 'in_progress' ? 'Traiter' : 'Voir'}
-                      </Link>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-        </form>
+        <MailRequestQueue
+          rows={result.rows}
+          spots={spots}
+          timeZone={timeZone}
+          today={todayIsoDate(timeZone)}
+          formId="prise-en-charge-groupee"
+          hidden={{
+            retour: '/courrier/demandes',
+            etat: filters.state,
+            nature: filters.kindSlug ?? '',
+            page: String(filters.page),
+            client: clientParam ?? '',
+          }}
+          caption={`Demandes de courrier — ${requestStateFilterLabels[filters.state].toLowerCase()}`}
+          clientHref={(row) => link({ clientId: row.clientId })}
+        />
       )}
 
       {pages > 1 && (
