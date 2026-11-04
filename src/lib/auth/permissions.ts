@@ -14,7 +14,7 @@ import { staffRoleLabels, type StaffRole } from '../../db/staff.ts'
  * fait tout, dont les tarifs, les services, les contrats et leurs avenants,
  * les indicateurs, l'équipe et la configuration du centre. La direction fait
  * tout ce que fait l'exploitant, et seule nomme, rétrograde ou retire un
- * exploitant (ADR 054). La facturation, les paiements et l'export comptable
+ * exploitant (ADR 054) et règle la connexion au CRM (ADR 065). La facturation, les paiements et l'export comptable
  * sont dans Dolibarr (ADR 046).
  *
  * Module pur, sans Next ni accès à la base : il s'éprouve seul
@@ -61,6 +61,8 @@ export const permissions = [
   'espace-client.personnel',
   // La direction seule nomme ou retire un exploitant (ADR 054).
   'equipe.exploitants',
+  // La direction seule branche le centre à son CRM (ADR 065).
+  'crm.gerer',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -103,6 +105,7 @@ export const permissionLabels: Record<Permission, string> = {
   'espace-client.personnel': 'Ouvrir son propre espace client depuis le back-office',
   'equipe.exploitants':
     'Équipe : nommer, rétrograder ou retirer un exploitant ou un membre de la direction',
+  'crm.gerer': 'Connexion au CRM : choix du CRM, jeton, identifiants, flux échangés',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */
@@ -139,8 +142,11 @@ export function inDolibarr(permission: Permission): boolean {
   return dolibarrPermissions.includes(permission)
 }
 
-/** Droits de la direction seule : la tenue des exploitants (ADR 054). */
-export const directionPermissions: readonly Permission[] = ['equipe.exploitants']
+/**
+ * Droits de la direction seule : la tenue des exploitants (ADR 054) et la
+ * connexion au CRM, qui ouvre au CRM les données du centre (ADR 065).
+ */
+export const directionPermissions: readonly Permission[] = ['equipe.exploitants', 'crm.gerer']
 
 /**
  * La matrice : `super_admin` est la direction, `admin` l'exploitant, `staff`

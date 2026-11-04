@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { hasBearerOrQueryToken, hasBearerToken } from './maintenance.ts'
+import { hasBearerToken } from './maintenance.ts'
 
-/** Jeton des routes de maintenance et de Dolibarr (ADR 043, ADR 049). */
+/** Jeton des routes de maintenance. Celui de Dolibarr : `modules/crm/jeton.test.ts` (ADR 065). */
 const JETON = 'a+b/c=='
 const requete = (url: string, authorization?: string) =>
   new Request(url, authorization ? { headers: { authorization } } : undefined)
@@ -15,15 +15,8 @@ describe('jeton des routes protégées', () => {
     assert.equal(hasBearerToken(requete(`https://x.fr/api?jeton=${JETON}`), JETON), false)
   })
 
-  it('accepte aussi le jeton dans l’adresse, « + » collé tel quel compris', () => {
-    assert.equal(hasBearerOrQueryToken(requete(`https://x.fr/api?jeton=${JETON}`), JETON), true)
-    assert.equal(hasBearerOrQueryToken(requete(`https://x.fr/api?jeton=${encodeURIComponent(JETON)}`), JETON), true)
-    assert.equal(hasBearerOrQueryToken(requete('https://x.fr/api', `Bearer ${JETON}`), JETON), true)
-    assert.equal(hasBearerOrQueryToken(requete('https://x.fr/api?jeton=faux'), JETON), false)
-  })
-
   it('reste fermé sans jeton configuré', () => {
-    assert.equal(hasBearerOrQueryToken(requete('https://x.fr/api?jeton='), undefined), false)
-    assert.equal(hasBearerOrQueryToken(requete('https://x.fr/api?jeton='), ''), false)
+    assert.equal(hasBearerToken(requete('https://x.fr/api', 'Bearer '), undefined), false)
+    assert.equal(hasBearerToken(requete('https://x.fr/api', 'Bearer '), ''), false)
   })
 })

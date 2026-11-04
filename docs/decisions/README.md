@@ -71,6 +71,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 054 | [La direction, au-dessus des exploitants](054-direction-au-dessus-des-exploitants.md) | 2026-10-22 | accepté ; complète l'ADR 019 (troisième rôle `super_admin`, droit `equipe.exploitants`, migration 0006) et l'ADR 008 (amorçage en `--role super_admin`) |
 | 055 | [Photos du courrier à chaque étape du back-office](055-photos-du-courrier-a-chaque-etape.md) | 2026-10-22 | accepté ; complète les ADR 015, 037 et 044 : photos à l'enregistrement, dans la saisie groupée (une par pli), à l'ouverture, à la numérisation demandée, enveloppe ajoutée après coup depuis la fiche ou la tournée ; plusieurs photos réunies en un PDF d'une page par photo, sans migration ni dépendance |
 | 056 | [Des PDF avec les photos des états des lieux](056-pdf-dans-les-etats-des-lieux.md) | 2026-10-22 | accepté ; amende l'ADR 039 : un PDF se joint comme une photo, sur un brouillon, figé à la clôture ; dimensions facultatives (migration 0007) |
+| 065 | [Connexion au CRM réglée par centre, depuis le back-office](065-connexion-au-crm-par-centre.md) | 2026-11-04 | accepté ; amende les ADR 043 § 5 et 049 § 2 (jeton réglé à l'écran par centre, `DOLIBARR_API_TOKEN` accepté tant qu'aucun ne l'est) et 046 § 2 (clé d'appel du CRM, chiffrée) ; complète l'ADR 054 (`crm.gerer`, direction) ; module `crm/`, interface de connecteur, flux de la seconde tranche prévus et coupés ; migration 0008 |
 
 ## Numéros en double et numéro manquant
 

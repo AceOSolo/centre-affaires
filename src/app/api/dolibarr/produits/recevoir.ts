@@ -1,6 +1,6 @@
 import { todayIsoDate } from '../../../../lib/dates.ts'
-import { hasBearerOrQueryToken, maintenanceNotFound } from '../../../../lib/maintenance.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
+import { crmGateway, serveCrmCall, type CrmCall, type CrmGateway } from '../../../../modules/crm/appels.ts'
 import { readDolibarrProductEvent } from '../../../../modules/facturation/produits-dolibarr.ts'
 import {
   applyDolibarrService,
@@ -14,12 +14,15 @@ import {
  * des pages.
  *
  * Réponses : 200 quand le produit est pris en compte ou n'a rien à faire sur le
- * site ; 400 quand l'envoi est illisible (référence, prix, TVA) ou que le site
- * n'a pas où le poser (grille par défaut, ressource) — 400 et pas 422 ou 409,
- * parce que Dolibarr (version 23 et suivantes) ne garde le message du site que
- * pour un 400 ; 404 sans jeton valide ; 500 sur une panne du site.
+ * site ; 400 quand l'envoi est illisible (référence, prix, TVA), que le site
+ * n'a pas où le poser (grille par défaut, ressource) ou que le flux « Produits
+ * et tarifs » est coupé à l'écran — 400 et pas 422, 409 ou 403, parce que
+ * Dolibarr (version 23 et suivantes) ne garde le message du site que pour un
+ * 400 ; 404 sans jeton valide ; 500 sur une panne du site.
  *
- * Chaque appel laisse une ligne dans le journal du serveur
+ * Jeton (celui de l'écran « Connexion au CRM », ou `DOLIBARR_API_TOKEN` tant
+ * qu'aucun n'y est réglé), centre et journal des échanges : `serveCrmCall`
+ * (ADR 065). Chaque appel laisse en plus une ligne dans le journal du serveur
  * (`docker compose logs app`) : avant Dolibarr 23, c'est le seul endroit où
  * lire pourquoi un produit a été refusé.
  */
@@ -30,19 +33,34 @@ export type Reception = {
   changed: boolean
 }
 
-export async function receiveDolibarrProduct(request: Request): Promise<Reception> {
+const call: CrmCall = {
+  connector: 'dolibarr',
+  flow: 'products',
+  operation: 'POST /api/dolibarr/produits',
+  acceptQueryToken: true,
+  flowOffStatus: 400,
+}
+
+export async function receiveDolibarrProduct(request: Request, gateway: CrmGateway = crmGateway): Promise<Reception> {
   const start = performance.now()
   const log = (body: unknown, status: number, outcome: string) =>
     webhookLogLine({ body, status, outcome, durationMs: performance.now() - start })
 
-  if (!hasBearerOrQueryToken(request, process.env.DOLIBARR_API_TOKEN)) {
+  const served = await serveCrmCall(request, call, () => receive(request, log), gateway)
+  if (served.access.result === 'unknown') {
     // Le corps n'est pas lu : rien de ce qu'envoie un inconnu n'entre au journal.
     console.warn(log(undefined, 404, 'jeton absent ou faux'))
-    return { response: maintenanceNotFound(), changed: false }
+  } else if (served.access.result === 'flow_off') {
+    console.warn(log(undefined, 400, 'flux « Produits et tarifs » coupé à l’écran'))
   }
+  return { response: served.response, changed: served.handled?.changed ?? false }
+}
 
+type Received = Reception & { summary?: string }
+
+async function receive(request: Request, log: (body: unknown, status: number, outcome: string) => string): Promise<Received> {
   const body: unknown = await request.json().catch(() => null)
-  const refuse = (message: string): Reception => {
+  const refuse = (message: string): Received => {
     console.warn(log(body, 400, message))
     return { response: Response.json({ erreur: message }, { status: 400 }), changed: false }
   }
@@ -52,7 +70,11 @@ export async function receiveDolibarrProduct(request: Request): Promise<Receptio
     if (decision.kind === 'invalid') return refuse(decision.message)
     if (decision.kind === 'ignore') {
       console.info(log(body, 200, 'ignore'))
-      return { response: Response.json({ ok: true, resultat: 'ignore', message: decision.reason }), changed: false }
+      return {
+        response: Response.json({ ok: true, resultat: 'ignore', message: decision.reason }),
+        changed: false,
+        summary: decision.reason,
+      }
     }
 
     const outcome =
@@ -65,6 +87,7 @@ export async function receiveDolibarrProduct(request: Request): Promise<Receptio
     return {
       response: Response.json({ ok: true, resultat: outcome.result, message: outcome.message }),
       changed: outcome.result !== 'inchange',
+      summary: outcome.message,
     }
   } catch (error) {
     console.error(log(body, 500, 'erreur du site'), error)

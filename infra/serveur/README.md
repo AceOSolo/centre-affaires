@@ -159,9 +159,11 @@ Un fichier nginx qui a changé se réinstalle ensuite comme en section 7
 - `IMAGE_TAG=<l'étiquette de 4.1>`. `compose.yml` refuse de démarrer sans
   elle : sans étiquette, Docker prendrait `latest`, qui est sur GHCR l'image
   publiée par l'ancien job le 06/10/2026, d'avant MySQL.
-- `DOLIBARR_API_TOKEN` : `openssl rand -base64 32`, remis au développeur
-  Dolibarr. Sans lui, l'API des devis et le webhook des produits n'existent
-  pas (ADR 043, ADR 049, `docs/integrations/dolibarr.md`).
+- `DOLIBARR_API_TOKEN` : l'ancien jeton de l'API des devis et du webhook des
+  produits (ADR 043, ADR 049, `docs/integrations/dolibarr.md`), à garder tel
+  quel tant que la direction n'a pas généré de jeton dans Réglages > Connexion
+  au CRM (ADR 065) ; ce jeton-là le remplace, et la variable peut ensuite être
+  retirée.
 - Toute variable apparue dans le modèle depuis la mise en ligne précédente.
 
 **Première mise en ligne de la version MySQL.** Le `.env` de la version du
