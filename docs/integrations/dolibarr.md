@@ -143,6 +143,16 @@ Champs à connaître :
 - **`reponses`** : les réponses au questionnaire, en clair, dans l'ordre —
   à reporter en note privée ou publique de la proposition.
   **`reponsesBrutes`** : les mêmes, en valeurs, si vous voulez des extrafields.
+- **Réservation sur plusieurs jours** (ADR 061) : rien ne change dans le
+  format. C'est une seule réservation, donc une seule ligne : `reservation.debut`
+  et `reservation.fin` sont sur deux jours différents, la désignation dit la
+  période (« Camion 12 m³ — du lundi 9 novembre 2026 09:00 au mercredi
+  11 novembre 2026 09:00 »), l'unité est `journée` ou `semaine` (jamais
+  `heure` ni `demi-journée` sur plusieurs jours) et `quantite` compte les
+  journées de 24 heures entamées (ici 2). Reportez `debut` et `fin` en
+  `date_start` / `date_end` de la ligne si vous voulez la période dans
+  Dolibarr. Une période que la grille ne chiffre pas arrive « à compléter »
+  et n'apparaît qu'une fois l'accueil passé dessus.
 - **Montants** : toujours des entiers en **centimes** (`…Centimes`), plus le
   prix unitaire en décimal à point (`prixUnitaireHt`) pour `subprice`. Les
   taux (`tauxTva`, `remisePourcent`) sont des pourcentages décimaux en texte

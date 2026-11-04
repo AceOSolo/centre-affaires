@@ -31,6 +31,10 @@ describe(`cas tarifaires des réservations (${STATUT_DES_CAS})`, () => {
         rules: { ...REGLES_PAR_DEFAUT, ...cas.regles },
         discount: cas.remise,
       })
+      if ('nonChiffre' in cas.attendu) {
+        assert.deepEqual(outcome, { ok: false, reason: cas.attendu.nonChiffre })
+        return
+      }
       assert.equal(outcome.ok, true, outcome.ok ? '' : outcome.reason)
       if (!outcome.ok) return
       const { unit, quantity, netCents, vatCents, totalCents } = outcome.quote

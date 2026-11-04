@@ -8,7 +8,7 @@ import { withTenant } from '../../db/index.ts'
 import { creerCompteur, ipDuVisiteur, type Plafond } from '../../lib/anti-robot.ts'
 import { CHAMP_PREUVE, champPiegeRempli } from '../../lib/champs-anti-robot.ts'
 import { preuveHumaine } from '../../lib/preuve-humaine.ts'
-import { formatLongDate, formatTime, toIsoDate, todayIsoDate } from '../../lib/dates.ts'
+import { toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
 import { quote } from '../facturation/devis-queries.ts'
@@ -20,12 +20,14 @@ import {
   notifyDomiciliationRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
 import { findResource } from '../ressources/queries.ts'
+import { maxRequestDaysFor } from './durees.ts'
+import { dayFreeRanges, periodLabel, periodRejection, periodRejectionMessage, type PeriodAvailability } from './periode.ts'
+import { loadPeriodAvailability } from './periode-queries.ts'
 import {
   BookingConflictError,
   InvalidRangeError,
   countRecentRequestsByEmail,
   createBookingRequest,
-  listDayAvailability,
 } from './queries.ts'
 import { errorsByField } from './questionnaire-fields.tsx'
 import { parseAnswers, productForResourceType } from './questionnaires.ts'
@@ -37,13 +39,23 @@ import {
   rejectionMessages,
 } from './requests.ts'
 import { requestableRanges, requestBounds, requestPolicyMessage } from './request-policy.ts'
-import { fitsFreeRange, publicSelection } from './public-selection.ts'
+import { periodSelection, publicSelection } from './public-selection.ts'
 import type { TimeRange } from './availability.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 export type PublicDayAvailability =
-  | { status: 'ready'; free: TimeRange[]; closed: boolean; latestStart: Date }
+  | {
+      status: 'ready'
+      /** Plages libres du jour choisi, coupées par le préavis : les départs possibles. */
+      free: TimeRange[]
+      closed: boolean
+      latestStart: Date
+      /** La ressource sur les jours que peut couvrir une demande, à partir de ce jour (ADR 061). */
+      period: PeriodAvailability
+      /** Jours d'affilée qu'une demande peut couvrir pour ce produit. */
+      maxDays: number
+    }
   | { status: 'error'; message: string }
 
 /** Ne renvoie que les plages libres, jamais l'identité des occupants. */
@@ -56,9 +68,24 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
   if (!publicSelection(date, '09:00', '10:00', timeZone) || date < toIsoDate(earliest, timeZone) || date > toIsoDate(latest, timeZone)) {
     return { status: 'error', message: requestPolicyMessage(tenant) }
   }
-  const availability = (await listDayAvailability(date, timeZone)).find(({ resource }) => resource.id === resourceId)
-  if (!availability) return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
-  return { status: 'ready', free: requestableRanges(availability.free, tenant, now), closed: availability.closed, latestStart: latest }
+  const resource = await findResource(resourceId)
+  if (!resource || resource.status !== 'active' || resource.deletedAt) {
+    return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
+  }
+  // La période couvre les jours que la demande peut atteindre : le moteur
+  // vérifie la ressource jusqu'au bout, nuits comprises (ADR 061).
+  const maxDays = maxRequestDaysFor(tenant.bookingMaxDays, resource.resourceType)
+  const period = await withTenant(currentTenantId(), (tx) =>
+    loadPeriodAvailability(tx, { resourceId, firstDate: date, dayCount: maxDays, timeZone }),
+  )
+  return {
+    status: 'ready',
+    free: requestableRanges(dayFreeRanges(period, date), tenant, now),
+    closed: period.days[0].windows.length === 0,
+    latestStart: latest,
+    period,
+    maxDays,
+  }
 }
 
 /** Montant annoncé au visiteur avant sa demande (R11). */
@@ -79,11 +106,13 @@ export async function loadPublicQuoteAction(
   date: string,
   startTime: string,
   endTime: string,
+  /** Jour de fin, pour une demande sur plusieurs jours (ADR 061) ; le jour même par défaut. */
+  endDate: string = date,
 ): Promise<PublicQuote> {
   const unpriced = (message: string): PublicQuote => ({ status: 'unpriced', message })
   if (!UUID.test(resourceId)) return unpriced(rejectionMessages['ressource-indisponible'])
   const tenant = await currentTenant()
-  const selection = publicSelection(date, startTime, endTime, tenant.timezone)
+  const selection = periodSelection(date, startTime, endDate, endTime, tenant.timezone)
   if (!selection) return unpriced(rejectionMessages['creneau-illisible'])
   const resource = await findResource(resourceId)
   if (!resource || resource.status !== 'active' || resource.deletedAt) {
@@ -200,7 +229,9 @@ export async function requestBookingAction(
     return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
   }
   if (!UUID.test(resourceId)) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
-  const selection = publicSelection(date, text(formData, 'startTime'), text(formData, 'endTime'), timeZone)
+  // Le jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même.
+  const endDate = text(formData, 'endDate') || date
+  const selection = periodSelection(date, text(formData, 'startTime'), endDate, text(formData, 'endTime'), timeZone)
   if (!selection) return { status: 'error', step: 2, message: rejectionMessages['creneau-illisible'] }
   const { startsAt, endsAt } = selection
 
@@ -245,10 +276,14 @@ export async function requestBookingAction(
     return { status: 'error', step, message: rejection === 'preavis-insuffisant' || rejection === 'creneau-trop-lointain' ? requestPolicyMessage(tenant) : rejectionMessages[rejection] }
   }
 
+  // Disponibilités relues sur toute la période, avec la durée maximale du
+  // produit : le formulaire a pu rester ouvert, ou mentir (ADR 061). Le
+  // trigger anti-chevauchement reste le garde final (décision 3).
   const availability = await loadPublicDayAction(resourceId, date)
   if (availability.status === 'error') return { ...availability, step: 2 }
-  if (!fitsFreeRange(selection, availability.free)) {
-    return { status: 'error', step: 2, message: 'Ce créneau n’est plus disponible. Choisissez de nouveaux horaires.' }
+  const periodProblem = periodRejection(selection, availability.period, timeZone, availability.maxDays)
+  if (periodProblem) {
+    return { status: 'error', step: 2, message: periodRejectionMessage(periodProblem, availability.maxDays) }
   }
   const refus = await refusAntiRobot(formData)
   if (refus) return { status: 'error', message: refus }
@@ -296,10 +331,9 @@ export async function requestBookingAction(
   revalidatePath('/devis')
   revalidatePath('/')
 
-  const jour = formatLongDate(toIsoDate(startsAt, timeZone), timeZone)
   return {
     status: 'sent',
-    summary: `${resource.name} — ${jour} de ${formatTime(startsAt, timeZone)} à ${formatTime(endsAt, timeZone)}`,
+    summary: `${resource.name} — ${periodLabel({ startsAt, endsAt }, timeZone)}`,
     proposal,
   }
 }

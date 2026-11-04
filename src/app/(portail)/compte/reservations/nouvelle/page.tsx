@@ -12,7 +12,11 @@ import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { PortalBookingForm } from '../../../../../modules/reservations/portail-booking-form.tsx'
 import { productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
-import { listPortalDayAvailability } from '../../../../../modules/reservations/portail-queries.ts'
+import { serializePeriod } from '../../../../../modules/reservations/periode.ts'
+import {
+  listPortalDayAvailability,
+  loadPortalPeriodAvailability,
+} from '../../../../../modules/reservations/portail-queries.ts'
 import { portalModeLabels } from '../../../../../modules/reservations/portail-regles.ts'
 import { availableStarts } from '../../../../../modules/reservations/public-selection.ts'
 import {
@@ -79,6 +83,15 @@ export default async function NouvelleReservationPage({
       return { ...availability, free, starts: availableStarts(free, now, latest) }
     })
   const selected = params.ressource ? shown.find(({ resource }) => resource.id === params.ressource) : undefined
+  // L'espace choisi, sur les jours qu'une demande peut couvrir (ADR 061).
+  const selectedPeriod = selected
+    ? await loadPortalPeriodAvailability(accounts, {
+        resourceId: selected.resource.id,
+        firstDate: date,
+        timeZone,
+        maxDaysSettings: tenant.bookingMaxDays,
+      })
+    : undefined
 
   const dateLabel = formatLongDate(date, timeZone)
   const href = (changes: { type?: ResourceType | null; date?: string; ressource?: string }) => {
@@ -104,8 +117,9 @@ export default async function NouvelleReservationPage({
           Réserver un espace
         </h1>
         <p className="mt-2 max-w-prose text-muted-foreground">
-          Choisissez un jour, puis un espace : seuls les créneaux libres sont proposés, avec le tarif
-          de votre contrat. {requestPolicyMessage(tenant)}
+          Choisissez le jour du début, puis un espace : seuls les créneaux libres sont proposés, avec
+          le tarif de votre contrat. Une réservation peut s’étendre sur plusieurs jours d’affilée.{' '}
+          {requestPolicyMessage(tenant)}
         </p>
       </div>
 
@@ -184,7 +198,7 @@ export default async function NouvelleReservationPage({
             </form>
           </div>
 
-          {selected && (
+          {selected && selectedPeriod && (
             <section
               id="reserver"
               aria-labelledby="reserver-titre"
@@ -214,6 +228,8 @@ export default async function NouvelleReservationPage({
                   startsAt: range.startsAt.toISOString(),
                   endsAt: range.endsAt.toISOString(),
                 }))}
+                period={serializePeriod(selectedPeriod.period)}
+                maxDays={selectedPeriod.maxDays}
                 now={now.toISOString()}
                 latestStart={latest.toISOString()}
                 accounts={accounts.map(({ clientId, clientName }) => ({ clientId, clientName }))}

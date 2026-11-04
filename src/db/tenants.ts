@@ -73,6 +73,17 @@ export const tenants = mysqlTable('tenants', {
   currency: char('currency', { length: 3 }).notNull().default('EUR'),
   bookingLeadHours: int('booking_lead_hours').notNull().default(0),
   bookingHorizonDays: int('booking_horizon_days').notNull().default(90),
+  /**
+   * Durée maximale d'une demande en ligne, en jours d'affilée, par clé de
+   * produit (`ressources/produits.ts`) : `{ "vehicules": 7 }` (ADR 061). Une
+   * clé absente prend la valeur par défaut du produit
+   * (`reservations/durees.ts`) ; un objet plutôt qu'une colonne par produit,
+   * pour qu'un produit nouveau n'appelle pas de migration.
+   */
+  bookingMaxDays: json('booking_max_days')
+    .$type<Partial<Record<string, number>>>()
+    .notNull()
+    .default(sql`(JSON_OBJECT())`),
 
   /*
    * Identité publique du centre.

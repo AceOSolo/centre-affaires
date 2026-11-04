@@ -121,7 +121,7 @@ export const questionnaires: Record<ProposalProduct, Questionnaire> = {
   vehicule: {
     product: 'vehicule',
     label: 'Camion ou utilitaire',
-    description: 'Un véhicule à l’heure, à la demi-journée ou à la journée.',
+    description: 'Un véhicule à l’heure, à la journée ou sur plusieurs jours.',
     resourceTypes: ['vehicule'],
     autoValidate: false,
     questions: [

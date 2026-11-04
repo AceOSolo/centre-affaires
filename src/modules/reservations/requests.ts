@@ -10,9 +10,11 @@ import { DEFAULT_REQUEST_POLICY, requestTimingRejection, type RequestPolicy } fr
  * serveur ne fait que les appliquer.
  */
 
-/** Durées acceptées pour une demande publique. */
+/**
+ * Durée minimale d'une demande en ligne. La durée maximale, autrefois de huit
+ * heures, se règle par produit et se compte en jours (`durees.ts`, ADR 061).
+ */
 export const MIN_REQUEST_MINUTES = 30
-export const MAX_REQUEST_MINUTES = 8 * 60
 
 /** Horizon par défaut ; le réglage du centre est appliqué aux demandes réelles. */
 export const MAX_DAYS_AHEAD = 90
@@ -31,7 +33,6 @@ export type RequestRejection =
   | 'preavis-insuffisant'
   | 'creneau-trop-lointain'
   | 'duree-trop-courte'
-  | 'duree-trop-longue'
   | 'ressource-indisponible'
   | 'trop-de-demandes'
 
@@ -45,7 +46,6 @@ export const rejectionMessages: Record<RequestRejection, string> = {
   'preavis-insuffisant': 'Ce créneau ne respecte pas le préavis minimum de réservation.',
   'creneau-trop-lointain': `Les demandes sont ouvertes jusqu'à ${MAX_DAYS_AHEAD} jours à l'avance. Au-delà, contactez-nous directement.`,
   'duree-trop-courte': `La durée minimale est de ${MIN_REQUEST_MINUTES} minutes.`,
-  'duree-trop-longue': `Au-delà de ${MAX_REQUEST_MINUTES / 60} heures, contactez-nous pour une location à la journée.`,
   'ressource-indisponible': "Cet espace n'est pas réservable en ligne.",
   'trop-de-demandes': `Vous avez déposé ${MAX_REQUESTS_PER_EMAIL} demandes en ${RATE_WINDOW_HOURS} heures. Contactez-nous directement pour la suite.`,
 }
@@ -105,9 +105,10 @@ export function rejectRequest(
     return 'creneau-illisible'
   }
 
+  // La durée maximale, par produit et en jours, se vérifie avec la
+  // disponibilité de la période (`periodRejection`, ADR 061).
   const minutes = (endsAt.getTime() - startsAt.getTime()) / 60_000
   if (minutes < MIN_REQUEST_MINUTES) return 'duree-trop-courte'
-  if (minutes > MAX_REQUEST_MINUTES) return 'duree-trop-longue'
 
   // Le créneau doit commencer dans le futur. La contrainte d'exclusion, elle,
   // laisserait très bien réserver l'année dernière.

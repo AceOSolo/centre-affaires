@@ -67,7 +67,9 @@ export default async function NewBookingPage({
   const jours = weekDays(defaultDate)
   const [days, bookings, clients, activeContracts] = await Promise.all([
     loadWeekCalendar({ resourceId: resource.id, anchor: defaultDate, timeZone }),
-    listBookingsBetween(jours[0], jours[6], timeZone),
+    // Quatre semaines de plus que la semaine affichée : le verdict d'une
+    // période sur plusieurs jours voit ce qui la suit (ADR 061).
+    listBookingsBetween(jours[0], addDaysToIsoDate(jours[6], 28), timeZone),
     listClients(),
     // Contrats proposés au rattachement (R05) : seuls les actifs le peuvent.
     listContracts({ status: 'active' }),

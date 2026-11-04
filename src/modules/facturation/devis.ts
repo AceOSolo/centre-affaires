@@ -209,7 +209,7 @@ export const quoteFailureMessages: Record<QuoteFailure, string> = {
   'aucune-grille':
     'Aucune grille tarifaire n’est en vigueur à cette date : le montant n’est pas calculé.',
   'aucun-tarif':
-    'La grille en vigueur ne fixe aucun prix à l’heure, à la demi-journée, à la journée ni à la semaine pour cette ressource.',
+    'La grille en vigueur ne fixe aucun prix à l’heure, à la demi-journée, à la journée ni à la semaine pour cette ressource. Sur plusieurs jours, seuls la journée et la semaine comptent.',
   'remise-invalide':
     'Remise illisible : un pourcentage de 0 à 100, ou un montant positif en euros.',
   'remise-excessive': 'La remise dépasse le montant de la réservation.',
@@ -229,6 +229,17 @@ function wallClockMinutes(instant: Date, timeZone: string): number {
  */
 export function bookingDurationMinutes(startsAt: Date, endsAt: Date, timeZone: string): number {
   return wallClockMinutes(endsAt, timeZone) - wallClockMinutes(startsAt, timeZone)
+}
+
+/** Unités d'une période sur plusieurs jours (ADR 061) : jamais l'heure ni la demi-journée. */
+export const multiDayUnits = ['day', 'week'] as const satisfies readonly BookableUnit[]
+
+/**
+ * La réservation déborde-t-elle de son premier jour du centre ? La fin est
+ * exclue : une réservation qui finit à minuit pile reste sur sa journée.
+ */
+export function spansSeveralDays(startsAt: Date, endsAt: Date, timeZone: string): boolean {
+  return toIsoDate(new Date(endsAt.getTime() - 1), timeZone) !== toIsoDate(startsAt, timeZone)
 }
 
 /** Une remise saisie est-elle lisible ? Pourcentage de 0 à 100 %, montant positif. */
@@ -253,8 +264,15 @@ function validDiscount(discount: QuoteDiscount): boolean {
  *    quatre heures coûte une demi-journée, une de neuf heures une journée, et
  *    non trois demi-journées. À montant égal, l'unité la plus large (une
  *    journée plutôt que deux demi-journées).
+ *    **Sur plusieurs jours** (ADR 061), seules la journée et la semaine
+ *    chiffrent : la ressource est tenue nuits comprises, et l'heure ou la
+ *    demi-journée feraient payer ces nuits heure par heure. Une grille sans
+ *    prix à la journée ni à la semaine ne chiffre pas la période : l'accueil
+ *    la chiffre.
  * 3. **La quantité** : unité entamée au-delà de la tolérance du centre
- *    (`billableQuantity`).
+ *    (`billableQuantity`) — sur plusieurs jours, chaque tranche de 24 heures
+ *    entamée est une journée due, et le moins cher des deux retient la semaine
+ *    dès que les journées la dépassent.
  * 4. **Le montant** : quantité × prix, moins la remise, arrondi une seule fois
  *    (`lineNetAmountCents`, jumeau de la base) ; TVA au taux du centre.
  */
@@ -266,9 +284,12 @@ export function quoteBooking(input: BookingQuoteInput): QuoteOutcome {
   const day = toIsoDate(input.startsAt, input.timeZone)
   const valid = input.plans.filter(({ plan }) => isRatePlanValidOn(plan, day))
   if (valid.length === 0) return { ok: false, reason: 'aucune-grille' }
+  const units: readonly BookableUnit[] = spansSeveralDays(input.startsAt, input.endsAt, input.timeZone)
+    ? multiDayUnits
+    : bookableUnits
 
   for (const { plan, source } of valid) {
-    const options = bookableUnits.flatMap((unit) => {
+    const options = units.flatMap((unit) => {
       const item = resolveRate(plan, {
         resourceId: input.resource.id,
         resourceType: input.resource.resourceType,

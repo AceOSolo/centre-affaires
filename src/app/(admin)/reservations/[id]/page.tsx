@@ -16,6 +16,7 @@ import { proposalStatusLabels } from '../../../../modules/facturation/propositio
 import { formatContractDays, occupationDays } from '../../../../modules/contrats/occupation.ts'
 import { cancelBookingAction } from '../../../../modules/reservations/actions.ts'
 import { bookingLabel } from '../../../../modules/reservations/affichage.ts'
+import { periodDuration, periodLabel, spansSeveralDays } from '../../../../modules/reservations/periode.ts'
 import { AssignClientForm } from '../../../../modules/reservations/assign-client-form.tsx'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
 import { findBookingAuthors } from '../../../../modules/reservations/demandes-queries.ts'
@@ -105,6 +106,16 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
             <dt className="text-muted-foreground">Période</dt>
             <dd className="tabular">
               {formatContractDays(occupationDays(booking, timeZone))}
+            </dd>
+          </>
+        ) : spansSeveralDays(booking, timeZone) ? (
+          // Sur plusieurs jours d'affilée (ADR 061) : du jour et de l'heure du
+          // début au jour et à l'heure de la fin.
+          <>
+            <dt className="text-muted-foreground">Période</dt>
+            <dd className="first-letter:uppercase">
+              {periodLabel(booking, timeZone)}{' '}
+              <span className="text-muted-foreground">({periodDuration(booking, timeZone)})</span>
             </dd>
           </>
         ) : (

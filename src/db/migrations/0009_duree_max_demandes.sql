@@ -1,0 +1,1 @@
+ALTER TABLE `tenants` ADD `booking_max_days` json DEFAULT (JSON_OBJECT()) NOT NULL;

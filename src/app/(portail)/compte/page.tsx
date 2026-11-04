@@ -8,7 +8,8 @@ import {
   FileTextIcon,
   MailIcon,
 } from '../../../components/ui/icons.tsx'
-import { formatCalendarDate, formatDateTime, formatLongDate, formatTime, toIsoDate } from '../../../lib/dates.ts'
+import { formatCalendarDate, formatDateTime, formatLongDate, toIsoDate } from '../../../lib/dates.ts'
+import { formatBookingHours } from '../../../modules/reservations/affichage.ts'
 import { contractTypeLabels } from '../../../modules/contrats/labels.ts'
 import { mailKindLabels } from '../../../modules/courrier/labels.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
@@ -89,7 +90,7 @@ export default async function CompteAccueilPage() {
             <>
               <p className="text-sm text-muted-foreground">Prochaine réservation</p>
               <p className="mt-1 text-lg font-semibold text-foreground first-letter:uppercase">{formatLongDate(toIsoDate(prochaine.startsAt, timeZone), timeZone)}</p>
-              <p className="mt-0.5 tabular">{formatTime(prochaine.startsAt, timeZone)} – {formatTime(prochaine.endsAt, timeZone)} · {prochaine.resourceName}</p>
+              <p className="mt-0.5 tabular">{formatBookingHours(prochaine, timeZone)} · {prochaine.resourceName}</p>
               <p className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-sm font-medium text-primary">
                 {prochaine.status === 'confirmed' ? <CheckIcon size={20} /> : <ClockIcon size={20} />}
                 {prochaine.status === 'confirmed' ? 'Confirmée' : 'En attente de validation par le centre'}

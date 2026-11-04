@@ -1,6 +1,6 @@
 import type { ProrataRule } from '../../db/tenants.ts'
 import type { ScheduleVersion, ScheduledContract } from '../contrats/echeancier.ts'
-import type { BookableUnit, QuoteDiscount, QuotePlan, QuoteRules } from './devis.ts'
+import type { BookableUnit, QuoteDiscount, QuoteFailure, QuotePlan, QuoteRules } from './devis.ts'
 import { DEFAULT_QUANTITY_RULES } from './tarifs.ts'
 
 /**
@@ -37,9 +37,10 @@ export const GRILLE_REELLE: QuotePlan = {
 }
 
 /**
- * Le centre ne publie ni prix à l'heure ni prix à la semaine. Les deux prix
- * ci-dessous sont des **hypothèses de travail**, posées pour éprouver ces
- * unités (R08) : à remplacer par les prix réels, ou à retirer.
+ * Le centre ne publie ni prix à l'heure ni prix à la semaine, ni de prix du
+ * camion. Les prix ci-dessous sont des **hypothèses de travail**, posées pour
+ * éprouver ces unités (R08) et les périodes de plusieurs jours (ADR 061) : à
+ * remplacer par les prix réels, ou à retirer.
  */
 export const GRILLE_AVEC_HYPOTHESES: QuotePlan = {
   ...GRILLE_REELLE,
@@ -48,7 +49,10 @@ export const GRILLE_AVEC_HYPOTHESES: QuotePlan = {
   items: [
     ...GRILLE_REELLE.items,
     { id: 'salle-heure', resourceType: 'salle', resourceId: null, unit: 'hour', amountCents: 2_500 },
+    { id: 'salle-semaine', resourceType: 'salle', resourceId: null, unit: 'week', amountCents: 50_000 },
     { id: 'bureau-semaine', resourceType: 'bureau', resourceId: null, unit: 'week', amountCents: 15_000 },
+    { id: 'camion-jour', resourceType: 'vehicule', resourceId: null, unit: 'day', amountCents: 8_000 },
+    { id: 'camion-semaine', resourceType: 'vehicule', resourceId: null, unit: 'week', amountCents: 40_000 },
   ],
 }
 
@@ -63,26 +67,30 @@ export type CasReservation = {
   id: string
   /** Ce que le cas éprouve, en une phrase. */
   libelle: string
-  ressource: { id: string; resourceType: 'salle' | 'bureau' | 'boite_aux_lettres' }
+  ressource: { id: string; resourceType: 'salle' | 'bureau' | 'boite_aux_lettres' | 'vehicule' }
   /** Heure murale du centre : « 2026-10-06T09:00 ». */
   debut: string
   fin: string
   grille?: QuotePlan
   regles?: Partial<QuoteRules>
   remise?: QuoteDiscount
-  attendu: {
-    unit: BookableUnit
-    quantity: number
-    netCents: number
-    vatCents: number
-    totalCents: number
-  }
+  /** Le devis attendu, ou la raison pour laquelle le moteur ne chiffre pas : l'accueil chiffre. */
+  attendu:
+    | {
+        unit: BookableUnit
+        quantity: number
+        netCents: number
+        vatCents: number
+        totalCents: number
+      }
+    | { nonChiffre: QuoteFailure }
   /** Question à trancher par l'exploitation, quand le cas en soulève une. */
   question?: string
 }
 
 const SALLE = { id: 'salle-mont-blanc', resourceType: 'salle' as const }
 const POSTE = { id: 'bureau-03-p1', resourceType: 'bureau' as const }
+const CAMION = { id: 'camion-01', resourceType: 'vehicule' as const }
 
 export const casReservations: readonly CasReservation[] = [
   {
@@ -165,12 +173,15 @@ export const casReservations: readonly CasReservation[] = [
   },
   {
     id: 'semaine-grille-reelle',
-    libelle: 'Poste de bureau, du lundi au samedi minuit : 30 demi-journées sans prix à la semaine',
+    libelle:
+      'Poste de bureau, du lundi au samedi minuit, sans prix à la journée ni à la semaine : non chiffré, l’accueil fixe le prix',
     ressource: POSTE,
     debut: '2026-10-05T00:00',
     fin: '2026-10-10T00:00',
-    attendu: { unit: 'half_day', quantity: 30, netCents: 21_000, vatCents: 4_200, totalCents: 25_200 },
-    question: 'Le centre vend-il le poste à la semaine ? Une réservation de plusieurs jours compte ses nuits.',
+    // Avant l'ADR 061 : 30 demi-journées, nuits comprises (210 € HT).
+    attendu: { nonChiffre: 'aucun-tarif' },
+    question:
+      'Le centre vend-il le poste à la journée ou à la semaine ? Sur plusieurs jours, l’heure et la demi-journée ne chiffrent plus : elles feraient payer les nuits (ADR 061).',
   },
   {
     id: 'semaine-hypothese',
@@ -198,6 +209,65 @@ export const casReservations: readonly CasReservation[] = [
     fin: '2026-10-06T13:00',
     remise: { kind: 'amount', cents: 1_500 },
     attendu: { unit: 'half_day', quantity: 1, netCents: 7_500, vatCents: 1_500, totalCents: 9_000 },
+  },
+  // Demandes sur plusieurs jours (ADR 061) : journées de 24 heures entamées,
+  // la semaine dès qu'elle coûte moins cher ; jamais l'heure ni la demi-journée.
+  {
+    id: 'plusieurs-jours',
+    libelle: 'Salle, du lundi 9 h au mercredi 18 h : trois journées, et non 57 heures',
+    ressource: SALLE,
+    debut: '2026-10-05T09:00',
+    fin: '2026-10-07T18:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 3, netCents: 39_000, vatCents: 7_800, totalCents: 46_800 },
+  },
+  {
+    id: 'plusieurs-jours-nuit',
+    libelle: 'Salle, du lundi 14 h au mardi 12 h : 22 heures sur deux jours, une journée',
+    ressource: SALLE,
+    debut: '2026-10-05T14:00',
+    fin: '2026-10-06T12:00',
+    attendu: { unit: 'day', quantity: 1, netCents: 13_000, vatCents: 2_600, totalCents: 15_600 },
+    question:
+      'Pour une salle, faut-il compter les jours du calendrier touchés (deux journées, lundi après-midi et mardi matin) plutôt que les tranches de 24 heures ?',
+  },
+  {
+    id: 'plafond-semaine',
+    libelle: 'Salle, du lundi 9 h au vendredi 18 h : cinq journées (650 €) dépassent la semaine hypothétique de 500 €',
+    ressource: SALLE,
+    debut: '2026-10-05T09:00',
+    fin: '2026-10-09T18:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'week', quantity: 1, netCents: 50_000, vatCents: 10_000, totalCents: 60_000 },
+  },
+  {
+    id: 'au-dela-de-la-semaine',
+    libelle: 'Camion, neuf jours au prix hypothétique de 80 € la journée et 400 € la semaine : neuf journées',
+    ressource: CAMION,
+    debut: '2026-10-03T09:00',
+    fin: '2026-10-12T09:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 9, netCents: 72_000, vatCents: 14_400, totalCents: 86_400 },
+    question:
+      'Au-delà de sept jours, la semaine entamée est due (R08) : neuf jours coûtent neuf journées (720 €) ou deux semaines (800 €), la moins chère. Faut-il plutôt une semaine et deux journées (560 €) ? Ce serait deux lignes sur le devis.',
+  },
+  {
+    id: 'changement-heure-automne',
+    libelle: 'Camion, du samedi 24 au lundi 26 octobre 2026 à 10 h : 49 heures réelles, deux journées',
+    ressource: CAMION,
+    debut: '2026-10-24T10:00',
+    fin: '2026-10-26T10:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 2, netCents: 16_000, vatCents: 3_200, totalCents: 19_200 },
+  },
+  {
+    id: 'changement-heure-printemps',
+    libelle: 'Camion, du samedi 27 au lundi 29 mars 2027 à 10 h : 47 heures réelles, deux journées',
+    ressource: CAMION,
+    debut: '2027-03-27T10:00',
+    fin: '2027-03-29T10:00',
+    grille: GRILLE_AVEC_HYPOTHESES,
+    attendu: { unit: 'day', quantity: 2, netCents: 16_000, vatCents: 3_200, totalCents: 19_200 },
   },
 ]
 

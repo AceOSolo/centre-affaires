@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { availableEnds, availableStarts, fitsFreeRange, publicSelection } from './public-selection.ts'
+import { availableEnds, availableStarts, fitsFreeRange, periodSelection, publicSelection } from './public-selection.ts'
 
 const timeZone = 'Europe/Paris'
 const range = (start: string, end: string) => publicSelection('2026-09-22', start, end, timeZone)!
@@ -29,12 +29,24 @@ describe('choix du créneau public', () => {
     assert.deepEqual(availableStarts(free, range('09:31', '10:00').startsAt), [])
   })
 
-  it('limite les fins à la plage libre et à huit heures', () => {
+  it('limite les fins à la plage libre, et à la durée demandée par l’appelant', () => {
     const free = [range('08:00', '22:00')]
     const ends = availableEnds(free[0].startsAt, free, timeZone)
     assert.equal(ends[0].getTime(), range('08:00', '08:30').endsAt.getTime())
-    assert.equal(ends.at(-1)?.getTime(), range('08:00', '16:00').endsAt.getTime())
+    // Plus de plafond de huit heures (ADR 061) : jusqu'à la fin de la plage.
+    assert.equal(ends.at(-1)?.getTime(), range('08:00', '22:00').endsAt.getTime())
+    assert.equal(availableEnds(free[0].startsAt, free, timeZone, 8 * 60).at(-1)?.getTime(), range('08:00', '16:00').endsAt.getTime())
     assert.equal(availableEnds(range('11:30', '12:00').startsAt, [range('09:00', '12:00')], timeZone).length, 1)
+  })
+
+  it('lit une période sur deux jours, et refuse une fin qui ne suit pas le début', () => {
+    const period = periodSelection('2026-09-22', '09:00', '2026-09-24', '18:00', timeZone)
+    assert.equal(period?.startsAt.toISOString(), '2026-09-22T07:00:00.000Z')
+    assert.equal(period?.endsAt.toISOString(), '2026-09-24T16:00:00.000Z')
+    assert.equal(periodSelection('2026-09-24', '09:00', '2026-09-22', '18:00', timeZone), undefined)
+    assert.equal(periodSelection('2026-09-22', '09:00', '2026-09-31', '18:00', timeZone), undefined)
+    // L'heure sautée au printemps n'existe pas : refusée plutôt que décalée.
+    assert.equal(periodSelection('2027-03-27', '09:00', '2027-03-28', '02:30', timeZone), undefined)
   })
 
   it('convertit les horaires avec le fuseau du centre, été comme hiver', () => {

@@ -4,11 +4,12 @@ import { useActionState, useMemo, useState } from 'react'
 
 import Link from 'next/link'
 
-import { formatTime, toIsoDate, wallClockToUtc } from '../../lib/dates.ts'
+import { formatTime, toIsoDate } from '../../lib/dates.ts'
 import type { Resource } from '../ressources/schema.ts'
 import { moveBookingAction, type FormState } from './actions.ts'
 import type { TimeRange } from './availability.ts'
 import { AvailabilityVerdict, type BusyBooking } from './booking-form.tsx'
+import { adminSelection } from './periode.ts'
 import { WeekCalendar, type CalendarDay } from './week-calendar.tsx'
 
 const fieldClass =
@@ -46,6 +47,7 @@ export function MoveForm({
   origin,
   defaultDate,
   defaultStartTime,
+  defaultEndDate,
   defaultEndTime,
 }: {
   bookingId: string
@@ -60,25 +62,26 @@ export function MoveForm({
   origin: { resourceId: string; resourceName: string; label: string }
   defaultDate: string
   defaultStartTime: string
+  /** Jour de fin : celui du début, sauf réservation sur plusieurs jours (ADR 061). */
+  defaultEndDate: string
   defaultEndTime: string
 }) {
   const [state, formAction, pending] = useActionState<FormState, FormData>(moveBookingAction, null)
   const [date, setDate] = useState(defaultDate)
   const [startTime, setStartTime] = useState(defaultStartTime)
+  const [endDate, setEndDate] = useState(defaultEndDate)
   const [endTime, setEndTime] = useState(defaultEndTime)
 
-  const selection = useMemo<TimeRange | undefined>(() => {
-    if (!date || !startTime || !endTime || endTime <= startTime) return undefined
-    return {
-      startsAt: wallClockToUtc(`${date}T${startTime}`, timeZone),
-      endsAt: wallClockToUtc(`${date}T${endTime}`, timeZone),
-    }
-  }, [date, startTime, endTime, timeZone])
+  const selection = useMemo(
+    () => adminSelection(date, startTime, endDate, endTime, timeZone),
+    [date, startTime, endDate, endTime, timeZone],
+  )
 
   function onSelect(range: TimeRange | undefined) {
     if (!range) return
     setDate(toIsoDate(range.startsAt, timeZone))
     setStartTime(formatTime(range.startsAt, timeZone))
+    setEndDate(toIsoDate(range.endsAt, timeZone))
     setEndTime(formatTime(range.endsAt, timeZone))
   }
 
@@ -88,6 +91,7 @@ export function MoveForm({
     resource.id === origin.resourceId &&
     date === defaultDate &&
     startTime === defaultStartTime &&
+    endDate === defaultEndDate &&
     endTime === defaultEndTime
 
   return (
@@ -128,25 +132,30 @@ export function MoveForm({
           timeZone={timeZone}
         />
 
-        <div>
-          <label className={labelClass} htmlFor="date">
-            Jour
-          </label>
-          <input
-            id="date"
-            name="date"
-            type="date"
-            required
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-            className={`${fieldClass} mt-1`}
-          />
-        </div>
-
+        {/* Début et fin, chacun son jour et son heure (ADR 061). */}
         <div className="grid grid-cols-2 gap-4">
           <div>
+            <label className={labelClass} htmlFor="date">
+              Jour du début
+            </label>
+            <input
+              id="date"
+              name="date"
+              type="date"
+              required
+              value={date}
+              onChange={(event) => {
+                const value = event.target.value
+                // La fin suit le début quand elle était le même jour, ou qu'elle le précéderait.
+                setEndDate((current) => (current === date || current < value ? value : current))
+                setDate(value)
+              }}
+              className={`${fieldClass} mt-1`}
+            />
+          </div>
+          <div>
             <label className={labelClass} htmlFor="startTime">
-              Début
+              Heure du début
             </label>
             <input
               id="startTime"
@@ -158,14 +167,29 @@ export function MoveForm({
               onChange={(event) => {
                 const value = event.target.value
                 setStartTime(value)
-                if (value && value >= endTime) setEndTime(addMinutes(value, 60))
+                if (value && endDate === date && value >= endTime) setEndTime(addMinutes(value, 60))
               }}
               className={`${fieldClass} mt-1 tabular`}
             />
           </div>
           <div>
+            <label className={labelClass} htmlFor="endDate">
+              Jour de fin
+            </label>
+            <input
+              id="endDate"
+              name="endDate"
+              type="date"
+              required
+              min={date}
+              value={endDate}
+              onChange={(event) => setEndDate(event.target.value)}
+              className={`${fieldClass} mt-1`}
+            />
+          </div>
+          <div>
             <label className={labelClass} htmlFor="endTime">
-              Fin
+              Heure de fin
             </label>
             <input
               id="endTime"
