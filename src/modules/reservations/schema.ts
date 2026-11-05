@@ -358,10 +358,6 @@ export type Booking = typeof bookings.$inferSelect
 export type NewBooking = typeof bookings.$inferInsert
 
 /**
- * En sommeil depuis l'ADR 071 : les agendas passent par un lien `.ics` par
- * ressource (`calendar_feeds`), plus par la connexion d'un compte Google. Les
- * trois tables Google restent, sans code qui les lise ni les écrive.
- *
  * Identifiants Google Cloud du centre (ID client OAuth et son code secret),
  * réglés à l'écran des agendas plutôt que dans les variables du serveur
  * (ADR 069).
@@ -427,11 +423,13 @@ export type GoogleCalendarConnection = typeof googleCalendarConnections.$inferSe
 
 /**
  * Agenda Google d'une ressource : celui où s'écrivent ses réservations
- * confirmées (ADR 014).
+ * confirmées (ADR 014). Depuis l'ADR 072, un agenda existant du compte, choisi
+ * à l'écran, ou un agenda créé par l'application ; plusieurs ressources
+ * peuvent partager le même agenda.
  *
- * Créé par l'application dans le compte connecté, qui ne peut écrire que dans
- * les agendas qu'elle a créés. Supprimé avec la connexion : ces agendas
- * appartiennent à ce compte, un autre compte ne pourrait pas y écrire.
+ * Supprimé avec la connexion : ces agendas appartiennent à ce compte, un autre
+ * compte ne pourrait pas y écrire. Une reconnexion du même compte garde les
+ * liaisons.
  */
 export const resourceGoogleCalendars = mysqlTable(
   'resource_google_calendars',
@@ -465,6 +463,10 @@ export const resourceGoogleCalendars = mysqlTable(
 export type ResourceGoogleCalendar = typeof resourceGoogleCalendars.$inferSelect
 
 /**
+ * En sommeil depuis l'ADR 072 : les réservations s'écrivent dans les agendas
+ * Google existants des salles, le lien `.ics` est retiré. La table reste, sans
+ * code qui la lise ni l'écrive ; une migration la supprimera.
+ *
  * Lien d'agenda d'une ressource (ADR 071) : l'adresse `.ics` à laquelle Google
  * Agenda, Apple Calendrier ou Outlook s'abonnent.
  *

@@ -171,7 +171,7 @@ Un fichier nginx qui a changé se réinstalle ensuite comme en section 7
 `APP_DATABASE_URL`, `NEON_AUTH_*` et `AWS_*` ne sont plus lues : les retirer.
 Reprendre telles quelles celles qui existent toujours (`APP_URL`,
 `DOCUMENTS_ENCRYPTION_KEY` et sa version, `SECRETS_ENCRYPTION_KEY`,
-`MAINTENANCE_TOKEN`, `SMTP_*`, `MAIL_FROM`), créer les nouvelles
+`MAINTENANCE_TOKEN`, `GOOGLE_*`, `SMTP_*`, `MAIL_FROM`), créer les nouvelles
 (`DB_*`, `AUTH_SECRET`, `S3_*`) comme en section 3. `PORT_LOCAL=3100`, s'il y
 figure, peut rester : c'est la valeur par défaut. La base MySQL part vide,
 rien n'est repris de Neon (ADR 042) : si des données réelles ont été saisies

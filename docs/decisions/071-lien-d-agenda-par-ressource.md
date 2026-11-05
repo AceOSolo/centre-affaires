@@ -1,9 +1,10 @@
 # ADR 071 — Un lien d'agenda par ressource, à la place de la connexion Google
 
 **Date** : 2026-11-05
-**Statut** : accepté — remplace l'ADR 014 (agenda Google écrit par
-l'application) et l'ADR 069 (identifiants Google Cloud à l'écran) ; amende
-l'ADR 064 (l'agenda du camion dans Dolibarr passe par le lien) ; migration 0016
+**Statut** : remplacé par l'ADR 072 le même jour (écriture directe dans les
+agendas Google existants des salles) ; le lien est retiré, la table
+`calendar_feeds` (migration 0016) reste en sommeil. Remplaçait l'ADR 014 et
+l'ADR 069, et amendait l'ADR 064
 
 ## Contexte
 

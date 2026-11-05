@@ -1,9 +1,8 @@
 # ADR 069 — Identifiants Google Agenda réglés à l'écran, par centre
 
 **Date** : 2026-11-05
-**Statut** : remplacé par l'ADR 071 le même jour (lien d'agenda par ressource,
-connexion Google retirée) ; table `google_oauth_clients` en sommeil. Amendait
-l'ADR 014 (« Mise en place », point 4 :
+**Statut** : accepté — remplacé un temps par l'ADR 071, rétabli par l'ADR 072
+le même jour ; amende l'ADR 014 (« Mise en place », point 4 :
 `GOOGLE_CLIENT_ID` et `GOOGLE_CLIENT_SECRET` ne sont plus nécessaires sur le
 serveur), sur le modèle de l'ADR 065 (réglage par centre, ancienne variable
 acceptée tant que rien n'est réglé à l'écran)

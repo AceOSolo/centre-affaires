@@ -5,8 +5,8 @@
 l'ADR 014 (un agenda Google par ressource) ; lot 8 de la recette du 04/11/2026
 (`docs/recette/2026-11-04.md`) ; « tout ouvert par défaut » et le cookie
 `menu_plie` amendés par l'ADR 067 (rayons pliés par défaut, cookie
-`menu_ouvert`) ; l'agenda du camion dans Dolibarr passe par le lien d'agenda
-de l'ADR 071, le code d'intégration Google est retiré
+`menu_ouvert`) ; le code d'intégration vaut aussi pour un agenda existant du
+compte, relié à une ressource (ADR 072)
 
 ## Contexte
 

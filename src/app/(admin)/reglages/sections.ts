@@ -45,8 +45,8 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
       },
       {
         href: '/ressources/agendas',
-        label: 'Agendas',
-        description: 'Le lien d’agenda de chaque ressource, à ajouter à Google Agenda, Apple Calendrier ou Outlook.',
+        label: 'Agendas Google',
+        description: 'Le planning de chaque ressource recopié dans un agenda Google.',
         permission: 'agenda-google.gerer',
       },
       {
