@@ -1,7 +1,9 @@
 # ADR 014 — Un agenda Google par ressource
 
 **Date** : 2026-09-30
-**Statut** : proposé — le compromis RGPD ci-dessous est à valider
+**Statut** : proposé — le compromis RGPD ci-dessous est à valider ; « Mise en
+place » amendée par l'ADR 069 (identifiants Google Cloud collés à l'écran,
+par centre)
 
 ## Contexte
 
@@ -151,10 +153,12 @@ production) :
 3. Identifiants > ID client OAuth, type **Application Web**, URI de
    redirection autorisée : `APP_URL` suivi de `/ressources/agendas/retour`,
    par exemple `https://reservations.exemple.fr/ressources/agendas/retour`.
-4. Renseigner `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `APP_URL` et
-   `SECRETS_ENCRYPTION_KEY` (`openssl rand -base64 32`, différente par
-   environnement). Tant qu'il en manque une, l'espace des agendas dit que
-   l'intégration n'est pas configurée.
+4. Coller l'ID client et le code secret dans l'espace des agendas, qui
+   connecte le compte dans la foulée (ADR 069). Le serveur n'a besoin que
+   d'`APP_URL` et de `SECRETS_ENCRYPTION_KEY` (`openssl rand -base64 32`,
+   différente par environnement) ; `GOOGLE_CLIENT_ID` et
+   `GOOGLE_CLIENT_SECRET` n'y sont plus qu'un repli, tant que rien n'est réglé
+   à l'écran.
 
 ## Conséquences
 

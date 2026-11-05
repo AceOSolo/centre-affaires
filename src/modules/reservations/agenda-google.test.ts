@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { describe, it } from 'node:test'
+import { describe, it, mock } from 'node:test'
 
 import {
   GOOGLE_SCOPES,
@@ -9,10 +9,13 @@ import {
   calendarEmbedUrl,
   calendarEventFor,
   calendarOperationsFor,
+  checkGoogleClient,
   emailFromIdToken,
   googleConfig,
   googleEventId,
   hasCalendarScope,
+  isGoogleClientId,
+  isGoogleClientSecret,
   pkceChallenge,
 } from './agenda-google.ts'
 
@@ -210,5 +213,81 @@ describe('Google Agenda : connexion', () => {
     assert.equal(emailFromIdToken(token({ email: 'x@y.fr', email_verified: false })), undefined)
     assert.equal(emailFromIdToken('illisible'), undefined)
     assert.equal(emailFromIdToken(undefined), undefined)
+  })
+})
+
+describe('Google Agenda : identifiants réglés à l’écran (ADR 069)', () => {
+  const serveur = { APP_URL: 'https://centre.exemple.fr', SECRETS_ENCRYPTION_KEY: 'clé' }
+  const ecran = { clientId: '123-abc.apps.googleusercontent.com', clientSecret: 'GOCSPX-ecran' }
+
+  it('prend les identifiants de l’écran plutôt que ceux du serveur', () => {
+    const avecLesDeux = googleConfig(
+      { ...serveur, GOOGLE_CLIENT_ID: 'serveur.apps.googleusercontent.com', GOOGLE_CLIENT_SECRET: 'serveur' },
+      ecran,
+    )
+    assert.equal(avecLesDeux?.clientId, ecran.clientId)
+    assert.equal(avecLesDeux?.clientSecret, ecran.clientSecret)
+    assert.equal(avecLesDeux?.redirectUri, 'https://centre.exemple.fr/ressources/agendas/retour')
+  })
+
+  it('n’a besoin d’aucune variable GOOGLE_* sur le serveur', () => {
+    assert.ok(googleConfig(serveur, ecran))
+    assert.equal(googleConfig(serveur), undefined)
+  })
+
+  it('garde l’adresse du site et la clé de chiffrement comme réglages du serveur', () => {
+    assert.equal(googleConfig({ APP_URL: serveur.APP_URL }, ecran), undefined)
+    assert.equal(googleConfig({ SECRETS_ENCRYPTION_KEY: 'clé' }, ecran), undefined)
+  })
+
+  it('reconnaît un ID client copié de Google Cloud, et refuse un collage incomplet', () => {
+    assert.ok(isGoogleClientId('1234567890-abcdefghijklmnop0123456789abcdef.apps.googleusercontent.com'))
+    assert.equal(isGoogleClientId('1234567890-abcdefghijklmnop'), false)
+    assert.equal(isGoogleClientId('1234 5678.apps.googleusercontent.com'), false)
+    assert.equal(isGoogleClientId('.apps.googleusercontent.com'), false)
+    assert.equal(isGoogleClientId(`${'a'.repeat(250)}.apps.googleusercontent.com`), false)
+  })
+
+  it('reconnaît un code secret d’un seul mot', () => {
+    assert.ok(isGoogleClientSecret('GOCSPX-AbCdEf_123456-xyz'))
+    assert.equal(isGoogleClientSecret('court'), false)
+    assert.equal(isGoogleClientSecret('GOCSPX AbCdEf'), false)
+  })
+
+  describe('vérification auprès de Google', () => {
+    const repondre = (status: number, body: unknown) =>
+      mock.method(globalThis, 'fetch', async () =>
+        new Response(typeof body === 'string' ? body : JSON.stringify(body), { status }),
+      )
+
+    it('refuse un ID client ou un code secret que Google ne reconnaît pas', async (t) => {
+      t.after(() => mock.restoreAll())
+      repondre(401, { error: 'invalid_client', error_description: 'Unauthorized' })
+      assert.equal(await checkGoogleClient(config), 'refuse')
+    })
+
+    it('accepte des identifiants que Google reconnaît, le faux code seul étant refusé', async (t) => {
+      t.after(() => mock.restoreAll())
+      const fetch = repondre(400, { error: 'invalid_grant', error_description: 'Malformed auth code.' })
+      assert.equal(await checkGoogleClient(config), 'accepte')
+
+      const [url, init] = fetch.mock.calls[0]!.arguments as [string, RequestInit]
+      assert.equal(url, 'https://oauth2.googleapis.com/token')
+      const body = new URLSearchParams(String(init.body))
+      assert.equal(body.get('client_id'), config.clientId)
+      assert.equal(body.get('client_secret'), config.clientSecret)
+      assert.equal(body.get('grant_type'), 'authorization_code')
+    })
+
+    it('ne bloque pas quand Google ne répond pas ou répond autre chose', async (t) => {
+      t.after(() => mock.restoreAll())
+      repondre(503, 'Service Unavailable')
+      assert.equal(await checkGoogleClient(config), 'inconnu')
+      mock.restoreAll()
+      mock.method(globalThis, 'fetch', async () => {
+        throw new TypeError('fetch failed')
+      })
+      assert.equal(await checkGoogleClient(config), 'inconnu')
+    })
   })
 })

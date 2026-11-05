@@ -358,6 +358,32 @@ export type Booking = typeof bookings.$inferSelect
 export type NewBooking = typeof bookings.$inferInsert
 
 /**
+ * Identifiants Google Cloud du centre (ID client OAuth et son code secret),
+ * réglés à l'écran des agendas plutôt que dans les variables du serveur
+ * (ADR 069).
+ *
+ * Une ligne au plus par centre. Elle survit à la déconnexion du compte Google :
+ * c'est l'application déclarée chez Google, pas l'accès d'un compte. Le code
+ * secret est chiffré comme le jeton (`sealSecret`) et jamais réaffiché.
+ */
+export const googleOAuthClients = mysqlTable(
+  'google_oauth_clients',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    clientId: varchar('client_id', { length: 255 }).notNull(),
+    clientSecretSealed: text('client_secret_sealed').notNull(),
+    updatedBy: char('updated_by', { length: 36 })
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: 'restrict' }),
+    ...timestamps(),
+  },
+  (table) => [uniqueIndex('google_oauth_clients_tenant_key').on(table.tenantId)],
+)
+
+export type GoogleOAuthClient = typeof googleOAuthClients.$inferSelect
+
+/**
  * Compte Google du centre, dans lequel l'application crée un agenda par
  * ressource (ADR 014).
  *

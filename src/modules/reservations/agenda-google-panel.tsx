@@ -5,6 +5,7 @@ import { formatDateTime } from '../../lib/dates.ts'
 import { resourceTypeLabels } from '../ressources/labels.ts'
 import { calendarEmbedCode } from './agenda-google.ts'
 import { CopyField } from './agenda-google-copie.tsx'
+import { GoogleClientForm } from './agenda-google-identifiants.tsx'
 import {
   connectGoogleCalendarAction,
   createResourceCalendarsAction,
@@ -14,6 +15,7 @@ import {
 import type {
   ConnectionOutcome,
   GoogleCalendarStatus,
+  GoogleClientStatus,
   ResourceCalendarLink,
 } from './agenda-google-queries.ts'
 import { SubmitButton } from './submit-button.tsx'
@@ -43,9 +45,12 @@ const accountOutcomes: Record<ConnectionOutcome, Flash> = {
   expire: { failed: true, text: 'La demande de connexion a expiré. Recommencez.' },
   erreur: {
     failed: true,
-    text: 'La connexion à Google a échoué. Recommencez ; si l’échec persiste, vérifiez le projet Google Cloud (ADR 014).',
+    text: 'La connexion à Google a échoué. Recommencez ; si l’échec persiste, vérifiez les identifiants Google Cloud ci-dessous et l’URI de redirection déclarée chez Google.',
   },
-  'non-configure': { failed: true, text: 'Google Agenda n’est pas configuré sur ce serveur.' },
+  'non-configure': {
+    failed: true,
+    text: 'Google Agenda n’est pas encore réglé : renseignez les identifiants Google Cloud ci-dessous.',
+  },
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n > 1 ? 's' : ''}`
@@ -158,8 +163,8 @@ export function GoogleAccountPanel({
           ) : !configured ? (
             <p className="mt-1 text-sm text-muted-foreground">
               {isAdmin
-                ? 'Non configuré sur ce serveur : renseigner GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, SECRETS_ENCRYPTION_KEY et APP_URL (ADR 014).'
-                : 'Google Agenda n’est pas configuré sur ce serveur.'}
+                ? 'Aucun compte connecté. Renseignez d’abord les identifiants Google Cloud du centre, ci-dessous : le compte se connecte dans la foulée.'
+                : 'Google Agenda n’est pas encore réglé. Un administrateur peut le faire.'}
             </p>
           ) : (
             <p className="mt-1 text-sm text-muted-foreground">
@@ -201,6 +206,84 @@ export function GoogleAccountPanel({
           </div>
         </details>
       )}
+    </section>
+  )
+}
+
+/**
+ * Identifiants Google Cloud du centre (ADR 069), sous le compte tant qu'aucun
+ * n'est connecté. À régler, le bloc est ouvert ; déjà réglés, il est replié,
+ * pour changer de projet Google Cloud.
+ */
+export function GoogleClientSetup({
+  client,
+  configured,
+  encryptionReady,
+  redirectUri,
+  timeZone,
+}: {
+  client: GoogleClientStatus
+  /** Identifiants utilisables : le bouton « Connecter » est déjà là. */
+  configured: boolean
+  encryptionReady: boolean
+  redirectUri: string
+  timeZone: string
+}) {
+  if (!encryptionReady) {
+    return (
+      <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 px-5 py-4 text-sm text-destructive">
+        Le serveur n’a pas de clé de chiffrement (SECRETS_ENCRYPTION_KEY) : ni le code secret de
+        Google ni l’accès au compte ne peuvent y être gardés. Elle se pose une fois, par la personne
+        qui installe le serveur (infra/serveur/README.md).
+      </p>
+    )
+  }
+
+  if (configured && client.source !== 'aucune') {
+    return (
+      <details className="rounded-lg border border-border bg-white">
+        <summary className={`cursor-pointer rounded-lg px-5 py-3 text-sm font-medium ${focus}`}>
+          Identifiants Google Cloud{' '}
+          <span className="break-all font-normal text-muted-foreground">
+            — ID client {client.clientId}
+            {client.source === 'ecran'
+              ? `, enregistré le ${formatDateTime(client.updatedAt, timeZone)}`
+              : ', réglé sur le serveur'}
+          </span>
+        </summary>
+        <div className="border-t border-border px-5 py-4">
+          <p className="mb-4 max-w-3xl text-sm text-muted-foreground">
+            Pour changer de projet Google Cloud. Le compte se connecte avec les nouveaux identifiants
+            dès qu’ils sont enregistrés.
+          </p>
+          <GoogleClientForm redirectUri={redirectUri} />
+        </div>
+      </details>
+    )
+  }
+
+  return (
+    <section
+      aria-labelledby="identifiants-google-titre"
+      className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4"
+    >
+      <div>
+        <h2 id="identifiants-google-titre" className="text-sm font-semibold">
+          Identifiants Google Cloud
+        </h2>
+        <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+          Google ne laisse un site écrire dans un agenda que s’il y est déclaré. C’est à faire une
+          seule fois pour le centre, en quelques minutes ; ensuite, le compte se connecte d’un clic.
+        </p>
+        {client.source === 'ecran' && !client.readable && (
+          <p className="mt-2 text-sm text-destructive">
+            <span className="font-medium">Code secret illisible</span> : celui enregistré le{' '}
+            {formatDateTime(client.updatedAt, timeZone)} ne se lit plus avec la clé de ce serveur.
+            Collez-le de nouveau.
+          </p>
+        )}
+      </div>
+      <GoogleClientForm redirectUri={redirectUri} />
     </section>
   )
 }

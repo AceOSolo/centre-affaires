@@ -22,6 +22,7 @@ import {
   removeEvent,
   revokeToken,
   writeEvent,
+  type GoogleClient,
   type GoogleConfig,
 } from './agenda-google.ts'
 import { listBookingSeries } from './bulk-queries.ts'
@@ -29,9 +30,88 @@ import { findBooking, type BookingWithResource } from './queries.ts'
 import {
   bookings,
   googleCalendarConnections,
+  googleOAuthClients,
   resourceGoogleCalendars,
   type GoogleCalendarConnection,
 } from './schema.ts'
+
+/* ------------------------------------------------------------------------ */
+/* Identifiants Google Cloud du centre (ADR 069)                            */
+/* ------------------------------------------------------------------------ */
+
+async function findOAuthClient() {
+  const [client] = await withTenant(currentTenantId(), (tx) =>
+    tx
+      .select()
+      .from(googleOAuthClients)
+      .where(eq(googleOAuthClients.tenantId, currentTenantId()))
+      .limit(1),
+  )
+  return client
+}
+
+/**
+ * D'où viennent les identifiants du centre, pour l'écran. L'ID client n'est pas
+ * un secret — il figure dans l'adresse de la page de consentement ; le code
+ * secret n'est jamais relu pour l'affichage, seulement éprouvé.
+ */
+export type GoogleClientStatus =
+  | { source: 'ecran'; clientId: string; updatedAt: Date; readable: boolean }
+  | { source: 'serveur'; clientId: string }
+  | { source: 'aucune' }
+
+export async function googleClientStatus(): Promise<GoogleClientStatus> {
+  const client = await findOAuthClient()
+  if (client) {
+    return {
+      source: 'ecran',
+      clientId: client.clientId,
+      updatedAt: client.updatedAt,
+      readable: readSecret(client.clientSecretSealed) !== undefined,
+    }
+  }
+  const fromEnv = googleConfig()
+  return fromEnv ? { source: 'serveur', clientId: fromEnv.clientId } : { source: 'aucune' }
+}
+
+/** Le secret en clair, ou `undefined` s'il a été chiffré par une autre clé de serveur. */
+function readSecret(sealed: string): string | undefined {
+  try {
+    return openSecret(sealed)
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * La configuration du centre courant. Les identifiants réglés à l'écran
+ * l'emportent ; illisibles, ils ne laissent pas la place à ceux du serveur :
+ * l'écran demande de les ressaisir.
+ */
+export async function loadGoogleConfig(): Promise<GoogleConfig | undefined> {
+  const client = await findOAuthClient()
+  if (!client) return googleConfig()
+  const clientSecret = readSecret(client.clientSecretSealed)
+  return clientSecret ? googleConfig(process.env, { clientId: client.clientId, clientSecret }) : undefined
+}
+
+const MISSING_CLIENT =
+  'Identifiants Google Cloud absents ou illisibles avec la clé de ce serveur : ressaisissez-les dans l’espace des agendas.'
+
+/** Enregistre (ou remplace) les identifiants du centre, le code secret chiffré. */
+export async function saveGoogleClient(client: GoogleClient, staffMemberId: string): Promise<void> {
+  const values = {
+    clientId: client.clientId,
+    clientSecretSealed: sealSecret(client.clientSecret),
+    updatedBy: staffMemberId,
+  }
+  await withTenant(currentTenantId(), (tx) =>
+    tx
+      .insert(googleOAuthClients)
+      .values(values)
+      .onDuplicateKeyUpdate({ set: values }),
+  )
+}
 
 /* ------------------------------------------------------------------------ */
 /* Compte Google du centre (ADR 014)                                        */
@@ -92,7 +172,7 @@ export async function completeGoogleCalendarConnection(
   pending: string | undefined,
   staffMemberId: string,
 ): Promise<ConnectionOutcome> {
-  const config = googleConfig()
+  const config = await loadGoogleConfig()
   if (!config) return 'non-configure'
   // `access_denied` : la personne a refusé sur l'écran de Google.
   if (params.get('error')) return 'refuse'
@@ -191,8 +271,12 @@ export async function createResourceCalendars(
   resourceIds: string[],
 ): Promise<{ created: string[]; failed: number }> {
   const connection = await findConnection()
-  const config = googleConfig()
-  if (!connection || !config || !resourceIds.length) return { created: [], failed: 0 }
+  if (!connection || !resourceIds.length) return { created: [], failed: 0 }
+  const config = await loadGoogleConfig()
+  if (!config) {
+    await recordOutcome(connection.id, 0, [MISSING_CLIENT])
+    return { created: [], failed: resourceIds.length }
+  }
 
   const pending = await withTenant(currentTenantId(), (tx) =>
     tx
@@ -369,11 +453,11 @@ async function sync(load: () => Promise<SyncItem[]>): Promise<void> {
     if (!work.length) return
 
     const { timezone: timeZone } = await currentTenant()
-    const config = googleConfig()
+    const config = await loadGoogleConfig()
     let accessToken: string
     try {
       if (!config) {
-        throw new GoogleCalendarError("Google Agenda n'est plus configuré sur ce serveur (ADR 014).")
+        throw new GoogleCalendarError(MISSING_CLIENT)
       }
       accessToken = await accessTokenFor(connection, config)
     } catch (error) {

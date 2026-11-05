@@ -1,34 +1,50 @@
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
+import { parseKey } from '../../../../lib/chiffrement.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
-import { googleConfig } from '../../../../modules/reservations/agenda-google.ts'
+import { googleRedirectUri } from '../../../../modules/reservations/agenda-google.ts'
 import {
   FlashMessage,
   GoogleAccountPanel,
+  GoogleClientSetup,
   ResourceCalendarsEmbed,
   ResourceCalendarsTable,
   flashFor,
 } from '../../../../modules/reservations/agenda-google-panel.tsx'
 import {
   googleCalendarStatus,
+  googleClientStatus,
   listResourceCalendarLinks,
+  loadGoogleConfig,
 } from '../../../../modules/reservations/agenda-google-queries.ts'
+
+function encryptionReady(): boolean {
+  try {
+    parseKey(process.env.SECRETS_ENCRYPTION_KEY)
+    return true
+  } catch {
+    return false
+  }
+}
 
 export const metadata = { title: 'Agendas Google' }
 
 /**
  * Espace des agendas Google (ADR 014) : un compte Google pour le centre, un
- * agenda par ressource, où s'écrivent ses réservations confirmées.
+ * agenda par ressource, où s'écrivent ses réservations confirmées. Les
+ * identifiants Google Cloud du centre s'y règlent aussi (ADR 069).
  */
 export default async function AgendasPage({
   searchParams,
 }: {
   searchParams: Promise<{ compte?: string; agendas?: string; n?: string; echecs?: string }>
 }) {
-  const [{ member }, timeZone, status, links, params] = await Promise.all([
+  const [{ member }, timeZone, status, client, config, links, params] = await Promise.all([
     requirePermission('agenda-google.gerer'),
     currentTimeZone(),
     googleCalendarStatus(),
+    googleClientStatus(),
+    loadGoogleConfig(),
     listResourceCalendarLinks(),
     searchParams,
   ])
@@ -53,9 +69,20 @@ export default async function AgendasPage({
       <GoogleAccountPanel
         status={status}
         isAdmin={isAdmin}
-        configured={googleConfig() !== undefined}
+        configured={config !== undefined}
         timeZone={timeZone}
       />
+
+      {/* Un compte connecté garde les identifiants avec lesquels il l'a été. */}
+      {isAdmin && !status && (
+        <GoogleClientSetup
+          client={client}
+          configured={config !== undefined}
+          encryptionReady={encryptionReady()}
+          redirectUri={googleRedirectUri(process.env.APP_URL ?? 'http://localhost:3000')}
+          timeZone={timeZone}
+        />
+      )}
 
       <section aria-labelledby="agendas-ressources-titre" className="flex flex-col gap-3">
         <div>

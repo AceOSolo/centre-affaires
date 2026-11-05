@@ -33,24 +33,49 @@ const TOKEN_URL = 'https://oauth2.googleapis.com/token'
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke'
 const CALENDAR_API = 'https://www.googleapis.com/calendar/v3'
 
-export type GoogleConfig = {
-  clientId: string
-  clientSecret: string
+/** Le client OAuth déclaré par le centre dans Google Cloud (ADR 069). */
+export type GoogleClient = { clientId: string; clientSecret: string }
+
+export type GoogleConfig = GoogleClient & {
   appUrl: string
   redirectUri: string
 }
 
 /**
- * Configuration du serveur, ou `undefined` s'il en manque une pièce : l'écran
- * dit alors que l'intégration n'est pas configurée au lieu de proposer un
- * bouton qui échouerait chez Google.
+ * Configuration complète, ou `undefined` s'il en manque une pièce : l'écran
+ * demande alors les identifiants au lieu de proposer un bouton qui échouerait
+ * chez Google.
+ *
+ * L'ID client et son code secret viennent de l'espace des agendas (`client`,
+ * ADR 069), à défaut des variables du serveur `GOOGLE_CLIENT_*`, comme avant
+ * l'écran. L'adresse du site et la clé de chiffrement restent des réglages du
+ * serveur : la première sert déjà à la connexion de l'équipe, la seconde
+ * protège les secrets gardés en base.
  */
 export function googleConfig(
   env: Record<string, string | undefined> = process.env,
+  client?: GoogleClient,
 ): GoogleConfig | undefined {
-  const { GOOGLE_CLIENT_ID: clientId, GOOGLE_CLIENT_SECRET: clientSecret, APP_URL: appUrl } = env
+  const clientId = client ? client.clientId : env.GOOGLE_CLIENT_ID
+  const clientSecret = client ? client.clientSecret : env.GOOGLE_CLIENT_SECRET
+  const appUrl = env.APP_URL
   if (!clientId || !clientSecret || !appUrl || !env.SECRETS_ENCRYPTION_KEY) return undefined
-  return { clientId, clientSecret, appUrl, redirectUri: new URL(CALLBACK_PATH, appUrl).toString() }
+  return { clientId, clientSecret, appUrl, redirectUri: googleRedirectUri(appUrl) }
+}
+
+/** L'URI de redirection à déclarer, à l'identique, dans le client OAuth de Google Cloud. */
+export function googleRedirectUri(appUrl: string): string {
+  return new URL(CALLBACK_PATH, appUrl).toString()
+}
+
+/** L'ID client tel que Google Cloud le donne : `123…-abc….apps.googleusercontent.com`. */
+export function isGoogleClientId(value: string): boolean {
+  return value.length <= 255 && /^[\w-]+\.apps\.googleusercontent\.com$/.test(value)
+}
+
+/** Le code secret du client : un seul mot, sans espace (`GOCSPX-…` aujourd'hui). */
+export function isGoogleClientSecret(value: string): boolean {
+  return /^[\x21-\x7e]{8,255}$/.test(value)
 }
 
 /** PKCE (RFC 7636) : un code intercepté au retour ne s'échange pas sans le vérificateur. */
@@ -343,6 +368,49 @@ export function exchangeCode(
     client_secret: config.clientSecret,
     redirect_uri: config.redirectUri,
   })
+}
+
+/**
+ * Ce que Google dit d'un ID client et de son code secret : `refuse` s'il ne
+ * les reconnaît pas, `inconnu` s'il n'a pas pu répondre.
+ */
+export type ClientCheck = 'accepte' | 'refuse' | 'inconnu'
+
+/**
+ * Éprouve l'ID client et le code secret avant d'envoyer l'administrateur chez
+ * Google. Sans cela, un code secret mal collé ne se verrait qu'au retour, par
+ * un échec sans explication : la page de consentement ne le lit pas.
+ *
+ * Google n'a pas de point d'entrée pour cela. On lui présente un code
+ * d'autorisation volontairement faux : il authentifie le client avant de lire
+ * le code, et répond `invalid_client` si l'ID ou le secret est faux,
+ * `invalid_grant` (code refusé) s'ils sont bons.
+ */
+export async function checkGoogleClient(config: GoogleConfig): Promise<ClientCheck> {
+  let response: Response
+  try {
+    response = await call(TOKEN_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code: 'verification-des-identifiants',
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: config.redirectUri,
+      }),
+    })
+  } catch {
+    return 'inconnu'
+  }
+  let code: unknown
+  try {
+    code = ((await response.json()) as { error?: unknown }).error
+  } catch {
+    // Corps illisible : rien ne dit que les identifiants sont faux.
+  }
+  if (code === 'invalid_client') return 'refuse'
+  return code === 'invalid_grant' ? 'accepte' : 'inconnu'
 }
 
 /** Jeton d'accès d'une heure, redemandé à chaque écriture : elles se comptent en unités par jour. */

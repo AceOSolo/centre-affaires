@@ -28,7 +28,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 012 | [Les horaires sont portés par la ressource](012-horaires-portes-par-la-ressource.md) | 2026-09-18 | accepté |
 | 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** ; Apache remplacé par nginx et port local 3100 (ADR 051) ; job de déploiement retiré de la CI le 15/10/2026, mise en ligne manuelle |
 | 013 | [Séries et délais de réservation](013-series-et-delais-de-reservation.md) | 2026-09-21 | accepté — **numéro en double** |
-| 014 | [Un agenda Google par ressource](014-agendas-google-par-ressource.md) | 2026-09-30 | **proposé** : le compromis RGPD est à valider |
+| 014 | [Un agenda Google par ressource](014-agendas-google-par-ressource.md) | 2026-09-30 | **proposé** : le compromis RGPD est à valider ; mise en place amendée par l'ADR 069 (identifiants Google Cloud à l'écran) |
 | 015 | [Espace client, courrier et réservations des entreprises clientes](015-compte-client-et-courrier.md) | 2026-09-30 | accepté ; inscription libre par l'ADR 045 (fiche client créée à l'inscription) |
 | 016 | [Tout le cahier des charges DOMOTOP entre dans le périmètre](016-perimetre-du-cahier-des-charges.md) | 2026-10-01 | accepté |
 | 017 | [Planning : semaine toutes ressources, vue mois et filtres](017-planning-toutes-ressources-et-vue-mois.md) | 2026-10-01 | accepté ; amende l'ADR 011 |
@@ -82,6 +82,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 065 | [Connexion au CRM réglée par centre, depuis le back-office](065-connexion-au-crm-par-centre.md) | 2026-11-04 | accepté ; amende les ADR 043 § 5 et 049 § 2 (jeton réglé à l'écran par centre, `DOLIBARR_API_TOKEN` accepté tant qu'aucun ne l'est) et 046 § 2 (clé d'appel du CRM, chiffrée) ; complète l'ADR 054 (`crm.gerer`, direction) ; module `crm/`, interface de connecteur, flux de la seconde tranche prévus et coupés ; migration 0008 |
 | 066 | [Seconde tranche Dolibarr : tiers, contrats et consommations facturables](066-seconde-tranche-dolibarr-tiers-contrats-consommations.md) | 2026-11-04 | accepté ; lot 10 de la recette du 04/11 ; seconde tranche de l'ADR 046 § 5 côté site, sur le connecteur de l'ADR 065 : tiers reçus et rapprochés (identifiant Dolibarr, SIRET puis SIREN au premier rapprochement), contrats reçus pour l'occupation, consommations facturables exposées avec accusé de réception ; amende l'ADR 046 § 2 (référence Dolibarr gardée, `crm_links`) et l'ADR 025 (prix d'un contrat du CRM suivi hors avenant) ; le site ne facture rien ; migration 0009 |
 | 067 | [Rayons du menu pliés par défaut](067-rayons-du-menu-plies-par-defaut.md) | 2026-11-04 | accepté ; amende l'ADR 064 : tout rayon pliable est plié tant qu'on ne l'a pas ouvert, le rayon de la page en cours reste ouvert ; cookie `menu_ouvert` (rayons ouverts) à la place de `menu_plie` ; sans migration |
+| 069 | [Identifiants Google Agenda réglés à l'écran, par centre](069-identifiants-google-agenda-a-l-ecran.md) | 2026-11-05 | accepté ; amende l'ADR 014 (« Mise en place ») : l'ID client et le code secret Google Cloud se collent dans l'espace des agendas, éprouvés auprès de Google, puis le compte se connecte du même clic ; code secret chiffré, table `google_oauth_clients` par centre ; `GOOGLE_CLIENT_*` du serveur gardés en repli ; migration 0014 |
 
 ## Numéros en double et numéro manquant
 
@@ -129,7 +130,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **068** (057 à 066 pris par les dix lots de la recette du 04/11, `docs/recette/2026-11-04.md` ; 067 par les rayons du menu pliés par défaut).
+   `ListAgents`. Le prochain numéro libre est **070** (057 à 066 pris par les dix lots de la recette du 04/11, `docs/recette/2026-11-04.md` ; 067 par les rayons du menu pliés par défaut ; 068 par les comptes et invitations ; 069 par les identifiants Google Agenda à l'écran).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).
