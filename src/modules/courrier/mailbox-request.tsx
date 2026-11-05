@@ -42,7 +42,7 @@ export function MailboxRequest({
             aria-describedby={announcementId}
             className="press inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
           >
-            {pending ? 'Envoi de la demande…' : 'Demander l’ouverture et la numérisation'}
+            {pending ? 'Envoi de la demande…' : 'Demander l’ouverture'}
           </button>
           <p id={announcementId} className="max-w-prose text-xs text-muted-foreground">
             {announcement}

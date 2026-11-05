@@ -438,8 +438,9 @@ function MailCard({
   const options = clientRequestOptions({ ...item, forwarded: item.forwardedAt !== null })
   const pendingOpening = item.pendingRequests.find((request) => request.kind === 'open_and_scan')
   const otherPending = item.pendingRequests.filter((request) => request.kind !== 'open_and_scan')
-  const linkLabel = options.scan || options.forward ? 'Numériser, réexpédier, suivre' : 'Détails et suivi'
+  const opening = options.open_and_scan || pendingOpening?.status === 'requested'
   const unread = item.classification.readAt === null
+  const sender = item.sender ?? 'Expéditeur non précisé'
 
   return (
     <article aria-labelledby={`pli-${item.id}`} className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 sm:p-5">
@@ -493,8 +494,16 @@ function MailCard({
             </span>
             {showClient && <span className="text-muted-foreground">· {item.clientName}</span>}
           </div>
-          <h2 id={`pli-${item.id}`} className={`mt-1 truncate text-base ${unread ? 'font-bold' : 'font-semibold'}`}>
-            {item.sender ?? 'Expéditeur non précisé'}
+          <h2 id={`pli-${item.id}`} className={`mt-1 text-base ${unread ? 'font-bold' : 'font-semibold'}`}>
+            {/* La fiche du pli (numérisations, classement, suivi) s'ouvre par
+                son expéditeur. Cible de 44 px, les marges négatives gardent la
+                hauteur de la ligne. */}
+            <Link
+              href={`/compte/courrier/${item.id}`}
+              className="relative -my-2.5 flex min-h-11 items-center underline-offset-2 hover:underline"
+            >
+              <span className="truncate">{sender}</span>
+            </Link>
           </h2>
           <p className="text-sm text-muted-foreground tabular">Reçu le {formatDateTime(item.receivedAt, timeZone)}</p>
           {(category || item.classification.tags.length > 0) && (
@@ -534,35 +543,40 @@ function MailCard({
 
       {item.note && <p className="whitespace-pre-line rounded-md bg-muted px-3 py-2 text-sm">{item.note}</p>}
 
-      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
-        {item.contentScanId && (
-          <a
-            href={`/compte/scans/${item.contentScanId}`}
-            className="press inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-          >
-            <MailOpenIcon size={20} />
-            Lire le courrier
-          </a>
-        )}
-        {/* Une seule position pour les deux modes : le composant survit au
-            passage de l'un à l'autre, et son message de confirmation reste
-            annoncé. */}
-        {(options.open_and_scan || pendingOpening?.status === 'requested') && (
-          <MailboxRequest
-            mailItemId={item.id}
-            mode={options.open_and_scan ? 'request' : 'cancel'}
-            announcement={openingAnnouncement}
-          />
-        )}
-        <Link
-          href={`/compte/courrier/${item.id}`}
-          aria-label={`${linkLabel} — pli de ${item.sender ?? 'expéditeur non précisé'} reçu le ${formatDateTime(item.receivedAt, timeZone)}`}
-          className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border px-5 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-muted"
-        >
-          {linkLabel}
-          <ArrowRightIcon size={20} />
-        </Link>
-      </div>
+      {(item.contentScanId || opening || options.forward) && (
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
+          {item.contentScanId && (
+            <a
+              href={`/compte/scans/${item.contentScanId}`}
+              className="press inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+            >
+              <MailOpenIcon size={20} />
+              Lire le courrier
+            </a>
+          )}
+          {/* Une seule position pour les deux modes : le composant survit au
+              passage de l'un à l'autre, et son message de confirmation reste
+              annoncé. */}
+          {opening && (
+            <MailboxRequest
+              mailItemId={item.id}
+              mode={options.open_and_scan ? 'request' : 'cancel'}
+              announcement={openingAnnouncement}
+            />
+          )}
+          {/* L'envoi demande une adresse : la fiche du pli s'ouvre sur son formulaire. */}
+          {options.forward && (
+            <Link
+              href={`/compte/courrier/${item.id}?demande=envoi#reexpedition`}
+              aria-label={`Demander l’envoi — pli de ${sender} reçu le ${formatDateTime(item.receivedAt, timeZone)}`}
+              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border px-5 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-muted"
+            >
+              <SendIcon size={20} />
+              Demander l’envoi
+            </Link>
+          )}
+        </div>
+      )}
     </article>
   )
 }

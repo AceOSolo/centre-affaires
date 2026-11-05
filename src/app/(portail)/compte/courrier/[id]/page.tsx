@@ -58,10 +58,11 @@ export default async function PliPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  searchParams: Promise<{ fait?: string; classe?: string }>
+  /** `demande=envoi` : venu du bouton « Demander l'envoi » de la boîte aux lettres. */
+  searchParams: Promise<{ fait?: string; classe?: string; demande?: string }>
 }) {
   const { accounts } = await requireClientAccount()
-  const [{ id }, { fait, classe }] = await Promise.all([params, searchParams])
+  const [{ id }, { fait, classe, demande }] = await Promise.all([params, searchParams])
   // Ouvrir la fiche, c'est lire le pli (ADR 044) : « lu » pour cette personne.
   await markMailRead(accounts, id)
   const [tenant, mail, folders] = await Promise.all([
@@ -230,7 +231,11 @@ export default async function PliPage({
             </details>
           )}
           {options.forward && (
-            <details className="rounded-lg border border-border bg-white px-3 py-2">
+            <details
+              id="reexpedition"
+              open={demande === 'envoi'}
+              className="scroll-mt-36 rounded-lg border border-border bg-white px-3 py-2 lg:scroll-mt-24"
+            >
               <summary className={summaryClass}>Réexpédition</summary>
               <div className="pb-2 pt-3">
                 <p className="mb-3 text-sm text-muted-foreground">
