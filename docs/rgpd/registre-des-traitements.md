@@ -29,7 +29,7 @@ l'entreprise.
 | **Stockage objet des documents** (MinIO sur le VPS, ou S3 d'un hébergeur de l'UE) | Bucket `uploads` : scans de courrier et photos, chiffrés par l'application avant dépôt (ADR 020) | numérisations, photos, chiffrées | région UE, imposée par l'application (R33) | si MinIO : couvert par OVHcloud ; sinon DPA de l'hébergeur | à choisir |
 | **Destination des sauvegardes** (recommandée : OVHcloud Object Storage) | Conservation des sauvegardes, chiffrées avant envoi : le prestataire ne peut pas les lire (ADR 022) | toutes, chiffrées | UE, dans une autre région que le VPS | DPA du prestataire | à choisir |
 | **Brevo** (Sendinblue SAS, France) | Envoi des courriels transactionnels par SMTP (ADR 015) | adresse du destinataire, objet, texte | Europe (ADR 015) | DPA à accepter dans le compte Brevo ; suivi des ouvertures et des clics désactivé | DPA à accepter et à archiver |
-| **Google** (Google Agenda) | Agendas des salles reliées (ADR 014) | objet de la réservation, ressource, créneau, lien vers la fiche | aucune garantie de localisation pour un compte Gmail : **transfert hors UE possible** | conditions de Google ; transfert à encadrer | ADR 014 au statut « proposé » : compromis à valider |
+| **Google, Apple, Microsoft** (application d'agenda) | Lien d'agenda d'une ressource, ajouté par l'équipe (ADR 071) | objet de la réservation, ressource, créneau, lien vers la fiche | Google ne garantit pas la localisation pour un compte Gmail : **transfert hors UE possible** ; aucun par l'agenda de Dolibarr | conditions de l'éditeur ; transfert à encadrer | compromis sur l'objet à valider (ADR 071) |
 
 GitHub (code source, intégration continue, registre d'images) ne traite
 aucune donnée personnelle de ces traitements : l'image est construite sans
@@ -67,7 +67,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
   l'application ne peut ni modifier ni effacer (ADR 015). Les plis, les
   numérisations et les ouvertures portent leur auteur.
 - **Chiffrement** :
-  - secrets confiés par un tiers (jeton Google) en AES-256-GCM, clé propre à
+  - secrets confiés par un tiers (clé d'appel du CRM) en AES-256-GCM, clé propre à
     chaque environnement ;
   - numérisations chiffrées au repos : modèle posé, mise en œuvre en cours
     (ADR 020, R22) ;
@@ -143,7 +143,7 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Personnes | Demandeurs (prospects, particuliers, représentants d'entreprises), clients, équipe. |
 | Données | Nom, adresse électronique et téléphone du demandeur. Objet et notes saisis librement. Créneau, ressource, statut, canal, client, contrat. Dates de création et d'annulation, motif. |
 | Destinataires | Équipe du centre. Le client voit ses propres réservations. Le public ne voit que des créneaux occupés, sans identité. |
-| Sous-traitants | OVHcloud. Google, pour l'objet et le créneau des réservations confirmées des salles reliées (T8). |
+| Sous-traitants | OVHcloud. L'application d'agenda à laquelle l'équipe ajoute le lien d'une ressource, pour l'objet et le créneau de ses réservations confirmées (T8). |
 | Transferts hors UE | Voir T8. |
 | Conservation | Coordonnées du demandeur : 12 mois après la fin du créneau ou l'annulation, puis anonymisation par la tâche nocturne (ADR 020). Durée **à valider**. Le créneau est conservé (historique, statistiques). |
 | Mesures propres | Au plus 5 demandes par adresse sur 24 heures. Préavis, horizon et durée maximale contrôlés côté serveur. Aucune identité exposée au public. |
@@ -194,20 +194,20 @@ secret ni donnée. Il ne figure ici que pour mémoire.
 | Conservation | L'application ne garde pas d'historique des envois. Journaux d'envoi chez Brevo : durée **à vérifier**. |
 | Code | `src/lib/courriel.ts`, `src/modules/courrier/notifications.ts`, `src/modules/clients/invitation.ts` |
 
-### T8. Agendas Google des salles
+### T8. Liens d'agenda des ressources
 
 | Rubrique | Contenu |
 |---|---|
-| Finalité | Montrer l'occupation des salles reliées dans Google Agenda, où l'équipe la suit. |
+| Finalité | Montrer l'occupation de chaque ressource dans l'agenda où l'équipe la suit (Google Agenda, Apple Calendrier, Outlook, Dolibarr). |
 | Base légale | Intérêt légitime (art. 6-1-f) : organisation interne. |
-| Personnes | Toute personne nommée dans l'objet d'une réservation. Titulaire du compte Google du centre. |
-| Données | Objet de la réservation, ressource, créneau, lien vers la fiche. **Ni nom, ni courriel, ni téléphone du demandeur, ni notes** : un test le vérifie. Adresse du compte Google connecté, jeton chiffré. |
-| Destinataires | Personnes avec qui l'agenda est partagé dans Google. |
-| Sous-traitants | Google. |
-| Transferts hors UE | **Possibles** : Google ne garantit pas la localisation pour un compte Gmail. À encadrer, ou à éviter par un compte Google Workspace avec localisation des données. |
-| Conservation | Tant que l'agenda existe dans le compte Google. Une annulation retire l'événement. Déconnexion : jeton révoqué et connexion supprimée. |
-| Statut | ADR 014 « proposé » : le compromis sur l'objet est à valider. Consigne : ne pas écrire de nom de personne dans l'objet. |
-| Code | `src/modules/reservations/agenda-google*.ts` |
+| Personnes | Toute personne nommée dans l'objet d'une réservation. |
+| Données | Objet de la réservation, ressource, créneau, lien vers la fiche. **Ni nom, ni courriel, ni téléphone du demandeur, ni notes** : un test le vérifie. Le site ne garde que la ressource reliée, l'auteur et la date de dernière lecture ; le jeton du lien n'est pas en base. |
+| Destinataires | Détenteurs du lien : l'équipe, et l'application d'agenda à laquelle elle l'ajoute. Le lien ouvre le planning sans mot de passe : il ne se donne qu'à l'équipe, et se régénère s'il a circulé. |
+| Sous-traitants | L'éditeur de l'application d'agenda choisie par l'équipe (Google, Apple, Microsoft), qui lit et garde le contenu du lien. |
+| Transferts hors UE | **Possibles**, selon l'application d'agenda : Google ne garantit pas la localisation pour un compte Gmail. Dolibarr, hébergé par le centre, n'en implique pas. |
+| Conservation | Le lien sert les réservations à venir et celles du mois écoulé ; une annulation en sort à la relecture suivante. Désactiver le lien coupe l'accès ; ce que l'application a déjà lu y reste jusqu'à ce qu'on retire l'agenda. L'adresse figure dans les journaux nginx (T9). |
+| Statut | ADR 071, qui remplace l'ADR 014. Compromis sur l'objet toujours à valider. Consigne : ne pas écrire de nom de personne dans l'objet. |
+| Code | `src/modules/reservations/agenda-ics*.ts`, `src/app/api/agendas/` |
 
 ### T9. Journaux techniques
 
@@ -246,8 +246,9 @@ secret ni donnée. Il ne figure ici que pour mémoire.
    - OVHcloud ;
    - le prestataire de la destination des sauvegardes.
 3. **Vérifier** que le VPS est dans un centre de données en UE.
-4. **Trancher l'ADR 014** (Google Agenda) : valider le compromis et encadrer
-   le transfert, ou passer par un compte avec localisation en UE.
+4. **Valider le compromis de l'ADR 071** (objet des réservations dans les
+   liens d'agenda) et encadrer le transfert, ou préférer l'agenda de
+   Dolibarr, hébergé par le centre.
 5. **Valider ou fixer** les durées marquées comme telles
    ([durées de conservation](durees-de-conservation.md)).
 6. **Évaluer la nécessité d'une AIPD** pour le courrier numérisé (T5).

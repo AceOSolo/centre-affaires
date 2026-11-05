@@ -28,18 +28,17 @@ champs personnels. La ligne reste, pour l'historique et la facturation.
 | Journal des consultations (`mail_scan_views`) | **12 mois** | consultation | lignes effacées | M1, réglage M3 (`mail_access_log_retention_months`) | validé le 30/09/2026 |
 | Plis (`mail_items` : expéditeur, type, dates, note, auteurs) | avec l'entreprise : **60 mois** après la fin de la relation (proposition) | dernière activité de l'entreprise, fin de la domiciliation comprise | expéditeur et note effacés, `sender_anonymized_at` posé ; le pli, ses dates et son ouverture restent au relevé | M7, réglage M3 (`client_retention_months`) | à valider ; pas de durée propre aux plis (ADR 040) |
 
-### Réservations (ADR 005, ADR 014, ADR 020)
+### Réservations (ADR 005, ADR 020, ADR 071)
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
 |---|---|---|---|---|---|
 | Coordonnées d'un demandeur (`bookings.requester_*`) | **12 mois** | fin du créneau, ou annulation si elle est antérieure | coordonnées effacées, `requester_anonymized_at` posé. Sans client rattaché, notes effacées et objet remplacé par « Demande publique anonymisée ». La réservation reste. | M2, réglage M3 (`public_request_retention_months`) | à valider (B4) |
 | Réservations : créneau, ressource, statut, canal, client, contrat | historique conservé | — | — | aucun | à valider |
 | Objet et notes d'une réservation, saisis librement | comme la réservation ; les notes et les coordonnées d'un demandeur partent avec l'entreprise cliente | dernière activité de l'entreprise | notes effacées ; l'objet reste | M7 pour les réservations d'un client ; aucun sinon | à valider ; consigne de saisie ci-dessous |
-| Événements des agendas Google (objet, créneau, lien) | tant que l'agenda existe dans le compte Google du centre | écriture | une annulation retire l'événement ; les événements passés restent chez Google | aucun côté application | à valider avec l'ADR 014 |
-| Connexion Google (adresse du compte, jeton chiffré) | jusqu'à la déconnexion | connexion | suppression, jeton révoqué (ADR 014) | action de l'administrateur | validé (ADR 014) |
+| Lien d'agenda d'une ressource (objet, créneau, lien vers la fiche) | le lien sert le mois écoulé et l'avenir ; l'application d'agenda garde ce qu'elle a lu tant qu'on n'y retire pas l'agenda | lecture du lien | une annulation sort à la relecture suivante ; désactiver le lien coupe l'accès | aucun côté application | à valider avec l'ADR 071 |
 
-**Consigne de saisie** : l'objet d'une réservation part dans Google Agenda
-(ADR 014) et reste dans l'historique. On n'y écrit pas de nom de personne ni
+**Consigne de saisie** : l'objet d'une réservation part dans le lien
+d'agenda de la ressource (ADR 071) et reste dans l'historique. On n'y écrit pas de nom de personne ni
 de motif personnel ; on écrit « Réunion Alpha », pas « Entretien M. Dupont ».
 
 ### Clients et contrats (ADR 006, R07)

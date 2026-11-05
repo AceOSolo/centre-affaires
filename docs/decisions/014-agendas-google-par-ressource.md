@@ -1,9 +1,8 @@
 # ADR 014 — Un agenda Google par ressource
 
 **Date** : 2026-09-30
-**Statut** : proposé — le compromis RGPD ci-dessous est à valider ; « Mise en
-place » amendée par l'ADR 069 (identifiants Google Cloud collés à l'écran,
-par centre)
+**Statut** : remplacé par l'ADR 071 (un lien d'agenda par ressource) ; « Mise
+en place » amendée avant cela par l'ADR 069
 
 ## Contexte
 

@@ -96,7 +96,8 @@ export const permissionLabels: Record<Permission, string> = {
   'horaires.gerer': 'Horaires d’ouverture et fermetures',
   'centre.configurer':
     'Configuration du centre : règles de réservation, conservation, règles tarifaires, identité de facturation',
-  'agenda-google.gerer': 'Agendas Google',
+  // Identifiant d'avant l'ADR 071, gardé : le renommer toucherait toutes les gardes.
+  'agenda-google.gerer': 'Agendas : liens d’agenda des ressources',
   'equipe.gerer': 'Équipe : inscrire et retirer un membre de l’accueil',
   'notifications.consulter': 'Consulter le journal des messages envoyés et la cloche de l’équipe',
   'notifications.gerer': 'Modèles des messages envoyés aux clients et au centre',

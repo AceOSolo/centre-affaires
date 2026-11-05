@@ -358,6 +358,10 @@ export type Booking = typeof bookings.$inferSelect
 export type NewBooking = typeof bookings.$inferInsert
 
 /**
+ * En sommeil depuis l'ADR 071 : les agendas passent par un lien `.ics` par
+ * ressource (`calendar_feeds`), plus par la connexion d'un compte Google. Les
+ * trois tables Google restent, sans code qui les lise ni les écrive.
+ *
  * Identifiants Google Cloud du centre (ID client OAuth et son code secret),
  * réglés à l'écran des agendas plutôt que dans les variables du serveur
  * (ADR 069).
@@ -459,3 +463,39 @@ export const resourceGoogleCalendars = mysqlTable(
 )
 
 export type ResourceGoogleCalendar = typeof resourceGoogleCalendars.$inferSelect
+
+/**
+ * Lien d'agenda d'une ressource (ADR 071) : l'adresse `.ics` à laquelle Google
+ * Agenda, Apple Calendrier ou Outlook s'abonnent.
+ *
+ * Le jeton de l'adresse n'est pas ici : il se recalcule à partir de `id` et
+ * d'une clé du serveur (`agenda-ics.ts`). Régénérer remplace la ligne, donc
+ * l'identifiant et le jeton ; désactiver la supprime. Un réglage, pas une
+ * entité métier : supprimé physiquement, comme la connexion Google
+ * (ADR 014).
+ */
+export const calendarFeeds = mysqlTable(
+  'calendar_feeds',
+  {
+    id: primaryKeyId(),
+    tenantId: tenantId(),
+    resourceId: char('resource_id', { length: 36 }).notNull(),
+    createdBy: char('created_by', { length: 36 })
+      .notNull()
+      .references(() => staffMembers.id, { onDelete: 'restrict' }),
+    /** Dernière lecture du lien par une application d'agenda : l'abonnement marche. */
+    lastFetchedAt: instant('last_fetched_at'),
+    ...timestamps(),
+  },
+  (table) => [
+    foreignKey({
+      name: 'calendar_feeds_resource_fk',
+      columns: [table.tenantId, table.resourceId],
+      foreignColumns: [resources.tenantId, resources.id],
+    }).onDelete('restrict'),
+    // Un lien par ressource : deux liens actifs seraient deux portes à fermer.
+    uniqueIndex('calendar_feeds_resource_key').on(table.tenantId, table.resourceId),
+  ],
+)
+
+export type CalendarFeed = typeof calendarFeeds.$inferSelect

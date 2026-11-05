@@ -13,7 +13,6 @@ import {
   notifyBookingConfirmed,
   notifyBookingRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
-import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import { describeAttributes } from '../ressources/labels.ts'
 import { parseEquipmentIds } from './options.ts'
 import { periodLabel } from './periode.ts'
@@ -236,14 +235,8 @@ export async function bookFromPortalAction(
   }
 
   const bookingId = created.id
-  // Chaque appareil confirmé s'écrit dans son agenda Google (ADR 014).
-  for (const option of created.options) {
-    if (option.status === 'confirmed') after(() => syncBookingToGoogleCalendar(option.id))
-  }
   if (created.status === 'confirmed') {
-    // Écrite dans l'agenda Google de la ressource, après la réponse (ADR 014),
-    // et confirmée par courriel à la personne (`booking_confirmed`, ADR 038).
-    after(() => syncBookingToGoogleCalendar(bookingId))
+    // Confirmée par courriel à la personne (`booking_confirmed`, ADR 038).
     after(() => notifyBookingConfirmed(bookingId))
   } else {
     // L'accueil est prévenu qu'un créneau attend sa réponse (ADR 038).

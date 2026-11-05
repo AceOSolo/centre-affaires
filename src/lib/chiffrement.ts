@@ -1,8 +1,8 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto'
 
 /**
- * Chiffrement des secrets confiés par un tiers — aujourd'hui le jeton Google
- * Agenda du centre (ADR 014).
+ * Chiffrement des secrets confiés par un tiers — aujourd'hui la clé d'appel du
+ * CRM (ADR 065) ; avant l'ADR 071, le jeton Google Agenda du centre (ADR 014).
  *
  * Une copie de la base de production (sauvegarde restaurée, base de
  * développement alimentée depuis elle) emporte les jetons : en clair, elle

@@ -1,13 +1,11 @@
 'use server'
 
 import { revalidatePath } from 'next/cache'
-import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { formatTime } from '../../lib/dates.ts'
 import { currentTimeZone } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
-import { syncBookingToGoogleCalendar } from './agenda-google-queries.ts'
 import { parseEquipmentIds } from './options.ts'
 import { OptionRefusedError, addOptionsToBooking, type OptionLinesOutcome } from './options-queries.ts'
 import { BookingConflictError } from './queries.ts'
@@ -56,8 +54,6 @@ export async function addOptionsAction(_previous: AddOptionsFormState, formData:
     throw error
   }
 
-  // Écrites dans l'agenda Google de chaque appareil, après la réponse (ADR 014).
-  for (const option of added) after(() => syncBookingToGoogleCalendar(option.id))
   revalidatePath(`/reservations/${bookingId}`)
   revalidatePath('/reservations', 'layout')
   revalidatePath('/devis', 'layout')
