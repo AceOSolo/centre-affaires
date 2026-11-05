@@ -5,6 +5,7 @@ import { usePathname, useSearchParams } from 'next/navigation'
 import { useId, useState, useSyncExternalStore } from 'react'
 
 import type { Permission } from '../../lib/auth/permissions.ts'
+import type { InboxShelf } from './aujourdhui/journee.ts'
 import { activeEntry } from './nav-actif.ts'
 import {
   groupKey,
@@ -46,8 +47,7 @@ function writeOpenedCookie(keys: readonly string[]) {
   for (const listener of listeners) listener()
 }
 
-const counterLabel = (counter: NonNullable<Entry['counter']>, count: number) =>
-  ({ mail: `${count} demande${count > 1 ? 's' : ''} de courrier à traiter` })[counter]
+const pendingLabel = (count: number) => `${count} demande${count > 1 ? 's' : ''} à traiter`
 
 /**
  * Navigation du back-office, rangée par service vendu (ADR 053), chaque rayon
@@ -55,12 +55,12 @@ const counterLabel = (counter: NonNullable<Entry['counter']>, count: number) =>
  * courante ; le reste de la coque reste rendu sur le serveur.
  */
 export function Nav({
-  mailRequestCount = 0,
+  inboxCounts = {},
   allowed,
   opened: openedOnServer = [],
 }: {
-  /** Demandes de courrier à traiter, au rayon Domiciliation (ADR 037). */
-  mailRequestCount?: number
+  /** Demandes à traiter par rayon (`inboxCountsByShelf`, ADR 070) : leur somme est le nombre de la cloche. */
+  inboxCounts?: Partial<Record<InboxShelf, number>>
   /** Droits du membre connecté (`permissionsOf`). */
   allowed: readonly Permission[]
   /** Rayons ouverts, lus dans le cookie par la coque : le premier rendu est déjà le bon. */
@@ -104,8 +104,6 @@ export function Nav({
   const activeKey = visibles.find((group) => group.entries.some((entry) => entry.href === actif))?.key
   const dismissedKey = dismissed?.at === here ? dismissed.key : undefined
 
-  const counts = { mail: mailRequestCount }
-
   const toggle = (key: string, open: boolean) => {
     writeOpenedCookie(toggleOpened(opened, key, open))
     if (key === activeKey) setDismissed(open ? { key, at: here } : undefined)
@@ -118,10 +116,8 @@ export function Nav({
         const listId = `${titleId}-liste`
         const last = index === visibles.length - 1 && group.label === 'Réglages'
         const open = isGroupOpen(group, { opened, active: activeKey, dismissed: dismissedKey })
-        // Plié, le rayon garde à son titre les compteurs de ses entrées.
-        const folderCounts = group.entries.flatMap((entry) =>
-          entry.counter && counts[entry.counter] > 0 ? [{ counter: entry.counter, count: counts[entry.counter] }] : [],
-        )
+        // Le titre du rayon dit ses demandes à traiter, plié comme ouvert (ADR 070).
+        const pending = group.inbox ? (inboxCounts[group.inbox] ?? 0) : 0
 
         // Une marge intérieure dans un cadre `-mx-1` : le contour de focus des
         // liens tient dans la zone qui masque le rayon plié, au lieu d'y être
@@ -130,7 +126,6 @@ export function Nav({
           <ul className={`flex flex-col gap-0.5 px-1 pb-1 ${group.foldable ? 'pt-2' : 'pt-1'}`}>
             {group.entries.map((entry) => {
               const active = entry.href === actif
-              const count = entry.counter ? counts[entry.counter] : 0
               return (
                 <li key={entry.href}>
                   <Link
@@ -145,14 +140,6 @@ export function Nav({
                     }`}
                   >
                     <span>{entry.label}</span>
-                    {count > 0 && entry.counter && (
-                      <span
-                        className="rounded-full bg-primary px-1.5 text-xs font-semibold text-white tabular"
-                        aria-label={counterLabel(entry.counter, count)}
-                      >
-                        {count}
-                      </span>
-                    )}
                   </Link>
                 </li>
               )
@@ -178,16 +165,12 @@ export function Nav({
                 >
                   <span id={titleId}>{group.label}</span>
                   <span className="flex items-center gap-2">
-                    {!open &&
-                      folderCounts.map(({ counter, count }) => (
-                        <span
-                          key={counter}
-                          className="rounded-full bg-primary px-1.5 font-semibold normal-case tracking-normal text-white tabular"
-                        >
-                          <span aria-hidden="true">{count}</span>
-                          <span className="sr-only">{counterLabel(counter, count)}</span>
-                        </span>
-                      ))}
+                    {pending > 0 && (
+                      <span className="rounded-full bg-primary px-1.5 font-semibold normal-case tracking-normal text-white tabular">
+                        <span aria-hidden="true">{pending}</span>
+                        <span className="sr-only">{pendingLabel(pending)}</span>
+                      </span>
+                    )}
                     {/* Lucide « chevron-down » ; tourné vers la droite, le rayon est plié. */}
                     <svg
                       width={20}

@@ -1,6 +1,10 @@
 import type { Permission } from '../../../lib/auth/permissions.ts'
 import type { OfferRequestStatus } from '../../../modules/contrats/schema.ts'
+import { proposalProductKey } from '../../../modules/facturation/propositions.ts'
+import type { ProposalProduct } from '../../../modules/facturation/schema-devis.ts'
 import type { BookingKind, BookingStatus } from '../../../modules/reservations/schema.ts'
+import { productOf, products, type ProductKey } from '../../../modules/ressources/produits.ts'
+import type { ResourceType } from '../../../modules/ressources/schema.ts'
 
 /**
  * Règles de l'écran « Aujourd'hui » (ADR 050), sans base ni rendu.
@@ -39,6 +43,36 @@ export function inboxCount(inbox: {
 }): number {
   const openOfferRequests = inbox.offerRequests.filter((request) => request.status === 'requested').length
   return inbox.pendingBookings + inbox.proposalsToComplete + openOfferRequests + inbox.mailRequests
+}
+
+/**
+ * Rayon du menu où une demande se compte (ADR 070) : le produit de sa
+ * ressource, ou « autres » — sous « Tous les services » — pour ce qui n'en
+ * relève d'aucun (offres groupées, devis sans ressource).
+ */
+export type InboxShelf = ProductKey | 'autres'
+
+export const inboxShelves: readonly InboxShelf[] = [...products.map((product) => product.key), 'autres']
+
+/**
+ * Les demandes d'`inboxCount`, réparties par rayon : chaque rayon du menu porte
+ * le nombre des siennes, et leur somme est le nombre de la cloche (ADR 070).
+ * Un devis se range comme dans les pastilles de « Demandes »
+ * (`proposalProductKey`) ; le courrier est la file de la domiciliation
+ * (ADR 057).
+ */
+export function inboxCountsByShelf(inbox: {
+  pendingBookings: readonly { resource: { resourceType: ResourceType } }[]
+  proposalsToComplete: readonly { product: ProposalProduct; resourceType: ResourceType | null }[]
+  offerRequests: readonly { status: OfferRequestStatus }[]
+  mailRequests: number
+}): Record<InboxShelf, number> {
+  const counts = Object.fromEntries(inboxShelves.map((shelf) => [shelf, 0])) as Record<InboxShelf, number>
+  for (const booking of inbox.pendingBookings) counts[productOf(booking.resource.resourceType).key] += 1
+  for (const proposal of inbox.proposalsToComplete) counts[proposalProductKey(proposal) ?? 'autres'] += 1
+  counts.autres += inbox.offerRequests.filter((request) => request.status === 'requested').length
+  counts.domiciliation += inbox.mailRequests
+  return counts
 }
 
 export type TodayCounts = {

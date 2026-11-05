@@ -16,7 +16,7 @@ import { awaitsReception } from '../../modules/facturation/propositions.ts'
 import { listProposals } from '../../modules/facturation/propositions-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
 import { SignOutButton } from '../(auth)/sign-out-button.tsx'
-import { inboxCount as countInbox } from './aujourdhui/journee.ts'
+import { inboxCount as countInbox, inboxCountsByShelf } from './aujourdhui/journee.ts'
 import { MobileMenu } from './mobile-menu.tsx'
 import { Nav } from './nav.tsx'
 import { OPENED_COOKIE, parseOpened } from './nav-plie.ts'
@@ -83,12 +83,15 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   // une, les offres demandées (ADR 048), les demandes de courrier (ADR 057) —
   // le nombre de « Demandes » et d'« Aujourd'hui » (ADR 070). Juste dès le
   // premier affichage, puis relu par la cloche toutes les minutes.
+  const proposalsToComplete = draftProposals.filter(awaitsReception)
   const inboxCount = countInbox({
     pendingBookings: pending.length,
-    proposalsToComplete: draftProposals.filter(awaitsReception).length,
+    proposalsToComplete: proposalsToComplete.length,
     offerRequests,
     mailRequests,
   })
+  // Les mêmes, par rayon du menu : chacun dit les siennes (ADR 070).
+  const inboxCounts = inboxCountsByShelf({ pendingBookings: pending, proposalsToComplete, offerRequests, mailRequests })
 
   // Rayons ouverts du menu, lus dès le rendu serveur : la barre latérale arrive
   // telle que le membre l'a laissée, sans saut au chargement (ADR 064, 067).
@@ -96,7 +99,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const nav = (
     <Nav
-      mailRequestCount={mailRequests}
+      inboxCounts={inboxCounts}
       allowed={permissionsOf(member.role)}
       opened={opened}
     />

@@ -4,7 +4,8 @@
 **Statut** : accepté — amende l'ADR 059 § 1 (la cloche ne lit plus ses
 notifications, lues membre par membre, mais les files de « Demandes ») et
 les ADR 048 et 053 (« Demandes » reste la seule boîte de réception, mais n'est
-plus une entrée du menu) ; sans migration
+plus une entrée du menu) ; complété le même jour par le § 4 (chaque rayon
+compte ses demandes) ; sans migration
 
 ## Contexte
 
@@ -83,6 +84,27 @@ répétitif le 20/10). Il a choisi **la cloche seule**.
 Chaque demande envoie toujours son courriel à l'adresse du centre (ADR 038) :
 c'est l'« e-mail à l'admin » de la recette.
 
+### 4. Chaque rayon compte ses demandes
+
+Complément du 05/11, après essai : la cloche disait 8, le rayon Domiciliation
+7 (ses demandes de courrier), et rien ne disait où était la huitième — une
+demande de salle de la page publique.
+
+- **Le titre de chaque rayon porte le nombre de ses demandes à traiter**, plié
+  comme ouvert (`inboxCountsByShelf`, `journee.ts`) : les réservations en
+  attente du produit de leur ressource, les devis à compléter rangés comme dans
+  les pastilles de « Demandes » (`proposalProductKey`), et, pour Domiciliation,
+  les demandes de courrier. Ce qui ne relève d'aucun produit — offres groupées,
+  devis sans ressource — compte sous « Tous les services ».
+- **La somme des titres est le nombre de la cloche** : chaque rayon déclare ce
+  qu'il compte (`inbox`, `menu.ts`), une fois chacun, et `menu.test.ts` le
+  vérifie.
+- **Le compteur de l'entrée « Courrier » disparaît** : celui du rayon
+  Domiciliation le reprend ; garder les deux referait le doublon.
+- Le nombre n'est pas un lien : le titre plie et déplie le rayon. Il est lu
+  avec le nom du rayon (« Salles, 1 demande à traiter »), et la cloche mène à
+  la demande.
+
 ## Justification
 
 **Une liste de travail plutôt qu'un fil d'événements.** Ce dont l'accueil a
@@ -121,4 +143,6 @@ compter.
 - Tests : `cloche.test.ts` (libellés, ancres, nombre égal à `inboxCount`,
   ordre, visiteur, prise en charge, pas d'expéditeur, borne de la liste),
   `cloche.db.test.ts` (chaque sorte de demande, sortie après traitement,
-  droits, autre centre), `menu.test.ts` et `nav-plie.test.ts`.
+  droits, autre centre), `menu.test.ts` (aucune entrée « Demandes », chaque
+  rayon compté une fois), `journee.test.ts` (répartition par rayon, même total
+  qu'`inboxCount`) et `nav-plie.test.ts`.

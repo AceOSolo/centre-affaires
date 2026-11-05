@@ -213,7 +213,8 @@ Camion, Matériel, dans l'ordre de `src/modules/ressources/produits.ts`, chacun 
 seuls écrans (planning, parc, courrier, états des lieux) en adresses filtrées
 `?type=` ou `?produit=`. En tête, « Aujourd'hui » (ADR 050). **Une seule
 « Demandes »** (ADR 048), hors du menu : la cloche de l'en-tête en dit le
-nombre, en liste les plus récentes et y mène (ADR 070). Ce qui sert à tous les
+nombre, en liste les plus récentes et y mène, et chaque rayon compte les
+siennes à son titre (ADR 070). Ce qui sert à tous les
 produits est sous « Tous les services », ce qui se règle une fois dans
 Réglages (`(admin)/reglages/sections.ts`). **Pas d'écran répété dans le
 menu** : ni « Demandes » par rayon, ni vue d'ensemble doublée — la pastille

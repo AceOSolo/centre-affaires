@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
 import { can } from '../../../lib/auth/permissions.ts'
-import { dayTimeline, inboxCount, todoTiles } from './journee.ts'
+import { dayTimeline, inboxCount, inboxCountsByShelf, inboxShelves, todoTiles } from './journee.ts'
 
 const counts = { requests: 3, mailRequests: 1, inspectionsToFinish: 0, inspectionsToSign: 2 }
 
@@ -17,6 +17,37 @@ describe('demandes à traiter (menu et tuile, ADR 048)', () => {
     assert.equal(requests, 1)
     const [tile] = todoTiles({ requests, mailRequests: 0, inspectionsToFinish: 0, inspectionsToSign: 0 }, () => true)
     assert.equal(tile.label, '1 demande à traiter')
+  })
+
+  it('range chaque demande dans le rayon de son produit, pour le même total (ADR 070)', () => {
+    const inbox = {
+      pendingBookings: [
+        { resource: { resourceType: 'salle' as const } },
+        { resource: { resourceType: 'casier' as const } },
+        { resource: { resourceType: 'vehicule' as const } },
+      ],
+      proposalsToComplete: [
+        { product: 'domiciliation' as const, resourceType: null },
+        { product: 'materiel' as const, resourceType: 'materiel' as const },
+        // Un devis de l'accueil sans ressource : sous « Tous les services ».
+        { product: 'espace' as const, resourceType: null },
+      ],
+      offerRequests: [{ status: 'requested' as const }, { status: 'dismissed' as const }],
+      mailRequests: 7,
+    }
+    const byShelf = inboxCountsByShelf(inbox)
+    assert.deepEqual(byShelf, { salles: 1, bureaux: 1, domiciliation: 8, vehicules: 1, materiel: 1, autres: 2 })
+    assert.deepEqual(Object.keys(byShelf), [...inboxShelves])
+    const total = Object.values(byShelf).reduce((sum, count) => sum + count, 0)
+    assert.equal(
+      total,
+      inboxCount({
+        pendingBookings: inbox.pendingBookings.length,
+        proposalsToComplete: inbox.proposalsToComplete.length,
+        offerRequests: inbox.offerRequests,
+        mailRequests: inbox.mailRequests,
+      }),
+    )
   })
 
   it('compte les demandes de courrier dans « Demandes » (ADR 057)', () => {

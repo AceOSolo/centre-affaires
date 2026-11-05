@@ -1,5 +1,5 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
-import { todayPermissions } from './aujourdhui/journee.ts'
+import { todayPermissions, type InboxShelf } from './aujourdhui/journee.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -13,8 +13,6 @@ export type MenuEntry = {
   label: string
   /** Droit de la page ; plusieurs : l'entrée s'affiche si le rôle en a un. */
   permission: Permission | readonly Permission[]
-  /** Compteur de file d'attente affiché à côté du libellé. */
-  counter?: 'mail'
   /**
    * Autres adresses qui allument l'entrée : « Réglages » reste allumé sur les
    * pages qu'il réunit (tarifs, équipe…), le planning des bureaux sur ses vues
@@ -32,7 +30,18 @@ export type MenuEntry = {
 // pastilles de la page.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
-export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
+export type MenuGroup = {
+  label: string
+  /**
+   * Les demandes à traiter que le titre du rayon compte (ADR 070) : celles de
+   * son produit, ou « autres » pour « Tous les services ». Chaque rayon une
+   * fois : leur somme est le nombre de la cloche.
+   */
+  inbox?: InboxShelf
+  entries: MenuEntry[]
+}
+
+export const menuGroups: MenuGroup[] = [
   // Page d'arrivée de l'équipe (ADR 050). Ce qui attend l'accueil est dans la
   // cloche, qui mène à « Demandes » (ADR 070).
   {
@@ -41,6 +50,7 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
   },
   {
     label: 'Salles',
+    inbox: 'salles',
     entries: [
       { href: '/reservations?type=salle', label: 'Planning des salles', permission: 'reservations.gerer' },
       { href: '/ressources?type=salle', label: 'Salles', permission: 'ressources.gerer' },
@@ -48,6 +58,7 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
   },
   {
     label: 'Bureaux',
+    inbox: 'bureaux',
     entries: [
       // Un bureau se loue au mois : le planning s'ouvre sur le mois.
       {
@@ -69,11 +80,11 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
   },
   {
     label: 'Domiciliation',
+    // Le titre compte les demandes de courrier et de domiciliation (ADR 057, ADR 070).
+    inbox: 'domiciliation',
     entries: [
-      // Les demandes de courrier à traiter sont comptées : c'est une file (ADR 037),
-      // la part du rayon dans la cloche et « Demandes » (ADR 057, ADR 070). Leur
-      // historique (`/courrier/demandes`) allume cette entrée.
-      { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
+      // L'historique des demandes de courrier (`/courrier/demandes`) allume cette entrée.
+      { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
       // Message libre aux domiciliés — fermeture, travaux… — et son historique (ADR 060).
       { href: '/messages', label: 'Messages aux domiciliés', permission: 'notifications.diffuser' },
@@ -81,6 +92,7 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
   },
   {
     label: 'Camion',
+    inbox: 'vehicules',
     entries: [
       // Le camion se loue à la demi-journée ou à la journée : la semaine d'abord.
       {
@@ -98,6 +110,7 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
     // (ADR 062) : chaque appareil a son planning, la semaine d'abord comme le
     // camion. Ses états des lieux se trouvent par la pastille « Matériel ».
     label: 'Matériel',
+    inbox: 'materiel',
     entries: [
       {
         href: '/reservations/semaine?type=materiel',
@@ -109,7 +122,9 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
     ],
   },
   {
+    // Les offres groupées et les devis sans ressource n'ont pas de rayon : ils comptent ici.
     label: 'Tous les services',
+    inbox: 'autres',
     entries: [
       { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
       // Devis que Dolibarr vient chercher (ADR 043).

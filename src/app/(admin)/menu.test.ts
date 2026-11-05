@@ -6,6 +6,7 @@ import { describe, it } from 'node:test'
 import { isPermission } from '../../lib/auth/permissions.ts'
 import { productOf, products } from '../../modules/ressources/produits.ts'
 import { resourceTypes, type ResourceType } from '../../modules/ressources/schema.ts'
+import { inboxShelves } from './aujourdhui/journee.ts'
 import { menuGroups } from './menu.ts'
 import { activeEntry } from './nav-actif.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
@@ -82,6 +83,17 @@ describe('menu du back-office', () => {
     assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Courrier')
     assert.equal(at('/courrier/01a1'), 'Courrier')
     assert.equal(at('/demandes', 'produit=domiciliation'), undefined)
+  })
+
+  it('compte les demandes de chaque rayon à son titre, chaque rayon une fois (ADR 070)', () => {
+    // Un rayon par produit compte les siennes, « Tous les services » le reste :
+    // la somme des titres est le nombre de la cloche.
+    for (const product of products) {
+      assert.equal(menuGroups.find((group) => group.label === product.label)?.inbox, product.key, product.label)
+    }
+    assert.equal(menuGroups.find((group) => group.label === 'Tous les services')?.inbox, 'autres')
+    const counted = menuGroups.flatMap((group) => (group.inbox ? [group.inbox] : []))
+    assert.deepEqual([...counted].sort(), [...inboxShelves].sort())
   })
 
   it('ne montre aucune adresse deux fois', () => {
