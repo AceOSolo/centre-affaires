@@ -61,12 +61,20 @@ export const notificationEvents = [
   'domiciliation_request_submitted',
   // Message libre de l'équipe aux domiciliés ou à une sélection (ADR 060).
   'client_broadcast',
+  // Comptes créés par invitation ou après une demande du site (ADR 068) : à
+  // une personne seule, qui n'a pas encore d'entreprise.
+  'staff_invited',
+  'request_received',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
 
-/** À qui s'adresse un événement : les personnes de l'entreprise, ou l'adresse du centre. */
-export const notificationAudiences = ['client', 'centre'] as const
+/**
+ * À qui s'adresse un événement : les personnes de l'entreprise, l'adresse du
+ * centre, ou une personne seule (ADR 068) — un membre de l'équipe invité, le
+ * demandeur d'une demande du site —, à l'adresse que l'appelant donne.
+ */
+export const notificationAudiences = ['client', 'centre', 'person'] as const
 export type NotificationAudience = (typeof notificationAudiences)[number]
 export const notificationAudienceEnum = (name: string) => mysqlEnum(name, notificationAudiences)
 
@@ -112,6 +120,8 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   mail_none: 'client',
   domiciliation_request_submitted: 'centre',
   client_broadcast: 'client',
+  staff_invited: 'person',
+  request_received: 'person',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -137,6 +147,8 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   mail_none: 'mail_none',
   domiciliation_request_submitted: null,
   client_broadcast: 'centre_info',
+  staff_invited: null,
+  request_received: null,
 }
 
 /**
@@ -169,6 +181,8 @@ export const notificationRelatedTypes = [
   'proposal',
   // Message groupé aux clients (ADR 060).
   'client_broadcast',
+  // Invitation d'un membre de l'équipe (ADR 068).
+  'staff_member',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
 export const notificationRelatedTypeEnum = (name: string) =>

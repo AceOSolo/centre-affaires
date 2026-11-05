@@ -4,6 +4,7 @@
  *
  *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --role super_admin --nom "Alexis Martin"
  *   node --env-file=.env.local infra/ajouter-membre-staff.mjs --lister
+ *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --lien
  *   node --env-file=.env.local infra/ajouter-membre-staff.mjs alexis@exemple.fr --retirer
  *
  * Rôles : `super_admin` (direction), `admin` (exploitant), `staff` (accueil).
@@ -19,11 +20,14 @@
  * ne se retire pas soi-même, le centre garde une direction. Le script reste
  * pour l'amorçage et le dépannage, et ne les applique pas.
  *
- * La personne inscrite n'a pas encore de compte : elle choisit son mot de
- * passe sur /auth/equipe avec cette adresse, et le rattachement se fait à la
- * première connexion.
+ * Personne ne crée plus son compte sur la page de connexion (ADR 068) : le
+ * script affiche le lien d'invitation de la personne inscrite, valable sept
+ * jours, à lui transmettre. Elle y choisit son mot de passe, puis se connecte
+ * sur /auth/equipe ; le rattachement se fait à la première connexion.
+ * `--lien` en donne un nouveau à un membre déjà inscrit (lien expiré).
  */
 import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs'
+import { afficherLien, preparerLienInvitation } from './lien-invitation.mjs'
 
 const ROLES = ['super_admin', 'admin', 'staff']
 
@@ -67,9 +71,27 @@ try {
     console.error(
       'Indiquer une adresse électronique.\n' +
         '  node --env-file=.env.local infra/ajouter-membre-staff.mjs <adresse> [--role super_admin|admin|staff] [--nom "Prénom Nom"]\n' +
+        '  node --env-file=.env.local infra/ajouter-membre-staff.mjs <adresse> --lien\n' +
         '  node --env-file=.env.local infra/ajouter-membre-staff.mjs --lister',
     )
     process.exit(1)
+  }
+
+  if (has('lien')) {
+    // Nouveau lien d'invitation pour un membre déjà inscrit (ADR 068).
+    const lien = await dansLeCentre(client, async (cnx) => {
+      const [[membre]] = await cnx.query(
+        'select full_name from staff_members where email = ? and deleted_at is null',
+        [email],
+      )
+      return membre ? preparerLienInvitation(cnx, { email, nom: membre.full_name, espace: 'equipe' }) : null
+    })
+    if (!lien) {
+      console.log(`${email} ne fait pas partie de l'équipe : l'inscrire d'abord.`)
+      process.exit(1)
+    }
+    afficherLien(email, lien, { espace: 'equipe' })
+    process.exit(0)
   }
 
   if (has('retirer')) {
@@ -96,7 +118,7 @@ try {
     process.exit(1)
   }
 
-  const inscrit = await dansLeCentre(client, async (cnx) => {
+  const lien = await dansLeCentre(client, async (cnx) => {
     // Base vide : la ligne du centre est posée au premier ajout.
     await assurerCentre(cnx)
     // Lecture puis écriture : l'unicité de l'adresse ne vaut que pour les
@@ -112,18 +134,20 @@ try {
       role,
       fullName,
     ])
-    return true
+    // Le lien d'invitation, dans la même transaction (ADR 068).
+    return preparerLienInvitation(cnx, { email, nom: fullName, espace: 'equipe' })
   })
 
-  if (!inscrit) {
-    console.log(`${email} fait déjà partie de l'équipe.`)
+  if (!lien) {
+    console.log(`${email} fait déjà partie de l'équipe. Nouveau lien d'invitation : --lien.`)
     process.exit(0)
   }
 
   console.log(`${email} inscrit comme « ${role} ».`)
+  afficherLien(email, lien, { espace: 'equipe' })
   console.log(
-    "Prochaine étape : la personne choisit son mot de passe sur /auth/equipe avec cette adresse ; " +
-      'le rattachement se fait tout seul à la première connexion.',
+    'Prochaine étape : transmettre ce lien. La personne y choisit son mot de passe, puis se connecte ' +
+      'sur /auth/equipe ; le rattachement se fait tout seul à la première connexion.',
   )
 } finally {
   await client.end()

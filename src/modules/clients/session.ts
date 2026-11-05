@@ -24,8 +24,8 @@ export const clientAccess = cache(async (): Promise<ClientAccess> => {
   if (!session) return { status: 'anonyme' }
   const { user, emailVerified } = session
 
-  // Inscription libre (ADR 045) : sans entreprise, le compte reçoit la
-  // sienne, une fois son adresse confirmée.
+  // Sans entreprise, le compte reçoit la sienne une fois son adresse
+  // confirmée, avec ses demandes du site (ADR 045, ADR 068).
   const accounts = await withTenant(currentTenantId(), (tx) =>
     resolveOrSignupClientAccounts(tx, user, { emailVerified }),
   )

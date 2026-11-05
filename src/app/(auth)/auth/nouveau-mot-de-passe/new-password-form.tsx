@@ -25,8 +25,9 @@ type Echec = { message?: string; champs?: Record<string, string> }
  * (`revokeSessionsOnPasswordReset`, `lib/auth/server.ts`) ; aucune n'est
  * ouverte ici : la personne se connecte ensuite, avec le nouveau.
  *
- * `invitation` : premier mot de passe d'une personne invitée par l'accueil
- * (ADR 059) ; seuls les textes changent.
+ * `invitation` : premier mot de passe d'une personne invitée — à l'espace
+ * client (ADR 059), à l'équipe avec `equipe` (ADR 068), ou demandeur du site
+ * qui crée son espace ; seuls les textes changent.
  */
 export function NewPasswordForm({
   token,
@@ -89,7 +90,11 @@ export function NewPasswordForm({
     <div className="flex flex-col gap-6">
       <div>
         <h1 className="text-xl font-semibold text-primary">
-          {invitation ? 'Bienvenue dans votre espace client' : 'Nouveau mot de passe'}
+          {invitation
+            ? equipe
+              ? 'Bienvenue dans l’équipe'
+              : 'Bienvenue dans votre espace client'
+            : 'Nouveau mot de passe'}
         </h1>
         {!change && (
           <p className="mt-1 text-sm text-muted-foreground">

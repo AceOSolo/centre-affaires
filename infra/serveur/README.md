@@ -319,11 +319,17 @@ docker compose restart app
   `docker compose exec db mysql -uroot -p` (le mot de passe est
   `DB_ADMIN_PASSWORD`).
 
-La personne inscrite choisit son mot de passe sur `/auth/equipe` avec cette
-adresse. Elle est la **direction** (ADR 054) : seule à nommer, rétrograder ou
-retirer un exploitant. Elle inscrit ensuite le reste de l'équipe depuis
-l'écran Équipe du back-office (`/equipe`) ; les exploitants y inscrivent
-l'accueil.
+`ajouter-membre-staff.mjs` affiche un **lien d'invitation**, valable une fois
+et sept jours (ADR 068) : on ne crée plus son compte sur la page de
+connexion. Transmettez-le à la personne inscrite ; elle y choisit son mot de
+passe, puis se connecte sur `/auth/equipe`. Lien perdu ou expiré :
+`docker compose run --rm migrer node infra/ajouter-membre-staff.mjs <adresse> --lien`
+en donne un nouveau. `APP_URL` doit être renseigné : le lien en part.
+
+Elle est la **direction** (ADR 054) : seule à nommer, rétrograder ou
+retirer un exploitant. Elle ajoute ensuite le reste de l'équipe depuis
+l'écran Équipe du back-office (`/equipe`), qui envoie à chacun son lien par
+courriel ; les exploitants y ajoutent l'accueil.
 
 Par la suite, chaque version se migre **sur le serveur**, une fois son image
 tirée : `docker compose run --rm migrer` (section 4.4). Les migrations ne
@@ -420,9 +426,11 @@ recopier dans `sites-available` puis `nginx -t && systemctl reload nginx`.
 ## 8. Courriels avec Brevo
 
 L'application prévient les clients à l'arrivée et à la numérisation de leur
-courrier, le centre à chaque demande (ADR 015, ADR 038), et envoie aux
-personnes inscrites par l'accueil le lien pour choisir leur mot de passe
-(ADR 059). L'envoi passe par le SMTP de Brevo, prestataire français hébergé en
+courrier, le centre à chaque demande (ADR 015, ADR 038), et envoie le lien
+pour choisir son mot de passe aux personnes invitées — clients (ADR 059),
+membres de l'équipe — et aux visiteurs qui déposent une demande sur le site
+(ADR 068). **Sans SMTP, personne ne peut créer de compte** hors du script
+d'amorçage. L'envoi passe par le SMTP de Brevo, prestataire français hébergé en
 Europe, en port 587 avec STARTTLS (jamais en clair).
 
 **Authentifier le domaine expéditeur**, sans quoi les messages finissent en

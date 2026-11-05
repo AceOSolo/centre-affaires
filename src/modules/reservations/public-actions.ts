@@ -11,6 +11,7 @@ import { preuveHumaine } from '../../lib/preuve-humaine.ts'
 import { toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
 import { clientAccess } from '../clients/session.ts'
+import { sendRequestReceived } from '../comptes/demandes-site.ts'
 import { quote } from '../facturation/devis-queries.ts'
 import { toQuoteDisplay, type QuoteDisplay } from '../facturation/devis.ts'
 import { createProposalInTransaction } from '../facturation/propositions-queries.ts'
@@ -291,6 +292,7 @@ export async function requestBookingAction(
 
   let requestId: string
   let proposal: { number: string; status: ProposalStatus } | undefined
+  const clientId = await requesterClientId()
   try {
     const created = await createBookingRequest({
       resourceId,
@@ -301,7 +303,7 @@ export async function requestBookingAction(
       requesterName: text(formData, 'name'),
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
-      clientId: await requesterClientId(),
+      clientId,
       // Le devis naît avec la demande, dans la même transaction (ADR 043).
       proposal: { product, answers, message: notes, requesterCompany: company, timeZone },
     })
@@ -326,6 +328,9 @@ export async function requestBookingAction(
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyBookingRequestSubmitted(requestId))
+  // Le visiteur reçoit l'accusé de réception, avec le lien pour créer son
+  // espace et y suivre sa demande (ADR 068). Connecté, il la voit déjà.
+  if (!clientId) after(() => sendRequestReceived({ bookingId: requestId }))
   // Le planning du staff doit montrer la demande sans attendre.
   revalidatePath('/reservations')
   revalidatePath('/demandes')
@@ -403,6 +408,8 @@ export async function requestDomiciliationAction(
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyDomiciliationRequestSubmitted(proposal.id))
+  // Le visiteur reçoit l'accusé de réception et le lien de son espace (ADR 068).
+  if (!clientId) after(() => sendRequestReceived({ proposalId: proposal.id }))
   revalidatePath('/devis')
 
   return {

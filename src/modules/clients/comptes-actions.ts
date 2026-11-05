@@ -12,7 +12,66 @@ import { emailEnabled } from '../../lib/courriel.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { DuplicateClientMemberError, addClientMember, removeClientMember } from './comptes.ts'
 import { sendInvitation } from './invitation.ts'
+import { createInvitedClient } from './invitation-rapide.ts'
 import { clientMembers } from './schema.ts'
+
+export type QuickInviteFormState = {
+  ok?: string
+  /** Fiche créée, ou fiche où l'adresse a déjà son accès : le lien du message. */
+  client?: { id: string; name: string }
+  fieldErrors?: { email?: string; fullName?: string; company?: string }
+  values?: { email: string; fullName: string; company: string }
+} | null
+
+/**
+ * « Inviter un client » de l'écran Comptes (ADR 068) : une adresse suffit.
+ * La fiche prospect et l'accès sont créés ensemble, puis l'invitation part
+ * comme depuis la fiche — lien pour choisir son mot de passe, sept jours.
+ * Une adresse qui a déjà un accès en cours n'en reçoit pas un second : le
+ * message mène à sa fiche, d'où l'on renvoie l'invitation.
+ */
+export async function inviteNewClientAction(
+  _previous: QuickInviteFormState,
+  formData: FormData,
+): Promise<QuickInviteFormState> {
+  await requirePermission('clients.gerer')
+  const values = {
+    email: String(formData.get('email') ?? '').trim().toLowerCase(),
+    fullName: String(formData.get('fullName') ?? '').trim(),
+    company: String(formData.get('company') ?? '').trim(),
+  }
+  const fieldErrors: NonNullable<QuickInviteFormState>['fieldErrors'] = {}
+  if (!EMAIL.test(values.email)) fieldErrors.email = 'Saisissez une adresse électronique valide.'
+  if (values.fullName.length > 255) fieldErrors.fullName = 'Le nom compte 255 caractères au plus.'
+  if (values.company.length > 255) fieldErrors.company = 'Le nom de l’entreprise compte 255 caractères au plus.'
+  if (Object.keys(fieldErrors).length > 0) return { fieldErrors, values }
+
+  const result = await createInvitedClient({
+    email: values.email,
+    fullName: values.fullName || null,
+    company: values.company || null,
+  })
+  const client = { id: result.clientId, name: result.clientName }
+  if (!result.ok) {
+    return {
+      client,
+      fieldErrors: {
+        email: `${values.email} a déjà accès à l’espace de ${result.clientName}. Renvoyez l’invitation depuis sa fiche si besoin.`,
+      },
+      values,
+    }
+  }
+
+  after(() => sendInvitation(result.clientId, values.email))
+  revalidatePath('/comptes')
+  revalidatePath('/clients')
+  return {
+    client,
+    ok: emailEnabled()
+      ? `Fiche « ${result.clientName} » créée. ${values.email} reçoit le lien pour choisir son mot de passe, valable ${INVITATION_JOURS} jours.`
+      : `Fiche « ${result.clientName} » créée. Aucun courriel n’est parti : l’envoi n’est pas configuré (Réglages, « Courriels »). Prévenez la personne autrement.`,
+  }
+}
 
 export type MemberFormState = {
   ok?: string

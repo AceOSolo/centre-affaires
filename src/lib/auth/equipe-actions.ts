@@ -2,16 +2,21 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { staffRoleLabels, staffRoles, type StaffRole } from '../../db/staff.ts'
+import { emailEnabled } from '../courriel.ts'
 import { isUuid } from '../uuid.ts'
 import {
   assignableRoles,
+  findTeamMember,
   inscribeTeamMember,
   teamRefusalMessages,
   updateTeamMember,
   type TeamChange,
 } from './equipe.ts'
+import { sendStaffInvitation } from './equipe-invitation.ts'
+import { INVITATION_JOURS } from './messages.ts'
 import { requirePermission } from './staff.ts'
 
 /**
@@ -27,7 +32,7 @@ export type TeamFormState = {
   values?: { email: string; fullName: string; role: string }
 } | null
 
-/** Contrôle volontairement sommaire : c'est Better Auth qui vérifiera l'adresse (courriel de vérification). */
+/** Contrôle volontairement sommaire : le lien d'invitation, parti à cette adresse, la prouvera. */
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 
 const isRole = (value: string): value is StaffRole =>
@@ -61,11 +66,53 @@ export async function addTeamMemberAction(
     return { fieldErrors: { email: `${values.email} fait déjà partie de l’équipe.` }, values }
   }
 
+  // Le lien pour choisir son mot de passe (ADR 068), après la réponse.
+  after(() => sendStaffInvitation(created.id))
   revalidatePath('/equipe')
   return {
-    ok:
-      `${created.email} inscrit comme ${staffRoleLabels[created.role]}. ` +
-      'La personne choisit son mot de passe sur la page de connexion de l’équipe (/auth/equipe) avec cette adresse ; le rattachement se fait à sa première connexion.',
+    ok: emailEnabled()
+      ? `${created.email} ajouté comme ${staffRoleLabels[created.role]}. Un courriel lui donne le lien pour choisir son mot de passe, valable ${INVITATION_JOURS} jours.`
+      : `${created.email} ajouté comme ${staffRoleLabels[created.role]}. Aucun courriel n’est parti : l’envoi n’est pas configuré (Réglages, « Courriels »). Prévenez la personne autrement.`,
+  }
+}
+
+/**
+ * Renvoie l'invitation d'un membre qui ne s'est pas encore connecté
+ * (ADR 068) : un nouveau lien, valable de nouveau sept jours. Même règle que
+ * les autres actions de la ligne : on ne touche qu'un membre dont on peut
+ * donner le rôle. L'envoi est attendu pour dire s'il est parti.
+ */
+export async function resendStaffInvitationAction(
+  _previous: TeamRowState,
+  formData: FormData,
+): Promise<TeamRowState> {
+  const { member } = await requirePermission('equipe.gerer')
+  const id = String(formData.get('id') ?? '')
+  if (!isUuid(id)) return { error: 'Demande illisible : rechargez la page.' }
+  const target = await findTeamMember(id)
+  if (!target || target.deletedAt) return { error: 'Ce membre a été retiré : il n’y a plus d’invitation à envoyer.' }
+  if (!assignableRoles(member.role).includes(target.role)) return { error: teamRefusalMessages['reserve-direction'] }
+  if (target.authUserId) {
+    return {
+      error: `${target.email} s’est déjà connecté. En cas d’oubli, « Mot de passe oublié » sur la page de connexion de l’équipe lui donne un nouveau mot de passe.`,
+    }
+  }
+
+  const outcome = await sendStaffInvitation(target.id)
+  revalidatePath('/equipe')
+  switch (outcome?.status) {
+    case 'sent':
+      return { ok: `Invitation renvoyée à ${target.email} : un nouveau lien, valable ${INVITATION_JOURS} jours.` }
+    case 'not_configured':
+      return {
+        error: `Aucun courriel n’est parti : l’envoi n’est pas configuré sur le serveur (Réglages, « Courriels »). Prévenez ${target.email} autrement.`,
+      }
+    case 'failed':
+      return { error: `L’envoi à ${target.email} a échoué. ${outcome.error ?? ''}`.trim() }
+    case 'skipped':
+      return { error: outcome.error ?? 'Le message n’est pas parti.' }
+    default:
+      return { error: 'L’invitation n’a pas pu être préparée. Réessayez dans un instant.' }
   }
 }
 

@@ -306,6 +306,61 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
       optional: true,
     },
   ],
+  // Invitation dans l'équipe (ADR 068) : le lien de l'invitation, comme pour
+  // l'espace client, mais vers le back-office.
+  staff_invited: [
+    centre,
+    { name: 'role', label: 'Rôle donné : Accueil, Exploitant ou Direction', example: 'Accueil' },
+    { name: 'adresse', label: 'Adresse de la personne invitée', example: 'camille@exemple.fr' },
+    {
+      name: 'lien',
+      label: 'Lien pour choisir son mot de passe, valable une fois ; absent si la personne a déjà un mot de passe',
+      example: 'https://centre.exemple/api/auth/reset-password/…',
+      optional: true,
+    },
+    {
+      name: 'echeance',
+      label: 'Fin de validité du lien, à l’heure du centre',
+      example: 'mercredi 11 novembre 2026 à 10:00',
+      optional: true,
+    },
+    {
+      name: 'connexion',
+      label: 'Lien vers la page de connexion de l’équipe',
+      example: 'https://centre.exemple/auth/equipe',
+      optional: true,
+    },
+  ],
+  // Demande déposée sur la page publique par un visiteur (ADR 068).
+  request_received: [
+    centre,
+    {
+      name: 'demande',
+      label: 'Ce qui est demandé : ressource et créneau, ou domiciliation et raison sociale',
+      example: 'Salle Horizon, mardi 10 novembre 2026, 09:00 – 12:00',
+    },
+    { name: 'numero', label: 'Numéro du devis né de la demande', example: 'DV-2026-0012', optional: true },
+    { name: 'adresse', label: 'Adresse du demandeur', example: 'camille@exemple.fr' },
+    {
+      name: 'lien',
+      label:
+        'Lien pour créer son espace en choisissant son mot de passe, valable une fois ; absent si l’adresse a déjà un compte',
+      example: 'https://centre.exemple/api/auth/reset-password/…',
+      optional: true,
+    },
+    {
+      name: 'echeance',
+      label: 'Fin de validité du lien, à l’heure du centre',
+      example: 'mercredi 11 novembre 2026 à 10:00',
+      optional: true,
+    },
+    {
+      name: 'connexion',
+      label: 'Lien vers la page de connexion, seulement quand l’adresse a déjà un compte',
+      example: 'https://centre.exemple/auth/connexion',
+      optional: true,
+    },
+  ],
 }
 
 export type DefaultTemplate = { subject: string; body: string }
@@ -500,6 +555,31 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       'décochez « Informations du centre » dans les préférences de votre espace client.' +
       '\n{{lien}}',
   },
+  staff_invited: {
+    subject: 'Votre accès au back-office {{centre}}',
+    body:
+      'Bonjour,\n\n{{centre}} vous a ajouté à son équipe, avec le rôle {{role}}.' +
+      '\n\nPour entrer dans le back-office, choisissez votre mot de passe en ouvrant ce lien, valable une fois, jusqu’au {{echeance}} :' +
+      '\n{{lien}}' +
+      '\n\nVotre identifiant est votre adresse : {{adresse}}.' +
+      '\nEnsuite, connectez-vous depuis {{connexion}}' +
+      '\n\nVous avez déjà un mot de passe pour {{centre}} ? Connectez-vous avec lui : le back-office s’y ajoute.' +
+      '\n\nLien expiré ? Demandez à la personne qui vous a ajouté de vous renvoyer l’invitation, ou choisissez « Mot de passe oublié » sur la page de connexion.' +
+      '\n\nSi vous n’attendiez pas ce message, ignorez-le.' +
+      signature,
+  },
+  request_received: {
+    subject: 'Votre demande à {{centre}} est bien reçue',
+    body:
+      'Bonjour,\n\nNous avons bien reçu votre demande : {{demande}}.' +
+      '\nRéférence : {{numero}}' +
+      '\n\nL’équipe de {{centre}} l’étudie et revient vers vous rapidement.' +
+      '\n\nPour la suivre en ligne, créez votre espace : choisissez votre mot de passe en ouvrant ce lien, valable une fois, jusqu’au {{echeance}}. Votre identifiant sera votre adresse, {{adresse}}.' +
+      '\n{{lien}}' +
+      '\n\nVous avez déjà un compte chez {{centre}} : l’équipe vous répond par courriel. Pour vos prochaines demandes, connectez-vous d’abord à votre espace, elles y apparaîtront : {{connexion}}' +
+      '\n\nSi vous n’êtes pas à l’origine de cette demande, ignorez ce message ou prévenez {{centre}}.' +
+      signature,
+  },
 }
 
 /** Nom de l'événement à l'écran. */
@@ -525,6 +605,8 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   offer_requested: 'Offre demandée depuis l’espace client',
   domiciliation_request_submitted: 'Demande de domiciliation déposée',
   client_broadcast: 'Message du centre aux clients',
+  staff_invited: 'Invitation dans l’équipe',
+  request_received: 'Demande du site bien reçue',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -556,11 +638,16 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
     'Quand une demande de domiciliation est déposée sur la page publique : son devis attend la relecture de l’accueil.',
   client_broadcast:
     'Quand l’équipe envoie un message libre aux domiciliés, aux clients des bureaux ou à une sélection (« Messages aux domiciliés ») : une fermeture, des travaux, un nouveau service.',
+  staff_invited:
+    'Quand la direction ou un exploitant ajoute une personne à l’équipe, ou renvoie son invitation : le lien pour choisir son mot de passe et entrer dans le back-office.',
+  request_received:
+    'Quand un visiteur dépose une demande sur la page publique (salle, bureau, camion, matériel, domiciliation) : l’accusé de réception, et le lien pour créer son espace et y retrouver sa demande.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {
   client: 'Client',
   centre: 'Centre',
+  person: 'Personne invitée ou demandeur',
 }
 
 /** Catégories auxquelles une personne de l'espace client peut renoncer. */
@@ -604,4 +691,5 @@ export const notificationRelatedTypeLabels: Record<NotificationRelatedType, stri
   mail_batch: 'Tournée du courrier',
   proposal: 'Devis',
   client_broadcast: 'Message aux clients',
+  staff_member: 'Membre de l’équipe',
 }

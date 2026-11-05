@@ -28,8 +28,12 @@ import {
  *
  * Ce module ne dit **que** qui est connecté. Savoir si cette personne a le droit
  * d'entrer dans le back-office est une autre question, traitée par
- * `src/lib/auth/staff.ts` : n'importe qui peut créer un compte, personne ne
- * devient membre de l'équipe pour autant.
+ * `src/lib/auth/staff.ts` : avoir un compte ne fait pas un membre de l'équipe.
+ *
+ * Pas d'inscription libre (ADR 068, qui revient sur l'ADR 045) : un compte
+ * naît d'une invitation — équipe, espace client — ou d'une demande déposée
+ * sur la page publique, toujours par un lien parti à l'adresse
+ * (`invitation.ts`). La route d'inscription de Better Auth est fermée.
  */
 function required(name: string): string {
   const value = process.env[name]
@@ -42,9 +46,10 @@ function required(name: string): string {
 /**
  * Chemins qui font partir un courriel vers une adresse saisie par un
  * inconnu : pas d'appel sans preuve ALTCHA (ADR 047). Un robot ne doit pas
- * pouvoir en faire partir des milliers.
+ * pouvoir en faire partir des milliers. L'inscription, fermée (ADR 068), n'en
+ * fait plus partie : elle refuse tout appel.
  */
-const CHEMINS_SOUS_PREUVE = new Set(['/sign-up/email', '/request-password-reset'])
+const CHEMINS_SOUS_PREUVE = new Set(['/request-password-reset'])
 
 /** Validité du lien de réinitialisation, annoncée dans le courriel. */
 const LIEN_REINITIALISATION_SECONDES = 3600
@@ -93,6 +98,10 @@ export function createAuth(
     }),
     emailAndPassword: {
       enabled: true,
+      // Les comptes naissent d'une invitation ou d'une demande du site
+      // (ADR 068) : `/sign-up/email` refuse tout appel
+      // (`EMAIL_PASSWORD_SIGN_UP_DISABLED`).
+      disableSignUp: true,
       minPasswordLength: MOT_DE_PASSE_MIN,
       requireEmailVerification: verify,
       // Mot de passe oublié (`app/(auth)/auth/mot-de-passe-oublie`). Better
@@ -135,17 +144,19 @@ export function createAuth(
         })
       },
     },
-    // Raison sociale saisie à l'inscription libre (ADR 045) : la fiche client
-    // n'est créée qu'une fois l'adresse confirmée (`modules/comptes/inscription.ts`).
+    // Raison sociale du demandeur d'une demande du site (ADR 068), posée sur
+    // le compte créé pour lui (`invitation.ts`) : elle nomme la fiche client,
+    // créée une fois l'adresse confirmée (`modules/comptes/inscription.ts`).
+    // Héritée de l'inscription libre (ADR 045) ; plus saisie par personne.
     user: {
       additionalFields: {
-        companyName: { type: 'string', required: false, input: true },
+        companyName: { type: 'string', required: false, input: false },
       },
     },
     hooks: {
-      // Pas d'inscription ni de demande de réinitialisation sans preuve
-      // ALTCHA (ADR 047) : le formulaire joint la réponse du widget à la
-      // requête (`CHEMINS_SOUS_PREUVE`).
+      // Pas de demande de réinitialisation sans preuve ALTCHA (ADR 047) : le
+      // formulaire joint la réponse du widget à la requête
+      // (`CHEMINS_SOUS_PREUVE`).
       before: createAuthMiddleware(async (ctx) => {
         if (!CHEMINS_SOUS_PREUVE.has(ctx.path)) return
         if (!(await preuveHumaine().verifier(ctx.headers?.get(EN_TETE_PREUVE)))) {
@@ -177,13 +188,12 @@ export function createAuth(
     // Contre les robots (`lib/anti-robot.ts`) : Better Auth compte les appels
     // par adresse IP, en production seulement. Ses plafonds par défaut (trois
     // essais en dix secondes, plus d'un millier par heure) sont resserrés là
-    // où un robot gagne quelque chose : deviner un mot de passe, créer des
-    // comptes en série, ou faire partir des courriels vers n'importe quelle
-    // adresse. En mémoire : un seul conteneur (ADR 013).
+    // où un robot gagne quelque chose : deviner un mot de passe, ou faire
+    // partir des courriels vers n'importe quelle adresse. En mémoire : un seul
+    // conteneur (ADR 013).
     rateLimit: {
       customRules: {
         '/sign-in/email': { window: 300, max: 10 },
-        '/sign-up/email': { window: 3600, max: 5 },
         '/send-verification-email': { window: 900, max: 3 },
         '/request-password-reset': { window: 900, max: 3 },
       },

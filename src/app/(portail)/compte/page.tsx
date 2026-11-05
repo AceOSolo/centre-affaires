@@ -13,6 +13,7 @@ import { formatBookingHours } from '../../../modules/reservations/affichage.ts'
 import { contractTypeLabels } from '../../../modules/contrats/labels.ts'
 import { mailKindLabels } from '../../../modules/courrier/labels.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
+import { domiciliationRequestStatusLabel } from '../../../modules/facturation/propositions-portail.ts'
 import { loadClientSpace } from './espace.ts'
 
 export const metadata = { title: 'Mon espace' }
@@ -85,6 +86,35 @@ export default async function CompteAccueilPage() {
       )}
 
       <div className="grid gap-6 lg:grid-cols-2">
+        {/* Une demande de domiciliation n'est qu'un devis : sa seule trace ici (ADR 068). */}
+        {space.domiciliationRequests.length > 0 && (
+          <Carte
+            titre={space.domiciliationRequests.length > 1 ? 'Demandes de domiciliation' : 'Demande de domiciliation'}
+            Icon={MailIcon}
+          >
+            <ul className="divide-y divide-border">
+              {space.domiciliationRequests.map((demande) => (
+                <li key={demande.id} className="py-2.5 first:pt-0">
+                  <p className="font-medium text-foreground">
+                    {demande.company ? `Domiciliation de ${demande.company}` : 'Domiciliation'}
+                  </p>
+                  <p className="text-sm text-muted-foreground">
+                    Déposée le {formatCalendarDate(toIsoDate(demande.createdAt, timeZone))} · réf.{' '}
+                    <span className="tabular">{demande.number}</span>
+                  </p>
+                  <p className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-muted px-3 py-1 text-sm font-medium text-primary">
+                    <ClockIcon size={20} />
+                    {domiciliationRequestStatusLabel(demande.status)}
+                  </p>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-sm text-muted-foreground">
+              Notre équipe vous recontacte pour le devis et les pièces à fournir avant la signature.
+            </p>
+          </Carte>
+        )}
+
         <Carte titre="Réservations" Icon={CalendarIcon}>
           {prochaine ? (
             <>

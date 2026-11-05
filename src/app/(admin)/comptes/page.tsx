@@ -6,6 +6,7 @@ import { formatCalendarDate, toIsoDate, todayIsoDate } from '../../../lib/dates.
 import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTenantId, currentTimeZone } from '../../../lib/tenant.ts'
+import { InviteClientForm } from '../../../modules/clients/invite-client-form.tsx'
 import { AccountsTable, type AccountTableRow } from '../../../modules/comptes/accounts-table.tsx'
 import {
   ACCOUNT_LIST_LIMIT,
@@ -22,8 +23,9 @@ const stateFilters: { value: AccountStateFilter; label: string }[] = [
 ]
 
 /**
- * Comptes créés sur le site (ADR 045) : inscriptions libres, clients invités,
- * équipe. L'exploitant y bannit, réactive, et rattache un compte à une
+ * Comptes du site (ADR 045, ADR 068) : clients invités, demandeurs du site
+ * qui ont créé leur espace, équipe. On y invite un client d'une simple
+ * adresse ; l'exploitant y bannit, réactive, et rattache un compte à une
  * entreprise existante.
  */
 export default async function ComptesPage({
@@ -34,6 +36,8 @@ export default async function ComptesPage({
   const { user, member } = await requirePermission('comptes.rattacher')
   // Bannir et réactiver : l'exploitant seul ; l'accueil consulte et rattache.
   const canBan = can(member.role, 'comptes.gerer')
+  // Inviter un client crée sa fiche : le droit des fiches clients (ADR 068).
+  const canInvite = can(member.role, 'clients.gerer')
   const { etat, q } = await searchParams
   const state = stateFilters.some((filter) => filter.value === etat)
     ? (etat as AccountStateFilter)
@@ -79,13 +83,30 @@ export default async function ComptesPage({
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Comptes</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
-          Toute personne peut créer son compte sur le site. Une fois son adresse confirmée, elle
-          reçoit sa propre fiche client, « inscrite en ligne », et n’y voit que ce qui la concerne.
+          Un compte naît d’une invitation — dans l’équipe, ou à l’espace d’un client — ou d’une
+          demande faite sur le site : le demandeur reçoit un lien pour créer son espace, où il
+          retrouve sa demande, sous sa propre fiche « inscrite en ligne ».{' '}
           {canBan
             ? 'Ici, vous bannissez un compte, le réactivez, ou le rattachez à une entreprise existante.'
             : 'Ouvrez un compte pour le rattacher à une entreprise existante. Bannir un compte est réservé à l’exploitant.'}
         </p>
       </div>
+
+      {canInvite && (
+        <section aria-labelledby="inviter" className="flex flex-col gap-3">
+          <h2 id="inviter" className="text-sm font-semibold tracking-tight">
+            Inviter un client
+          </h2>
+          <p className="max-w-3xl text-sm text-muted-foreground">
+            Une fiche prospect est créée avec son accès, et la personne reçoit un lien pour choisir son
+            mot de passe, valable sept jours. Pour une entreprise qui a déjà sa fiche, ajoutez la
+            personne depuis la fiche.
+          </p>
+          <div className="rounded-lg border border-border bg-white px-5 py-4">
+            <InviteClientForm />
+          </div>
+        </section>
+      )}
 
       <div className="flex flex-wrap items-end gap-x-4 gap-y-3">
         <nav aria-label="Filtrer par état" className="flex flex-wrap items-center gap-2">
@@ -143,7 +164,7 @@ export default async function ComptesPage({
           <p className="text-sm text-muted-foreground">
             {search || state
               ? 'Aucun compte ne correspond. Vérifiez l’orthographe de l’adresse, ou affichez tous les comptes.'
-              : 'Aucun compte pour l’instant. Les personnes créent le leur depuis la page de connexion du site.'}
+              : 'Aucun compte pour l’instant. Invitez un client ci-dessus, ou un membre depuis l’écran Équipe ; un visiteur qui fait une demande sur le site reçoit aussi son lien.'}
           </p>
         </div>
       ) : (

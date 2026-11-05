@@ -4,7 +4,10 @@
 **Statut** : accepté — revient sur la règle « avoir un compte ne donne accès à
 rien » des ADR 008 et 015 pour l'espace client ; le back-office n'est pas
 concerné ; choix tranchés par le centre le 20/10/2026 (droits de l'accueil,
-fiche d'inscription gardée, filtre des clients)
+fiche d'inscription gardée, filtre des clients). **L'inscription libre est
+fermée par l'ADR 068** (05/11/2026) : un compte naît d'une invitation ou
+d'une demande du site ; la fiche « inscrite en ligne », l'écran Comptes et le
+bannissement restent.
 
 ## Contexte
 

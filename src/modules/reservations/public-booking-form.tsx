@@ -514,6 +514,8 @@ export function RequestSent({ headingRef, summary, proposal, email, onClose, chi
       ) : (
         <p className="mt-4 max-w-prose text-muted-foreground">Notre équipe préparera votre devis et vous répondra à <strong className="break-all font-medium text-foreground">{email}</strong>, en général sous un jour ouvré.</p>
       )}
+      {/* L'accusé de réception porte le lien de l'espace client (ADR 068). */}
+      <p className="mt-3 max-w-prose text-sm text-muted-foreground">Pas encore d’espace client ? Un courriel de confirmation vous apporte le lien pour en créer un et y suivre votre demande.</p>
       {children}
       <button type="button" onClick={onClose} className={`${primaryClass} mt-8`}>Fermer</button>
     </div>

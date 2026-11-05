@@ -66,9 +66,10 @@ BEGIN
 END
 --> statement-breakpoint
 
--- À qui s'adresse un événement : `client` (les personnes de l'entreprise) ou
--- `centre` (l'adresse du centre). Miroir : `notificationEventAudience`
--- (src/modules/notifications/schema.ts).
+-- À qui s'adresse un événement : `client` (les personnes de l'entreprise),
+-- `centre` (l'adresse du centre) ou `person` (une personne seule, sans
+-- entreprise : membre de l'équipe invité, demandeur du site, ADR 068).
+-- Miroir : `notificationEventAudience` (src/modules/notifications/schema.ts).
 CREATE FUNCTION notification_event_audience(p_event varchar(64)) RETURNS varchar(16)
 DETERMINISTIC NO SQL
 BEGIN
@@ -94,6 +95,8 @@ BEGIN
     WHEN 'mail_none' THEN 'client'
     WHEN 'domiciliation_request_submitted' THEN 'centre'
     WHEN 'client_broadcast' THEN 'client'
+    WHEN 'staff_invited' THEN 'person'
+    WHEN 'request_received' THEN 'person'
     ELSE notification_event_unknown(p_event)
   END;
 END
@@ -126,6 +129,8 @@ BEGIN
     WHEN 'member_invited' THEN NULL
     WHEN 'offer_requested' THEN NULL
     WHEN 'domiciliation_request_submitted' THEN NULL
+    WHEN 'staff_invited' THEN NULL
+    WHEN 'request_received' THEN NULL
     ELSE notification_event_unknown(p_event)
   END;
 END

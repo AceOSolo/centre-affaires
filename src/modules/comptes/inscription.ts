@@ -9,13 +9,18 @@ import type { AuthenticatedUser } from '../../lib/auth/membre.ts'
 import { authUsers } from '../../lib/auth/schema.ts'
 import { resolveClientAccounts, type ClientAccount } from '../clients/comptes.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
+import { attachSiteRequests } from './demandes-site.ts'
 
 /**
- * Inscription libre sur le site (ADR 045) : une personne qui crée son compte
- * sans avoir été inscrite par le centre reçoit sa propre fiche client, un
- * prospect « inscrit en ligne », et entre dans l'espace client de cette fiche.
- * Elle n'y voit que ce qui lui appartient : la portée client (ADR 019) ne
- * change pas.
+ * Fiche du compte qui n'a encore aucune entreprise (ADR 045, ADR 068) : il
+ * reçoit sa propre fiche client, un prospect « inscrit en ligne », et entre
+ * dans l'espace client de cette fiche, où l'attendent les demandes qu'il a
+ * déposées sur le site. Il n'y voit que ce qui lui appartient : la portée
+ * client (ADR 019) ne change pas.
+ *
+ * Depuis la fermeture de l'inscription libre (ADR 068), un tel compte naît
+ * du lien envoyé avec l'accusé de réception d'une demande du site
+ * (`demandes-site.ts`).
  *
  * Appelée par `clientAccess` quand le compte n'a accès à aucune entreprise,
  * **après** le rattachement des inscriptions faites à son adresse : une
@@ -103,6 +108,9 @@ export async function ensureSignupClient(
     authUserId: user.id,
     fullName: user.name || null,
   })
+  // Les demandes déposées sur le site à cette adresse (ADR 068) : la personne
+  // les retrouve dans son espace dès la première entrée.
+  await attachSiteRequests(tx, client.id, user.email)
   return true
 }
 

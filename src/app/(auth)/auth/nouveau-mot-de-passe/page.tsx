@@ -10,8 +10,9 @@ export const metadata = { title: 'Nouveau mot de passe' }
  * Auth vérifie le jeton au passage (`/api/auth/reset-password/:token`) et
  * arrive ici avec `?token=`, ou `?error=INVALID_TOKEN` s'il a servi ou expiré.
  *
- * `?invitation=1` : le lien de l'invitation à l'espace client (ADR 059),
- * valable plusieurs jours, où la personne choisit son premier mot de passe.
+ * `?invitation=1` : le lien d'une invitation (ADR 059, ADR 068), valable
+ * plusieurs jours, où la personne choisit son premier mot de passe — à
+ * l'espace client, ou au back-office avec `espace=equipe`.
  */
 export default async function NouveauMotDePassePage({
   searchParams,
@@ -20,7 +21,7 @@ export default async function NouveauMotDePassePage({
 }) {
   const { token, error, espace, invitation } = await searchParams
   const equipe = espace === 'equipe'
-  const invite = invitation === '1' && !equipe
+  const invite = invitation === '1'
 
   if (!token || error) {
     return (
@@ -28,7 +29,11 @@ export default async function NouveauMotDePassePage({
         <h1 className="text-xl font-semibold text-primary">Lien plus valable</h1>
         <p className="text-sm text-muted-foreground">
           {invite
-            ? `Ce lien d’invitation a déjà servi ou a expiré : il ne vaut qu’une fois, et pendant ${INVITATION_JOURS} jours. Demandez au centre de vous renvoyer l’invitation, ou recevez un nouveau lien ici.`
+            ? `Ce lien d’invitation a déjà servi ou a expiré : il ne vaut qu’une fois, et pendant ${INVITATION_JOURS} jours. ${
+                equipe
+                  ? 'Demandez à la personne qui vous a ajouté à l’équipe de vous renvoyer l’invitation'
+                  : 'Demandez au centre de vous renvoyer l’invitation'
+              }, ou recevez un nouveau lien ici.`
             : 'Ce lien a déjà servi ou a expiré : il ne vaut qu’une fois, et pendant une heure. Demandez-en un nouveau.'}
         </p>
         <Link
@@ -39,7 +44,7 @@ export default async function NouveauMotDePassePage({
         </Link>
         {invite && (
           <Link
-            href="/auth/connexion"
+            href={equipe ? '/auth/equipe' : '/auth/connexion'}
             className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
           >
             J’ai déjà choisi mon mot de passe : me connecter

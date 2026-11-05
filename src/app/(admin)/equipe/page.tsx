@@ -1,10 +1,13 @@
 import { CheckIcon } from '../../../components/ui/icons.tsx'
 import { staffRoleLabels, staffRoles, type StaffRole } from '../../../db/staff.ts'
 import { assignableRoles, findTeamMember, listTeamMembers } from '../../../lib/auth/equipe.ts'
+import { latestStaffInvitations } from '../../../lib/auth/equipe-invitation.ts'
 import { can, inDolibarr, permissionLabels, permissions } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { describeMemberAccess, memberAccessState } from '../../../modules/clients/invitation-etat.ts'
 import { RemovedStaffSection } from '../../../modules/rgpd/staff-section.tsx'
+import { ResendStaffInvitationForm } from './resend-staff-invitation-form.tsx'
 import { TeamMemberForm } from './team-member-form.tsx'
 import { TeamRowActions } from './team-row-actions.tsx'
 
@@ -24,6 +27,10 @@ const roleBadge: Record<StaffRole, string> = {
  *
  * Remplace l'usage courant de `infra/ajouter-membre-staff.mjs`, gardé pour
  * l'amorçage : la première direction ne peut pas s'inscrire elle-même.
+ *
+ * Ajouter un membre lui envoie un lien pour choisir son mot de passe
+ * (ADR 068) ; la colonne « Accès » dit où en est l'invitation, et la
+ * renvoie tant que la personne ne s'est pas connectée.
  */
 export default async function EquipePage({
   searchParams,
@@ -39,6 +46,10 @@ export default async function EquipePage({
   const assignable = assignableRoles(me.role)
   const isDirection = can(me.role, 'equipe.exploitants')
   const roles = assignable.map((role) => ({ value: role, label: staffRoleLabels[role] }))
+  const timeZone = await currentTimeZone()
+  const invitations = await latestStaffInvitations(
+    team.filter((member) => !member.authUserId).map((member) => member.id),
+  )
 
   return (
     <div className="flex flex-col gap-6">
@@ -86,6 +97,8 @@ export default async function EquipePage({
                 // On n'a la main que sur un membre dont on peut donner le rôle.
                 const inHand = assignable.includes(member.role)
                 const otherRoles = roles.filter((role) => role.value !== member.role)
+                const accessState = memberAccessState(member, invitations.get(member.id))
+                const access = describeMemberAccess(accessState, timeZone)
                 return (
                   <tr key={member.id}>
                     <td className="px-4 py-3">
@@ -101,8 +114,15 @@ export default async function EquipePage({
                         {staffRoleLabels[member.role]}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-muted-foreground">
-                      {member.authUserId ? 'Compte activé' : 'En attente de première connexion'}
+                    <td className="px-4 py-3">
+                      {/* L'état se lit en texte : la couleur ne fait que le doubler. */}
+                      <span className={access.active ? 'text-primary' : 'font-medium text-foreground'}>
+                        {access.label}
+                      </span>
+                      {access.detail && <p className="mt-0.5 text-xs text-muted-foreground">{access.detail}</p>}
+                      {!access.active && !self && inHand && (
+                        <ResendStaffInvitationForm memberId={member.id} email={member.email} />
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       {self ? (
@@ -132,19 +152,20 @@ export default async function EquipePage({
       {/* Membres retirés et leur anonymisation (R29, ADR 040). */}
       <RemovedStaffSection
         canAnonymize={can(me.role, 'rgpd.anonymiser')}
-        timeZone={await currentTimeZone()}
+        timeZone={timeZone}
         anonymized={anonymise === '1'}
       />
 
       <section aria-labelledby="inscrire" className="flex flex-col gap-3">
         <h2 id="inscrire" className="text-sm font-semibold tracking-tight">
-          Inscrire un membre
+          Ajouter un membre
         </h2>
         <p className="max-w-3xl text-sm text-muted-foreground">
-          La personne choisit ensuite son mot de passe sur la page de connexion de l’équipe
-          (<span className="font-medium text-foreground">/auth/equipe</span>), avec cette
-          adresse : son compte lui est rattaché à la première connexion.
-          {!isDirection && ' Vous inscrivez l’accueil ; un exploitant est nommé par la direction.'}
+          La personne reçoit un courriel avec un lien pour choisir son mot de passe, valable
+          sept jours. Elle entre ensuite dans le back-office depuis la page de connexion de
+          l’équipe (<span className="font-medium text-foreground">/auth/equipe</span>). Lien
+          expiré : renvoyez l’invitation depuis la liste ci-dessus.
+          {!isDirection && ' Vous ajoutez l’accueil ; un exploitant est nommé par la direction.'}
         </p>
         <div className="rounded-lg border border-border bg-white px-5 py-4">
           <TeamMemberForm roles={roles} />

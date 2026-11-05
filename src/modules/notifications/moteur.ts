@@ -55,7 +55,8 @@ export type NotificationRequest = {
    * Destinataires d'un message au client. Sans eux : toutes les personnes de
    * l'espace du client. `memberIds` désigne des accès de l'entreprise, retirés
    * exclus ; `addresses`, des adresses données telles quelles. Ignorés pour un
-   * message au centre, qui part à l'adresse du centre.
+   * message au centre, qui part à l'adresse du centre. Un message à une
+   * personne seule (ADR 068) part aux seules `addresses`.
    */
   recipients?: { memberIds?: readonly string[]; addresses?: readonly Recipient[] }
   /** Valeurs des variables. `centre` est fourni par le moteur. */
@@ -181,6 +182,13 @@ async function prepare(tx: Transaction, request: NotificationRequest, tenantId: 
     return address.length > 0
       ? prepared(address, null)
       : prepared([], 'Le centre n’a pas d’adresse de courriel : renseignez-la dans la configuration.')
+  }
+
+  // Une personne seule (ADR 068) : membre de l'équipe invité, demandeur du
+  // site. Pas d'entreprise, pas de préférence : l'adresse donnée, et elle seule.
+  if (notificationEventAudience[event] === 'person') {
+    const addresses = normalizeRecipients((request.recipients?.addresses ?? []).map((recipient) => recipient.email))
+    return addresses.length > 0 ? prepared(addresses, null) : prepared([], 'Aucune adresse de courriel à prévenir.')
   }
 
   if (!request.clientId) throw new Error(`Message « ${event} » au client sans client.`)

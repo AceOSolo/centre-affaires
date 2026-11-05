@@ -11,6 +11,7 @@ import { searchMailForAccounts } from '../../../modules/courrier/demandes-querie
 import { countToSign, listInspectionsForAccounts } from '../../../modules/etats-des-lieux/queries.ts'
 import { listInvoicesForAccounts } from '../../../modules/facturation/compte-queries.ts'
 import { listPortalOffers } from '../../../modules/facturation/offres-portail.ts'
+import { listOpenDomiciliationRequests } from '../../../modules/facturation/propositions-portail.ts'
 import { splitClientBookings } from '../../../modules/reservations/compte-regles.ts'
 import { listBookingsForAccounts } from '../../../modules/reservations/compte-queries.ts'
 
@@ -37,7 +38,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
   const today = todayIsoDate(tenant.timezone)
   const now = new Date()
 
-  const [bookings, invoices, contracts, inspections, mail, latestMail, offers] = await Promise.all([
+  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests] = await Promise.all([
     listBookingsForAccounts(accounts),
     listInvoicesForAccounts(accounts),
     listContractsForAccounts(accounts, today),
@@ -45,6 +46,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
     mailFolderCounts(accounts),
     searchMailForAccounts(accounts, {}, { number: 1, size: LATEST_MAIL }, tenant.timezone),
     listPortalOffers(accounts, today),
+    listOpenDomiciliationRequests(accounts),
   ])
 
   const activeContracts = contracts.filter((contract) => contract.status === 'active')
@@ -62,6 +64,9 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
     mail,
     latestMail: latestMail.rows,
     offerCount: offers.length,
+    // Demandes de domiciliation en cours (ADR 068) : seule trace, dans
+    // l'espace, d'une demande qui n'est qu'un devis.
+    domiciliationRequests,
     sections: clientSections({
       domiciliated,
       invoices: invoices.length,

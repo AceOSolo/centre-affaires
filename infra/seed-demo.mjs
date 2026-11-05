@@ -16,11 +16,11 @@
  *
  * Il produit un centre exploitable : ressources, horaires, réservations,
  * entreprises clientes et leurs contacts, contrats, grille tarifaire, services,
- * et un exploitant de démonstration invité par son adresse `demo@exemple.test`.
- * Son compte n'existe pas encore : il se crée par inscription sur
- * /auth/connexion (avec `AUTH_SKIP_EMAIL_VERIFICATION=true` en développement,
- * la session s'ouvre directement) ; le rattachement se fait à la première
- * connexion.
+ * et une direction de démonstration invitée par son adresse `demo@exemple.test`.
+ * Personne ne crée plus son compte sur la page de connexion (ADR 068) : le
+ * script affiche les liens d'invitation de la direction et de l'accès client
+ * de démonstration, où l'on choisit son mot de passe ; le rattachement se fait
+ * à la première connexion.
  *
  * Pour repartir de zéro, recréer la base (`drop database` puis
  * `npm run db:migrer`) : les occupations de contrat ne se suppriment que par
@@ -31,6 +31,7 @@
 // le formulaire de réservation.
 import { addDaysToIsoDate, todayIsoDate, wallClockToUtc } from '../src/lib/dates.ts'
 import { assurerCentre, dansLeCentre, ouvrirBase, uuidv7 } from './connexion.mjs'
+import { afficherLien, preparerLienInvitation } from './lien-invitation.mjs'
 
 const TIME_ZONE = 'Europe/Paris'
 
@@ -241,7 +242,18 @@ try {
       [uuidv7(), COURRIEL_EXPLOITANT_DEMO],
     )
 
+    // Les liens d'invitation (ADR 068) : la seule façon d'entrer.
+    const liens = [
+      [COURRIEL_EXPLOITANT_DEMO, 'equipe', await preparerLienInvitation(cnx, {
+        email: COURRIEL_EXPLOITANT_DEMO, nom: 'Direction de démonstration', espace: 'equipe',
+      })],
+      ...(await Promise.all(membres.map(async ([, email, fullName]) => [
+        email, 'client', await preparerLienInvitation(cnx, { email, nom: fullName, espace: 'client' }),
+      ]))),
+    ]
+
     return {
+      liens,
       resources: resources.length,
       bookings: bookings.length,
       clients: clients.length,
@@ -253,10 +265,11 @@ try {
     `${bilan.resources} ressources, ${bilan.bookings} réservations, ${bilan.clients} entreprises ` +
       `et ${bilan.contracts} contrats fictifs insérés.`,
   )
-  console.log(
-    `Direction de démonstration : ${COURRIEL_EXPLOITANT_DEMO}. Créer son compte sur /auth/equipe ` +
-      "(« Choisir votre mot de passe » ; avec AUTH_SKIP_EMAIL_VERIFICATION=true, la session s'ouvre directement).",
-  )
+  console.log('Liens d’invitation : y choisir son mot de passe, puis se connecter.')
+  for (const [email, espace, lien] of bilan.liens) {
+    console.log(espace === 'equipe' ? `Direction de démonstration (${email}) :` : `Accès client de démonstration (${email}) :`)
+    afficherLien(email, lien, { espace })
+  }
 } finally {
   await client.end()
 }

@@ -15,11 +15,17 @@
 export const MOT_DE_PASSE_MIN = 10
 
 /**
- * Validité du lien d'invitation à l'espace client, en jours (ADR 059) :
- * posée par `invitation.ts`, annoncée par le courriel, la fiche du client et
- * la page du mot de passe.
+ * Validité d'un lien d'invitation, en jours (ADR 059, ADR 068) : posée par
+ * `invitation.ts` et par le script d'amorçage, annoncée par les courriels,
+ * la fiche du client, l'écran Équipe et la page du mot de passe.
  */
 export const INVITATION_JOURS = 7
+
+/** Où mène un lien d'invitation, une fois le jeton vérifié par Better Auth : espace client. */
+export const INVITATION_CALLBACK = '/auth/nouveau-mot-de-passe?invitation=1'
+
+/** Même page, aux textes de l'équipe ; « Se connecter » y mène à `/auth/equipe` (ADR 068). */
+export const STAFF_INVITATION_CALLBACK = '/auth/nouveau-mot-de-passe?invitation=1&espace=equipe'
 
 /** Ce que le client d'authentification rend dans `error`. */
 export type RefusAuth = { code?: string; message?: string; status?: number }
