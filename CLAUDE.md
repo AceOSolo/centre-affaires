@@ -212,13 +212,13 @@ Le menu a un rayon par produit (ADR 053) : Salles, Bureaux, Domiciliation,
 Camion, Matériel, dans l'ordre de `src/modules/ressources/produits.ts`, chacun avec ses
 seuls écrans (planning, parc, courrier, états des lieux) en adresses filtrées
 `?type=` ou `?produit=`. En tête, « Aujourd'hui » (ADR 050). **Une seule
-« Demandes »** (ADR 048), hors du menu : la cloche de l'en-tête en dit le
-nombre, en liste les plus récentes et y mène, et chaque rayon compte les
-siennes à son titre (ADR 070). Ce qui sert à tous les
-produits est sous « Tous les services », ce qui se règle une fois dans
-Réglages (`(admin)/reglages/sections.ts`). **Pas d'écran répété dans le
-menu** : ni « Demandes » par rayon, ni vue d'ensemble doublée — la pastille
-« Tous » de la page y mène. Le menu est décrit dans `(admin)/menu.ts` et vérifié par
+page « Demandes »** (ADR 048) : chaque rayon s'ouvre sur sa ligne « Demandes »,
+filtrée sur son produit et comptée, « Tous les services » sur « Autres
+demandes » ; la cloche de l'en-tête en dit le total et mène à chaque demande
+(ADR 070). Ce qui sert à tous les produits est sous « Tous les services », ce
+qui se règle une fois dans Réglages (`(admin)/reglages/sections.ts`). **Pas
+d'écran répété dans le menu** : pas de « Demandes » générale ni de vue
+d'ensemble doublée — la pastille « Tous » de la page y mène. Le menu est décrit dans `(admin)/menu.ts` et vérifié par
 `menu.test.ts`. Le regroupement des types de ressource vit dans `produits.ts`,
 jamais en base.
 

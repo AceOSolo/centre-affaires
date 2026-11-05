@@ -4,7 +4,9 @@
 **Statut** : accepté — remplace le rangement par parcours de l'ADR 048 (la
 boîte de réception unique « Demandes », la page « Réglages » et la fiche
 client qui montre sa commande sont conservées) ; garde « Aujourd'hui » en tête
-(ADR 050) ; « Demandes » sort du menu, la cloche y mène (ADR 070)
+(ADR 050) ; « Demandes » générale sort du menu, la cloche y mène, et chaque
+rayon a sa ligne « Demandes » filtrée (ADR 070, qui revient sur « pas de
+Demandes par rayon »)
 
 ## Contexte
 

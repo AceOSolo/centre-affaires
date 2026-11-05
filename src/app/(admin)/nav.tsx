@@ -116,8 +116,8 @@ export function Nav({
         const listId = `${titleId}-liste`
         const last = index === visibles.length - 1 && group.label === 'Réglages'
         const open = isGroupOpen(group, { opened, active: activeKey, dismissed: dismissedKey })
-        // Le titre du rayon dit ses demandes à traiter, plié comme ouvert (ADR 070).
-        const pending = group.inbox ? (inboxCounts[group.inbox] ?? 0) : 0
+        // Plié, le rayon garde à son titre les demandes à traiter de sa ligne « Demandes ».
+        const folded = group.entries.reduce((sum, entry) => sum + (entry.counter ? (inboxCounts[entry.counter] ?? 0) : 0), 0)
 
         // Une marge intérieure dans un cadre `-mx-1` : le contour de focus des
         // liens tient dans la zone qui masque le rayon plié, au lieu d'y être
@@ -126,6 +126,7 @@ export function Nav({
           <ul className={`flex flex-col gap-0.5 px-1 pb-1 ${group.foldable ? 'pt-2' : 'pt-1'}`}>
             {group.entries.map((entry) => {
               const active = entry.href === actif
+              const count = entry.counter ? (inboxCounts[entry.counter] ?? 0) : 0
               return (
                 <li key={entry.href}>
                   <Link
@@ -140,6 +141,12 @@ export function Nav({
                     }`}
                   >
                     <span>{entry.label}</span>
+                    {count > 0 && (
+                      <span className="rounded-full bg-primary px-1.5 text-xs font-semibold text-white tabular">
+                        <span aria-hidden="true">{count}</span>
+                        <span className="sr-only">{pendingLabel(count)}</span>
+                      </span>
+                    )}
                   </Link>
                 </li>
               )
@@ -165,10 +172,10 @@ export function Nav({
                 >
                   <span id={titleId}>{group.label}</span>
                   <span className="flex items-center gap-2">
-                    {pending > 0 && (
+                    {!open && folded > 0 && (
                       <span className="rounded-full bg-primary px-1.5 font-semibold normal-case tracking-normal text-white tabular">
-                        <span aria-hidden="true">{pending}</span>
-                        <span className="sr-only">{pendingLabel(pending)}</span>
+                        <span aria-hidden="true">{folded}</span>
+                        <span className="sr-only">{pendingLabel(folded)}</span>
                       </span>
                     )}
                     {/* Lucide « chevron-down » ; tourné vers la droite, le rayon est plié. */}

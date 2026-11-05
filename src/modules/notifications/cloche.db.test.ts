@@ -171,7 +171,7 @@ describe('cloche de l’équipe : les demandes à traiter', { skip: raisonDeSaut
 
     assert.deepEqual(
       [par(ids.reservation)?.label, par(ids.reservation)?.who, par(ids.reservation)?.href],
-      ['Demande de réservation', 'Atelier Durand', `/demandes#demande-${ids.reservation}`],
+      ['Demande de réservation', 'Atelier Durand', `/demandes?produit=salles#demande-${ids.reservation}`],
     )
     assert.match(String(par(ids.reservation)?.summary), /^Salle Atlas · \w+ \d+ \w+ \d{4}, de \d{2}:\d{2} à \d{2}:\d{2}$/)
     // Le devis né avec la demande ne compte pas deux fois : la demande dit « de devis ».
@@ -181,11 +181,11 @@ describe('cloche de l’équipe : les demandes à traiter', { skip: raisonDeSaut
     )
     assert.deepEqual(
       [par(ids.domiciliation)?.label, par(ids.domiciliation)?.who, par(ids.domiciliation)?.href],
-      ['Demande de domiciliation', 'Rousseau Conseil', `/demandes#devis-${ids.domiciliation}`],
+      ['Demande de domiciliation', 'Rousseau Conseil', `/demandes?produit=domiciliation#devis-${ids.domiciliation}`],
     )
     assert.deepEqual(
       [par(ids.demandeOffre)?.label, par(ids.demandeOffre)?.summary, par(ids.demandeOffre)?.href],
-      ['Offre demandée', 'Domiciliation premium', `/demandes#offre-${ids.demandeOffre}`],
+      ['Offre demandée', 'Domiciliation premium', `/demandes?produit=autres#offre-${ids.demandeOffre}`],
     )
     // Ni l'expéditeur, ni rien de ce que le pli contient.
     assert.deepEqual(

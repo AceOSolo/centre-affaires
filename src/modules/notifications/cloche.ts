@@ -1,3 +1,4 @@
+import type { InboxShelf } from '../../app/(admin)/aujourdhui/journee.ts'
 import { addDaysToIsoDate, formatDateTime, formatTime, toIsoDate } from '../../lib/dates.ts'
 
 /**
@@ -40,23 +41,23 @@ export const inboxItemLabels: Record<InboxItemKind, string> = {
   mail_request: 'Demande de courrier',
 }
 
+const anchors: Record<InboxItemKind, string> = {
+  booking_request: 'demande',
+  quote_request: 'demande',
+  domiciliation_request: 'devis',
+  proposal: 'devis',
+  offer_request: 'offre',
+  mail_request: 'courrier',
+}
+
 /**
- * Où mène une ligne : la demande dans « Demandes » (ADR 048), à son ancre —
- * `demande-` pour une réservation, `devis-`, `offre-`, `courrier-`.
+ * Où mène une ligne : la demande dans « Demandes » (ADR 048) filtrée sur son
+ * rayon — le menu ouvre alors ce rayon et allume sa ligne « Demandes »
+ * (ADR 070) —, à son ancre : `demande-` pour une réservation, `devis-`,
+ * `offre-`, `courrier-`.
  */
-export function inboxItemHref(kind: InboxItemKind, id: string): string {
-  switch (kind) {
-    case 'booking_request':
-    case 'quote_request':
-      return `/demandes#demande-${id}`
-    case 'domiciliation_request':
-    case 'proposal':
-      return `/demandes#devis-${id}`
-    case 'offer_request':
-      return `/demandes#offre-${id}`
-    case 'mail_request':
-      return `/demandes#courrier-${id}`
-  }
+export function inboxItemHref(kind: InboxItemKind, id: string, shelf: InboxShelf): string {
+  return `/demandes?produit=${shelf}#${anchors[kind]}-${id}`
 }
 
 /**

@@ -19,17 +19,17 @@ import { buildInboxFeed, type InboxSources } from './cloche-liste.ts'
 
 /** Règles de la cloche de l'équipe (ADR 059, ADR 070), sans base. */
 describe('cloche de l’équipe : règles', () => {
-  it('donne à chaque sorte de demande son libellé et son ancre dans « Demandes »', () => {
+  it('donne à chaque sorte de demande son libellé, et son ancre dans « Demandes » filtrée sur son rayon', () => {
     for (const kind of inboxItemKinds) {
       assert.ok(inboxItemLabels[kind], kind)
-      assert.match(inboxItemHref(kind, 'abc'), /^\/demandes#(demande|devis|offre|courrier)-abc$/, kind)
+      assert.match(inboxItemHref(kind, 'abc', 'salles'), /^\/demandes\?produit=salles#(demande|devis|offre|courrier)-abc$/, kind)
     }
-    assert.equal(inboxItemHref('booking_request', 'r1'), '/demandes#demande-r1')
-    assert.equal(inboxItemHref('quote_request', 'r1'), '/demandes#demande-r1')
-    assert.equal(inboxItemHref('domiciliation_request', 'd1'), '/demandes#devis-d1')
-    assert.equal(inboxItemHref('proposal', 'd2'), '/demandes#devis-d2')
-    assert.equal(inboxItemHref('offer_request', 'o1'), '/demandes#offre-o1')
-    assert.equal(inboxItemHref('mail_request', 'm1'), '/demandes#courrier-m1')
+    assert.equal(inboxItemHref('booking_request', 'r1', 'salles'), '/demandes?produit=salles#demande-r1')
+    assert.equal(inboxItemHref('quote_request', 'r1', 'vehicules'), '/demandes?produit=vehicules#demande-r1')
+    assert.equal(inboxItemHref('domiciliation_request', 'd1', 'domiciliation'), '/demandes?produit=domiciliation#devis-d1')
+    assert.equal(inboxItemHref('proposal', 'd2', 'autres'), '/demandes?produit=autres#devis-d2')
+    assert.equal(inboxItemHref('offer_request', 'o1', 'autres'), '/demandes?produit=autres#offre-o1')
+    assert.equal(inboxItemHref('mail_request', 'm1', 'domiciliation'), '/demandes?produit=domiciliation#courrier-m1')
   })
 
   it('dit « quand » à l’heure du centre', () => {
@@ -72,7 +72,7 @@ describe('cloche de l’équipe : les lignes', () => {
       requesterName: null,
       clientName: 'Atelier Durand',
       bookedBy: null,
-      resource: { name: 'Salle Atlas' },
+      resource: { name: 'Salle Atlas', resourceType: 'salle' },
       ...extra,
     }) as unknown as PendingRequest
   const proposal = (id: string, minutesAgo: number, extra: Partial<ProposalListItem> = {}) =>
@@ -158,7 +158,13 @@ describe('cloche de l’équipe : les lignes', () => {
     )
     const [b2] = feed.items
     assert.equal(b2.when, 'il y a 5 min')
-    assert.equal(b2.href, '/demandes#demande-b2')
+    assert.equal(b2.href, '/demandes?produit=salles#demande-b2')
+    // Chacune ouvre son rayon : le devis sans ressource et l'offre sous « Autres ».
+    const href = (id: string) => feed.items.find((item) => item.id === id)?.href
+    assert.equal(href('p2'), '/demandes?produit=domiciliation#devis-p2')
+    assert.equal(href('p3'), '/demandes?produit=autres#devis-p3')
+    assert.equal(href('o1'), '/demandes?produit=autres#offre-o1')
+    assert.equal(href('m1'), '/demandes?produit=domiciliation#courrier-m1')
     assert.equal(b2.createdAt, at(5).toISOString())
   })
 

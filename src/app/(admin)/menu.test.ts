@@ -34,6 +34,8 @@ function filteredProduct(href: string): string | undefined {
     return productOf(type as ResourceType).label
   }
   const key = search.get('produit')
+  // « Autres demandes » (ADR 070) : ce qui ne relève d'aucun produit.
+  if (key === 'autres') return undefined
   if (key) {
     const product = products.find((candidate) => candidate.key === key)
     assert.ok(product, `produit inconnu : ${href}`)
@@ -63,37 +65,40 @@ describe('menu du back-office', () => {
     }
   })
 
-  it('ne filtre aucune entrée hors des rayons', () => {
+  it('ne filtre aucune entrée hors des rayons, sauf les « Autres demandes »', () => {
     const outside = menuGroups
       .filter((group) => !productLabels.includes(group.label))
       .flatMap((group) => group.entries.map((entry) => entry.href))
-    assert.deepEqual(outside.filter((href) => href.includes('?')), [])
+    assert.deepEqual(outside.filter((href) => href.includes('?') && href !== '/demandes?produit=autres'), [])
   })
 
-  it('laisse « Demandes » à la cloche : aucune entrée, ni en tête ni par rayon (ADR 070)', () => {
-    assert.deepEqual(
-      entries.filter((entry) => /demande/i.test(entry.label) || entry.href.startsWith('/demandes')),
-      [],
-    )
+  it('ouvre chaque rayon sur ses « Demandes », filtrées et comptées, sans « Demandes » générale (ADR 070)', () => {
+    for (const product of products) {
+      const [first] = menuGroups.find((group) => group.label === product.label)?.entries ?? []
+      assert.deepEqual(
+        [first?.label, first?.href, first?.counter],
+        ['Demandes', `/demandes?produit=${product.key}`, product.key],
+        product.label,
+      )
+    }
+    const [autres] = menuGroups.find((group) => group.label === 'Tous les services')?.entries ?? []
+    assert.deepEqual([autres?.label, autres?.href, autres?.counter], ['Autres demandes', '/demandes?produit=autres', 'autres'])
+    // La page entière n'a pas d'entrée : la cloche y mène.
+    assert.equal(entries.find((entry) => entry.href === '/demandes'), undefined)
+    // Chaque rayon compté une fois : la somme des compteurs est le nombre de la cloche.
+    const counted = entries.flatMap((entry) => (entry.counter ? [entry.counter] : []))
+    assert.deepEqual([...counted].sort(), [...inboxShelves].sort())
+
     const at = (pathname: string, query = '') => {
       const href = activeEntry(addresses, pathname, new URLSearchParams(query))
-      return entries.find((entry) => [entry.href, ...(entry.also ?? [])].includes(href ?? ''))?.label
+      return menuGroups.find((group) => group.entries.some((entry) => [entry.href, ...(entry.also ?? [])].includes(href ?? '')))
+        ?.label
     }
+    assert.equal(at('/demandes', 'produit=salles'), 'Salles')
+    assert.equal(at('/demandes', 'produit=autres'), 'Tous les services')
     // L'historique des demandes de courrier reste au rayon Domiciliation.
-    assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Courrier')
-    assert.equal(at('/courrier/01a1'), 'Courrier')
-    assert.equal(at('/demandes', 'produit=domiciliation'), undefined)
-  })
-
-  it('compte les demandes de chaque rayon à son titre, chaque rayon une fois (ADR 070)', () => {
-    // Un rayon par produit compte les siennes, « Tous les services » le reste :
-    // la somme des titres est le nombre de la cloche.
-    for (const product of products) {
-      assert.equal(menuGroups.find((group) => group.label === product.label)?.inbox, product.key, product.label)
-    }
-    assert.equal(menuGroups.find((group) => group.label === 'Tous les services')?.inbox, 'autres')
-    const counted = menuGroups.flatMap((group) => (group.inbox ? [group.inbox] : []))
-    assert.deepEqual([...counted].sort(), [...inboxShelves].sort())
+    assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Domiciliation')
+    assert.equal(at('/demandes'), undefined)
   })
 
   it('ne montre aucune adresse deux fois', () => {
@@ -101,16 +106,17 @@ describe('menu du back-office', () => {
   })
 
   it('reste court', () => {
-    // 21 : le rayon Matériel (ADR 062) ajoute deux entrées, dans un rayon
-    // plié tant qu'on ne l'ouvre pas (ADR 067), « Messages aux domiciliés »
-    // une dans le rayon Domiciliation (ADR 060), et « Demandes » passe à la
-    // cloche (ADR 070).
-    assert.ok(entries.length <= 21, `${entries.length} entrées`)
+    // 27 : le rayon Matériel (ADR 062) ajoute deux entrées, « Messages aux
+    // domiciliés » une (ADR 060), et chaque rayon sa ligne « Demandes »
+    // (ADR 070) — six, la « Demandes » générale en moins. Les rayons sont
+    // pliés tant qu'on ne les ouvre pas (ADR 067).
+    assert.ok(entries.length <= 27, `${entries.length} entrées`)
   })
 
-  it('range le matériel dans son rayon : planning et appareils (ADR 062)', () => {
+  it('range le matériel dans son rayon : demandes, planning et appareils (ADR 062, ADR 070)', () => {
     const materiel = menuGroups.find((group) => group.label === 'Matériel')
     assert.deepEqual(materiel?.entries.map((entry) => entry.href), [
+      '/demandes?produit=materiel',
       '/reservations/semaine?type=materiel',
       '/ressources?type=materiel',
     ])

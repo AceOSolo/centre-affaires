@@ -22,7 +22,12 @@ import {
   listOfferRequests,
 } from '../../../modules/facturation/offres-portail.ts'
 import { ProposalStatusBadge } from '../../../modules/facturation/proposal-status.tsx'
-import { awaitsReception, proposalProductLabels, proposalsOfProduct } from '../../../modules/facturation/propositions.ts'
+import {
+  awaitsReception,
+  proposalProductKey,
+  proposalProductLabels,
+  proposalsOfProduct,
+} from '../../../modules/facturation/propositions.ts'
 import { listProposals } from '../../../modules/facturation/propositions-queries.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 import {
@@ -73,11 +78,14 @@ export default async function DemandesPage({
   // Le produit se choisit par les pastilles de la page (ADR 048) ; les
   // adresses filtrées (`?produit=bureaux`) restent valables (ADR 046).
   const product = parseProduct(params.produit)
+  // « Autres demandes » (ADR 070) : ce qui ne relève d'aucun produit — offres
+  // groupées, devis sans ressource —, la ligne de « Tous les services ».
+  const others = !product && [params.produit].flat()[0] === 'autres'
   // Le courrier est la file de la domiciliation (ADR 057).
-  const showsMail = canHandleMail && (!product || product.key === 'domiciliation')
+  const showsMail = canHandleMail && !others && (!product || product.key === 'domiciliation')
   const timeZone = await currentTimeZone()
   const [pending, offerRequests, openProposals, mailQueue] = await Promise.all([
-    canHandleRequests ? listPendingRequests(product && typesOf(product)) : [],
+    canHandleRequests && !others ? listPendingRequests(product && typesOf(product)) : [],
     // Les offres groupées ne relèvent d'aucun produit : file complète seulement.
     product || !canHandleRequests ? [] : listOfferRequests(),
     // Tout ce qui arrive se traite ici (ADR 048) : les devis à compléter aussi,
@@ -102,8 +110,10 @@ export default async function DemandesPage({
   const proposalOfBooking = new Map(
     openProposals.filter((proposal) => proposal.bookingId).map((proposal) => [proposal.bookingId, proposal]),
   )
-  const proposalsToComplete = proposalsOfProduct(openProposals.filter(awaitsReception), product?.key)
-  const showsBookings = canHandleRequests && product?.key !== 'domiciliation'
+  const proposalsToComplete = others
+    ? openProposals.filter((proposal) => awaitsReception(proposal) && !proposalProductKey(proposal))
+    : proposalsOfProduct(openProposals.filter(awaitsReception), product?.key)
+  const showsBookings = canHandleRequests && !others && product?.key !== 'domiciliation'
   const canDrawContract = can(member.role, 'contrats.creer')
   const openOfferRequests = offerRequests.filter((request) => request.status === 'requested')
 
@@ -112,7 +122,7 @@ export default async function DemandesPage({
       <section aria-labelledby="reservations-titre" className="flex flex-col gap-6">
         <div>
           <h1 id="reservations-titre" className="text-2xl font-semibold tracking-tight">
-            Demandes{product && ` · ${product.label}`}
+            Demandes{product ? ` · ${product.label}` : others ? ' · Autres' : ''}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou
@@ -124,6 +134,7 @@ export default async function DemandesPage({
         <ProductFilter
           active={product}
           href={(key) => (key ? `/demandes?produit=${key}` : '/demandes')}
+          others={{ href: '/demandes?produit=autres', current: others }}
         />
 
         {!showsBookings ? null : pending.length === 0 ? (

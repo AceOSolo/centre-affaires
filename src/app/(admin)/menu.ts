@@ -1,5 +1,5 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
-import { todayPermissions, type InboxShelf } from './aujourdhui/journee.ts'
+import { demandesPermissions, todayPermissions, type InboxShelf } from './aujourdhui/journee.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -14,6 +14,11 @@ export type MenuEntry = {
   /** Droit de la page ; plusieurs : l'entrée s'affiche si le rôle en a un. */
   permission: Permission | readonly Permission[]
   /**
+   * Demandes à traiter que l'entrée compte (`inboxCountsByShelf`, ADR 070) :
+   * celles de son rayon. Plié, le rayon les garde à son titre.
+   */
+  counter?: InboxShelf
+  /**
    * Autres adresses qui allument l'entrée : « Réglages » reste allumé sur les
    * pages qu'il réunit (tarifs, équipe…), le planning des bureaux sur ses vues
    * du jour et de la semaine.
@@ -25,21 +30,21 @@ export type MenuEntry = {
 // l'ordre de `produits.ts`, avec le planning, le parc et ce qui se traite pour
 // ce produit. Ce qui sert à tous les produits (clients, devis, contrats…) est
 // réuni sous « Tous les services ». « Demandes », la seule boîte de réception
-// (ADR 048), n'est plus au menu : la cloche de l'en-tête en dit le nombre, en
-// liste les plus récentes et y mène (ADR 070) ; le produit s'y choisit par les
-// pastilles de la page.
+// (ADR 048), s'ouvre par rayon : chacun a sa ligne « Demandes », filtrée sur son
+// produit et comptée, « Tous les services » ses « Autres demandes » (offres
+// groupées, devis sans ressource) ; la cloche de l'en-tête en dit le total
+// (ADR 070). Pas de « Demandes » générale au menu : la cloche y mène.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
-export type MenuGroup = {
-  label: string
-  /**
-   * Les demandes à traiter que le titre du rayon compte (ADR 070) : celles de
-   * son produit, ou « autres » pour « Tous les services ». Chaque rayon une
-   * fois : leur somme est le nombre de la cloche.
-   */
-  inbox?: InboxShelf
-  entries: MenuEntry[]
-}
+export type MenuGroup = { label: string; entries: MenuEntry[] }
+
+/** La ligne « Demandes » d'un rayon : la page filtrée sur son produit, et son compteur. */
+const demandes = (shelf: InboxShelf, permission: MenuEntry['permission'] = 'demandes.traiter'): MenuEntry => ({
+  href: `/demandes?produit=${shelf}`,
+  label: shelf === 'autres' ? 'Autres demandes' : 'Demandes',
+  permission,
+  counter: shelf,
+})
 
 export const menuGroups: MenuGroup[] = [
   // Page d'arrivée de l'équipe (ADR 050). Ce qui attend l'accueil est dans la
@@ -50,16 +55,16 @@ export const menuGroups: MenuGroup[] = [
   },
   {
     label: 'Salles',
-    inbox: 'salles',
     entries: [
+      demandes('salles'),
       { href: '/reservations?type=salle', label: 'Planning des salles', permission: 'reservations.gerer' },
       { href: '/ressources?type=salle', label: 'Salles', permission: 'ressources.gerer' },
     ],
   },
   {
     label: 'Bureaux',
-    inbox: 'bureaux',
     entries: [
+      demandes('bureaux'),
       // Un bureau se loue au mois : le planning s'ouvre sur le mois.
       {
         href: '/reservations/mois?type=bureau',
@@ -80,9 +85,9 @@ export const menuGroups: MenuGroup[] = [
   },
   {
     label: 'Domiciliation',
-    // Le titre compte les demandes de courrier et de domiciliation (ADR 057, ADR 070).
-    inbox: 'domiciliation',
     entries: [
+      // Demandes de domiciliation et de courrier (ADR 057) : l'un ou l'autre droit l'ouvre.
+      demandes('domiciliation', demandesPermissions),
       // L'historique des demandes de courrier (`/courrier/demandes`) allume cette entrée.
       { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer' },
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
@@ -92,8 +97,8 @@ export const menuGroups: MenuGroup[] = [
   },
   {
     label: 'Camion',
-    inbox: 'vehicules',
     entries: [
+      demandes('vehicules'),
       // Le camion se loue à la demi-journée ou à la journée : la semaine d'abord.
       {
         href: '/reservations/semaine?type=vehicule',
@@ -110,8 +115,8 @@ export const menuGroups: MenuGroup[] = [
     // (ADR 062) : chaque appareil a son planning, la semaine d'abord comme le
     // camion. Ses états des lieux se trouvent par la pastille « Matériel ».
     label: 'Matériel',
-    inbox: 'materiel',
     entries: [
+      demandes('materiel'),
       {
         href: '/reservations/semaine?type=materiel',
         label: 'Planning du matériel',
@@ -122,10 +127,10 @@ export const menuGroups: MenuGroup[] = [
     ],
   },
   {
-    // Les offres groupées et les devis sans ressource n'ont pas de rayon : ils comptent ici.
     label: 'Tous les services',
-    inbox: 'autres',
     entries: [
+      // Les offres groupées et les devis sans ressource n'ont pas de rayon.
+      demandes('autres'),
       { href: '/clients', label: 'Clients', permission: 'clients.gerer' },
       // Devis que Dolibarr vient chercher (ADR 043).
       { href: '/devis', label: 'Devis', permission: 'demandes.traiter' },

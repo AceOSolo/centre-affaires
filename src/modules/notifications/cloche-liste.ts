@@ -1,9 +1,11 @@
+import type { InboxShelf } from '../../app/(admin)/aujourdhui/journee.ts'
 import type { StaffMailRequestRow } from '../courrier/demandes-queries.ts'
 import { mailKindLabels, mailRequestKindLabels } from '../courrier/labels.ts'
 import type { OfferRequestRow } from '../facturation/offres-portail.ts'
-import { awaitsReception, proposalProductLabels } from '../facturation/propositions.ts'
+import { awaitsReception, proposalProductKey, proposalProductLabels } from '../facturation/propositions.ts'
 import type { ProposalListItem } from '../facturation/propositions-queries.ts'
 import type { PendingRequest } from '../reservations/demandes-queries.ts'
+import { productOf } from '../ressources/produits.ts'
 import {
   STAFF_NOTIFICATION_PANEL_LIMIT,
   inboxItemHref,
@@ -50,7 +52,7 @@ const join = (...parts: readonly (string | null | undefined)[]) =>
     .filter(Boolean)
     .join(' · ')
 
-type Line = Omit<InboxItem, 'label' | 'when' | 'href' | 'createdAt'> & { kind: InboxItemKind; at: Date }
+type Line = Omit<InboxItem, 'label' | 'when' | 'href' | 'createdAt'> & { kind: InboxItemKind; shelf: InboxShelf; at: Date }
 
 /**
  * Ce que la cloche affiche : le nombre de demandes à traiter et les plus
@@ -68,6 +70,7 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
       (booking): Line => ({
         id: booking.id,
         kind: bookingsWithProposal.has(booking.id) ? 'quote_request' : 'booking_request',
+        shelf: productOf(booking.resource.resourceType).key,
         summary: join(booking.resource.name, formatSlot(booking.startsAt, booking.endsAt, timeZone)),
         who: firstName(booking.clientName, booking.bookedBy?.name, booking.requesterName),
         state: null,
@@ -80,6 +83,8 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
         // Une domiciliation demandée sur le site n'a pas de créneau : son
         // devis est la demande (ADR 043). Un devis de l'accueil se complète.
         kind: proposal.product === 'domiciliation' && proposal.channel !== 'staff' ? 'domiciliation_request' : 'proposal',
+        // Rangé comme dans les pastilles de « Demandes » ; sans ressource, sous « Autres ».
+        shelf: proposalProductKey(proposal) ?? 'autres',
         summary: join(`Devis ${proposal.number}`, proposal.resourceName ?? proposalProductLabels[proposal.product]),
         who: firstName(proposal.clientName, proposal.requesterCompany, proposal.requesterName),
         state: null,
@@ -90,6 +95,8 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
       (offer): Line => ({
         id: offer.id,
         kind: 'offer_request',
+        // Une offre groupée ne relève d'aucun produit.
+        shelf: 'autres',
         summary: offer.offerName,
         who: firstName(offer.clientName, offer.requestedByName),
         state: null,
@@ -100,6 +107,7 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
       (request): Line => ({
         id: request.id,
         kind: 'mail_request',
+        shelf: 'domiciliation',
         // Ni l'expéditeur ni la consigne du client (ADR 015) : la fiche du pli les montre.
         summary: join(
           mailRequestKindLabels[request.kind],
@@ -116,12 +124,12 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
 
   return {
     count: sources.bookings.length + toComplete.length + openOffers.length + sources.mail.total,
-    items: lines.slice(0, STAFF_NOTIFICATION_PANEL_LIMIT).map(({ at, ...line }) => ({
+    items: lines.slice(0, STAFF_NOTIFICATION_PANEL_LIMIT).map(({ at, shelf, ...line }) => ({
       ...line,
       label: inboxItemLabels[line.kind],
       createdAt: at.toISOString(),
       when: staffNotificationWhen(at, timeZone, now),
-      href: inboxItemHref(line.kind, line.id),
+      href: inboxItemHref(line.kind, line.id, shelf),
     })),
   }
 }
