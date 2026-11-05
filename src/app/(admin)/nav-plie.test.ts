@@ -7,7 +7,7 @@ import { groupKey, isFoldable, isGroupOpen, parseOpened, serializeOpened, toggle
 
 /** Rayons pliés du menu (ADR 064), pliés par défaut (ADR 067). */
 describe('menu pliable', () => {
-  it('plie chaque rayon, sans plier « Aujourd’hui » ni « Demandes »', () => {
+  it('plie chaque rayon, sans plier « Aujourd’hui »', () => {
     const foldable = menuGroups.filter(isFoldable).map((group) => group.label)
     // Tiré de `produits.ts` : un produit ajouté au menu se plie sans retouche ici.
     for (const product of products) assert.ok(foldable.includes(product.label), `${product.label} ne se plie pas`)
@@ -16,7 +16,6 @@ describe('menu pliable', () => {
     const pinned = menuGroups.filter((group) => !isFoldable(group))
     const pinnedHrefs = pinned.flatMap((group) => group.entries.map((entry) => entry.href))
     assert.ok(pinnedHrefs.includes('/aujourdhui'))
-    assert.ok(pinnedHrefs.includes('/demandes'))
     // « Réglages », seul lien de son groupe, ne serait pas plus court plié.
     assert.deepEqual(
       pinned.map((group) => group.label),

@@ -12,7 +12,6 @@ import { openStaffClientSpaceAction } from '../../modules/comptes/espace-equipe-
 import { countPendingMailRequests } from '../../modules/courrier/demandes-queries.ts'
 import { listOfferRequests } from '../../modules/facturation/offres-portail.ts'
 import { StaffNotificationBell } from '../../modules/notifications/cloche.tsx'
-import { countUnreadStaffNotifications } from '../../modules/notifications/cloche-queries.ts'
 import { awaitsReception } from '../../modules/facturation/propositions.ts'
 import { listProposals } from '../../modules/facturation/propositions-queries.ts'
 import { listPendingBookings } from '../../modules/reservations/queries.ts'
@@ -45,21 +44,18 @@ export default async function AdminLayout({ children }: { children: React.ReactN
   const { user, member } = await requireStaff()
   const canHandleRequests = can(member.role, 'demandes.traiter')
   const canHandleMail = can(member.role, 'courrier.gerer')
-  // La cloche de l'équipe (ADR 059) : même droit que ses actions.
+  // La cloche de l'équipe (ADR 059, ADR 070) : même droit que sa route.
   const hasBell = can(member.role, 'notifications.consulter')
-  const [tenant, pending, draftProposals, offerRequests, mailRequests, hasClientSpace, unreadNotifications] = await Promise.all([
+  const [tenant, pending, draftProposals, offerRequests, mailRequests, hasClientSpace] = await Promise.all([
     currentTenant(),
     canHandleRequests ? listPendingBookings() : [],
-    // Les devis à compléter entrent aussi dans « Demandes » (ADR 048).
+    // Les devis à compléter attendent aussi (ADR 048).
     canHandleRequests ? listProposals({ statuses: ['draft'] }) : [],
     // Les offres demandées depuis l'espace client aussi.
     canHandleRequests ? listOfferRequests() : [],
-    // Demandes de courrier à traiter, toutes natures (ADR 037) : dans
-    // « Demandes » aussi (ADR 057).
+    // Demandes de courrier à traiter, toutes natures (ADR 037, ADR 057).
     canHandleMail ? countPendingMailRequests().then((counts) => counts.total) : 0,
     withTenant(currentTenantId(), (tx) => staffHasClientSpace(tx, user)),
-    // La pastille de la cloche (ADR 059), juste dès le premier affichage.
-    hasBell ? countUnreadStaffNotifications({ id: member.id, allowed: permissionsOf(member.role) }) : 0,
   ])
 
   const logo = (
@@ -82,10 +78,11 @@ export default async function AdminLayout({ children }: { children: React.ReactN
     </Link>
   )
 
-  // « Demandes » compte tout ce qui attend l'accueil, une fois chacun : les
+  // La cloche compte tout ce qui attend l'accueil, une fois chacun : les
   // réservations en attente, les devis à compléter qui n'en accompagnent pas
   // une, les offres demandées (ADR 048), les demandes de courrier (ADR 057) —
-  // le même nombre qu'« Aujourd'hui ».
+  // le nombre de « Demandes » et d'« Aujourd'hui » (ADR 070). Juste dès le
+  // premier affichage, puis relu par la cloche toutes les minutes.
   const inboxCount = countInbox({
     pendingBookings: pending.length,
     proposalsToComplete: draftProposals.filter(awaitsReception).length,
@@ -99,7 +96,6 @@ export default async function AdminLayout({ children }: { children: React.ReactN
 
   const nav = (
     <Nav
-      inboxCount={inboxCount}
       mailRequestCount={mailRequests}
       allowed={permissionsOf(member.role)}
       opened={opened}
@@ -148,7 +144,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <aside className="sticky top-0 z-20 hidden h-screen w-60 shrink-0 flex-col border-r border-border bg-white lg:flex">
         <div className="flex items-center justify-between gap-2 pb-4 pl-6 pr-3 pt-5">
           {logo}
-          {hasBell && <StaffNotificationBell initialUnread={unreadNotifications} placement="sidebar" />}
+          {hasBell && <StaffNotificationBell initialCount={inboxCount} placement="sidebar" />}
         </div>
         <div className="flex-1 overflow-y-auto px-3 pb-6">{nav}</div>
         <div className="border-t border-border px-6 py-4">{account}</div>
@@ -157,7 +153,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       <header className="relative flex items-center justify-between gap-4 border-b border-border bg-white px-4 py-2 lg:hidden">
         {logo}
         <div className="flex items-center gap-2">
-          {hasBell && <StaffNotificationBell initialUnread={unreadNotifications} placement="header" />}
+          {hasBell && <StaffNotificationBell initialCount={inboxCount} placement="header" />}
           <MobileMenu>
             <div className="flex flex-col gap-6">
               {nav}

@@ -4,7 +4,8 @@
 **Statut** : accepté — remplace la partie « menu rangé par produit » de
 l'ADR 046 ; les filtres par produit des pages (ADR 046) sont conservés ;
 rangement par parcours remplacé par le rangement par service vendu de
-l'ADR 053 (boîte de réception unique, « Réglages » et fiche client conservés)
+l'ADR 053 (boîte de réception unique, « Réglages » et fiche client conservés) ;
+l'entrée « Demandes » du menu remplacée par la cloche (ADR 070), la page reste
 
 ## Contexte
 

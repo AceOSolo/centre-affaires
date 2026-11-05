@@ -47,9 +47,7 @@ function writeOpenedCookie(keys: readonly string[]) {
 }
 
 const counterLabel = (counter: NonNullable<Entry['counter']>, count: number) =>
-  counter === 'inbox'
-    ? `${count} demande${count > 1 ? 's' : ''} à traiter`
-    : `${count} demande${count > 1 ? 's' : ''} de courrier à traiter`
+  ({ mail: `${count} demande${count > 1 ? 's' : ''} de courrier à traiter` })[counter]
 
 /**
  * Navigation du back-office, rangée par service vendu (ADR 053), chaque rayon
@@ -57,13 +55,11 @@ const counterLabel = (counter: NonNullable<Entry['counter']>, count: number) =>
  * courante ; le reste de la coque reste rendu sur le serveur.
  */
 export function Nav({
-  inboxCount = 0,
   mailRequestCount = 0,
   allowed,
   opened: openedOnServer = [],
 }: {
-  /** Demandes à traiter : réservations en attente et devis à compléter. */
-  inboxCount?: number
+  /** Demandes de courrier à traiter, au rayon Domiciliation (ADR 037). */
   mailRequestCount?: number
   /** Droits du membre connecté (`permissionsOf`). */
   allowed: readonly Permission[]
@@ -108,7 +104,7 @@ export function Nav({
   const activeKey = visibles.find((group) => group.entries.some((entry) => entry.href === actif))?.key
   const dismissedKey = dismissed?.at === here ? dismissed.key : undefined
 
-  const counts = { inbox: inboxCount, mail: mailRequestCount }
+  const counts = { mail: mailRequestCount }
 
   const toggle = (key: string, open: boolean) => {
     writeOpenedCookie(toggleOpened(opened, key, open))

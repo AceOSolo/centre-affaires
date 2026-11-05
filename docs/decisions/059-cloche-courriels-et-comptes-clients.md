@@ -4,7 +4,9 @@
 **Statut** : accepté — complète l'ADR 038 (moteur de notifications), l'ADR 015
 (accès à l'espace client) et l'ADR 045 (comptes du site) ; recette du
 04/11/2026, lot 3 ; une migration de structure (tables `staff_notifications`
-et `staff_notification_reads`)
+et `staff_notification_reads`) ; § 1 (la cloche) amendé par l'ADR 070 : elle
+montre les demandes à traiter, lues dans les files de « Demandes », et ces
+tables sont en sommeil
 
 ## Contexte
 

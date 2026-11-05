@@ -6,10 +6,9 @@ import { appUrl } from '../../lib/courriel.ts'
 import { formatCalendarDate, formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
-import { contracts, offerRequests } from '../contrats/schema.ts'
+import { contracts } from '../contrats/schema.ts'
 import { offers } from '../facturation/schema.ts'
 import { resources } from '../ressources/schema.ts'
-import { signalStaff } from './cloche-queries.ts'
 import { centreTimeZone, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.ts'
 
@@ -140,8 +139,8 @@ export function notifyMemberInvited(
 }
 
 /**
- * Offre demandée depuis l'espace client (ADR 036) : à l'adresse du centre, et
- * dans la cloche de l'équipe (ADR 059).
+ * Offre demandée depuis l'espace client (ADR 036) : à l'adresse du centre.
+ * La demande attend dans « Demandes », que la cloche compte (ADR 070).
  * L'appelant (l'action de l'espace) a vérifié que l'offre est montrée aux
  * clients et que la personne relève de l'entreprise ; le message ne dit rien
  * de plus que ce qu'elle a demandé.
@@ -163,31 +162,12 @@ export function notifyOfferRequested(
           .from(clientMembers)
           .innerJoin(clients, eq(clients.id, clientMembers.clientId))
           .where(and(eq(clientMembers.id, request.memberId), eq(clientMembers.clientId, request.clientId)))
-        // La demande à traiter, que la cloche désigne : une seule par
-        // entreprise et par offre (`offer_requests_open_key`).
-        const [open] = await tx
-          .select({ id: offerRequests.id })
-          .from(offerRequests)
-          .where(
-            and(
-              eq(offerRequests.clientId, request.clientId),
-              eq(offerRequests.offerId, request.offerId),
-              eq(offerRequests.status, 'requested'),
-            ),
-          )
-          .limit(1)
-        return { offer, member, open }
+        return { offer, member }
       },
       options.database,
     )
-    const { offer, member, open } = loaded
+    const { offer, member } = loaded
     if (!offer || offer.deletedAt || !offer.clientVisible || !member) return null
-    if (open) {
-      await signalStaff(
-        { kind: 'offer_request', clientId: request.clientId, relatedId: open.id, summary: [offer.name] },
-        options,
-      )
-    }
     return notify(
       {
         event: 'offer_requested',

@@ -1,5 +1,5 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
-import { demandesPermissions, todayPermissions } from './aujourdhui/journee.ts'
+import { todayPermissions } from './aujourdhui/journee.ts'
 import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
@@ -14,7 +14,7 @@ export type MenuEntry = {
   /** Droit de la page ; plusieurs : l'entrée s'affiche si le rôle en a un. */
   permission: Permission | readonly Permission[]
   /** Compteur de file d'attente affiché à côté du libellé. */
-  counter?: 'inbox' | 'mail'
+  counter?: 'mail'
   /**
    * Autres adresses qui allument l'entrée : « Réglages » reste allumé sur les
    * pages qu'il réunit (tarifs, équipe…), le planning des bureaux sur ses vues
@@ -26,28 +26,18 @@ export type MenuEntry = {
 // Le menu est rangé par service vendu (ADR 053) : un rayon par produit, dans
 // l'ordre de `produits.ts`, avec le planning, le parc et ce qui se traite pour
 // ce produit. Ce qui sert à tous les produits (clients, devis, contrats…) est
-// réuni sous « Tous les services ». « Demandes » reste la seule boîte de
-// réception (ADR 048) : le produit s'y choisit par les pastilles de la page.
+// réuni sous « Tous les services ». « Demandes », la seule boîte de réception
+// (ADR 048), n'est plus au menu : la cloche de l'en-tête en dit le nombre, en
+// liste les plus récentes et y mène (ADR 070) ; le produit s'y choisit par les
+// pastilles de la page.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
 export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
-  // Page d'arrivée de l'équipe (ADR 050), puis tout ce qui attend l'accueil.
+  // Page d'arrivée de l'équipe (ADR 050). Ce qui attend l'accueil est dans la
+  // cloche, qui mène à « Demandes » (ADR 070).
   {
     label: 'Aujourd’hui',
-    entries: [
-      { href: '/aujourdhui', label: 'Aujourd’hui', permission: todayPermissions },
-      // Réservations à valider (elles bloquent un créneau, ADR 005), devis à
-      // compléter (ADR 043), offres demandées, demandes de courrier (ADR 057) :
-      // un seul compteur. La file du courrier, historique compris, en est une
-      // vue filtrée : elle allume « Demandes », pas une seconde entrée.
-      {
-        href: '/demandes',
-        label: 'Demandes',
-        permission: demandesPermissions,
-        counter: 'inbox',
-        also: ['/courrier/demandes'],
-      },
-    ],
+    entries: [{ href: '/aujourdhui', label: 'Aujourd’hui', permission: todayPermissions }],
   },
   {
     label: 'Salles',
@@ -81,7 +71,8 @@ export const menuGroups: { label: string; entries: MenuEntry[] }[] = [
     label: 'Domiciliation',
     entries: [
       // Les demandes de courrier à traiter sont comptées : c'est une file (ADR 037),
-      // la part du rayon dans « Demandes » (ADR 057).
+      // la part du rayon dans la cloche et « Demandes » (ADR 057, ADR 070). Leur
+      // historique (`/courrier/demandes`) allume cette entrée.
       { href: '/courrier', label: 'Courrier', permission: 'courrier.gerer', counter: 'mail' },
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
       // Message libre aux domiciliés — fermeture, travaux… — et son historique (ADR 060).

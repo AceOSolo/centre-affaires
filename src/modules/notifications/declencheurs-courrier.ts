@@ -9,7 +9,6 @@ import { mailItems, mailRequests, type MailRequestKind } from '../courrier/schem
 import { batchRecipients, type BatchRecipients } from '../courrier/tournees.ts'
 import { mailCountPhrase, mailKindsPhrase, scannedPhrase } from '../courrier/tournees-regles.ts'
 import { formatLongDate } from '../../lib/dates.ts'
-import { signalStaff } from './cloche-queries.ts'
 import { centreTimeZone, formatInstant, mailRequestKindPhrases, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.ts'
 
@@ -158,28 +157,15 @@ function requestValues(loaded: LoadedRequest) {
 }
 
 /**
- * Demande de courrier déposée : à l'adresse du centre, et dans la cloche de
- * l'équipe (ADR 059). Une demande consignée par l'accueil lui-même ne le
- * prévient pas.
+ * Demande de courrier déposée : à l'adresse du centre. Une demande consignée
+ * par l'accueil lui-même ne le prévient pas. Elle attend dans « Demandes »,
+ * que la cloche compte (ADR 070).
  */
 export function notifyMailRequestSubmitted(mailRequestId: string, options: NotifyOptions = {}) {
   return guarded('demande de courrier déposée', async () => {
     const loaded = await loadRequest(mailRequestId, options)
     if (!loaded || loaded.request.requestedByStaffId) return null
     if (loaded.request.status !== 'requested' && loaded.request.status !== 'in_progress') return null
-    const phrase = mailRequestKindPhrases[loaded.request.kind]
-    await signalStaff(
-      {
-        kind: 'mail_request',
-        clientId: loaded.request.clientId,
-        relatedId: loaded.request.id,
-        summary: [
-          phrase.charAt(0).toUpperCase() + phrase.slice(1),
-          `${mailKindLabels[loaded.mailKind]} du ${formatInstant(loaded.receivedAt, loaded.timeZone)}`,
-        ],
-      },
-      options,
-    )
     return notify(
       {
         event: 'mail_request_submitted',

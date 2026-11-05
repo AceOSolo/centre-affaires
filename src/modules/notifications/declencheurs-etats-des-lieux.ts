@@ -6,7 +6,6 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { inspections, type InspectionKind } from '../etats-des-lieux/schema.ts'
 import { resources } from '../ressources/schema.ts'
-import { signalStaff } from './cloche-queries.ts'
 import { centreTimeZone, formatInstant, personName } from './faits.ts'
 import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.ts'
 
@@ -20,12 +19,6 @@ import { notify, type NotificationOutcome, type NotifyOptions } from './moteur.t
 const kindPhrases: Record<InspectionKind, string> = {
   entry: 'd’entrée',
   exit: 'de sortie',
-}
-
-/** En tête du résumé de la cloche (ADR 059). */
-const kindLabels: Record<InspectionKind, string> = {
-  entry: 'Entrée',
-  exit: 'Sortie',
 }
 
 async function loadInspection(inspectionId: string, options: NotifyOptions) {
@@ -97,7 +90,7 @@ export async function notifyInspectionToSign(
   }
 }
 
-/** État des lieux validé par le client : à l'adresse du centre, et dans la cloche de l'équipe (ADR 059). */
+/** État des lieux validé par le client : à l'adresse du centre. */
 export async function notifyInspectionSigned(
   inspectionId: string,
   options: NotifyOptions = {},
@@ -105,15 +98,6 @@ export async function notifyInspectionSigned(
   try {
     const loaded = await loadInspection(inspectionId, options)
     if (!loaded || loaded.deletedAt || !loaded.signedAt) return null
-    await signalStaff(
-      {
-        kind: 'inspection_signed',
-        clientId: loaded.clientId,
-        relatedId: loaded.id,
-        summary: [kindLabels[loaded.kind], loaded.resourceName],
-      },
-      options,
-    )
     return await notify(
       {
         event: 'inspection_signed',

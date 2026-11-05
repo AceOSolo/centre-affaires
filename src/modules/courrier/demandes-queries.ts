@@ -1115,7 +1115,8 @@ function queueWhere(filters: RequestQueueFilters): SQL | undefined {
  */
 export async function listMailRequests(
   filters: RequestQueueFilters,
-  page: { number: number; size: number },
+  /** `newestFirst` : la plus récente d'abord, même pour la file (cloche de l'équipe, ADR 070). */
+  page: { number: number; size: number; newestFirst?: boolean },
 ): Promise<{ rows: StaffMailRequestRow[]; total: number }> {
   if (filters.statuses.length === 0) return { rows: [], total: 0 }
   const where = queueWhere(filters)
@@ -1125,7 +1126,7 @@ export async function listMailRequests(
       .from(mailRequests)
       .where(where)
     const rows = await selectRequests(tx, where, {
-      order: isQueue(filters.statuses) ? 'asc' : 'desc',
+      order: isQueue(filters.statuses) && !page.newestFirst ? 'asc' : 'desc',
       staff: true,
       limit: page.size,
       offset: (page.number - 1) * page.size,

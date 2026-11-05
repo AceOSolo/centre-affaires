@@ -29,12 +29,11 @@ type Group = { label: string; entries: readonly { label: string }[] }
 /**
  * Un groupe qui porte le nom de sa première entrée (« Aujourd’hui »,
  * « Réglages ») n'a pas de titre visible, donc rien sur quoi cliquer : il ne
- * se plie pas. « Aujourd’hui » et « Demandes » restent ainsi toujours à
- * l'écran, et « Réglages », seul lien de son groupe, ne serait pas plus court
- * plié.
+ * se plie pas. « Aujourd’hui » reste ainsi toujours à l'écran, et
+ * « Réglages », seul lien de son groupe, ne serait pas plus court plié.
  *
  * Lu sur le groupe tel que `menu.ts` le déclare, pas sur ce qu'un rôle en
- * voit : un rôle sans « Aujourd’hui » ne doit pas pouvoir plier « Demandes ».
+ * voit : un groupe ne se plie pas pour un rôle et pas pour un autre.
  */
 export function isFoldable(group: Group): boolean {
   return group.entries[0]?.label !== group.label

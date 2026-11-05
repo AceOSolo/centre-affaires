@@ -42,7 +42,7 @@ export type NightlyConservationReport = {
   anonymizedMembers: RemovedMembersReport | null
   /** Messages du journal des envois purgés (ADR 038). */
   notificationDeliveries: number | null
-  /** Notifications de la cloche de l'équipe purgées, même durée (ADR 059). */
+  /** Notifications de l'ancienne cloche de l'équipe purgées, même durée (ADR 059, en sommeil depuis l'ADR 070). */
   staffNotifications: number | null
   /** Consultations des numérisations purgées du journal d'accès (ADR 015). */
   views: number | null

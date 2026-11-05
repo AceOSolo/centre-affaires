@@ -19,6 +19,11 @@ import { clients } from '../clients/schema.ts'
 /**
  * Notifications de l'équipe : la cloche du back-office (ADR 059).
  *
+ * **En sommeil depuis l'ADR 070** : la cloche lit désormais les files de
+ * « Demandes » (`cloche-queries.ts`), plus rien n'écrit ici. Les tables
+ * restent — une migration de structure ne se réécrit pas — et la tâche de
+ * nuit purge ce qu'elles gardent. Ce qui suit décrit l'ADR 059.
+ *
  * Un événement qui attend l'équipe — une demande déposée par un client, un
  * état des lieux qu'il a signé — y laisse une ligne, posée par le même
  * déclencheur que le courriel au centre (`declencheurs-*.ts`). Le courriel
@@ -66,8 +71,7 @@ export const staffNotificationKindEnum = (name: string) => mysqlEnum(name, staff
  * rejoué ne sonne pas deux fois.
  *
  * Purgée au terme du journal des messages
- * (`tenants.notification_log_retention_months`, tâche de nuit) ; la cloche,
- * elle, ne montre que les derniers jours (`STAFF_NOTIFICATION_DAYS`).
+ * (`tenants.notification_log_retention_months`, tâche de nuit).
  */
 export const staffNotifications = mysqlTable(
   'staff_notifications',

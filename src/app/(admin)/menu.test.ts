@@ -69,18 +69,19 @@ describe('menu du back-office', () => {
     assert.deepEqual(outside.filter((href) => href.includes('?')), [])
   })
 
-  it('n’a qu’une « Demandes », que la file du courrier allume (ADR 048, ADR 057)', () => {
+  it('laisse « Demandes » à la cloche : aucune entrée, ni en tête ni par rayon (ADR 070)', () => {
     assert.deepEqual(
-      entries.filter((entry) => /demande/i.test(entry.label)).map((entry) => entry.href),
-      ['/demandes'],
+      entries.filter((entry) => /demande/i.test(entry.label) || entry.href.startsWith('/demandes')),
+      [],
     )
     const at = (pathname: string, query = '') => {
       const href = activeEntry(addresses, pathname, new URLSearchParams(query))
       return entries.find((entry) => [entry.href, ...(entry.also ?? [])].includes(href ?? ''))?.label
     }
-    assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Demandes')
-    assert.equal(at('/demandes', 'produit=domiciliation'), 'Demandes')
+    // L'historique des demandes de courrier reste au rayon Domiciliation.
+    assert.equal(at('/courrier/demandes', 'etat=toutes&nature=ouverture'), 'Courrier')
     assert.equal(at('/courrier/01a1'), 'Courrier')
+    assert.equal(at('/demandes', 'produit=domiciliation'), undefined)
   })
 
   it('ne montre aucune adresse deux fois', () => {
@@ -88,10 +89,11 @@ describe('menu du back-office', () => {
   })
 
   it('reste court', () => {
-    // 22 : le rayon Matériel (ADR 062) ajoute deux entrées, dans un rayon
-    // plié tant qu'on ne l'ouvre pas (ADR 067), et « Messages aux
-    // domiciliés » une dans le rayon Domiciliation (ADR 060).
-    assert.ok(entries.length <= 22, `${entries.length} entrées`)
+    // 21 : le rayon Matériel (ADR 062) ajoute deux entrées, dans un rayon
+    // plié tant qu'on ne l'ouvre pas (ADR 067), « Messages aux domiciliés »
+    // une dans le rayon Domiciliation (ADR 060), et « Demandes » passe à la
+    // cloche (ADR 070).
+    assert.ok(entries.length <= 21, `${entries.length} entrées`)
   })
 
   it('range le matériel dans son rayon : planning et appareils (ADR 062)', () => {

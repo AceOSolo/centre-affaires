@@ -5,19 +5,14 @@ import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } fro
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 
-import { BellIcon, CheckIcon } from '../../components/ui/icons.tsx'
-import { markAllStaffNotificationsReadAction, markStaffNotificationReadAction } from './cloche-actions.ts'
-import {
-  STAFF_NOTIFICATION_POLL_MS,
-  unreadBadge,
-  unreadPhrase,
-  type StaffNotificationFeed,
-  type StaffNotificationItem,
-} from './cloche.ts'
+import { BellIcon } from '../../components/ui/icons.tsx'
+import { STAFF_NOTIFICATION_PANEL_LIMIT, STAFF_NOTIFICATION_POLL_MS, inboxBadge, inboxPhrase, type InboxFeed, type InboxItem } from './cloche.ts'
 
 /**
  * Cloche de l'équipe (ADR 059), dans l'en-tête du back-office : barre
- * latérale sur grand écran, bandeau du haut sur écran étroit.
+ * latérale sur grand écran, bandeau du haut sur écran étroit. Elle montre ce
+ * qui reste à traiter, comme « Demandes », qui n'est plus au menu (ADR 070) :
+ * une demande en sort dès qu'elle est traitée, par n'importe quel membre.
  *
  * Les deux cloches de la coque — une seule est affichée à la fois —
  * partagent un même état et une seule interrogation : toutes les minutes,
@@ -26,9 +21,9 @@ import {
  */
 
 type Snapshot = {
-  unread: number
+  count: number
   /** `null` tant que la liste n'a pas été lue. */
-  items: StaffNotificationItem[] | null
+  items: InboxItem[] | null
   /** La dernière lecture a échoué : la liste affichée est la précédente. */
   failed: boolean
 }
@@ -45,7 +40,7 @@ const store = (() => {
     snapshot = next
     for (const listener of listeners) listener()
   }
-  const current = (): Snapshot => snapshot ?? { unread: 0, items: null, failed: false }
+  const current = (): Snapshot => snapshot ?? { count: 0, items: null, failed: false }
 
   async function load(): Promise<void> {
     if (stopped) return
@@ -57,8 +52,8 @@ const store = (() => {
         return
       }
       if (!response.ok) throw new Error(`HTTP ${response.status}`)
-      const feed = (await response.json()) as StaffNotificationFeed
-      emit({ unread: feed.unread, items: feed.items, failed: false })
+      const feed = (await response.json()) as InboxFeed
+      emit({ count: feed.count, items: feed.items, failed: false })
     } catch {
       emit({ ...current(), failed: true })
     }
@@ -101,23 +96,19 @@ const store = (() => {
       }
     },
     refresh,
-    /** Mise à jour immédiate, avant la réponse du serveur. */
-    update(change: (previous: Snapshot) => Snapshot) {
-      emit(change(current()))
-    },
   }
 })()
 
 export function StaffNotificationBell({
-  initialUnread,
+  initialCount,
   placement,
 }: {
-  /** Compté avec la page : la pastille est juste dès le premier affichage. */
-  initialUnread: number
+  /** Compté avec la page (`inboxCount`) : la pastille est juste dès le premier affichage. */
+  initialCount: number
   /** `sidebar` : panneau sous la cloche ; `header` : panneau sur toute la largeur du bandeau. */
   placement: 'sidebar' | 'header'
 }) {
-  const fallback = useMemo<Snapshot>(() => ({ unread: initialUnread, items: null, failed: false }), [initialUnread])
+  const fallback = useMemo<Snapshot>(() => ({ count: initialCount, items: null, failed: false }), [initialCount])
   const snapshot = useSyncExternalStore(
     store.subscribe,
     () => store.get() ?? fallback,
@@ -130,10 +121,12 @@ export function StaffNotificationBell({
   const wrapperRef = useRef<HTMLDivElement>(null)
   const pathname = usePathname()
 
-  // À chaque navigation, la cloche se remet à jour.
+  // À chaque navigation, la cloche se remet à jour ; et quand la coque, rendue
+  // de nouveau après une action (demande validée, prise en charge…), compte
+  // autre chose : on reste alors sur la même page.
   useEffect(() => {
     void store.refresh()
-  }, [pathname])
+  }, [pathname, initialCount])
 
   // Un clic hors du panneau le referme.
   useEffect(() => {
@@ -145,36 +138,8 @@ export function StaffNotificationBell({
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open])
 
-  const { unread, items, failed } = snapshot
-  const badge = unreadBadge(unread)
-
-  function markOne(id: string) {
-    store.update((previous) => {
-      const target = previous.items?.find((item) => item.id === id)
-      if (!target || target.read) return previous
-      return {
-        ...previous,
-        unread: Math.max(0, previous.unread - 1),
-        items: previous.items!.map((item) => (item.id === id ? { ...item, read: true } : item)),
-      }
-    })
-    void markStaffNotificationReadAction(id)
-      .then((count) => store.update((previous) => ({ ...previous, unread: count })))
-      .catch(() => store.refresh())
-  }
-
-  function markAll() {
-    store.update((previous) => ({
-      ...previous,
-      unread: 0,
-      items: previous.items?.map((item) => ({ ...item, read: true })) ?? null,
-    }))
-    void markAllStaffNotificationsReadAction()
-      .then((count) => store.update((previous) => ({ ...previous, unread: count })))
-      .catch(() => store.refresh())
-    // Le bouton disparaît : le focus revient à la cloche plutôt que de se perdre.
-    buttonRef.current?.focus()
-  }
+  const { count, items, failed } = snapshot
+  const badge = inboxBadge(count)
 
   const close = (returnFocus: boolean) => {
     setOpen(false)
@@ -197,7 +162,7 @@ export function StaffNotificationBell({
         type="button"
         aria-expanded={open}
         aria-controls={panelId}
-        aria-label={`Notifications, ${unreadPhrase(unread)}`}
+        aria-label={`Demandes, ${inboxPhrase(count)}`}
         onClick={() => {
           if (!open) void store.refresh()
           setOpen((value) => !value)
@@ -218,7 +183,7 @@ export function StaffNotificationBell({
       </button>
       {/* Annonce polie du compteur : la région existe avant que son texte change. */}
       <span className="sr-only" aria-live="polite">
-        {`Notifications : ${unreadPhrase(unread)}`}
+        {`Demandes : ${inboxPhrase(count)}`}
       </span>
 
       <div
@@ -236,54 +201,40 @@ export function StaffNotificationBell({
             : 'absolute inset-x-0 top-full rounded-b-lg border-t-0'
         } ${open ? 'flex' : ''}`}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="border-b border-border px-4 py-3">
           <h2 id={headingId} className="text-sm font-semibold text-foreground">
-            Notifications
+            Demandes à traiter{count > 0 && <span className="tabular"> ({count})</span>}
           </h2>
-          {unread > 0 && (
-            <button
-              type="button"
-              onClick={markAll}
-              className="inline-flex min-h-8 items-center rounded-sm px-2 text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            >
-              Tout marquer comme lu
-            </button>
-          )}
         </div>
 
         <div className="max-h-[min(28rem,calc(100vh-10rem))] overflow-y-auto">
           {items === null ? (
             <p className="px-4 py-6 text-sm text-muted-foreground" aria-live="polite">
-              {failed ? 'Les notifications n’ont pas pu être chargées.' : 'Chargement des notifications…'}
+              {failed ? 'Les demandes n’ont pas pu être chargées.' : 'Chargement des demandes…'}
             </p>
           ) : items.length === 0 ? (
             <div className="px-4 py-6 text-sm text-muted-foreground">
-              <p>Aucune notification ces derniers jours.</p>
+              <p>Rien à traiter pour l’instant.</p>
               <p className="mt-1">
-                Les demandes des clients — réservations, devis, courrier, offres — et les états des
-                lieux signés s’afficheront ici dès leur arrivée.
+                Les demandes des clients — réservations, devis, courrier, offres — s’afficheront ici dès
+                leur arrivée, jusqu’à ce que quelqu’un les traite.
               </p>
             </div>
           ) : (
             <ul className="divide-y divide-border">
               {items.map((item) => (
-                <li key={item.id} className={`flex items-start gap-2 px-4 py-3 ${item.read ? '' : 'bg-accent/10'}`}>
+                <li key={`${item.kind}-${item.id}`}>
                   <Link
                     href={item.href}
-                    onClick={() => {
-                      if (!item.read) markOne(item.id)
-                    }}
-                    className="min-w-0 flex-1 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    className="block px-4 py-3 transition-colors duration-150 ease-out hover:bg-muted focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   >
                     <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                      {!item.read && (
-                        <span className="rounded-full bg-primary px-1.5 text-xs font-medium leading-5 text-primary-foreground">
-                          Non lue
+                      <span className="text-sm font-semibold text-foreground">{item.label}</span>
+                      {item.state && (
+                        <span className="rounded-full border border-border px-1.5 text-xs font-medium leading-5 text-primary">
+                          {item.state}
                         </span>
                       )}
-                      <span className={`text-sm text-foreground ${item.read ? '' : 'font-semibold'}`}>
-                        {item.label}
-                      </span>
                     </span>
                     <span className="mt-0.5 block text-sm text-foreground">{item.who}</span>
                     <span className="block text-sm text-muted-foreground">{item.summary}</span>
@@ -291,17 +242,6 @@ export function StaffNotificationBell({
                       {item.when}
                     </time>
                   </Link>
-                  {!item.read && (
-                    <button
-                      type="button"
-                      onClick={() => markOne(item.id)}
-                      aria-label={`Marquer comme lue : ${item.label}, ${item.who}`}
-                      title="Marquer comme lue"
-                      className="inline-flex size-8 shrink-0 items-center justify-center rounded-md text-primary transition-colors duration-150 ease-out hover:bg-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                    >
-                      <CheckIcon size={20} />
-                    </button>
-                  )}
                 </li>
               ))}
             </ul>
@@ -319,6 +259,7 @@ export function StaffNotificationBell({
             className="inline-flex min-h-8 items-center rounded-sm text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             Voir toutes les demandes
+            {count > STAFF_NOTIFICATION_PANEL_LIMIT && <span className="tabular">&nbsp;({count})</span>}
           </Link>
         </div>
       </div>
