@@ -24,7 +24,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 009 | [Catalogue réel du centre et unité « demi-journée »](009-catalogue-reel-et-demi-journee.md) | 2026-09-18 | accepté ; durée de la demi-journée paramétrée par l'ADR 023 |
 | 010 | [Calendrier de sélection d'un créneau](010-calendrier-de-selection.md) | 2026-09-18 | accepté — **numéro en double** |
 | 010 | [Horaires d'ouverture et disponibilités](010-horaires-et-disponibilites.md) | 2026-09-18 | accepté — **numéro en double** |
-| 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté ; vue semaine amendée par l'ADR 017 |
+| 011 | [Annonces publiques et vue semaine](011-annonces-et-vue-semaine.md) | 2026-09-18 | accepté ; vue semaine amendée par l'ADR 017 ; photos et vidéos par l'ADR 073 |
 | 012 | [Les horaires sont portés par la ressource](012-horaires-portes-par-la-ressource.md) | 2026-09-18 | accepté |
 | 013 | [Hébergement sur le VPS de production, déployé depuis GitHub](013-hebergement-vps-de-production.md) | 2026-09-30 | accepté — **numéro en double** ; Apache remplacé par nginx et port local 3100 (ADR 051) ; job de déploiement retiré de la CI le 15/10/2026, mise en ligne manuelle |
 | 013 | [Séries et délais de réservation](013-series-et-delais-de-reservation.md) | 2026-09-21 | accepté — **numéro en double** |
@@ -87,6 +87,7 @@ renuméroter casserait ces renvois sans rien gagner.
 | 070 | [La cloche montre les demandes à traiter, « Demandes » quitte le menu](070-la-cloche-mene-aux-demandes.md) | 2026-11-05 | accepté ; amende l'ADR 059 § 1 (la cloche lit les files de « Demandes », au même nombre ; plus de lu / non lu ; tables de l'ADR 059 en sommeil) et les ADR 048 et 053 (« Demandes », seule boîte de réception, n'est plus au menu ; aucune par rayon) ; chaque rayon a sa ligne « Demandes » filtrée et comptée, « Autres demandes » sous « Tous les services », la somme fait la cloche — écart assumé avec l'ADR 053 ; sans migration |
 | 071 | [Un lien d'agenda par ressource, à la place de la connexion Google](071-lien-d-agenda-par-ressource.md) | 2026-11-05 | **remplacé par l'ADR 072** le même jour ; lien retiré, table `calendar_feeds` en sommeil ; remplace les ADR 014 et 069 : chaque ressource a une adresse `.ics` (Google Agenda, Apple, Outlook, Dolibarr) servie sans session, jeton signé par une clé dérivée d'`AUTH_SECRET` et jamais gardé, régénérable et désactivable ; connexion Google retirée, ses tables en sommeil ; délai de relecture de Google (8 à 24 h) accepté ; amende l'ADR 064 ; migration 0016 |
 | 072 | [Écrire dans les agendas Google existants des salles](072-ecrire-dans-les-agendas-existants-des-salles.md) | 2026-11-05 | accepté ; remplace l'ADR 071 et rétablit les ADR 014 et 069, amendés : l'agenda de chaque ressource se choisit parmi ceux dont le compte est propriétaire (ou se crée), scopes `calendar.calendarlist.readonly` et `calendar.events.owned` en plus de `calendar.app.created` ; le site n'écrit et ne retire que ses propres événements ; un agenda quitté perd les réservations à venir du site ; reconnecter le même compte garde les liaisons ; sans migration |
+| 073 | [Photos et vidéos des annonces, en galerie qui défile](073-photos-et-videos-des-annonces.md) | 2026-11-13 | accepté ; solde le « Reste à faire : les photos » de l'ADR 011 : l'équipe ajoute, ordonne, décrit et retire photos (compressées dans le navigateur) et vidéos MP4/WebM (20 Mo) depuis la fiche de l'annonce, douze au plus ; liste en JSON dans `listings.photos` (verrou de ligne) ; servies par `/medias/annonces/…`, publiques, par plages d'octets, sans journal ; galerie qui défile toutes les 6 s selon l'APG du W3C (pause, arrêt à la main, rien sous `prefers-reduced-motion`) ; première photo en couverture du catalogue ; sans migration |
 
 ## Numéros en double et numéro manquant
 
@@ -134,7 +135,7 @@ sont tranchés par l'ADR 041 (migration 0044).
 
 1. **Choisir le numéro.** Vérifier qu'aucune autre session n'est en train d'en
    écrire un : `ls docs/decisions`, `git log --all -- docs/decisions` et
-   `ListAgents`. Le prochain numéro libre est **073** (057 à 066 pris par les dix lots de la recette du 04/11, `docs/recette/2026-11-04.md` ; 067 par les rayons du menu pliés par défaut ; 068 par les comptes et invitations ; 069 par les identifiants Google Agenda à l'écran ; 070 par la cloche ; 071 par le lien d'agenda par ressource ; 072 par l'écriture dans les agendas existants des salles).
+   `ListAgents`. Le prochain numéro libre est **074** (057 à 066 pris par les dix lots de la recette du 04/11, `docs/recette/2026-11-04.md` ; 067 par les rayons du menu pliés par défaut ; 068 par les comptes et invitations ; 069 par les identifiants Google Agenda à l'écran ; 070 par la cloche ; 071 par le lien d'agenda par ressource ; 072 par l'écriture dans les agendas existants des salles ; 073 par les photos et vidéos des annonces).
 2. **Nommer le fichier** `NNN-sujet-en-minuscules.md`.
 3. **En-tête** : titre `# ADR NNN — …`, `**Date**`, `**Statut**` (proposé,
    accepté, remplacé par l'ADR …).

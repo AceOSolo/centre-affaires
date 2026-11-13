@@ -1,3 +1,4 @@
+import Image from 'next/image'
 import Link from 'next/link'
 
 import { todayIsoDate } from '../../../lib/dates.ts'
@@ -6,6 +7,12 @@ import { findDefaultRatePlan } from '../../../modules/facturation/queries.ts'
 import { rateUnitSuffixes } from '../../../modules/facturation/labels.ts'
 import { formatCents, resolveRate } from '../../../modules/facturation/tarifs.ts'
 import { listDayAvailability } from '../../../modules/reservations/queries.ts'
+import {
+  coverPhoto,
+  listingMediaAlt,
+  listingMediaUrl,
+  parseListingMedia,
+} from '../../../modules/ressources/annonces-medias.ts'
 import { listPublishedListings } from '../../../modules/ressources/annonces-queries.ts'
 import { describeAttributes, resourceTypeLabels } from '../../../modules/ressources/labels.ts'
 import type { RateUnit } from '../../../modules/facturation/schema.ts'
@@ -76,12 +83,27 @@ export default async function CataloguePage() {
                 ).find(Boolean)
               : undefined
             const details = describeAttributes(listing.resource.attributes ?? {})
+            const medias = parseListingMedia(listing.media)
+            const cover = coverPhoto(medias)
 
             return (
               <article
                 key={listing.id}
                 className="flex flex-col gap-3 rounded-lg border border-border bg-white p-5"
               >
+                {cover && (
+                  // Couverture décorative pour qui lit le titre juste en dessous ;
+                  // le lien du titre suffit, l'image n'en est pas un second.
+                  <div className="relative -mx-5 -mt-5 mb-1 aspect-[16/9] overflow-hidden rounded-t-lg bg-muted">
+                    <Image
+                      src={listingMediaUrl(listing.id, cover)}
+                      alt={cover.alt ? listingMediaAlt(cover, listing.headline, 0, 1) : ''}
+                      fill
+                      sizes="(max-width: 640px) calc(100vw - 40px), 480px"
+                      className="object-cover"
+                    />
+                  </div>
+                )}
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
                     {resourceTypeLabels[listing.resource.resourceType]}

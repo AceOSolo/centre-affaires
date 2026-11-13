@@ -3,6 +3,8 @@ import { notFound } from 'next/navigation'
 
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { AnnonceForm } from '../../../../../modules/ressources/annonce-form.tsx'
+import { AnnonceMedias } from '../../../../../modules/ressources/annonce-medias.tsx'
+import { parseListingMedia } from '../../../../../modules/ressources/annonces-medias.ts'
 import { findListingForResource } from '../../../../../modules/ressources/annonces-queries.ts'
 import { findResource } from '../../../../../modules/ressources/queries.ts'
 
@@ -43,6 +45,17 @@ export default async function EditAnnoncePage({
         )}
       </div>
       <AnnonceForm resource={resource} listing={listing} resources={[]} />
+      {listing ? (
+        <AnnonceMedias
+          listingId={listing.id}
+          headline={listing.headline}
+          media={parseListingMedia(listing.media)}
+        />
+      ) : (
+        <p className="max-w-2xl text-sm text-muted-foreground">
+          Les photos et vidéos s’ajoutent une fois l’annonce enregistrée.
+        </p>
+      )}
     </div>
   )
 }

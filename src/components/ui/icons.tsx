@@ -222,3 +222,52 @@ export function BellIcon(props: IconProps) {
     </Svg>
   )
 }
+
+/** Lucide « chevron-left » : média précédent d'une galerie (ADR 073). */
+export function ChevronLeftIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="m15 18-6-6 6-6" />
+    </Svg>
+  )
+}
+
+/** Lucide « chevron-right » : média suivant d'une galerie (ADR 073). */
+export function ChevronRightIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="m9 18 6-6-6-6" />
+    </Svg>
+  )
+}
+
+/** Lucide « play » : reprendre le défilement, ou signaler une vidéo. */
+export function PlayIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6 4.5v15a1 1 0 0 0 1.52.85l12-7.5a1 1 0 0 0 0-1.7l-12-7.5A1 1 0 0 0 6 4.5Z" />
+    </Svg>
+  )
+}
+
+/** Lucide « pause » : arrêter le défilement d'une galerie. */
+export function PauseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="6" y="4.5" width="4" height="15" rx="1" />
+      <rect x="14" y="4.5" width="4" height="15" rx="1" />
+    </Svg>
+  )
+}
+
+/** Lucide « image-plus » : ajouter une photo ou une vidéo. */
+export function ImagePlusIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M16 5h6M19 2v6" />
+      <path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+      <circle cx="9" cy="9" r="2" />
+    </Svg>
+  )
+}

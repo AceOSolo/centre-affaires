@@ -119,9 +119,10 @@ ressource, pas détourner celle-ci.
 
 **Reste à faire** :
 
-- **Les photos.** La colonne `photos` existe et reste vide : le téléversement
+- ~~**Les photos.** La colonne `photos` existe et reste vide : le téléversement
   demande le raccordement au stockage objet et des URL signées, ce qui est une
-  tranche à part entière. Une annonce sans photo est une annonce faible.
+  tranche à part entière. Une annonce sans photo est une annonce faible.~~
+  Fait par l'ADR 073 : photos et vidéos, servies par l'application.
 - **Les fermetures sur la page publique.** Les jours fermés s'affichent
   « Fermé », mais rien n'annonce « fermé du 24 décembre au 2 janvier » en tête
   de page.
