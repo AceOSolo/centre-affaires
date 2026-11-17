@@ -253,7 +253,7 @@ export default async function PortailLayout({ children }: { children: React.Reac
               <Link href="/compte" className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
                 Espace client
               </Link>
-              <Link href="/auth/connexion" className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
+              <Link href="/auth/equipe" className="inline-flex min-h-11 items-center underline-offset-4 hover:underline">
                 Accès équipe
               </Link>
             </div>

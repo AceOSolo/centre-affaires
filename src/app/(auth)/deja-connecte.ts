@@ -3,7 +3,8 @@ import { safeRedirect } from '../../lib/redirection.ts'
 /**
  * Une personne déjà connectée n'a rien à faire sur une page de connexion
  * (ADR 077, recette du 17/11) : `/auth/connexion`, `/auth/equipe` et
- * `/auth/mot-de-passe-oublie` la renvoient vers son espace.
+ * `/auth/mot-de-passe-oublie` la renvoient vers l'espace de la page — ou vers
+ * « Accès refusé » si son compte ne l'ouvre pas (ADR 083).
  *
  * Restent ouvertes, connecté ou non : `/auth/acces-refuse` (elle dit pourquoi
  * on n'entre pas), la déconnexion, et `/auth/nouveau-mot-de-passe` — le lien
@@ -21,25 +22,48 @@ export type PageDeConnexion = 'client' | 'equipe'
 export type AccesDuCompte = { equipe: boolean; client: boolean }
 
 /**
- * Où envoyer la personne connectée :
- *
- * - le chemin demandé (`?redirect=`, que `proxy.ts` ajoute), s'il est sûr et
- *   hors des pages d'authentification — la page visée revérifie les droits ;
- * - sinon son espace : depuis la page de l'équipe, le back-office d'abord ;
- *   depuis celle des clients, l'espace client d'abord ;
- * - un compte qui n'ouvre rien : « Accès refusé », qui le dit et propose de
- *   se déconnecter pour changer de compte.
+ * Chaque page de connexion n'ouvre que son espace (ADR 083) : celle des
+ * clients un compte qui a un espace client, celle de l'équipe un membre de
+ * l'équipe. Une personne qui est les deux passe par l'une ou l'autre.
+ */
+export function ouvreLaPorte(page: PageDeConnexion, acces: AccesDuCompte): boolean {
+  return page === 'equipe' ? acces.equipe : acces.client
+}
+
+/** L'espace où mène la page, faute de chemin demandé. */
+export const accueilDeLaPorte: Record<PageDeConnexion, string> = { client: '/compte', equipe: '/aujourdhui' }
+
+const espaceClient = (chemin: string) => chemin === '/compte' || /^\/compte[/?#]/.test(chemin)
+
+/**
+ * Où mène la page une fois connecté : le chemin demandé (`?redirect=`, que
+ * `proxy.ts` ajoute) s'il est sûr, hors des pages d'authentification et dans
+ * l'espace de la page — `/compte…` pour les clients, le reste pour l'équipe ;
+ * sinon l'accueil de l'espace. La page visée revérifie les droits.
+ */
+export function suiteDeLaPorte(page: PageDeConnexion, demande?: string | null): string {
+  const chemin = safeRedirect(demande)
+  const ok =
+    chemin &&
+    chemin !== '/auth' &&
+    !chemin.startsWith('/auth/') &&
+    !chemin.startsWith('/auth?') &&
+    espaceClient(chemin) === (page === 'client')
+  return ok ? chemin : accueilDeLaPorte[page]
+}
+
+/**
+ * Où envoyer la personne déjà connectée qui ouvre une page de connexion :
+ * dans l'espace de cette page si son compte l'ouvre (`suiteDeLaPorte`), sinon
+ * « Accès refusé », qui le dit et propose de se déconnecter pour changer de
+ * compte. Jamais vers l'espace de l'autre page (ADR 083).
  */
 export function destinationSiConnecte(
   page: PageDeConnexion,
   acces: AccesDuCompte,
   demande?: string | null,
 ): string {
-  if (!acces.equipe && !acces.client) return '/auth/acces-refuse'
-  const chemin = safeRedirect(demande)
-  if (chemin && chemin !== '/auth' && !chemin.startsWith('/auth/') && !chemin.startsWith('/auth?')) return chemin
-  if (page === 'equipe') return acces.equipe ? '/aujourdhui' : '/compte'
-  return acces.client ? '/compte' : '/aujourdhui'
+  return ouvreLaPorte(page, acces) ? suiteDeLaPorte(page, demande) : '/auth/acces-refuse'
 }
 
 /**

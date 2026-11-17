@@ -9,15 +9,19 @@ import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
 import { RequiredMark, RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
 import { messageRefusAuth, serveurInjoignable, type MessageAuth } from '../../../../lib/auth/messages.ts'
-import { safeRedirect } from '../../../../lib/redirection.ts'
+import { suiteDeLaPorte } from '../../deja-connecte.ts'
+import { verifierPorteAction } from '../../porte-actions.ts'
 
 const fieldClass =
   'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive'
 const labelClass = 'block text-sm font-medium text-foreground'
 const errorClass = 'mt-1 text-sm text-destructive'
 
-/** Échec d'un envoi : une erreur rattachée à un champ, ou au formulaire entier. */
-type Echec = { message?: string; champs?: Record<string, string> }
+/**
+ * Échec d'un envoi : une erreur rattachée à un champ, ou au formulaire entier.
+ * `autrePorte` : le compte est bon mais n'ouvre pas l'espace de cette page.
+ */
+type Echec = { message?: string; champs?: Record<string, string>; autrePorte?: boolean }
 
 const echecDe = ({ message, champ }: MessageAuth): Echec =>
   champ ? { champs: { [champ]: message } } : { message }
@@ -30,10 +34,11 @@ export type Audience = 'client' | 'equipe'
 
 /**
  * Formulaire de connexion des deux populations. Le compte Better Auth est le
- * même ; seules les pages diffèrent, pour que l'équipe et les clients ne
- * partagent pas un écran qui ne s'adresse vraiment à aucun des deux. Ce sont
- * `staff_members` et `client_members` qui donnent les droits (ADR 008, 015),
- * pas la page par laquelle on est entré.
+ * même ; chaque page n'ouvre que son espace (ADR 083) : la page des clients
+ * refuse un compte sans espace client, celle de l'équipe un compte qui n'est
+ * pas de l'équipe, et la session ouverte est aussitôt refermée. Ce sont
+ * `staff_members` et `client_members` qui donnent les droits (ADR 008, 015) ;
+ * la page choisit seulement lequel des deux on vérifie.
  *
  * On ne crée plus de compte ici (ADR 068, qui revient sur l'ADR 045) : un
  * compte naît d'une invitation — équipe, espace client — ou d'une demande
@@ -54,9 +59,9 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
   const [pending, startTransition] = useTransition()
   const occupe = envoi || pending
 
-  // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté.
-  // Sans chemin, l'équipe va au planning ; côté client, l'aiguillage choisit.
-  const redirectTo = safeRedirect(searchParams.get('redirect')) ?? (equipe ? '/aujourdhui' : '/auth/suite')
+  // `proxy.ts` ajoute le chemin demandé ; on y revient une fois connecté,
+  // s'il est dans l'espace de la page. Sinon, l'accueil de cet espace.
+  const redirectTo = suiteDeLaPorte(audience, searchParams.get('redirect'))
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -94,6 +99,15 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
         setEchec(echecDe(messageRefusAuth(authError, 'La connexion a échoué.')))
         return false
       }
+      if (!(await verifierPorteAction(audience))) {
+        setEchec({
+          message: equipe
+            ? 'Ce compte n’a pas accès au back-office. Client du centre ? Connectez-vous depuis l’espace client.'
+            : 'Ce compte n’a pas d’espace client. Membre de l’équipe ? Connectez-vous depuis la connexion équipe.',
+          autrePorte: true,
+        })
+        return false
+      }
       return true
     } catch {
       setEchec({ message: serveurInjoignable })
@@ -120,6 +134,14 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
           labels={{ email: 'Adresse professionnelle', password: 'Mot de passe' }}
           message={echec?.message}
         />
+        {echec?.autrePorte && (
+          <Link
+            href={equipe ? '/auth/connexion' : '/auth/equipe'}
+            className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
+          >
+            {equipe ? 'Aller à la connexion de l’espace client' : 'Aller à la connexion équipe'}
+          </Link>
+        )}
         <RequiredNote />
 
         <div>
