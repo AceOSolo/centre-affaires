@@ -6,6 +6,7 @@ import { sql } from 'drizzle-orm'
 import {
   DB_CHECK_VIOLATION,
   DB_CLIENT_BOOKING_REFUSED,
+  DB_CLIENT_CHANGE_REFUSED,
   DB_FOREIGN_KEY_VIOLATION,
   dbErrorCode,
 } from '../../db/errors.ts'
@@ -215,7 +216,7 @@ describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => 
     })
 
     it('trace l’annulation par le client : qui, quand', async () => {
-      const [row] = await asClients([DURAND], (tx) => reserver(tx))
+      const [row] = await asClients([DURAND], (tx) => reserver(tx, { jours: 10 }))
       const id = row.id as string
       await asClients([DURAND], (tx) =>
         tx.execute(sql`
@@ -233,7 +234,7 @@ describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => 
   })
 
   describe('règles de l’annulation par le client', () => {
-    it('refuse au nom du client l’annulation d’une réservation confirmée, même depuis le back-office', async () => {
+    it('refuse au nom du client l’annulation dans le délai du centre, même depuis le back-office (ADR 076)', async () => {
       const [row] = await asClients([DURAND], (tx) => reserver(tx, { resource: VEHICULE, devis: true }))
       assert.equal(row.status, 'confirmed')
       assert.equal(
@@ -244,8 +245,54 @@ describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => 
                where id = ${row.id as string}`),
           ),
         ),
+        DB_CLIENT_CHANGE_REFUSED,
+      )
+    })
+
+    it('laisse le client annuler ou changer les dates d’une réservation confirmée, avant le délai (ADR 076)', async () => {
+      const [row] = await asClients([DURAND], (tx) => reserver(tx, { resource: VEHICULE, devis: true, jours: 10 }))
+      const id = row.id as string
+      assert.equal(row.status, 'confirmed')
+      // Nouvelles dates : la réservation repasse en attente de l'accueil.
+      await asClients([DURAND], (tx) =>
+        tx.execute(sql`update bookings set status = 'pending', starts_at = date_add(starts_at, interval 1 day),
+                       ends_at = date_add(ends_at, interval 1 day) where id = ${id}`),
+      )
+      assert.equal((await ligne(id)).status, 'pending')
+      // Se confirmer soi-même : non.
+      assert.equal(
+        await codeErreur(() => asClients([DURAND], (tx) => tx.execute(sql`update bookings set status = 'confirmed' where id = ${id}`))),
         DB_CLIENT_BOOKING_REFUSED,
       )
+      // Dans le délai : non (CA022).
+      const [proche] = await asClients([DURAND], (tx) => reserver(tx, { resource: VEHICULE, devis: true, jours: 3 }))
+      assert.equal(
+        await codeErreur(() =>
+          asClients([DURAND], (tx) =>
+            tx.execute(sql`update bookings set status = 'pending', starts_at = date_add(starts_at, interval 1 hour),
+                           ends_at = date_add(ends_at, interval 1 hour) where id = ${proche.id as string}`),
+          ),
+        ),
+        DB_CLIENT_CHANGE_REFUSED,
+      )
+      // Sur un créneau pris : le garde anti-chevauchement (décision 3).
+      await asClients([DURAND], (tx) => reserver(tx, { resource: VEHICULE, devis: true, jours: 12 }))
+      const pris = creneau(12)
+      assert.equal(
+        await codeErreur(() =>
+          asClients([DURAND], (tx) =>
+            tx.execute(sql`update bookings set status = 'pending', starts_at = ${pris.debut}, ends_at = ${pris.fin}
+                           where id = ${id}`),
+          ),
+        ),
+        'CA000',
+      )
+      // L'annulation, tracée.
+      await asClients([DURAND], (tx) =>
+        tx.execute(sql`update bookings set status = 'cancelled', cancelled_at = current_timestamp(3),
+                       cancelled_by_member_id = ${JEANNE} where id = ${id}`),
+      )
+      assert.equal((await ligne(id)).status, 'cancelled')
     })
 
     it('refuse l’annulation par le client d’une demande déjà commencée', async () => {
@@ -259,7 +306,7 @@ describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => 
                where id = ${row.id as string}`),
           ),
         ),
-        DB_CLIENT_BOOKING_REFUSED,
+        DB_CLIENT_CHANGE_REFUSED,
       )
     })
 
@@ -276,7 +323,7 @@ describe('réservation depuis l’espace client', { skip: raisonDeSaut }, () => 
     })
 
     it('trace l’annulation par l’équipe, et un seul auteur', async () => {
-      const [row] = await asTenant((tx) => reserver(tx))
+      const [row] = await asTenant((tx) => reserver(tx, { jours: 10 }))
       const id = row.id as string
       assert.equal(
         await codeErreur(() =>

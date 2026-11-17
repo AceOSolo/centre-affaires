@@ -236,3 +236,10 @@ export const DB_MAIL_TEAM_REFUSED = 'CA025'
  * adresse du carnet déplacée vers une autre entreprise.
  */
 export const DB_CLIENT_MAIL_REFUSED = 'CA024'
+
+/**
+ * Modification ou annulation d'une réservation par son client refusée
+ * (ADR 076, `24-formules-et-modifications.sql`) : annulée, commencée, délai du
+ * centre passé, ou matériel en option à déplacer avec elle.
+ */
+export const DB_CLIENT_CHANGE_REFUSED = 'CA022'

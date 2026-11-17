@@ -15,7 +15,7 @@ import { tenants } from '../../db/tenants.ts'
 import { dayRangeUtc } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { contracts, type Contract } from '../contrats/schema.ts'
-import { NO_BOOKING_QUOTE, bookingQuoteColumns, type QuoteDiscount } from '../facturation/devis.ts'
+import { NO_BOOKING_QUOTE, bookingQuoteColumns, type QuotableUnit, type QuoteDiscount } from '../facturation/devis.ts'
 import { quoteInTransaction, type QuoteRequest } from '../facturation/devis-queries.ts'
 import { bookingLineInTransaction, createProposalInTransaction, type NewProposalInput } from '../facturation/propositions-queries.ts'
 import type { Proposal } from '../facturation/schema-devis.ts'
@@ -240,7 +240,12 @@ export type CreateBookingInput = {
 
 /** Comment chiffrer une réservation à l'écriture. */
 export type BookingPricing =
-  | { mode: 'grid'; discount?: QuoteDiscount | null }
+  | {
+      mode: 'grid'
+      discount?: QuoteDiscount | null
+      /** Unité imposée par la formule de location choisie (ADR 076). */
+      unit?: QuotableUnit
+    }
   | { mode: 'none' }
 
 /** Remise refusée par le devis : illisible, ou plus grande que le montant. */
@@ -262,7 +267,7 @@ async function quoteColumnsFor(
   pricing: BookingPricing = { mode: 'grid' },
 ) {
   if (pricing.mode === 'none') return NO_BOOKING_QUOTE
-  const result = await quoteInTransaction(tx, { ...request, discount: pricing.discount ?? null })
+  const result = await quoteInTransaction(tx, { ...request, discount: pricing.discount ?? null, unit: pricing.unit })
   if (result.ok) return bookingQuoteColumns(result.quote, new Date())
   if (result.reason === 'remise-invalide' || result.reason === 'remise-excessive') {
     throw new QuoteDiscountError(result.message)
@@ -303,6 +308,9 @@ async function requoteMovedBooking(tx: Transaction, row: Booking): Promise<Booki
     endsAt: row.endsAt,
     clientId: row.clientId,
     contractId: row.contractId,
+    // Une location au mois (ADR 076) reste au mois : le mois n'est jamais
+    // l'unité « la moins chère » d'une réservation.
+    unit: row.quoteUnit === 'month' ? ('month' as const) : undefined,
   }
   let result = await quoteInTransaction(tx, { ...request, discount })
   if (!result.ok && result.reason === 'remise-excessive') {

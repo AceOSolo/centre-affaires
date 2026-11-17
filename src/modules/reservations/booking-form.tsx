@@ -183,7 +183,7 @@ export function BookingForm({
         <AvailabilityVerdict selection={selection} days={days} busy={busy} timeZone={timeZone} />
 
         {/* Début et fin, chacun son jour et son heure : une réservation peut
-            durer plusieurs jours d'affilée, nuits comprises (ADR 061). */}
+            durer plusieurs jours d'affilée (ADR 061). */}
         <div className="grid grid-cols-2 gap-4">
           <div>
             <label className={labelClass} htmlFor="date">
@@ -267,7 +267,7 @@ export function BookingForm({
         </div>
         <p className="-mt-2 text-xs text-muted-foreground">
           Fin exclue : une réservation qui finit à 10h00 laisse le créneau de 10h00 libre. Sur
-          plusieurs jours, la ressource est tenue nuits comprises.
+          plusieurs jours, la ressource reste réservée d’un bout à l’autre de la période.
         </p>
 
         <div>
@@ -690,7 +690,7 @@ export function AvailabilityVerdict({
         <CheckIcon size={20} />
         <span>
           <strong className="font-medium">Période libre</strong> {periodLabel(selection, timeZone)} ·{' '}
-          {duree}, nuits comprises.
+          {duree}.
         </span>
       </p>
     )

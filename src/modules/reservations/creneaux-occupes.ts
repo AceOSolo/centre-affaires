@@ -24,6 +24,8 @@ export async function listBusyRanges(
   from: Date,
   to: Date,
   resourceIds?: readonly string[],
+  /** Réservation à ignorer : celle que son client modifie ne se gêne pas elle-même (ADR 076). */
+  excludeBookingId?: string,
 ): Promise<BusyRange[]> {
   if (resourceIds && resourceIds.length === 0) return []
   const tenantId = tenantContext.getStore()
@@ -41,6 +43,7 @@ export async function listBusyRanges(
         lt(bookings.startsAt, to),
         gt(bookings.endsAt, from),
         resourceIds ? inArray(bookings.resourceId, [...resourceIds]) : undefined,
+        excludeBookingId ? ne(bookings.id, excludeBookingId) : undefined,
       ),
     )
     .orderBy(asc(bookings.resourceId), asc(bookings.startsAt))

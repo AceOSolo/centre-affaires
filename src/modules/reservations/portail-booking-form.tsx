@@ -6,18 +6,13 @@ import Link from 'next/link'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { CheckIcon, ClockIcon } from '../../components/ui/icons.tsx'
-import { formatTime } from '../../lib/dates.ts'
 import { QuoteSummary, formatQuoteQuantity } from '../facturation/devis-resume.tsx'
 import { formatCents } from '../facturation/tarifs.ts'
-import { formatDays } from './durees.ts'
+import type { RentalFormula } from '../ressources/formules.ts'
+import { emptyChoice, evaluateChoice, type FormulaLimits, type PeriodChoice } from './formules-periode.ts'
 import { totalWithOptions } from './options.ts'
-import {
-  periodDuration,
-  periodEndDates,
-  periodEnds,
-  revivePeriod,
-  type SerializedPeriodAvailability,
-} from './periode.ts'
+import { revivePeriod, type SerializedPeriodAvailability } from './periode.ts'
+import { choiceFormValues, PeriodFields } from './periode-fields.tsx'
 import {
   bookFromPortalAction,
   previewPortalBookingAction,
@@ -30,7 +25,7 @@ import {
   portalModeLabels,
   type PortalBookingMode,
 } from './portail-regles.ts'
-import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
+import { availableStarts } from './public-selection.ts'
 import { RequiredNote } from '../../components/ui/obligatoire.tsx'
 import { QuestionnaireFields } from './questionnaire-fields.tsx'
 import { questionnaireErrorLabels, type Questionnaire } from './questionnaires.ts'
@@ -56,25 +51,27 @@ export type PortalBookingFormProps = {
   period: SerializedPeriodAvailability
   /** Jours d'affilée permis pour ce produit ; 1 : le formulaire d'une journée, comme avant. */
   maxDays: number
-  /** Instant de référence du serveur, et dernier départ permis par l'horizon du centre. */
+  /** Formules de location réglées sur l'espace (ADR 076) ; vide : le formulaire libre. */
+  formulas: RentalFormula[]
+  /** Plafonds des locations à la semaine et au mois, durée d'une demi-journée. */
+  limits: FormulaLimits
+  /** Instant de référence du serveur, premier début permis (préavis) et dernier départ permis par l'horizon du centre. */
   now: string
+  earliest: string
   latestStart: string
   accounts: { clientId: string; clientName: string }[]
 }
 
 const fieldLabels: Record<string, string> = {
   clientId: 'Entreprise',
-  startTime: 'Heure de début',
-  endTime: 'Heure de fin',
+  formula: 'Formule',
+  startTime: 'Arrivée',
+  endDate: 'Jour du départ',
+  endTime: 'Heure du départ',
+  count: 'Durée',
   title: 'Objet',
   notes: 'Précisions',
 }
-
-/** « mer. 4 nov. » : un jour de fin dans la liste ; midi UTC ne change jamais de date. */
-const shortDay = (isoDate: string) =>
-  new Intl.DateTimeFormat('fr-FR', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }).format(
-    new Date(`${isoDate}T12:00:00Z`),
-  )
 
 /**
  * Formulaire de réservation de l'espace client (R23) : l'entreprise (si le
@@ -84,16 +81,14 @@ const shortDay = (isoDate: string) =>
  * confirmation immédiate ou demande à l'accueil (ADR 036).
  */
 export function PortalBookingForm(props: PortalBookingFormProps) {
-  const { resource, date, dateLabel, timeZone, accounts, maxDays } = props
+  const { resource, date, dateLabel, timeZone, accounts, maxDays, formulas, limits } = props
   const [state, formAction, pending] = useActionState<PortalBookingFormState, FormData>(
     bookFromPortalAction,
     { status: 'idle' },
   )
   const [clientId, setClientId] = useState(accounts.length === 1 ? accounts[0].clientId : '')
-  const [startTime, setStartTime] = useState('')
-  // Jour de la fin : le jour même, sauf demande sur plusieurs jours (ADR 061).
-  const [endDate, setEndDate] = useState(date)
-  const [endTime, setEndTime] = useState('')
+  // La formule et ce qu'elle a choisi (ADR 076) : le jour du départ est libre.
+  const [choice, setChoice] = useState<PeriodChoice>(() => emptyChoice(formulas[0] ?? 'libre', date))
   // Contrôlés : React réinitialise le formulaire après chaque envoi, un échec
   // ne doit rien faire retaper.
   const [title, setTitle] = useState('')
@@ -107,12 +102,16 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   const free = props.free.map((range) => ({ startsAt: new Date(range.startsAt), endsAt: new Date(range.endsAt) }))
   const period = revivePeriod(props.period)
   const starts = availableStarts(free, new Date(props.now), new Date(props.latestStart))
-  const start = startTime ? publicSelection(date, startTime, '23:59', timeZone)?.startsAt : undefined
-  const endDates = start ? periodEndDates(start, period, timeZone, maxDays) : []
-  const ends = start ? periodEnds(start, endDate, period, timeZone, maxDays) : []
-  const selection = startTime && endTime ? periodSelection(date, startTime, endDate, endTime, timeZone) : undefined
+  const evaluation = evaluateChoice(
+    choice,
+    { date, timeZone, availability: period, earliest: new Date(props.earliest), maxDays, limits },
+    formulas,
+  )
+  const selection = evaluation.rejection ? undefined : evaluation.range
+  const values = choiceFormValues(choice, evaluation, date, timeZone)
+  const { startTime, endDate, endTime, formula } = values
 
-  const previewKey = selection && clientId ? `${resource.id}/${clientId}/${date}/${startTime}/${endDate}/${endTime}` : ''
+  const previewKey = selection && clientId ? `${resource.id}/${clientId}/${date}/${JSON.stringify(values)}` : ''
   const quote = previewKey && preview?.key === previewKey ? preview.result : undefined
   const equipment = quote && quote.status !== 'error' ? quote.equipment : []
   const chosen = equipment.filter((device) => equipmentIds.includes(device.id))
@@ -124,7 +123,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
   useEffect(() => {
     if (!previewKey) return
     let cancelled = false
-    previewPortalBookingAction({ resourceId: resource.id, clientId, date, startTime, endDate, endTime }).then(
+    previewPortalBookingAction({ resourceId: resource.id, clientId, date, startTime, endDate, endTime, formula }).then(
       (result) => {
         if (!cancelled) setPreview({ key: previewKey, result })
       },
@@ -140,7 +139,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
     return () => {
       cancelled = true
     }
-  }, [previewKey, resource.id, clientId, date, startTime, endDate, endTime])
+  }, [previewKey, resource.id, clientId, date, startTime, endDate, endTime, formula])
 
   useEffect(() => {
     if (state.status === 'done') headingRef.current?.focus()
@@ -282,90 +281,29 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
           Plus aucun créneau libre ce jour-là. Choisissez une autre date ou un autre espace.
         </p>
       ) : (
-        <div className={`grid gap-4 ${maxDays > 1 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-          <div>
-            <label htmlFor="startTime" className={labelClass}>
-              Heure de début
-            </label>
-            <select
-              id="startTime"
-              name="startTime"
-              value={startTime}
-              required
-              onChange={(event) => {
-                setStartTime(event.target.value)
-                setEndDate(date)
-                setEndTime('')
-              }}
-              aria-invalid={errors.startTime ? true : undefined}
-              aria-describedby={errors.startTime ? 'startTime-error' : undefined}
-              className={`${fieldClass} tabular`}
-            >
-              <option value="">Choisir</option>
-              {starts.map((at) => (
-                <option key={at.toISOString()} value={formatTime(at, timeZone)}>
-                  {formatTime(at, timeZone)}
-                </option>
-              ))}
-            </select>
-            <FieldError name="startTime" error={errors.startTime} />
-          </div>
-          {/* Plusieurs jours d'affilée (ADR 061) : le jour de fin, puis son heure. */}
-          {maxDays > 1 ? (
-            <div>
-              <label htmlFor="endDate" className={labelClass}>
-                Jour de fin
-              </label>
-              <select
-                id="endDate"
-                name="endDate"
-                value={endDate}
-                disabled={!startTime}
-                onChange={(event) => {
-                  setEndDate(event.target.value)
-                  setEndTime('')
-                }}
-                className={`${fieldClass} tabular`}
-              >
-                {(endDates.length > 0 ? endDates : [date]).map((day) => (
-                  <option key={day} value={day}>
-                    {day === date ? 'Le même jour' : shortDay(day)}
-                  </option>
-                ))}
-              </select>
-            </div>
-          ) : (
-            <input type="hidden" name="endDate" value={endDate} />
-          )}
-          <div>
-            <label htmlFor="endTime" className={labelClass}>
-              Heure de fin
-            </label>
-            <select
-              id="endTime"
-              name="endTime"
-              value={endTime}
-              required
-              disabled={!startTime}
-              onChange={(event) => setEndTime(event.target.value)}
-              aria-invalid={errors.endTime ? true : undefined}
-              aria-describedby={errors.endTime ? 'endTime-error' : 'endTime-hint'}
-              className={`${fieldClass} tabular`}
-            >
-              <option value="">{startTime ? 'Choisir' : 'Choisissez d’abord le début'}</option>
-              {ends.map((at) => (
-                <option key={at.toISOString()} value={formatTime(at, timeZone)}>
-                  {formatTime(at, timeZone)} · {start ? periodDuration({ startsAt: start, endsAt: at }, timeZone) : ''}
-                </option>
-              ))}
-            </select>
-            <FieldError name="endTime" error={errors.endTime} />
-          </div>
-          <p id="endTime-hint" className="text-xs text-muted-foreground sm:col-span-full">
-            Seuls les horaires libres sont proposés, à l’heure du centre.
-            {maxDays > 1 &&
-              ` Jusqu’à ${formatDays(maxDays)} d’affilée : sur plusieurs jours, la réservation court nuits comprises.`}
-          </p>
+        <div className="flex flex-col gap-2">
+          {/* Formule, jours et heures (ADR 076) : le jour du départ est libre, et
+              les heures d'ouverture des jours choisis remplacent les « nuits comprises ». */}
+          <PeriodFields
+            idPrefix=""
+            date={date}
+            timeZone={timeZone}
+            availability={period}
+            starts={starts}
+            maxDays={maxDays}
+            limits={limits}
+            formulas={formulas}
+            choice={choice}
+            evaluation={evaluation}
+            onChange={setChoice}
+            fieldClass={fieldClass}
+            labelClass={labelClass}
+            errors={errors}
+          />
+          {Object.entries(values).map(([name, value]) => (
+            <input key={name} type="hidden" name={name} value={value} />
+          ))}
+          <p className="text-xs text-muted-foreground">Seuls les horaires libres sont proposés, à l’heure du centre.</p>
         </div>
       )}
 

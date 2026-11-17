@@ -27,16 +27,28 @@ import {
   MAX_PORTAL_NOTES_LENGTH,
   MAX_PORTAL_TITLE_LENGTH,
   expectedPortalOutcome,
-  portalBookingRejection,
   portalBookingTitle,
+  portalChoiceRejection,
   portalOutcomeMessage,
   portalOutcomeNotice,
   portalRejectionMessage,
+  rejectionField,
   type PortalBookingOutcome,
+  type PortalPeriodField,
 } from './portail-regles.ts'
+import { isRentalFormula } from '../ressources/formules.ts'
+import {
+  choiceUnit,
+  evaluateChoice,
+  formulaLimitsOf,
+  parseChosenFormula,
+  readChoice,
+  type EvaluatedChoice,
+} from './formules-periode.ts'
 import { periodSelection } from './public-selection.ts'
 import { loadQuestionnaire } from './questionnaires-queries.ts'
 import { describeAnswers, errorsByField, formForResourceType, parseAnswers, productOfForm, type Answers } from './questionnaires.ts'
+import { requestBounds } from './request-policy.ts'
 
 /**
  * Réservation depuis l'espace client (R23, ADR 036). Chaque action revérifie
@@ -75,6 +87,8 @@ export type PortalQuoteInput = {
   /** Jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même. */
   endDate?: string
   endTime: string
+  /** Formule de location choisie (ADR 076) : son unité fait le prix ; absente, le formulaire libre. */
+  formula?: string
 }
 
 export async function previewPortalBookingAction(input: PortalQuoteInput): Promise<PortalQuoteState> {
@@ -82,10 +96,12 @@ export async function previewPortalBookingAction(input: PortalQuoteInput): Promi
   const tenant = await currentTenant()
   const selection = periodSelection(input.date, input.startTime, input.endDate || input.date, input.endTime, tenant.timezone)
   if (!selection) return { status: 'error', message: portalRejectionMessage('creneau-illisible', 1) }
+  const formula = isRentalFormula(input.formula) ? input.formula : 'libre'
   const preview = await previewPortalQuote(accounts, {
     clientId: input.clientId,
     resourceId: input.resourceId,
     ...selection,
+    unit: choiceUnit(formula),
   })
   if (!preview) {
     return { status: 'error', message: 'Cet espace ne se réserve pas depuis votre espace client.' }
@@ -105,7 +121,7 @@ export async function previewPortalBookingAction(input: PortalQuoteInput): Promi
     : { status: 'unpriced', outcome, notice, equipment }
 }
 
-export type PortalBookingFields = 'clientId' | 'startTime' | 'endTime' | 'title' | 'notes'
+export type PortalBookingFields = 'clientId' | PortalPeriodField | 'title' | 'notes'
 
 export type PortalBookingFormState =
   | { status: 'idle' }
@@ -168,16 +184,15 @@ export async function bookFromPortalAction(
     return { status: 'error', message: 'Choisissez un espace dans la liste des disponibilités.' }
   }
 
-  // Le jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même.
-  const endDate = text(formData, 'endDate') || date
-  const selection = periodSelection(date, text(formData, 'startTime'), endDate, text(formData, 'endTime'), timeZone)
   // Les disponibilités sont relues, sur toute la période : le formulaire a pu
   // rester ouvert pendant qu'un autre client réservait.
+  const limits = formulaLimitsOf(tenant)
   const availability = await loadPortalPeriodAvailability(accounts, {
     resourceId,
     firstDate: date,
     timeZone,
     maxDaysSettings: tenant.bookingMaxDays,
+    limits,
   })
   if (!availability) {
     return {
@@ -185,15 +200,26 @@ export async function bookFromPortalAction(
       message: 'Cet espace ne se réserve plus depuis votre espace client ce jour-là. Contactez le centre.',
     }
   }
-  const rejection = portalBookingRejection(
-    selection,
-    { availability: availability.period, timeZone, maxDays: availability.maxDays },
-    tenant,
-    now,
-  )
+  // La formule choisie (ADR 076), parmi celles réglées sur l'espace, et sa période.
+  const formula = parseChosenFormula(formData.get('formula'), availability.formulas)
+  const evaluation: EvaluatedChoice = formula
+    ? evaluateChoice(
+        readChoice(formData, formula, date),
+        {
+          date,
+          timeZone,
+          availability: availability.period,
+          earliest: requestBounds(tenant, now).earliest,
+          maxDays: availability.maxDays,
+          limits,
+        },
+        availability.formulas,
+      )
+    : { rejection: 'formule-indisponible' }
+  const selection = evaluation.range
+  const rejection = portalChoiceRejection(evaluation, tenant, now)
   if (rejection) {
-    const onEnd = rejection === 'duree-trop-courte' || rejection === 'duree-trop-longue' || rejection === 'fin-hors-ouverture'
-    fieldErrors[onEnd ? 'endTime' : 'startTime'] = portalRejectionMessage(rejection, availability.maxDays)
+    fieldErrors[rejectionField(rejection)] = portalRejectionMessage(rejection, availability.maxDays, limits)
     // Pris entre-temps : les horaires proposés sont relus.
     if (rejection === 'creneau-indisponible') revalidatePath('/compte/reservations', 'layout')
   }
@@ -232,6 +258,8 @@ export async function bookFromPortalAction(
             }
           : undefined,
       equipmentIds,
+      // Le prix suit l'unité de la formule choisie (ADR 076).
+      unit: formula ? choiceUnit(formula) : undefined,
     })
   } catch (error) {
     if (error instanceof PortalBookingError) {

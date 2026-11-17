@@ -21,6 +21,10 @@ import {
 
 type FieldKind = 'decimal' | 'integer' | 'text' | 'list' | 'choice' | 'plate'
 
+/** Agencement d'un bureau (ADR 076), tel qu'il s'écrit et s'affiche. */
+export const bureauLayouts = ['Open space', 'Bureau fermé'] as const
+export type BureauLayout = (typeof bureauLayouts)[number]
+
 export type AttributeField = {
   name: string
   label: string
@@ -57,6 +61,16 @@ export const attributeFields: Record<ResourceType, readonly AttributeField[]> = 
   bureau: [
     { name: 'superficieM2', label: 'Superficie (m²)', kind: 'decimal', min: 1, max: 100_000 },
     { name: 'postes', label: 'Postes de travail', kind: 'integer', min: 1, max: 500 },
+    // Open space ou bureau fermé (ADR 076) : ce que le client loue, dit sur
+    // l'annonce et dans le formulaire. Les formules de location se règlent à
+    // part, sur la fiche (`formules.ts`).
+    {
+      name: 'agencement',
+      label: 'Agencement',
+      kind: 'choice',
+      choices: bureauLayouts,
+      hint: 'Open space : un poste dans un espace partagé. Bureau fermé : une pièce à soi.',
+    },
   ],
   casier: [
     {
@@ -188,7 +202,10 @@ function parseField(field: AttributeField, raw: string): FieldResult {
       return plate ? { value: plate } : { error: 'Immatriculation attendue au format AB-123-CD.' }
     }
     case 'choice': {
-      const choice = field.choices?.find((candidate) => candidate === text.toUpperCase())
+      // Sans tenir compte de la casse : « s » vaut « S », « open space » vaut « Open space ».
+      const choice = field.choices?.find(
+        (candidate) => candidate.toLocaleUpperCase('fr-FR') === text.toLocaleUpperCase('fr-FR'),
+      )
       return choice
         ? { value: choice }
         : { error: `Valeur attendue : ${(field.choices ?? []).join(', ')}.` }

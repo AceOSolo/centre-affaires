@@ -160,7 +160,13 @@ describe('historique du compte', { skip: raisonDeSaut }, () => {
 
   it('garde une demande de réservation annulée par le client, avec son auteur', async () => {
     const id = await reserverDepuisLEspace(durand, 5)
-    assert.equal(await cancelRequestForAccounts(id, durand), true)
+    // Créneau à moins de sept jours : délai du centre ramené à zéro (ADR 076).
+    await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 0`))
+    try {
+      assert.equal(await cancelRequestForAccounts(id, durand), true)
+    } finally {
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+    }
 
     const { sources } = await loadAccountHistory(durand, { year: year(), timeZone: TZ })
     assert.equal(sources.bookings.length, 1)

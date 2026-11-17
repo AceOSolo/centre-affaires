@@ -50,6 +50,8 @@ import {
   tariffRefProblem,
   typeTariffRef,
 } from '../../../../modules/ressources/fiche-ressource.ts'
+import { acceptsRentalFormulas, formulasOf } from '../../../../modules/ressources/formules.ts'
+import { RentalFormulasForm } from '../../../../modules/ressources/formules-form.tsx'
 import {
   resourceStatusLabels,
   resourceStatusStyles,
@@ -435,6 +437,19 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
             Réservation depuis l’espace client
           </h2>
           <ClientBookingModeForm resourceId={resource.id} mode={resource.clientBookingMode} />
+        </section>
+      )}
+
+      {/* Formules de location d'un bureau : coworking ou longue durée (ADR 076). */}
+      {!archived && acceptsRentalFormulas(resource.resourceType) && (
+        <section
+          className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4"
+          aria-labelledby="formules-location"
+        >
+          <h2 id="formules-location" className="text-sm font-semibold tracking-tight">
+            Formules de location
+          </h2>
+          <RentalFormulasForm resourceId={resource.id} formulas={formulasOf(resource)} />
         </section>
       )}
 

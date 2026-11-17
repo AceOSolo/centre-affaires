@@ -390,6 +390,34 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
     { ...motif, optional: false, label: 'Motif du refus saisi par l’équipe', example: 'L’extrait date de plus de trois mois.' },
     lienEspace('la page « Pièces justificatives » de l’espace client'),
   ],
+  // Modification et annulation par le client depuis son espace (ADR 076).
+  booking_changed_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    { ...creneau, label: 'Nouveau jour et nouveaux horaires, à l’heure du centre' },
+    {
+      name: 'ancien',
+      label: 'Jour et horaires d’avant la modification',
+      example: 'lundi 5 octobre 2026, de 09:00 à 11:00',
+    },
+    { ...montantReservation, label: 'Nouveau montant annoncé au client' },
+    lienCentre('la file des demandes'),
+  ],
+  booking_cancelled_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    creneau,
+    {
+      name: 'etat',
+      label: 'Ce qui est annulé : la demande en attente ou la réservation confirmée',
+      example: 'la réservation confirmée',
+    },
+    lienCentre('la fiche de la réservation'),
+  ],
 }
 
 export type DefaultTemplate = { subject: string; body: string }
@@ -628,6 +656,23 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       sansDocument +
       signature,
   },
+  booking_changed_by_client: {
+    subject: 'Réservation modifiée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a modifié sa réservation de {{ressource}} depuis son espace client.' +
+      '\n\nAvant : {{ancien}}' +
+      '\nDésormais : {{creneau}}' +
+      '\nMontant annoncé : {{montant}}' +
+      '\n\nLa réservation attend de nouveau votre validation : {{lien}}' +
+      signature,
+  },
+  booking_cancelled_by_client: {
+    subject: 'Réservation annulée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a annulé depuis son espace client {{etat}} de {{ressource}} le {{creneau}}.' +
+      '\n\nLe créneau est libéré. Voir la réservation : {{lien}}' +
+      signature,
+  },
 }
 
 /** Nom de l'événement à l'écran. */
@@ -657,6 +702,8 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   request_received: 'Demande du site bien reçue',
   client_document_received: 'Pièce justificative déposée',
   client_document_refused: 'Pièce justificative refusée',
+  booking_changed_by_client: 'Réservation modifiée par le client',
+  booking_cancelled_by_client: 'Réservation annulée par le client',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -696,6 +743,10 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
     'Quand un client dépose une pièce justificative de sa domiciliation depuis son espace : à l’accueil, pour la vérifier.',
   client_document_refused:
     'Quand l’équipe refuse une pièce justificative : au client, avec le motif, pour qu’il en dépose une autre.',
+  booking_changed_by_client:
+    'Quand un client change les dates, les heures ou la formule d’une demande ou d’une réservation depuis son espace : elle repasse en attente de validation.',
+  booking_cancelled_by_client:
+    'Quand un client annule une demande ou une réservation depuis son espace, dans le délai réglé par le centre.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {

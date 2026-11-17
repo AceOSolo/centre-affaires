@@ -127,6 +127,14 @@ export const reglagesLinks: readonly ReglagesLink[] = [
     description: 'Le planning de chaque ressource recopié dans un agenda Google.',
     permission: 'agenda-google.gerer',
   },
+  // Règles de réservation en ligne : plafonds, délai de modification (ADR 076).
+  {
+    service: 'tous',
+    href: '/disponibilites#regles-reservation',
+    label: 'Règles de réservation en ligne',
+    description: 'Préavis, horizon, durées maximales (jours, semaines, mois) et délai pour modifier ou annuler depuis l’espace client.',
+    permission: 'horaires.gerer',
+  },
   // Cloche de l'espace client (ADR 077).
   {
     service: 'tous',
