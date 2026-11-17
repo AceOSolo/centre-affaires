@@ -30,8 +30,17 @@ import {
   countRecentRequestsByEmail,
   createBookingRequest,
 } from './queries.ts'
-import { errorsByField } from './questionnaire-fields.tsx'
-import { parseAnswers, productForResourceType } from './questionnaires.ts'
+import { describeDomiciliationPrice, domiciliationLines, parseChosenServices } from './domiciliation-tarif.ts'
+import { loadDomiciliationOffer, loadFormSettings, loadQuestionnaire } from './questionnaires-queries.ts'
+import {
+  describeAnswers,
+  DOMICILIATION_KEYS,
+  errorsByField,
+  formForResourceType,
+  parseAnswers,
+  productForResourceType,
+  SERVICES_ANSWER_KEY,
+} from './questionnaires.ts'
 import {
   MAX_REQUESTS_PER_EMAIL,
   RATE_WINDOW_HOURS,
@@ -181,7 +190,7 @@ const refusRobot = 'Votre demande n’a pas pu être envoyée. Contactez-nous di
  */
 async function refusAntiRobot(formData: FormData): Promise<string | null> {
   if (!(await preuveHumaine().verifier(formData.get(CHAMP_PREUVE)))) {
-    return 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis renvoyez.'
+    return 'La vérification anti-robot n’a pas abouti ou a expiré : elle recommence d’elle-même. Renvoyez votre demande dès qu’elle indique « Vérification anti-robot réussie ».'
   }
   const ip = ipDuVisiteur(await headers()) ?? 'inconnue'
   const depasse = compteur.passer([
@@ -246,8 +255,13 @@ export async function requestBookingAction(
   }
   const bookable = resource.status === 'active' && !resource.deletedAt
 
-  // Relu par le serveur, comme la ressource : le formulaire peut mentir.
-  const { answers, errors } = parseAnswers(product, formData)
+  // Relu par le serveur, comme la ressource : le formulaire peut mentir. Les
+  // questions sont celles du formulaire de la ressource (salle, bureau…), telles
+  // que le centre les a réglées (ADR 074).
+  const form = formForResourceType(resource.resourceType)
+  if (!form) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
+  const questionnaire = await loadQuestionnaire(form)
+  const { answers, errors } = parseAnswers(questionnaire, formData, { today: todayIsoDate(timeZone) })
   if (Object.keys(errors).length > 0) {
     return { status: 'error', step: 3, message: answersToCorrect, fieldErrors: errorsByField(errors) }
   }
@@ -304,8 +318,9 @@ export async function requestBookingAction(
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
       clientId,
-      // Le devis naît avec la demande, dans la même transaction (ADR 043).
-      proposal: { product, answers, message: notes, requesterCompany: company, timeZone },
+      // Le devis naît avec la demande, dans la même transaction (ADR 043), avec
+      // les réponses telles que le demandeur les a lues (ADR 074).
+      proposal: { product, answers, describedAnswers: describeAnswers(questionnaire, answers), message: notes, requesterCompany: company, timeZone },
     })
     requestId = created.id
     proposal = created.proposal && { number: created.proposal.number, status: created.proposal.status }
@@ -360,22 +375,26 @@ export async function requestDomiciliationAction(
 ): Promise<PublicFormState> {
   if (champPiegeRempli(formData)) return { status: 'error', message: refusRobot }
   const tenant = await currentTenant()
-  const { answers, errors } = parseAnswers('domiciliation', formData, { today: todayIsoDate(tenant.timezone) })
-  if (Object.keys(errors).length > 0) {
-    return { status: 'error', step: 1, message: answersToCorrect, fieldErrors: errorsByField(errors) }
-  }
-
-  const contact = { name: text(formData, 'name'), email: text(formData, 'email'), phone: text(formData, 'phone') }
-  const rejections = contactRejections(contact)
-  if (Object.keys(rejections).length > 0) {
+  // Les questions et les options que le centre a réglées (ADR 074).
+  const settings = await loadFormSettings('domiciliation')
+  const offer = await loadDomiciliationOffer(settings.serviceCodes)
+  const { answers, errors } = parseAnswers(settings.questionnaire, formData, { today: todayIsoDate(tenant.timezone) })
+  const chosen = parseChosenServices(offer, formData.getAll(SERVICES_ANSWER_KEY))
+  if (Object.keys(errors).length > 0 || chosen.error) {
     return {
       status: 'error',
-      step: 2,
-      message: 'Vos coordonnées sont à compléter.',
-      fieldErrors: Object.fromEntries(
-        Object.entries(rejections).map(([field, rejection]) => [field, rejectionMessages[rejection]]),
-      ),
+      step: 1,
+      message: answersToCorrect,
+      fieldErrors: { ...errorsByField(errors), ...(chosen.error ? { [SERVICES_ANSWER_KEY]: chosen.error } : {}) },
     }
+  }
+  const codes = chosen.codes ?? []
+  if (codes.length > 0) answers[SERVICES_ANSWER_KEY] = codes
+
+  // Prénom et nom en deux champs (recette du 17/11) ; le devis garde la personne entière.
+  const contact = contactFromNames(text(formData, 'firstName'), text(formData, 'lastName'), text(formData, 'email'), text(formData, 'phone'))
+  if (contact.errors) {
+    return { status: 'error', step: 2, message: 'Vos coordonnées sont à compléter.', fieldErrors: contact.errors }
   }
   const message = text(formData, 'notes')
   if (message.length > NOTES_MAX_LENGTH) {
@@ -388,7 +407,8 @@ export async function requestDomiciliationAction(
   if (refus) return { status: 'error', message: refus }
 
   const clientId = await requesterClientId()
-  const raisonSociale = String(answers.raisonSociale ?? '')
+  // La raison sociale d'une société immatriculée, le nom du projet d'une société en création.
+  const raisonSociale = String(answers[DOMICILIATION_KEYS.companyName] ?? answers[DOMICILIATION_KEYS.projectName] ?? '')
   const proposal = await withTenant(currentTenantId(), (tx) =>
     createProposalInTransaction(tx, {
       product: 'domiciliation',
@@ -401,8 +421,12 @@ export async function requestDomiciliationAction(
       requesterPhone: contact.phone,
       requesterCompany: raisonSociale,
       answers,
+      // Ce que le demandeur a lu, options et tarif annoncé compris (ADR 074).
+      describedAnswers: [...describeAnswers(settings.questionnaire, answers), ...describeDomiciliationPrice(offer, codes)],
       message,
-      lines: [],
+      currency: offer.currency,
+      // Le forfait et les options cochées, au prix annoncé : l'accueil relit le brouillon.
+      lines: domiciliationLines(offer, codes),
     }),
   )
 
@@ -414,7 +438,29 @@ export async function requestDomiciliationAction(
 
   return {
     status: 'sent',
-    summary: `Domiciliation de ${raisonSociale}`,
+    summary: raisonSociale ? `Domiciliation de ${raisonSociale}` : 'Domiciliation',
     proposal: { number: proposal.number, status: proposal.status },
   }
+}
+
+const NAME_PART_MAX_LENGTH = 100
+
+/**
+ * Coordonnées d'une demande de domiciliation : prénom et nom séparés, puis
+ * les mêmes règles que les autres demandes pour l'adresse et le téléphone.
+ * Erreurs rangées par nom de champ (`firstName`, `lastName`, `email`, `phone`).
+ */
+function contactFromNames(firstName: string, lastName: string, email: string, phone: string):
+  | { name: string; email: string; phone: string; errors?: undefined }
+  | { errors: Record<string, string> } {
+  const errors: Record<string, string> = {}
+  if (!firstName) errors.firstName = 'Saisissez votre prénom.'
+  else if (firstName.length > NAME_PART_MAX_LENGTH) errors.firstName = `${NAME_PART_MAX_LENGTH} caractères au plus.`
+  if (!lastName) errors.lastName = 'Saisissez votre nom.'
+  else if (lastName.length > NAME_PART_MAX_LENGTH) errors.lastName = `${NAME_PART_MAX_LENGTH} caractères au plus.`
+  const name = `${firstName} ${lastName}`.trim()
+  for (const [field, rejection] of Object.entries(contactRejections({ name: name || '-', email, phone }))) {
+    if (rejection) errors[field] = rejectionMessages[rejection]
+  }
+  return Object.keys(errors).length > 0 ? { errors } : { name, email, phone }
 }

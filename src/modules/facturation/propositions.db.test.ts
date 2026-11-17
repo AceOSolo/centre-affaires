@@ -343,7 +343,7 @@ describe('devis transmis à Dolibarr', { skip: raisonDeSaut }, () => {
 
     const devisAccueil = (bookingId: string) =>
       createStaffProposal({
-        product: 'espace',
+        form: 'salle',
         bookingId,
         clientId: CLIENT,
         requesterName: null,
@@ -351,6 +351,7 @@ describe('devis transmis à Dolibarr', { skip: raisonDeSaut }, () => {
         requesterPhone: null,
         requesterCompany: null,
         answers: {},
+        describedAnswers: [],
         message: null,
         staffNote: null,
         currency: 'EUR',
@@ -377,7 +378,7 @@ describe('devis transmis à Dolibarr', { skip: raisonDeSaut }, () => {
         assert.match(error.message, /déjà son devis : DV-/)
         return true
       })
-      const candidates = await listBookingsForNewProposal('espace', new Date('2026-10-01T00:00:00Z'))
+      const candidates = await listBookingsForNewProposal('salle', new Date('2026-10-01T00:00:00Z'))
       assert.equal(candidates.some((booking) => booking.id === created.id), false)
     })
 
@@ -388,7 +389,7 @@ describe('devis transmis à Dolibarr', { skip: raisonDeSaut }, () => {
       assert.equal(await cancelProposal(premier.id, 'Réservation déplacée : nouveau prix.'), true)
 
       // La réservation redevient chiffrable : elle est proposée, et le devis se refait.
-      const candidates = await listBookingsForNewProposal('espace', new Date('2026-10-01T00:00:00Z'))
+      const candidates = await listBookingsForNewProposal('salle', new Date('2026-10-01T00:00:00Z'))
       assert.ok(candidates.some((booking) => booking.id === created.id))
       const second = await devisAccueil(created.id)
       assert.notEqual(second.number, premier.number)

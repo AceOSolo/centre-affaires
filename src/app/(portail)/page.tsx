@@ -18,9 +18,17 @@ import type { RateUnit } from '../../modules/facturation/schema.ts'
 import { proposalProducts, type ProposalProduct } from '../../modules/facturation/schema-devis.ts'
 import { listServices } from '../../modules/facturation/services-queries.ts'
 import { pickRateItem, resolveRate } from '../../modules/facturation/tarifs.ts'
-import { BookingDialog, ReserveButton } from '../../modules/reservations/booking-dialog.tsx'
+import { BookingDialog, ReserveButton, type ServiceChoice } from '../../modules/reservations/booking-dialog.tsx'
 import type { PublicBookingResource, SlotProduct } from '../../modules/reservations/public-booking-form.tsx'
-import { productForResourceType, questionnaires } from '../../modules/reservations/questionnaires.ts'
+import { loadAllFormSettings, loadDomiciliationOffer } from '../../modules/reservations/questionnaires-queries.ts'
+import {
+  formResourceTypes,
+  formulaires,
+  productForResourceType,
+  productOfForm,
+  type Formulaire,
+  type Questionnaire,
+} from '../../modules/reservations/questionnaires.ts'
 import { requestBounds } from '../../modules/reservations/request-policy.ts'
 import { describeAttributes } from '../../modules/ressources/labels.ts'
 import { formatOpeningSummary } from '../../modules/ressources/ouverture.ts'
@@ -140,14 +148,18 @@ export default async function PortailPage({
   // Une URL hors délai ramène au premier jour admissible.
   const isoDate = date && ISO_DATE.test(date) && date >= minDate && date <= maxDate ? date : minDate
 
-  const [resources, tarifs, regles, services] = await Promise.all([
+  const [resources, tarifs, regles, services, formSettings] = await Promise.all([
     listBookableResources(),
     // Les prix affichés viennent de la grille par défaut en vigueur : la page
     // vitrine et la facturation ne peuvent pas diverger (R08, R11).
     findDefaultRatePlan(today),
     listOpeningHours(),
     listServices(),
+    // Les formulaires de demande réglés par le centre (ADR 074).
+    loadAllFormSettings(),
   ])
+  const questionnaires = Object.fromEntries(formulaires.map((form) => [form, formSettings[form].questionnaire])) as Record<Formulaire, Questionnaire>
+  const domiciliationOffer = await loadDomiciliationOffer(formSettings.domiciliation.serviceCodes)
   const ouverture = formatOpeningSummary(regles)
   const currency = tarifs?.currency ?? tenant.currency
 
@@ -171,10 +183,18 @@ export default async function PortailPage({
     materiel: bookable.filter((resource) => productForResourceType(resource.resourceType) === 'materiel'),
   }
 
-  // La domiciliation, sans calendrier, est toujours proposée (ADR 043).
-  const produits = proposalProducts
-    .filter((product) => product === 'domiciliation' || parProduit[product].length > 0)
-    .map((product) => ({ product, label: questionnaires[product].label, description: questionnaires[product].description }))
+  // Un choix par service vendu : salle et bureau ont chacun leur formulaire
+  // (ADR 074). La domiciliation, sans calendrier, est toujours proposée (ADR 043).
+  const choix: ServiceChoice[] = formulaires
+    .filter((form) => form === 'domiciliation' || bookable.some((resource) => formResourceTypes[form].includes(resource.resourceType)))
+    .map((form) => ({
+      form,
+      product: productOfForm(form),
+      // Un espace se dit par son type ; le camion et le matériel n'ont qu'un type.
+      type: productOfForm(form) === 'espace' ? formResourceTypes[form][0] : undefined,
+      label: questionnaires[form].label,
+      description: questionnaires[form].description,
+    }))
   const blocs = familles
     .map((famille) => ({ ...famille, espaces: bookable.filter((resource) => resource.resourceType === famille.type) }))
     .filter((famille) => famille.espaces.length > 0)
@@ -425,7 +445,9 @@ export default async function PortailPage({
       </div>
 
       <BookingDialog
-        products={produits}
+        choices={choix}
+        questionnaires={questionnaires}
+        domiciliationOffer={domiciliationOffer}
         resources={parProduit}
         initial={{
           product: requestedProduct,

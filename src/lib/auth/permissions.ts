@@ -66,6 +66,9 @@ export const permissions = [
   // Message libre aux domiciliés ou à une sélection (ADR 060) : il engage le
   // centre auprès de tous ses clients, comme les modèles de messages.
   'notifications.diffuser',
+  // Formulaires de demande du site : questions, options tarifées de la
+  // domiciliation (ADR 074). Ils engagent ce que le centre demande et annonce.
+  'formulaires.gerer',
 ] as const
 
 export type Permission = (typeof permissions)[number]
@@ -110,6 +113,7 @@ export const permissionLabels: Record<Permission, string> = {
     'Équipe : nommer, rétrograder ou retirer un exploitant ou un membre de la direction',
   'crm.gerer': 'Connexion au CRM : choix du CRM, jeton, identifiants, flux échangés',
   'notifications.diffuser': 'Envoyer un message aux domiciliés, aux clients des bureaux ou à une sélection de clients',
+  'formulaires.gerer': 'Formulaires de demande du site : questions posées, options et tarif de la domiciliation',
 }
 
 /** Droits de l'accueil : l'opérationnel du quotidien. */

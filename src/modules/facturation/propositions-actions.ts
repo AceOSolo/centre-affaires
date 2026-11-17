@@ -7,7 +7,15 @@ import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { listClients } from '../clients/queries.ts'
-import { answerFieldName, parseAnswers, questionnaires, type Answers } from '../reservations/questionnaires.ts'
+import { loadQuestionnaire } from '../reservations/questionnaires-queries.ts'
+import {
+  describeAnswers,
+  errorsByField,
+  formResourceTypes,
+  isFormulaire,
+  parseAnswers,
+  type Answers,
+} from '../reservations/questionnaires.ts'
 import { createStaffProposal, StaffProposalError } from './propositions-accueil-queries.ts'
 import {
   MAX_CANCEL_REASON_LENGTH,
@@ -33,7 +41,6 @@ import {
   updateProposalNote,
   validateProposal,
 } from './propositions-queries.ts'
-import { proposalProducts, type ProposalProduct } from './schema-devis.ts'
 
 /**
  * Actions de l'accueil sur les devis (ADR 043). Chacune vérifie le droit
@@ -232,42 +239,44 @@ export type NewProposalFormState = {
 } | null
 
 /**
- * Devis établi par l'accueil : produit, réservation (espace, véhicule),
- * destinataire, réponses au questionnaire. Il naît brouillon (canal
- * `staff`) : l'accueil le relit et le valide sur sa fiche.
+ * Devis établi par l'accueil : formulaire (salle, bureau, camion, matériel,
+ * domiciliation, ADR 074), réservation, destinataire, réponses au
+ * questionnaire du centre. Il naît brouillon (canal `staff`) : l'accueil le
+ * relit et le valide sur sa fiche.
  */
 export async function createStaffProposalAction(
   _previous: NewProposalFormState,
   formData: FormData,
 ): Promise<NewProposalFormState> {
   await requirePermission('demandes.traiter')
-  const productValue = String(formData.get('product') ?? '')
-  if (!(proposalProducts as readonly string[]).includes(productValue)) {
+  const form = String(formData.get('formulaire') ?? '')
+  if (!isFormulaire(form)) {
     return { message: 'Choisissez d’abord ce que le devis propose.' }
   }
-  const product = productValue as ProposalProduct
+  const questionnaire = await loadQuestionnaire(form)
   const reservation = String(formData.get('reservation') ?? '').trim()
   const requesterValues = requesterFormValues(formData)
-  const { answers, errors: answerErrors } = parseAnswers(product, formData)
+  const { answers, errors: answerErrors } = parseAnswers(questionnaire, formData)
   const values = { requester: requesterValues, answers, reservation }
 
   const clients = await listClients()
   const { requester, errors: requesterErrors } = parseRequester(requesterValues, new Set(clients.map((client) => client.id)))
   const fieldErrors: Record<string, string> = { ...(requesterErrors as Record<string, string>) }
-  const needsBooking = questionnaires[product].resourceTypes.length > 0
+  const needsBooking = formResourceTypes[form].length > 0
   if (needsBooking && !reservation) fieldErrors.reservation = 'Choisissez la réservation à chiffrer.'
   else if (needsBooking && !isUuid(reservation)) fieldErrors.reservation = 'Cette réservation est introuvable.'
-  for (const [question, message] of Object.entries(answerErrors)) fieldErrors[answerFieldName({ name: question })] = message
+  Object.assign(fieldErrors, errorsByField(answerErrors))
   if (Object.keys(fieldErrors).length > 0 || !requester) return { fieldErrors, values }
 
   const tenant = await currentTenant()
   let created: { id: string }
   try {
     created = await createStaffProposal({
-      product,
+      form,
       bookingId: needsBooking ? reservation : null,
       ...requester,
       answers,
+      describedAnswers: describeAnswers(questionnaire, answers),
       currency: tenant.currency,
       timeZone: tenant.timezone,
     })

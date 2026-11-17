@@ -9,8 +9,15 @@ import { listBookingsForNewProposal } from '../../../../modules/facturation/prop
 import type { RequesterFormValues } from '../../../../modules/facturation/propositions-ecran.ts'
 import { findProposalForBooking } from '../../../../modules/facturation/propositions-queries.ts'
 import { describeSlot, proposalStatusLabels } from '../../../../modules/facturation/propositions.ts'
-import { proposalProducts, type ProposalProduct } from '../../../../modules/facturation/schema-devis.ts'
-import { productForResourceType, questionnaires } from '../../../../modules/reservations/questionnaires.ts'
+import { loadQuestionnaires } from '../../../../modules/reservations/questionnaires-queries.ts'
+import {
+  formForResourceType,
+  formResourceTypes,
+  formulaires,
+  isFormulaire,
+  requestProducts,
+  type Formulaire,
+} from '../../../../modules/reservations/questionnaires.ts'
 import { findBooking } from '../../../../modules/reservations/queries.ts'
 
 export const metadata = { title: 'Nouveau devis' }
@@ -29,14 +36,16 @@ const emptyRequester: RequesterFormValues = {
 const first = (value: string | string[] | undefined) => (Array.isArray(value) ? value[0] : value)
 
 /**
- * Devis établi par l'accueil (ADR 043) : on choisit d'abord ce qu'il propose,
- * puis la réservation (espace, véhicule), le destinataire et les réponses.
- * Depuis la fiche d'une réservation, `?reservation=` la rattache d'office.
+ * Devis établi par l'accueil (ADR 043) : on choisit d'abord ce qu'il propose
+ * (un formulaire par service vendu, ADR 074), puis la réservation (salle,
+ * bureau, camion, matériel), le destinataire et les réponses. Depuis la fiche
+ * d'une réservation, `?reservation=` la rattache d'office. `?produit=` reste
+ * lu pour les liens d'avant l'ADR 074.
  */
 export default async function NewProposalPage({
   searchParams,
 }: {
-  searchParams: Promise<{ produit?: string | string[]; reservation?: string | string[]; client?: string | string[] }>
+  searchParams: Promise<{ formulaire?: string | string[]; produit?: string | string[]; reservation?: string | string[]; client?: string | string[] }>
 }) {
   await requirePermission('demandes.traiter')
   const params = await searchParams
@@ -53,13 +62,18 @@ export default async function NewProposalPage({
   const liveProposal = existing && existing.status !== 'cancelled' ? existing : undefined
   const replacedProposal = existing?.status === 'cancelled' ? existing : undefined
 
-  // La réservation impose son produit ; sinon, celui choisi.
-  const requested = first(params.produit)
-  const product: ProposalProduct | undefined = booking
-    ? productForResourceType(booking.resource.resourceType)
-    : (proposalProducts as readonly string[]).includes(requested ?? '')
-      ? (requested as ProposalProduct)
-      : undefined
+  // La réservation impose son formulaire ; sinon, celui choisi.
+  const requested = first(params.formulaire)
+  const legacy = first(params.produit)
+  const legacyForms = legacy && legacy in requestProducts ? requestProducts[legacy as keyof typeof requestProducts].forms : []
+  const form: Formulaire | undefined = booking
+    ? formForResourceType(booking.resource.resourceType)
+    : isFormulaire(requested)
+      ? requested
+      : legacyForms.length === 1
+        ? legacyForms[0]
+        : undefined
+  const questionnaires = await loadQuestionnaires()
 
   const header = (
     <div>
@@ -74,7 +88,7 @@ export default async function NewProposalPage({
     </div>
   )
 
-  if (reservationId && (!booking || booking.kind !== 'booking' || booking.status === 'cancelled' || !product || liveProposal)) {
+  if (reservationId && (!booking || booking.kind !== 'booking' || booking.status === 'cancelled' || !form || liveProposal)) {
     return (
       <div className="flex max-w-3xl flex-col gap-6">
         {header}
@@ -102,7 +116,7 @@ export default async function NewProposalPage({
     )
   }
 
-  if (!product) {
+  if (!form) {
     return (
       <div className="flex max-w-3xl flex-col gap-6">
         {header}
@@ -111,15 +125,15 @@ export default async function NewProposalPage({
             Que propose le devis ?
           </h2>
           <ul className="grid gap-3 sm:grid-cols-3">
-            {proposalProducts.map((candidate) => (
+            {formulaires.map((candidate) => (
               <li key={candidate}>
                 <Link
-                  href={`/devis/nouveau?produit=${candidate}${clientQuery}`}
+                  href={`/devis/nouveau?formulaire=${candidate}${clientQuery}`}
                   className="flex h-full flex-col gap-1 rounded-lg border border-border bg-white px-4 py-3 transition-colors duration-150 ease-out hover:border-accent hover:bg-accent/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   <span className="font-medium text-primary">{questionnaires[candidate].label}</span>
                   <span className="text-sm text-muted-foreground">{questionnaires[candidate].description}</span>
-                  {questionnaires[candidate].resourceTypes.length > 0 && (
+                  {formResourceTypes[candidate].length > 0 && (
                     <span className="text-xs text-muted-foreground">Sur une réservation du planning.</span>
                   )}
                 </Link>
@@ -133,7 +147,7 @@ export default async function NewProposalPage({
 
   const [clients, bookings] = await Promise.all([
     listClients(),
-    booking ? Promise.resolve([]) : listBookingsForNewProposal(product, new Date()),
+    booking ? Promise.resolve([]) : listBookingsForNewProposal(form, new Date()),
   ])
 
   const defaults = {
@@ -159,7 +173,7 @@ export default async function NewProposalPage({
       {header}
       <p className="text-sm">
         <span className="text-muted-foreground">Produit : </span>
-        <span className="font-medium">{questionnaires[product].label}</span>
+        <span className="font-medium">{questionnaires[form].label}</span>
         {!booking && (
           <>
             {' '}
@@ -183,7 +197,7 @@ export default async function NewProposalPage({
         </p>
       )}
       <NewProposalForm
-        product={product}
+        questionnaire={questionnaires[form]}
         clients={clients.map((client) => ({ id: client.id, name: client.name }))}
         bookings={bookings.map((candidate) => ({
           id: candidate.id,

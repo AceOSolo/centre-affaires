@@ -227,7 +227,7 @@ export type PortalBookingInput = {
   title: string
   notes: string | null
   /** Le devis de la réservation (ADR 043), écrit avec elle. */
-  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'requesterName' | 'requesterEmail'> & { timeZone: string }
+  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'describedAnswers' | 'requesterName' | 'requesterEmail'> & { timeZone: string }
   /**
    * Appareils loués en option d'une salle (ADR 062) : chacun devient une
    * réservation liée, écrite dans la même transaction, dont la ligne entre au
@@ -311,6 +311,7 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
           requesterCompany: account.clientName,
           bookingId: booking.id,
           answers: input.proposal.answers,
+          describedAnswers: input.proposal.describedAnswers,
           message: input.notes,
           currency: booking.quoteCurrency ?? 'EUR',
           lines: [...(line ? [line] : []), ...optionLines],

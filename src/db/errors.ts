@@ -199,3 +199,10 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Formulaire de demande refusé par la base (ADR 074, `23-questionnaires.sql`) :
+ * questions qui n'ont pas la forme attendue, options qui ne sont pas des codes
+ * de services, réponses figées d'un devis réécrites hors brouillon.
+ */
+export const DB_QUESTIONNAIRE_REFUSED = 'CA020'

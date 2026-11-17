@@ -7,7 +7,7 @@ import { clientMembers, clients } from '../clients/schema.ts'
 import { frozenQuoteDisplay } from '../facturation/devis.ts'
 import { proposals } from '../facturation/schema-devis.ts'
 import { formatCents } from '../facturation/tarifs.ts'
-import { describeAnswers } from '../reservations/questionnaires.ts'
+import { answersForDisplay, DOMICILIATION_KEYS, type Answers } from '../reservations/questionnaires.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { centreTimeZone, formatSlot, personName } from './faits.ts'
@@ -185,9 +185,11 @@ export function notifyDomiciliationRequestSubmitted(proposalId: string, options:
     if (!row) return null
     const { proposal } = row
     if (proposal.product !== 'domiciliation' || proposal.status !== 'draft' || proposal.channel === 'staff') return null
-    // La raison sociale a sa variable : elle n'est pas répétée dans les réponses.
-    const answers = Object.fromEntries(Object.entries(proposal.answers).filter(([name]) => name !== 'raisonSociale'))
-    const reponses = describeAnswers('domiciliation', answers)
+    // La raison sociale (ou le nom du projet) a sa variable : elle n'est pas
+    // répétée dans les réponses, lues telles que le demandeur les a vues (ADR 074).
+    const named = new Set<string>([DOMICILIATION_KEYS.companyName, DOMICILIATION_KEYS.projectName])
+    const reponses = answersForDisplay({ ...proposal, answers: proposal.answers as Answers })
+      .filter(({ name }) => !named.has(name))
       .map(({ label, value }) => `${label.replace(/\s*\?$/, '')} : ${value}`)
       .join('\n')
     return notify(
