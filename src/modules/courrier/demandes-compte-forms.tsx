@@ -3,6 +3,7 @@
 import { useActionState, useState } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
+import { RequiredMark, RequiredNotice } from './champs-obligatoires.tsx'
 import {
   cancelMailRequestAction,
   requestForwardAction,
@@ -86,19 +87,23 @@ const addressLabels: Record<string, string> = {
 }
 
 /**
- * Réexpédition : une adresse déjà utilisée par l'entreprise, ou une autre,
- * saisie ici. Elle est figée dans la demande (ADR 037) : pour en changer,
- * on annule et on redemande.
+ * Réexpédition : une adresse du carnet de l'entreprise — celle par défaut
+ * cochée d'abord (ADR 078) —, une adresse déjà utilisée, ou une autre, saisie
+ * ici et, si on le veut, ajoutée au carnet. Elle est figée dans la demande
+ * (ADR 037) : pour en changer, on annule et on redemande.
  */
 export function ForwardRequestForm({
   mailItemId,
   clientId,
+  book = [],
   previous,
   countries,
   announcement,
 }: {
   mailItemId: string
   clientId: string
+  /** Carnet d'adresses de l'entreprise, l'adresse par défaut en tête ; valeur `carnet:<id>`. */
+  book?: AddressOption[]
   previous: AddressOption[]
   countries: { code: string; name: string }[]
   announcement: string
@@ -109,19 +114,21 @@ export function ForwardRequestForm({
   )
   const values = state?.values
   const errors = state?.fieldErrors ?? {}
-  const [choice, setChoice] = useState(values?.adresse || previous[0]?.requestId || 'nouvelle')
+  const proposals = [...book, ...previous]
+  const [choice, setChoice] = useState(values?.adresse || proposals[0]?.requestId || 'nouvelle')
   const typing = choice === 'nouvelle'
 
   const input = (name: string, label: string, options: { optional?: boolean; autoComplete?: string; hint?: string } = {}) => (
     <div>
       <label htmlFor={name} className={labelClass}>
         {label}
-        {options.optional && <span className="font-normal text-muted-foreground"> (facultatif)</span>}
+        {options.optional ? <span className="font-normal text-muted-foreground"> (facultatif)</span> : <RequiredMark />}
       </label>
       <input
         id={name}
         name={name}
         required={!options.optional && typing}
+        aria-required={!options.optional && typing ? true : undefined}
         autoComplete={options.autoComplete}
         defaultValue={values?.[name] ?? ''}
         aria-invalid={errors[name] ? true : undefined}
@@ -143,13 +150,15 @@ export function ForwardRequestForm({
       <input type="hidden" name="id" value={mailItemId} />
       <input type="hidden" name="clientId" value={clientId} />
       <ErrorSummary errors={state?.fieldErrors} labels={addressLabels} message={state?.error} />
+      <RequiredNotice />
 
-      {previous.length > 0 && (
+      {proposals.length > 0 && (
         <fieldset className="flex flex-col gap-2">
           <legend id="adresse" tabIndex={-1} className={`${labelClass} mb-1`}>
             Adresse de réexpédition
+            <RequiredMark />
           </legend>
-          {previous.map((option) => (
+          {proposals.map((option) => (
             <label
               key={option.requestId}
               className="flex min-h-11 cursor-pointer items-start gap-3 rounded-md border border-border bg-white px-3 py-3 has-[:checked]:border-primary has-[:checked]:bg-accent/5"
@@ -182,7 +191,7 @@ export function ForwardRequestForm({
           <FieldError name="adresse" error={errors.adresse} />
         </fieldset>
       )}
-      {previous.length === 0 && <input type="hidden" name="adresse" value="nouvelle" />}
+      {proposals.length === 0 && <input type="hidden" name="adresse" value="nouvelle" />}
 
       {/* Masqués plutôt que retirés : la saisie en cours survit à un changement d'avis. */}
       <fieldset hidden={!typing} className="flex flex-col gap-4">
@@ -197,11 +206,14 @@ export function ForwardRequestForm({
         <div>
           <label htmlFor="forwardCountry" className={labelClass}>
             Pays
+            <RequiredMark />
           </label>
           <select
             id="forwardCountry"
             name="forwardCountry"
             autoComplete="country"
+            required={typing}
+            aria-required={typing ? true : undefined}
             defaultValue={values?.forwardCountry || 'FR'}
             aria-invalid={errors.forwardCountry ? true : undefined}
             aria-describedby={describedBy('forwardCountry', errors.forwardCountry, false)}
@@ -214,6 +226,19 @@ export function ForwardRequestForm({
             ))}
           </select>
           <FieldError name="forwardCountry" error={errors.forwardCountry} />
+        </div>
+        {/* Le carnet se remplit à l'envoi, si on le demande : rien n'y entre sans le dire (ADR 078). */}
+        <div className="flex min-h-11 items-center gap-3">
+          <input
+            id="enregistrerAdresse"
+            name="enregistrerAdresse"
+            type="checkbox"
+            defaultChecked={values?.enregistrerAdresse === 'on'}
+            className="size-5"
+          />
+          <label htmlFor="enregistrerAdresse" className="text-sm font-medium">
+            Ajouter cette adresse à mon carnet d’adresses
+          </label>
         </div>
       </fieldset>
 

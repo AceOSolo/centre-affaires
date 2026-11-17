@@ -199,3 +199,10 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Courrier côté client refusé par la base (ADR 078, `62-courrier-client.sql`) :
+ * réglage de catégorie déplacé vers une autre personne ou une autre catégorie,
+ * adresse du carnet déplacée vers une autre entreprise.
+ */
+export const DB_CLIENT_MAIL_REFUSED = 'CA024'

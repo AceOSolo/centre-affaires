@@ -10,6 +10,7 @@ import {
   validateCategoryName,
   type CustomCategory,
 } from './categories-perso-regles.ts'
+import { proposedNamesFor } from './categories-reglages.ts'
 import { mailItemMemberStates, mailMemberCategories } from './schema.ts'
 
 /**
@@ -105,7 +106,8 @@ export async function createCustomCategory(
           error: `${MAX_CUSTOM_CATEGORIES} catégories au plus : supprimez-en une avant d’en créer une autre.`,
         }
       }
-      const checked = validateCategoryName(input, existing)
+      // Les catégories proposées sous le nom que la personne leur voit (ADR 078).
+      const checked = validateCategoryName(input, existing, undefined, await proposedNamesFor(tx, account))
       if (checked.error !== undefined) return { ok: false as const, error: checked.error }
       const id = uuidv7()
       await tx.insert(mailMemberCategories).values({
@@ -138,7 +140,7 @@ export async function renameCustomCategory(
       const account = found && accounts.find((candidate) => candidate.memberId === found.clientMemberId)
       if (!account) return { ok: false as const, error: 'Catégorie introuvable.' }
       const existing = await lockedCategories(tx, account)
-      const checked = validateCategoryName(input, existing, id)
+      const checked = validateCategoryName(input, existing, id, await proposedNamesFor(tx, account))
       if (checked.error !== undefined) return { ok: false as const, error: checked.error }
       await tx
         .update(mailMemberCategories)

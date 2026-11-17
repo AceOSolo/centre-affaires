@@ -5,7 +5,10 @@ import { redirect } from 'next/navigation'
 
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
-import { createCustomCategory, deleteCustomCategory, renameCustomCategory } from './categories-perso.ts'
+import { createCustomCategory, deleteCustomCategory } from './categories-perso.ts'
+import { savePersonCategories } from './categories-reglages.ts'
+import type { CategoryListState } from './categories-reglages-forms.tsx'
+import { categoryListDoneMessage, readCategoryListForm } from './categories-reglages-regles.ts'
 
 /**
  * Catégories personnelles du courrier, depuis l'espace client (ADR 060).
@@ -35,18 +38,25 @@ export async function createCategoryAction(
   redirect(`${PAGE}?fait=creee`)
 }
 
-/** Renommer : le champ porte l'identifiant de la catégorie, pour que le résumé d'erreurs y mène. */
-export async function renameCategoryAction(
-  _previous: CategoryFormState,
+/**
+ * Ma liste de catégories (ADR 078) : renommer, masquer, ordonner les
+ * catégories proposées comme les miennes, pour moi seul. Sans redirection :
+ * la liste se redessine en place, le focus revient au bouton pressé.
+ */
+export async function savePersonCategoriesAction(
+  _previous: CategoryListState,
   formData: FormData,
-): Promise<CategoryFormState> {
+): Promise<CategoryListState> {
   const { accounts } = await requireClientAccount()
-  const id = String(formData.get('id') ?? '')
-  const field = `nom-${id}`
-  const result = await renameCustomCategory(accounts, id, String(formData.get('nom') ?? ''))
-  if (!result.ok) return { fieldErrors: { [field]: result.error } }
+  const clientId = String(formData.get('entreprise') ?? accounts[0]?.clientId ?? '')
+  const { inputs, gesture, values } = readCategoryListForm(formData)
+  const result = await savePersonCategories(accounts, clientId, inputs)
+  if (!result.ok) return { error: result.error, fieldErrors: result.fieldErrors, values }
   refresh()
-  redirect(`${PAGE}?fait=renommee`)
+  return {
+    done: categoryListDoneMessage(gesture, inputs),
+    focus: gesture.type === 'deplacer' ? `deplacer-${gesture.key}-${gesture.direction}` : undefined,
+  }
 }
 
 /** Supprimer, après confirmation : les plis rangés là redeviennent non classés. */

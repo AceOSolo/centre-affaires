@@ -374,12 +374,24 @@ export type ClientMailFilters = {
   category?: CategoryFilter
   followUp?: FollowUpFilter
   tag?: string
+  /** Expéditeur : le pli dont l'expéditeur contient ce texte (ADR 078). */
+  sender?: string
+}
+
+/** 100 caractères au plus : un nom d'expéditeur, pas un texte. */
+export const MAX_SENDER_FILTER_LENGTH = 100
+
+/** Expéditeur filtré, lu dans l'URL : espaces resserrés, ignoré s'il est vide ou trop long. */
+export function readSenderFilter(value: string | undefined): string | undefined {
+  const sender = (value ?? '').replace(/\s+/g, ' ').trim()
+  return sender && sender.length <= MAX_SENDER_FILTER_LENGTH ? sender : undefined
 }
 
 /**
  * Filtres de la boîte aux lettres, lus dans l'URL : type de pli, période de
- * réception, état. Une valeur illisible est ignorée, pas refusée ; une période
- * à l'envers est remise dans l'ordre.
+ * réception, état, suivi, catégorie, étiquette, expéditeur — combinables
+ * (ADR 078). Une valeur illisible est ignorée, pas refusée ; une période à
+ * l'envers est remise dans l'ordre.
  */
 export function readClientMailFilters(params: SearchParams): ClientMailFilters & { page: number } {
   const kind = first(params.type)
@@ -387,6 +399,7 @@ export function readClientMailFilters(params: SearchParams): ClientMailFilters &
   const category = readCategoryFilter(first(params.categorie))
   const followUp = readFollowUpFilter(first(params.suivi))
   const tag = readTagFilter(first(params.etiquette))
+  const sender = readSenderFilter(first(params.expediteur))
   let from = first(params.du)
   let to = first(params.au)
   if (!isCalendarDate(from)) from = undefined
@@ -401,6 +414,7 @@ export function readClientMailFilters(params: SearchParams): ClientMailFilters &
     ...(category ? { category } : {}),
     ...(followUp ? { followUp } : {}),
     ...(tag ? { tag } : {}),
+    ...(sender ? { sender } : {}),
     page: readPage(params.page),
   }
 }
@@ -415,6 +429,7 @@ export function clientMailQuery(filters: ClientMailFilters, page = 1): string {
   if (filters.category) query.set('categorie', filters.category)
   if (filters.followUp) query.set('suivi', filters.followUp)
   if (filters.tag) query.set('etiquette', filters.tag)
+  if (filters.sender) query.set('expediteur', filters.sender)
   if (page > 1) query.set('page', String(page))
   const text = query.toString()
   return text ? `?${text}` : ''

@@ -116,3 +116,44 @@ describe('rubriques lues dans l’URL', () => {
     assert.equal(readTagFilter('x'.repeat(31)), undefined)
   })
 })
+
+describe('ignorer un pli (ADR 078)', () => {
+  it('ignore sans toucher la lecture, le suivi ni le rangement ; réversible', () => {
+    const range: MailClassification = {
+      ...emptyClassification,
+      readAt: before,
+      category: 'publicite',
+      tags: ['prospectus'],
+    }
+    const ignore = applyClassification(range, { type: 'ignore' }, now)
+    assert.equal(ignore.ignoredAt, now)
+    assert.equal(ignore.readAt, before)
+    assert.equal(ignore.handledAt, null)
+    assert.equal(ignore.category, 'publicite')
+    assert.deepEqual(ignore.tags, ['prospectus'])
+    // Ignorer deux fois garde la première date ; rendu à la liste, il retrouve son état.
+    assert.equal(applyClassification(ignore, { type: 'ignore' }, new Date()).ignoredAt, now)
+    assert.deepEqual(applyClassification(ignore, { type: 'unignore' }, now), range)
+  })
+
+  it('lit les gestes « Ignorer » et « Ne plus ignorer » de la barre de sélection', () => {
+    assert.deepEqual(readClassificationChange('ignorer', ''), { change: { type: 'ignore' } })
+    assert.deepEqual(readClassificationChange('ne-plus-ignorer', ''), { change: { type: 'unignore' } })
+  })
+
+  it('dit où retrouver les plis ignorés', () => {
+    assert.equal(
+      classificationDoneMessage('ignorer', 1),
+      '1 courrier ignoré : il quitte la liste. Retrouvez-le dans « Ignorés ».',
+    )
+    assert.equal(
+      classificationDoneMessage('ignorer', 2),
+      '2 courriers ignorés : ils quittent la liste. Retrouvez-les dans « Ignorés ».',
+    )
+    assert.equal(classificationDoneMessage('ne-plus-ignorer', 2), '2 courriers reviennent dans la liste.')
+  })
+
+  it('« Ignorés » est une rubrique du suivi', () => {
+    assert.equal(readFollowUpFilter('ignores'), 'ignores')
+  })
+})

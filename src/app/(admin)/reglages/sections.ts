@@ -49,6 +49,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Le planning de chaque ressource recopié dans un agenda Google.',
         permission: 'agenda-google.gerer',
       },
+      // Service Domiciliation (recette du 17/11, lot 5, ADR 078).
+      {
+        href: '/courrier/categories',
+        label: 'Catégories du courrier',
+        description: 'Les catégories proposées aux domiciliés pour ranger leur courrier : noms, ordre, masquées.',
+        permission: 'centre.configurer',
+      },
       {
         href: '/indicateurs',
         label: 'Indicateurs',
