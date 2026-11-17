@@ -169,6 +169,13 @@
       "when": 1794922625282,
       "tag": "0023_formules_et_modifications",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1794928488296,
+      "tag": "0024_factures_et_depenses",
+      "breakpoints": true
     }
   ]
 }

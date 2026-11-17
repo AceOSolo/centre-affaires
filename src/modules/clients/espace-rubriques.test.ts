@@ -11,8 +11,12 @@ describe('rubriques de l’espace client', () => {
     assert.deepEqual(labels(nothing), ['Accueil', 'Réservations'])
   })
 
-  it('le courrier apparaît pour une entreprise domiciliée', () => {
-    assert.deepEqual(labels({ ...nothing, domiciliated: true }), ['Accueil', 'Réservations', 'Courrier'])
+  it('le courrier apparaît pour une entreprise domiciliée, avec ses dépenses (ADR 081)', () => {
+    assert.deepEqual(labels({ ...nothing, domiciliated: true }), ['Accueil', 'Réservations', 'Courrier', 'Factures'])
+  })
+
+  it('un contrat donne des frais fixes : la rubrique des dépenses et factures apparaît (ADR 081)', () => {
+    assert.deepEqual(labels({ ...nothing, contracts: 1 }), ['Accueil', 'Réservations', 'Factures', 'Contrats'])
   })
 
   it('chaque rubrique apparaît dès qu’elle a un document à montrer, dans l’ordre d’usage', () => {

@@ -50,7 +50,7 @@ describe('réglages par service', () => {
   })
 
   it('garde ce qui sert à tous et ce qui règle le centre hors des produits', () => {
-    assert.deepEqual(reglagesOf('tous').map((link) => link.href), ['/offres', '/services', '/tarifs', '/ressources/agendas', '/disponibilites#regles-reservation', '/notifications/cloche-client'])
+    assert.deepEqual(reglagesOf('tous').map((link) => link.href), ['/offres', '/services', '/tarifs', '/ressources/agendas', '/disponibilites#regles-reservation', '/reglages/depenses', '/notifications/cloche-client'])
     assert.deepEqual(reglagesOf('centre').map((link) => link.href), [
       '/disponibilites',
       '/indicateurs',

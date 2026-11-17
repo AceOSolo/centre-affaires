@@ -135,6 +135,14 @@ export const reglagesLinks: readonly ReglagesLink[] = [
     description: 'Préavis, horizon, durées maximales (jours, semaines, mois) et délai pour modifier ou annuler depuis l’espace client.',
     permission: 'horaires.gerer',
   },
+  // Dépenses montrées aux clients dans leur espace (ADR 081).
+  {
+    service: 'tous',
+    href: '/reglages/depenses',
+    label: 'Dépenses dans l’espace client',
+    description: 'Ce que le client voit de ses dépenses du mois : affichage, estimation des actes du courrier, mois passés, phrase d’explication.',
+    permission: 'centre.configurer',
+  },
   // Cloche de l'espace client (ADR 077).
   {
     service: 'tous',

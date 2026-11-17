@@ -585,6 +585,49 @@ reprise ne bouge plus : une correction se fait dans Dolibarr.
   message dit quoi corriger (dans Dolibarr, ou à l'accueil du centre) ; la
   direction le lit aussi au journal des échanges, sur son écran.
 
+### `POST /api/dolibarr/factures` (ADR 081)
+
+Une facture ou un avoir **validé, payé, abandonné, repassé en brouillon ou
+supprimé** dans Dolibarr. Le site en garde une copie de lecture pour l'espace
+client (« Dépenses et factures ») : il ne facture rien. Flux « Factures »,
+**coupé** tant que la direction ne l'ouvre pas (403 sinon).
+
+```json
+{
+  "dolibarrId": "1834",
+  "tiersDolibarrId": "412",
+  "numero": "FA2611-0042",
+  "type": "facture",
+  "statut": "a_payer",
+  "date": "2026-11-30",
+  "echeance": "2026-12-30",
+  "montantHtCentimes": 12000,
+  "montantTtcCentimes": 14400,
+  "resteAPayerCentimes": null,
+  "devise": "EUR",
+  "pdf": "https://crm.exemple.fr/document.php?hashp=…"
+}
+```
+
+| Champ | Dolibarr (objet `Facture`) | Sens |
+|---|---|---|
+| `dolibarrId` | `id` | **obligatoire** |
+| `tiersDolibarrId` | `socid` | **obligatoire** ; le tiers doit être envoyé avant (`409` sinon) |
+| `numero` | `ref` | **obligatoire** |
+| `type` | `type` 0 → `facture`, 2 → `avoir` | `facture` par défaut ; un avoir peut garder ses montants négatifs |
+| `statut` | `a_payer` (validée, non payée), `payee` (`paye` = 1), `abandonnee` (statut 3), `brouillon` | `brouillon` retire la facture de l'espace client |
+| `date`, `echeance` | `date`, `date_lim_reglement` | `AAAA-MM-JJ` |
+| `montantHtCentimes`, `montantTtcCentimes` | `total_ht`, `total_ttc` × 100 | **obligatoires**, entiers |
+| `resteAPayerCentimes` | `remaintopay` × 100 | facultatif ; sans lui, une facture à payer l'est pour son TTC |
+| `pdf` | lien public de téléchargement (`__DIRECTDOWNLOAD_URL_INVOICE__`, option « téléchargement externe » des factures) | https ; nul : la carte dit que le document est envoyé par courriel |
+| `supprime` | `BILL_DELETE` | `true` : seul `dolibarrId` est lu |
+
+Quand l'envoyer : `BILL_VALIDATE`, `BILL_PAYED`, `BILL_UNPAYED`, `BILL_CANCEL`,
+remise en brouillon, `BILL_DELETE`, chaque règlement ; et un balayage de nuit.
+Réponses : `200` `{"ok":true,"resultat":"cree","factureId":"…","message":"…"}`
+(`cree`, `modifie`, `inchange`, `retire`, `ignore`) ; `400` envoi illisible ;
+`409` tiers inconnu. Rejouable.
+
 ## À valider avec le développeur Dolibarr
 
 Choix faits par défaut par le site (ADR 066), à confirmer ou à changer
@@ -601,7 +644,7 @@ ensemble avant d'ouvrir les flux :
    plus tard, `400`/`409` corrigé puis renvoyé.
 4. **Avis de facture au client** : **Dolibarr** les envoie (facture et PDF par
    e-mail, plateforme agréée en 2027). Le site n'envoie aucun avis de facture ;
-   « Mes factures » de l'espace client reste vide.
+   « Mes factures » montre celles que vous envoyez (ADR 081).
 5. **Contacts** envoyés dans le tiers (liste complète à chaque envoi) ; le
    contact principal reste choisi par l'accueil.
 6. **Un contrat du site = une ressource** : un contrat Dolibarr à plusieurs
@@ -626,6 +669,7 @@ ensemble avant d'ouvrir les flux :
 | Dolibarr → application | tiers (entreprises, contacts) : `POST /api/dolibarr/tiers` | **côté site prêt** (ADR 066) ; connecteur à écrire, flux à ouvrir à l'écran |
 | Dolibarr → application | contrats (qui occupe quel bureau, qui est domicilié) : `POST /api/dolibarr/contrats` | **côté site prêt** (ADR 066) ; idem |
 | application → Dolibarr | consommations facturables : réservations sans devis, actes du courrier, pages en plus, frais d'affranchissement : `GET /api/dolibarr/consommations` + `/transmis` | **côté site prêt** (ADR 066) ; idem |
+| Dolibarr → application | factures et avoirs émis, pour l'espace client : `POST /api/dolibarr/factures` | **côté site prêt** (ADR 081) ; connecteur à écrire, flux à ouvrir |
 
 Hors de cette tranche : « Mes factures » de l'espace client et le chiffre
 d'affaires des indicateurs, qui liraient ce que Dolibarr facture ; les écrans
