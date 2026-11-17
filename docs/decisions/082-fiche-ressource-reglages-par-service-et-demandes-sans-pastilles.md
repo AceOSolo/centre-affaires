@@ -8,6 +8,11 @@ mène ») : les pastilles de « Demandes » disparaissent ; amende l'ADR 048
 ligne « Réglages »). Sans migration. Les choix marqués *à confirmer en
 recette* ont été faits par défaut, le responsable produit étant absent.
 
+**Amendé le 17/11 : une seule entrée Réglages en bas du menu.** Les lignes
+« Réglages » de chaque rayon sont retirées ; la page Réglages reste rangée par
+service (`reglages/sections.ts`) et l'entrée du bas s'allume sur chacun de ses
+écrans.
+
 ## Contexte
 
 Quatre notes de la recette du 17/11 visent le back-office :
