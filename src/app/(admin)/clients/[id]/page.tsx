@@ -587,7 +587,11 @@ export default async function ClientPage({
                   return (
                     <tr key={member.id} className="align-top">
                       <td className="px-4 py-3">{member.email}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{member.fullName ?? '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {member.fullName ?? '—'}
+                        {/* Saisi par la personne dans « Mon compte » (ADR 077). */}
+                        {member.phone && <span className="block tabular">{member.phone}</span>}
+                      </td>
                       <td className="px-4 py-3">
                         {/* Libellé et couleur : l'état ne se lit pas qu'à la teinte. */}
                         <span

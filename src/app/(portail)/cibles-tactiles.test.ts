@@ -212,6 +212,8 @@ describe('portail : cibles tactiles et largeur mobile (R25)', () => {
       '/compte/historique',
       '/compte/preferences',
       '/compte/offres',
+      // « Mon compte » et ses deux pages (ADR 077).
+      '/compte/mon-compte',
     ]
     assert.deepEqual(hrefs, [
       '/compte',
@@ -223,6 +225,7 @@ describe('portail : cibles tactiles et largeur mobile (R25)', () => {
       '/compte/historique',
       '/compte/preferences',
       '/compte/offres',
+      '/compte/mon-compte',
     ])
     // Aucune rubrique ne mène à une page absente (404).
     for (const href of hrefs) {

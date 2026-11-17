@@ -1,9 +1,15 @@
 import Link from 'next/link'
 
 import { INVITATION_JOURS } from '../../../../lib/auth/messages.ts'
+import { connecteEtLien } from '../../deja-connecte-serveur.ts'
+import { lienPourQui } from '../../deja-connecte.ts'
+import { SignOutButton } from '../../sign-out-button.tsx'
 import { NewPasswordForm } from './new-password-form.tsx'
 
 export const metadata = { title: 'Nouveau mot de passe' }
+
+const boutonSecondaire =
+  'inline-flex min-h-11 items-center self-start rounded-md border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60'
 
 /**
  * Où mène le lien du courriel « Choisissez un nouveau mot de passe ». Better
@@ -13,6 +19,11 @@ export const metadata = { title: 'Nouveau mot de passe' }
  * `?invitation=1` : le lien d'une invitation (ADR 059, ADR 068), valable
  * plusieurs jours, où la personne choisit son premier mot de passe — à
  * l'espace client, ou au back-office avec `espace=equipe`.
+ *
+ * Seule page de connexion ouverte à une personne déjà connectée (ADR 077) :
+ * le lien peut être celui d'un autre compte — une invitation reçue sur un
+ * poste où quelqu'un est connecté. La page le dit, et propose de se
+ * déconnecter pour entrer ensuite avec le bon compte.
  */
 export default async function NouveauMotDePassePage({
   searchParams,
@@ -22,6 +33,10 @@ export default async function NouveauMotDePassePage({
   const { token, error, espace, invitation } = await searchParams
   const equipe = espace === 'equipe'
   const invite = invitation === '1'
+  const { connecte, proprietaire } = await connecteEtLien(error ? undefined : token)
+  const pourQui = lienPourQui(connecte, proprietaire)
+  const nouveauLien = equipe ? '/auth/mot-de-passe-oublie?espace=equipe' : '/auth/mot-de-passe-oublie'
+  const connexion = equipe ? '/auth/equipe' : '/auth/connexion'
 
   if (!token || error) {
     return (
@@ -36,23 +51,61 @@ export default async function NouveauMotDePassePage({
               }, ou recevez un nouveau lien ici.`
             : 'Ce lien a déjà servi ou a expiré : il ne vaut qu’une fois, et pendant une heure. Demandez-en un nouveau.'}
         </p>
-        <Link
-          href={equipe ? '/auth/mot-de-passe-oublie?espace=equipe' : '/auth/mot-de-passe-oublie'}
-          className="inline-flex min-h-11 items-center justify-center self-start rounded-md bg-primary px-4 font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-        >
-          Demander un nouveau lien
-        </Link>
-        {invite && (
-          <Link
-            href={equipe ? '/auth/equipe' : '/auth/connexion'}
-            className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            J’ai déjà choisi mon mot de passe : me connecter
-          </Link>
+        {connecte ? (
+          <>
+            {/* Connecté, la page du mot de passe oublié renvoie à l'espace : se déconnecter d'abord. */}
+            <p className="rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-foreground">
+              Vous êtes connecté avec <strong className="font-medium">{connecte.email}</strong>. Pour demander un
+              nouveau lien, déconnectez-vous d’abord.
+            </p>
+            <SignOutButton redirectTo={nouveauLien} className={boutonSecondaire} />
+          </>
+        ) : (
+          <>
+            <Link
+              href={nouveauLien}
+              className="inline-flex min-h-11 items-center justify-center self-start rounded-md bg-primary px-4 font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
+            >
+              Demander un nouveau lien
+            </Link>
+            {invite && (
+              <Link
+                href={connexion}
+                className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
+              >
+                J’ai déjà choisi mon mot de passe : me connecter
+              </Link>
+            )}
+          </>
         )}
       </div>
     )
   }
 
-  return <NewPasswordForm token={token} equipe={equipe} invitation={invite} />
+  return (
+    <div className="flex flex-col gap-4">
+      {connecte && (
+        <p className="rounded-sm border border-primary/30 bg-primary/5 px-3 py-2 text-sm text-foreground">
+          {pourQui === 'meme-compte' ? (
+            <>
+              Vous êtes connecté avec <strong className="font-medium">{connecte.email}</strong>, le compte de ce
+              lien. Une fois le mot de passe enregistré, vos sessions se ferment : reconnectez-vous avec le nouveau.
+            </>
+          ) : (
+            <>
+              Vous êtes connecté avec <strong className="font-medium">{connecte.email}</strong>, mais ce lien
+              concerne un autre compte. Vous pouvez choisir son mot de passe ici ; pour entrer ensuite avec ce
+              compte, vous vous déconnecterez d’abord.
+            </>
+          )}
+        </p>
+      )}
+      <NewPasswordForm
+        token={token}
+        equipe={equipe}
+        invitation={invite}
+        deconnecterApres={pourQui === 'autre-compte'}
+      />
+    </div>
+  )
 }
