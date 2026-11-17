@@ -164,7 +164,8 @@ async function pageSources(tx: Transaction, tenantId: string, where: SQL | undef
     .from(mailScans)
     .innerJoin(mailItems, and(eq(mailItems.tenantId, mailScans.tenantId), eq(mailItems.id, mailScans.mailItemId)))
     .leftJoin(mailRequests, and(eq(mailRequests.tenantId, mailScans.tenantId), eq(mailRequests.id, mailScans.mailRequestId)))
-    .where(and(eq(mailScans.tenantId, tenantId), eq(mailScans.side, 'content'), where))
+    // Un dépôt remplacé avant validation (ADR 079) n'a jamais été le contenu du pli.
+    .where(and(eq(mailScans.tenantId, tenantId), eq(mailScans.side, 'content'), eq(mailScans.pendingValidation, false), where))
   return rows.map((row) => ({
     nature: 'mail_pages',
     sourceId: row.sourceId,

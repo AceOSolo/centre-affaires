@@ -16,12 +16,13 @@ import { spotLabel, type MailSpot } from './reperage.ts'
  *
  * Chaque ligne dit de quoi retrouver le pli : la photo de l'enveloppe,
  * agrandissable, l'entreprise, le type, l'expéditeur, la date de réception et
- * le rang du pli dans sa journée (« pli 3 sur 5 du 04/11 »). « Prendre en
- * charge » se fait ligne par ligne ou en groupe ; le reste du traitement se
- * fait sur la fiche du pli.
+ * le rang du pli dans sa journée (« pli 3 sur 5 du 04/11 »). « Valider »
+ * (« Prendre en charge » jusqu'à l'ADR 079) se fait ligne par ligne ou en
+ * groupe ; le reste du traitement se fait sur l'écran de la demande
+ * (`/courrier/demandes/…`), qui ne montre que ce qui la sert.
  *
  * Le formulaire de l'action groupée est à part, au-dessus du tableau : chaque
- * ligne a le sien pour « Prendre en charge », et les cases à cocher sont
+ * ligne a le sien pour « Valider », et les cases à cocher sont
  * rattachées au groupe par l'attribut `form` (pas de formulaires imbriqués).
  */
 export function MailRequestQueue({
@@ -61,7 +62,7 @@ export function MailRequestQueue({
         ))}
         {selectable > 0 && (
           <>
-            <PendingSubmit label="Prendre en charge la sélection" pendingLabel="Prise en charge…" />
+            <PendingSubmit label="Valider la sélection" pendingLabel="Validation…" />
             <p className="text-xs text-muted-foreground">
               Le client voit que le centre s’en occupe ; il ne peut plus l’annuler.
             </p>
@@ -77,7 +78,7 @@ export function MailRequestQueue({
             <tr>
               <th scope="col" className="w-10 px-4 py-3 font-medium">
                 {selectable > 0 && (
-                  <SelectAllRequests form={formId} label="Sélectionner toutes les demandes pas encore prises en charge" />
+                  <SelectAllRequests form={formId} label="Sélectionner toutes les demandes pas encore validées" />
                 )}
               </th>
               <th scope="col" className="px-4 py-3 font-medium">Pli</th>
@@ -172,11 +173,11 @@ export function MailRequestQueue({
                         <StartRequestButton requestId={row.id} subject={subject} />
                       )}
                       <Link
-                        href={`/courrier/${row.mailItemId}#demande-${row.id}`}
+                        href={`/courrier/demandes/${row.id}`}
                         aria-label={`${pending ? 'Traiter' : 'Voir'} la demande de ${subject}`}
                         className="whitespace-nowrap rounded-md border border-border px-3 py-1.5 text-xs font-medium hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
                       >
-                        {pending ? 'Traiter sur la fiche du pli' : 'Voir la fiche du pli'}
+                        {pending ? 'Traiter la demande' : 'Voir la demande'}
                       </Link>
                     </div>
                   </td>

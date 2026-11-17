@@ -62,16 +62,18 @@ export function MailForm({
     // réinitialise le formulaire à la fin de chaque envoi.
     <form key={JSON.stringify(values ?? {})} action={formAction} className="flex max-w-3xl flex-col gap-5">
       <ErrorSummary errors={state?.fieldErrors} labels={labels} message={state?.error} />
+      <p className="text-xs text-muted-foreground">Les champs marqués * sont obligatoires.</p>
 
       <div className="grid gap-5 sm:grid-cols-[2fr_1fr]">
         <div>
           <label className={labelClass} htmlFor="clientId">
-            Destinataire
+            Destinataire<span aria-hidden="true"> *</span>
           </label>
           <select
             id="clientId"
             name="clientId"
             required
+            aria-required
             defaultValue={values?.clientId ?? defaultClientId ?? ''}
             onChange={(event) => setClientId(event.target.value)}
             aria-invalid={errors.clientId ? true : undefined}
@@ -134,13 +136,14 @@ export function MailForm({
 
         <div>
           <label className={labelClass} htmlFor="receivedAt">
-            Reçu le
+            Reçu le<span aria-hidden="true"> *</span>
           </label>
           <input
             id="receivedAt"
             name="receivedAt"
             type="datetime-local"
             required
+            aria-required
             defaultValue={values?.receivedAt ?? defaultReceivedAt}
             aria-invalid={errors.receivedAt ? true : undefined}
             aria-describedby={errors.receivedAt ? 'receivedAt-error' : undefined}

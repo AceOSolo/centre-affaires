@@ -1,69 +1,27 @@
-'use client'
-
-import { useActionState } from 'react'
-
-import { ErrorSummary } from '../../components/ui/error-summary.tsx'
-import { openMailAction, type MailFormState } from './actions.ts'
-import { PagesField } from './mail-form.tsx'
-import { PhotosField } from './photos-field.tsx'
+import { DepositForm } from './depots-forms.tsx'
 
 /**
- * Ouverture et numérisation d'un pli : la prestation facturée. Le fichier est
- * obligatoire — une ouverture sans numérisation laisserait le client payer
- * pour une boîte aux lettres vide.
+ * Ouverture et numérisation d'un pli à l'initiative du centre : la prestation
+ * facturée. Le contenu est déposé, relu dans l'aperçu, puis validé
+ * (ADR 079) : le pli n'est noté ouvert, et le client prévenu, qu'à la
+ * validation. Le fichier est obligatoire — une ouverture sans numérisation
+ * laisserait le client payer pour une boîte aux lettres vide.
+ *
+ * Une ouverture demandée par le client se traite depuis sa demande
+ * (`/courrier/demandes/…`).
  */
-export function OpenForm({ mailItemId, requested }: { mailItemId: string; requested: boolean }) {
-  const [state, formAction, pending] = useActionState<MailFormState, FormData>(
-    openMailAction,
-    null,
-  )
-
+export function OpenForm({ mailItemId }: { mailItemId: string }) {
   return (
-    <form
-      // Remonté avec la saisie rendue après un échec : React efface le formulaire.
-      key={JSON.stringify(state?.values ?? {})}
-      action={formAction}
-      className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4"
-    >
-      <input type="hidden" name="id" value={mailItemId} />
+    <section aria-labelledby="ouvrir" className="flex flex-col gap-3 rounded-lg border border-border bg-white px-5 py-4">
       <div>
-        <h2 className="text-sm font-semibold tracking-tight">Ouvrir et numériser</h2>
+        <h2 id="ouvrir" className="text-sm font-semibold tracking-tight">
+          Ouvrir et numériser
+        </h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          {requested
-            ? 'Le client a demandé l’ouverture. Elle sera comptée au relevé comme sa demande.'
-            : 'Ouverture à l’initiative du centre. Elle sera comptée au relevé comme telle.'}
+          Ouverture à l’initiative du centre. Elle sera comptée au relevé comme telle, à sa validation.
         </p>
       </div>
-
-      <ErrorSummary
-        errors={state?.fieldErrors}
-        labels={{ content: 'Contenu', contentPages: 'Nombre de pages' }}
-        message={state?.error}
-      />
-
-      <PhotosField
-        name="content"
-        label="Contenu"
-        hint="Une photo lisible par page, dans l’ordre, ou le PDF de toutes les pages. Le client y a accès dès l’enregistrement."
-        error={state?.fieldErrors?.content}
-        required
-        multiple
-      />
-      <PagesField
-        name="contentPages"
-        error={state?.fieldErrors?.contentPages}
-        defaultValue={state?.values?.contentPages}
-      />
-
-      <div>
-        <button
-          type="submit"
-          disabled={pending}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-white hover:bg-primary-hover disabled:opacity-50"
-        >
-          {pending ? 'Dépôt en cours…' : 'Enregistrer l’ouverture'}
-        </button>
-      </div>
-    </form>
+      <DepositForm mailItemId={mailItemId} requestId={null} purpose="opening" />
+    </section>
   )
 }

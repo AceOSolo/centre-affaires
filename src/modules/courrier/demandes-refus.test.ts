@@ -41,26 +41,26 @@ describe('refus de la base, dits à l’équipe', () => {
   })
 })
 
-describe('bilan d’une prise en charge groupée', () => {
+describe('bilan d’une validation groupée (« Valider la sélection », ADR 079)', () => {
   it('ne dit rien sans bilan dans l’adresse', () => {
     assert.equal(groupStartNotice({ produit: 'domiciliation' }), undefined)
   })
 
-  it('dit ce qui a été pris en charge et ce qui a été ignoré', () => {
+  it('dit ce qui a été validé et ce qui a été ignoré', () => {
     assert.deepEqual(groupStartNotice({ prises: '2', ignorees: '1' }), {
-      done: '2 demandes prises en charge. 1 ignorée : déjà prise en charge, faite ou annulée entre-temps.',
+      done: '2 demandes validées. 1 ignorée : déjà validée, faite ou annulée entre-temps.',
       failure: undefined,
     })
-    assert.equal(groupStartNotice({ prises: '0', ignorees: '0' })?.done, 'Aucune demande prise en charge.')
+    assert.equal(groupStartNotice({ prises: '0', ignorees: '0' })?.done, 'Aucune demande validée.')
   })
 
   it('dit à part ce qui a échoué, sans le confondre avec un succès', () => {
     const notice = groupStartNotice({ prises: '1', ignorees: '0', echecs: '2' })
-    assert.equal(notice?.done, '1 demande prise en charge.')
-    assert.match(notice?.failure ?? '', /^2 demandes n’ont pas pu être prises en charge/)
+    assert.equal(notice?.done, '1 demande validée.')
+    assert.match(notice?.failure ?? '', /^2 demandes n’ont pas pu être validées/)
   })
 
   it('ignore une valeur bricolée', () => {
-    assert.equal(groupStartNotice({ prises: 'abc', ignorees: '-3' })?.done, 'Aucune demande prise en charge.')
+    assert.equal(groupStartNotice({ prises: 'abc', ignorees: '-3' })?.done, 'Aucune demande validée.')
   })
 })

@@ -7,20 +7,18 @@ import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import {
   cancelMailRequestForClientAction,
   completeForwardRequestAction,
-  completeScanRequestAction,
   refuseMailRequestAction,
   startMailRequestAction,
   updateForwardShippingAction,
   type RequestActionState,
 } from './demandes-actions.ts'
-import { PagesField } from './mail-form.tsx'
-import { PhotosField } from './photos-field.tsx'
 
 /**
- * Traitement d'une demande par l'accueil (R21, ADR 037) : prendre en charge,
- * faire — numérisation déposée, réexpédition notée —, refuser avec un motif,
- * annuler à la demande du client. Chaque action rend un état : en cours, puis
- * retour au pli avec une confirmation, ou l'erreur ici même.
+ * Traitement d'une demande par l'accueil (R21, ADR 037, ADR 079) : valider,
+ * faire — réexpédition notée ; la numérisation, elle, se dépose puis se valide
+ * (`depots-forms.tsx`) —, refuser avec un motif, annuler à la demande du
+ * client. Chaque action rend un état : en cours, puis retour à l'écran de
+ * traitement avec une confirmation, ou l'erreur ici même.
  *
  * Les identifiants de champ portent celui de la demande : plusieurs demandes
  * se traitent sur la même page.
@@ -46,7 +44,7 @@ export function PendingSubmit({ label, pendingLabel }: { label: string; pendingL
 /**
  * Coche ou décoche toutes les demandes de la file affichée. Les cases sont
  * rattachées au formulaire de l'action groupée par leur attribut `form` : la
- * file garde un formulaire par ligne pour « Prendre en charge » sans
+ * file garde un formulaire par ligne pour « Valider » sans
  * imbriquer de formulaires.
  */
 export function SelectAllRequests({ label, form }: { label: string; form: string }) {
@@ -83,7 +81,7 @@ function FieldError({ id, error }: { id: string; error?: string }) {
   )
 }
 
-/** Un bouton, une transition : prise en charge, annulation à la demande du client. */
+/** Un bouton, une transition : validation, annulation à la demande du client. */
 function OneClick({
   requestId,
   action,
@@ -111,14 +109,28 @@ function OneClick({
   )
 }
 
-export function StartRequestButton({ requestId, subject }: { requestId: string; subject: string }) {
+/**
+ * « Valider » (« Prendre en charge » jusqu'à la recette du 17/11, ADR 079) :
+ * le centre accepte la demande, le client ne l'annule plus ; l'écran de
+ * traitement s'ouvre ensuite sur ce que la demande demande.
+ */
+export function StartRequestButton({
+  requestId,
+  subject,
+  primary = false,
+}: {
+  requestId: string
+  subject: string
+  primary?: boolean
+}) {
   return (
     <OneClick
       requestId={requestId}
       action={startMailRequestAction}
-      label="Prendre en charge"
-      pendingLabel="Enregistrement…"
-      ariaLabel={`Prendre en charge la demande de ${subject}`}
+      label="Valider"
+      pendingLabel="Validation…"
+      ariaLabel={`Valider la demande de ${subject}`}
+      primary={primary}
     />
   )
 }
@@ -148,6 +160,7 @@ export function RefuseRequestForm({ requestId, subject }: { requestId: string; s
       <summary className="cursor-pointer text-sm font-medium">Refuser la demande de {subject}</summary>
       <form action={formAction} className="mt-3 flex flex-col gap-3">
         <input type="hidden" name="id" value={requestId} />
+        <p className="text-xs text-muted-foreground">Les champs marqués * sont obligatoires.</p>
         <ErrorSummary
           errors={error ? { [id]: error } : undefined}
           labels={{ [id]: 'Motif du refus' }}
@@ -155,7 +168,7 @@ export function RefuseRequestForm({ requestId, subject }: { requestId: string; s
         />
         <div>
           <label htmlFor={id} className={labelClass}>
-            Motif du refus
+            Motif du refus<span aria-hidden="true"> *</span>
           </label>
           <textarea
             id={id}
@@ -163,6 +176,7 @@ export function RefuseRequestForm({ requestId, subject }: { requestId: string; s
             rows={2}
             maxLength={500}
             required
+            aria-required
             defaultValue={state?.values?.refusalReason ?? ''}
             aria-invalid={error ? true : undefined}
             aria-describedby={`${id}-hint${error ? ` ${id}-error` : ''}`}
@@ -180,38 +194,6 @@ export function RefuseRequestForm({ requestId, subject }: { requestId: string; s
         </div>
       </form>
     </details>
-  )
-}
-
-/** Numérisation demandée : le contenu déposé est rattaché à la demande. */
-export function CompleteScanForm({ requestId }: { requestId: string }) {
-  const [state, formAction, pending] = useActionState<RequestActionState, FormData>(
-    completeScanRequestAction,
-    null,
-  )
-  return (
-    <form action={formAction} className="flex flex-col gap-3">
-      <input type="hidden" name="id" value={requestId} />
-      <ErrorSummary
-        errors={state?.fieldErrors}
-        labels={{ requestContent: 'Numérisation', requestContentPages: 'Nombre de pages' }}
-        message={state?.error}
-      />
-      <PhotosField
-        name="requestContent"
-        label="Numérisation"
-        hint="Une photo lisible par page demandée, dans l’ordre, ou un PDF. Le client y a accès dès l’enregistrement, et en est prévenu."
-        error={state?.fieldErrors?.requestContent}
-        required
-        multiple
-      />
-      <PagesField name="requestContentPages" error={state?.fieldErrors?.requestContentPages} />
-      <div>
-        <button type="submit" disabled={pending} className={primaryClass}>
-          {pending ? 'Dépôt en cours…' : 'Déposer et marquer faite'}
-        </button>
-      </div>
-    </form>
   )
 }
 

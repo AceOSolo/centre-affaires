@@ -199,7 +199,7 @@ describe('cloche de l’équipe : les demandes à traiter', { skip: raisonDeSaut
     const ids = await deposer()
 
     await asTenant((tx) => tx.execute(sql`update bookings set status = 'confirmed' where id = ${ids.reservation}`))
-    // Prise en charge : quelqu'un s'en occupe, elle reste jusqu'à ce qu'elle soit faite.
+    // Validée : quelqu'un s'en occupe, elle reste jusqu'à ce qu'elle soit faite.
     await asTenant((tx) =>
       tx.execute(sql`
         update mail_requests set status = 'in_progress', started_by_staff_id = ${CAMILLE} where id = ${ids.courrier}`),
@@ -208,7 +208,7 @@ describe('cloche de l’équipe : les demandes à traiter', { skip: raisonDeSaut
     assert.equal(feed.count, 4)
     assert.equal(feed.count, await compteurDeLaCoque())
     assert.equal(feed.items.find((item) => item.id === ids.reservation), undefined)
-    assert.equal(feed.items.find((item) => item.id === ids.courrier)?.state, 'Prise en charge')
+    assert.equal(feed.items.find((item) => item.id === ids.courrier)?.state, 'Validée')
 
     await asTenant((tx) =>
       tx.execute(sql`

@@ -199,3 +199,11 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Courrier côté équipe refusé par la base (ADR 079, `64-courrier-equipe.sql`) :
+ * contenu déposé sur un pli retiré ou pour une demande close, contenu validé
+ * remis « à valider », dépôt remplacé validé, validation sans le geste
+ * qu'elle publie (pli ouvert, numérisation demandée faite).
+ */
+export const DB_MAIL_TEAM_REFUSED = 'CA025'
