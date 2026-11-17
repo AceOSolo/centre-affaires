@@ -1,6 +1,7 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
+import type { ProductKey } from '../../modules/ressources/produits.ts'
 import { demandesPermissions, todayPermissions, type InboxShelf } from './aujourdhui/journee.ts'
-import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
+import { permissionsOf, reglagesHref, reglagesOf, reglagesPermissions } from './reglages/sections.ts'
 
 /**
  * Le menu du back-office (ADR 053), sans rendu : `nav.tsx` l'affiche,
@@ -34,6 +35,8 @@ export type MenuEntry = {
 // produit et comptée, « Tous les services » ses « Autres demandes » (offres
 // groupées, devis sans ressource) ; la cloche de l'en-tête en dit le total
 // (ADR 070). Pas de « Demandes » générale au menu : la cloche y mène.
+// Chaque rayon finit sur ses « Réglages », ceux de son seul produit (ADR 082) ;
+// « Réglages », en bas, réunit la page entière.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
 export type MenuGroup = { label: string; entries: MenuEntry[] }
@@ -45,6 +48,24 @@ const demandes = (shelf: InboxShelf, permission: MenuEntry['permission'] = 'dema
   permission,
   counter: shelf,
 })
+
+/**
+ * La ligne « Réglages » d'un rayon (ADR 082) : les réglages de son seul
+ * produit (`reglages/sections.ts`), s'il en a — sinon rien. Elle s'allume sur
+ * chacun de ses écrans ; le rôle la voit s'il a le droit de l'un d'eux.
+ */
+const reglages = (product: ProductKey): MenuEntry[] => {
+  const links = reglagesOf(product)
+  if (links.length === 0) return []
+  return [
+    {
+      href: reglagesHref(product),
+      label: 'Réglages',
+      permission: permissionsOf(links),
+      also: links.map((link) => link.href),
+    },
+  ]
+}
 
 export const menuGroups: MenuGroup[] = [
   // Page d'arrivée de l'équipe (ADR 050). Ce qui attend l'accueil est dans la
@@ -59,6 +80,7 @@ export const menuGroups: MenuGroup[] = [
       demandes('salles'),
       { href: '/reservations?type=salle', label: 'Planning des salles', permission: 'reservations.gerer' },
       { href: '/ressources?type=salle', label: 'Salles', permission: 'ressources.gerer' },
+      ...reglages('salles'),
     ],
   },
   {
@@ -81,6 +103,7 @@ export const menuGroups: MenuGroup[] = [
       },
       // Entrées et sorties des bureaux occupés ; les modèles s'y rejoignent (ADR 039).
       { href: '/etats-des-lieux?produit=bureaux', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+      ...reglages('bureaux'),
     ],
   },
   {
@@ -93,6 +116,7 @@ export const menuGroups: MenuGroup[] = [
       { href: '/ressources?type=boite_aux_lettres', label: 'Boîtes aux lettres', permission: 'ressources.gerer' },
       // Message libre aux domiciliés — fermeture, travaux… — et son historique (ADR 060).
       { href: '/messages', label: 'Messages aux domiciliés', permission: 'notifications.diffuser' },
+      ...reglages('domiciliation'),
     ],
   },
   {
@@ -108,6 +132,7 @@ export const menuGroups: MenuGroup[] = [
       },
       { href: '/ressources?type=vehicule', label: 'Véhicules', permission: 'ressources.gerer' },
       { href: '/etats-des-lieux?produit=vehicules', label: 'États des lieux', permission: 'etats-des-lieux.gerer' },
+      ...reglages('vehicules'),
     ],
   },
   {
@@ -124,6 +149,7 @@ export const menuGroups: MenuGroup[] = [
         also: ['/reservations?type=materiel'],
       },
       { href: '/ressources?type=materiel', label: 'Appareils', permission: 'ressources.gerer' },
+      ...reglages('materiel'),
     ],
   },
   {
@@ -149,8 +175,11 @@ export const menuGroups: MenuGroup[] = [
       {
         href: '/reglages',
         label: 'Réglages',
+        // La page entière (tous les groupes) ; elle s'allume sur les écrans de
+        // « Tous les services » et du « Centre », ceux d'un produit allumant
+        // la ligne « Réglages » de son rayon.
         permission: reglagesPermissions,
-        also: reglagesSections.flatMap((section) => section.links.map((link) => link.href)),
+        also: [...reglagesOf('tous'), ...reglagesOf('centre')].map((link) => link.href),
       },
     ],
   },

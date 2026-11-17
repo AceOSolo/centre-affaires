@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { existsSync } from 'node:fs'
+import { existsSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, it } from 'node:test'
 
@@ -9,16 +9,32 @@ import { resourceTypes, type ResourceType } from '../../modules/ressources/schem
 import { inboxShelves } from './aujourdhui/journee.ts'
 import { menuGroups } from './menu.ts'
 import { activeEntry } from './nav-actif.ts'
-import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
+import { reglagesLinks, reglagesOf, reglagesPermissions, reglagesSections } from './reglages/sections.ts'
 
 /**
  * Le menu est rangé par service vendu (ADR 053) : un rayon par produit de
  * `produits.ts`, qui ne mène qu'à son produit, et ce qui sert à tous les
  * produits à part, sans filtre.
  */
+/**
+ * Une page existe pour cette adresse : chaque segment est un dossier, ou à
+ * défaut le segment dynamique de son niveau (`[type]` pour
+ * `/etats-des-lieux/modeles/bureau`).
+ */
 const pageExists = (href: string) => {
-  const path = href.split('?')[0]
-  return existsSync(join(import.meta.dirname, ...path.split('/').filter(Boolean), 'page.tsx'))
+  let dir = import.meta.dirname
+  for (const segment of href.split('?')[0].split('/').filter(Boolean)) {
+    if (existsSync(join(dir, segment))) {
+      dir = join(dir, segment)
+      continue
+    }
+    const dynamic = existsSync(dir)
+      ? readdirSync(dir, { withFileTypes: true }).find((entry) => entry.isDirectory() && /^\[[^.\]]+\]$/.test(entry.name))
+      : undefined
+    if (!dynamic) return false
+    dir = join(dir, dynamic.name)
+  }
+  return existsSync(join(dir, 'page.tsx'))
 }
 
 const entries = menuGroups.flatMap((group) => group.entries)
@@ -108,18 +124,54 @@ describe('menu du back-office', () => {
   it('reste court', () => {
     // 27 : le rayon Matériel (ADR 062) ajoute deux entrées, « Messages aux
     // domiciliés » une (ADR 060), et chaque rayon sa ligne « Demandes »
-    // (ADR 070) — six, la « Demandes » générale en moins. Les rayons sont
-    // pliés tant qu'on ne les ouvre pas (ADR 067).
-    assert.ok(entries.length <= 27, `${entries.length} entrées`)
+    // (ADR 070) — six, la « Demandes » générale en moins. 32 : chaque rayon
+    // sa ligne « Réglages » (ADR 082), cinq. Les rayons sont pliés tant
+    // qu'on ne les ouvre pas (ADR 067).
+    assert.ok(entries.length <= 32, `${entries.length} entrées`)
   })
 
-  it('range le matériel dans son rayon : demandes, planning et appareils (ADR 062, ADR 070)', () => {
+  it('range le matériel dans son rayon : demandes, planning, appareils et réglages (ADR 062, ADR 070, ADR 082)', () => {
     const materiel = menuGroups.find((group) => group.label === 'Matériel')
     assert.deepEqual(materiel?.entries.map((entry) => entry.href), [
       '/demandes?produit=materiel',
       '/reservations/semaine?type=materiel',
       '/ressources?type=materiel',
+      '/reglages?produit=materiel',
     ])
+  })
+
+  it('finit chaque rayon sur ses « Réglages », ceux de son seul produit (ADR 082)', () => {
+    for (const product of products) {
+      const group = menuGroups.find((candidate) => candidate.label === product.label)
+      const links = reglagesOf(product.key)
+      const last = group?.entries.at(-1)
+      if (links.length === 0) {
+        // Un produit sans réglage n'a pas de ligne qui mènerait à une page vide.
+        assert.notEqual(last?.label, 'Réglages', product.label)
+        continue
+      }
+      assert.deepEqual([last?.label, last?.href], ['Réglages', `/reglages?produit=${product.key}`], product.label)
+      // Allumée sur chacun de ses écrans, visible avec le droit de l'un d'eux.
+      assert.deepEqual(last?.also, links.map((link) => link.href))
+      assert.deepEqual([...new Set(links.map((link) => link.permission))].sort(), [last?.permission].flat().sort())
+    }
+    // Chaque réglage allume une seule entrée : celle de son rayon, ou « Réglages » en bas.
+    const reglagesAddresses = reglagesLinks.map((link) => link.href)
+    const lit = reglagesAddresses.map((href) => {
+      const active = activeEntry(addresses, href, new URLSearchParams())
+      return menuGroups.find((group) => group.entries.some((entry) => [entry.href, ...(entry.also ?? [])].includes(active ?? '')))?.label
+    })
+    assert.deepEqual(
+      lit,
+      reglagesLinks.map((link) =>
+        link.service === 'tous' || link.service === 'centre'
+          ? 'Réglages'
+          : products.find((product) => product.key === link.service)?.label,
+      ),
+    )
+    // La page filtrée allume le rayon, la page entière l'entrée du bas.
+    assert.equal(activeEntry(addresses, '/reglages', new URLSearchParams('produit=bureaux')), '/reglages?produit=bureaux')
+    assert.equal(activeEntry(addresses, '/reglages', new URLSearchParams()), '/reglages')
   })
 
   it('mène à des pages qui existent, réglages compris', () => {
