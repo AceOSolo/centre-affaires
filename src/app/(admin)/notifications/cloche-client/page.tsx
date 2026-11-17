@@ -18,7 +18,7 @@ export default async function ClientBellSettingsPage() {
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div>
-        <Link href="/reglages" className="text-sm text-muted-foreground underline-offset-2 hover:underline">
+        <Link href="/reglages" className="inline-flex min-h-6 items-center text-sm text-muted-foreground underline-offset-2 hover:underline">
           ← Réglages
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-primary">Cloche de l’espace client</h1>
