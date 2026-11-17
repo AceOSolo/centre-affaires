@@ -1,5 +1,9 @@
 import { dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
+import {
+  purgeExpiredClientDocuments,
+  purgeExpiredClientDocumentViews,
+} from '../clients/pieces-conservation.ts'
 import { purgeExpiredMailScans, purgeExpiredMailScanViews } from '../courrier/conservation.ts'
 import {
   purgeExpiredInspectionPhotos,
@@ -52,6 +56,10 @@ export type NightlyConservationReport = {
   scans: number | null
   /** Photos d'états des lieux purgées, fichier compris (ADR 039). */
   inspectionPhotos: number | null
+  /** Consultations des pièces justificatives purgées (ADR 075). */
+  clientDocumentViews: number | null
+  /** Pièces justificatives purgées, fichier compris (ADR 075). */
+  clientDocuments: number | null
   /** Étapes en échec, dans l'ordre où elles ont été tentées. */
   failed: NightlyStep[]
 }
@@ -82,6 +90,8 @@ export async function runNightlyConservation(
     inspectionPhotoViews: null,
     scans: null,
     inspectionPhotos: null,
+    clientDocumentViews: null,
+    clientDocuments: null,
     failed: [],
   }
 
@@ -108,9 +118,11 @@ export async function runNightlyConservation(
   await step('staffNotifications', purgeExpiredStaffNotifications)
   await step('views', purgeExpiredMailScanViews)
   await step('inspectionPhotoViews', purgeExpiredInspectionPhotoViews)
+  await step('clientDocumentViews', purgeExpiredClientDocumentViews)
   // Puis le stockage : le fichier est effacé avant que la base ne marque la
   // ligne, si bien qu'une panne laisse la ligne à reprendre.
   await step('scans', (tx) => purgeExpiredMailScans(tx, removeObject))
   await step('inspectionPhotos', (tx) => purgeExpiredInspectionPhotos(tx, removeObject))
+  await step('clientDocuments', (tx) => purgeExpiredClientDocuments(tx, removeObject))
   return report
 }

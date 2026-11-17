@@ -97,6 +97,8 @@ BEGIN
     WHEN 'client_broadcast' THEN 'client'
     WHEN 'staff_invited' THEN 'person'
     WHEN 'request_received' THEN 'person'
+    WHEN 'client_document_received' THEN 'centre'
+    WHEN 'client_document_refused' THEN 'client'
     ELSE notification_event_unknown(p_event)
   END;
 END
@@ -131,6 +133,8 @@ BEGIN
     WHEN 'domiciliation_request_submitted' THEN NULL
     WHEN 'staff_invited' THEN NULL
     WHEN 'request_received' THEN NULL
+    WHEN 'client_document_received' THEN NULL
+    WHEN 'client_document_refused' THEN NULL
     ELSE notification_event_unknown(p_event)
   END;
 END

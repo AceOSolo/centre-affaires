@@ -12,6 +12,7 @@ import { countToSign, listInspectionsForAccounts } from '../../../modules/etats-
 import { listInvoicesForAccounts } from '../../../modules/facturation/compte-queries.ts'
 import { listPortalOffers } from '../../../modules/facturation/offres-portail.ts'
 import { listOpenDomiciliationRequests } from '../../../modules/facturation/propositions-portail.ts'
+import { hasDocumentSpace } from '../../../modules/clients/pieces-queries.ts'
 import { splitClientBookings } from '../../../modules/reservations/compte-regles.ts'
 import { listBookingsForAccounts } from '../../../modules/reservations/compte-queries.ts'
 
@@ -38,7 +39,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
   const today = todayIsoDate(tenant.timezone)
   const now = new Date()
 
-  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests] = await Promise.all([
+  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests, documents] = await Promise.all([
     listBookingsForAccounts(accounts),
     listInvoicesForAccounts(accounts),
     listContractsForAccounts(accounts, today),
@@ -47,6 +48,8 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
     searchMailForAccounts(accounts, {}, { number: 1, size: LATEST_MAIL }, tenant.timezone),
     listPortalOffers(accounts, today),
     listOpenDomiciliationRequests(accounts),
+    // Pièces justificatives de la domiciliation (ADR 075).
+    hasDocumentSpace(accounts),
   ])
 
   const activeContracts = contracts.filter((contract) => contract.status === 'active')
@@ -72,6 +75,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
       invoices: invoices.length,
       contracts: contracts.length,
       inspections: inspections.length,
+      documents,
     }),
   }
 })

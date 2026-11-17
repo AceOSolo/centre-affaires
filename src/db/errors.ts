@@ -199,3 +199,10 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Pièce justificative refusée par la base (ADR 075, `34-pieces.sql`) : pièce
+ * du même type déjà reçue ou validée, passage d'état impossible, fichier
+ * réécrit, suppression, liste des pièces écrite depuis l'espace client.
+ */
+export const DB_CLIENT_DOCUMENT_REFUSED = 'CA021'

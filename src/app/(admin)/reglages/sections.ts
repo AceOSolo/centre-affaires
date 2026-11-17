@@ -72,6 +72,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Identité du centre, règles de réservation, durées de conservation.',
         permission: 'centre.configurer',
       },
+      // Domiciliation (ADR 075) : la liste des pièces justificatives demandées.
+      {
+        href: '/reglages/pieces',
+        label: 'Pièces justificatives',
+        description: 'Domiciliation : les pièces que le client dépose dans son espace, selon la situation de sa société.',
+        permission: 'centre.configurer',
+      },
       // Réservé à la direction (ADR 065).
       {
         href: '/reglages/crm',

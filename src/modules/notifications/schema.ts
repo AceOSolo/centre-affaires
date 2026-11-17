@@ -65,6 +65,10 @@ export const notificationEvents = [
   // une personne seule, qui n'a pas encore d'entreprise.
   'staff_invited',
   'request_received',
+  // Pièces justificatives de la domiciliation (ADR 075) : une pièce arrive
+  // (à l'accueil), une pièce est refusée (au client).
+  'client_document_received',
+  'client_document_refused',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
@@ -122,6 +126,8 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   client_broadcast: 'client',
   staff_invited: 'person',
   request_received: 'person',
+  client_document_received: 'centre',
+  client_document_refused: 'client',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -149,6 +155,8 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   client_broadcast: 'centre_info',
   staff_invited: null,
   request_received: null,
+  client_document_received: null,
+  client_document_refused: null,
 }
 
 /**
@@ -183,6 +191,8 @@ export const notificationRelatedTypes = [
   'client_broadcast',
   // Invitation d'un membre de l'équipe (ADR 068).
   'staff_member',
+  // Pièce justificative déposée par un client (ADR 075).
+  'client_document',
 ] as const
 export type NotificationRelatedType = (typeof notificationRelatedTypes)[number]
 export const notificationRelatedTypeEnum = (name: string) =>

@@ -56,6 +56,8 @@ import { formatCentreDay } from '../../../../modules/rgpd/affichage.ts'
 import { crmOriginOf } from '../../../../modules/crm/liens.ts'
 import { CrmOriginRow } from '../../../../modules/crm/origine-crm.tsx'
 import { ClientRetentionSection } from '../../../../modules/rgpd/client-section.tsx'
+import { clientHasDocumentSpace } from '../../../../modules/clients/pieces-queries.ts'
+import { ClientDocumentsSection } from '../../../../modules/clients/pieces-section.tsx'
 
 export const metadata = { title: 'Client' }
 
@@ -89,7 +91,7 @@ export default async function ClientPage({
   const client = await findClient(id)
   if (!client) notFound()
 
-  const [contracts, members, contacts, history, timeZone, clientProposals, crmOrigin] = await Promise.all([
+  const [contracts, members, contacts, history, timeZone, clientProposals, crmOrigin, showsDocuments] = await Promise.all([
     listContracts({ clientId: client.id }),
     listClientMembers(client.id),
     listClientContacts(client.id),
@@ -99,6 +101,8 @@ export default async function ClientPage({
     can(staff.role, 'demandes.traiter') ? listProposals({ clientId: client.id, limit: 20 }) : null,
     // Fiche tenue par le CRM (ADR 066).
     crmOriginOf('client', client.id),
+    // Pièces justificatives de la domiciliation (ADR 075).
+    can(staff.role, 'pieces.valider') ? clientHasDocumentSpace(client.id) : false,
   ])
   // État de chaque accès : actif, ou invité et ce qu'est devenue l'invitation (ADR 059).
   const invitations = await latestInvitations(members.filter((member) => !member.authUserId).map((member) => member.id))
@@ -338,6 +342,15 @@ export default async function ClientPage({
           </>
         )}
       </section>
+
+      {showsDocuments && (
+        <ClientDocumentsSection
+          clientId={client.id}
+          timeZone={timeZone}
+          canReview={can(staff.role, 'pieces.valider')}
+          canConfigure={can(staff.role, 'centre.configurer')}
+        />
+      )}
 
       {clientProposals && (
         <section aria-labelledby="devis-titre" className="flex flex-col gap-3">

@@ -16,6 +16,8 @@ export type SpaceSignals = {
   invoices: number
   contracts: number
   inspections: number
+  /** Pièces justificatives de la domiciliation à déposer ou déposées (ADR 075). */
+  documents?: boolean
 }
 
 export type SpaceSection = { href: string; label: string }
@@ -28,6 +30,7 @@ export function clientSections(signals: SpaceSignals): SpaceSection[] {
     { href: '/compte/factures', label: 'Factures', show: signals.invoices > 0 },
     { href: '/compte/contrats', label: 'Contrats', show: signals.contracts > 0 },
     { href: '/compte/etats-des-lieux', label: 'États des lieux', show: signals.inspections > 0 },
+    { href: '/compte/pieces', label: 'Pièces justificatives', show: signals.documents === true },
   ]
     .filter((section) => section.show)
     .map(({ href, label }) => ({ href, label }))

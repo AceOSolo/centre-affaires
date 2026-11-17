@@ -56,6 +56,8 @@ function relatedLink(row: DeliveryRow): { href: string; permission: Permission }
       return row.clientId ? { href: `/clients/${row.clientId}`, permission: 'clients.gerer' } : undefined
     case 'client_broadcast':
       return { href: `/messages/${row.relatedId}`, permission: 'notifications.diffuser' }
+    case 'client_document':
+      return row.clientId ? { href: `/clients/${row.clientId}#pieces`, permission: 'pieces.valider' } : undefined
     default:
       return undefined
   }
