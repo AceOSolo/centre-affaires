@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { ArrowLeftIcon, MapPinIcon } from '../../../../../components/ui/icons.tsx'
+import { withReturn } from '../../../../../lib/redirection.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { listForwardAddresses } from '../../../../../modules/courrier/carnet-adresses.ts'
 import { deleteAddressAction, setDefaultAddressAction } from '../../../../../modules/courrier/carnet-adresses-actions.ts'
@@ -14,6 +15,7 @@ import {
 import { countryName, forwardAddressLines, forwardCountries } from '../../../../../modules/courrier/demandes-regles.ts'
 import { StarIcon } from '../../../../../modules/courrier/icones-client.tsx'
 import { loadClientSpace } from '../../espace.ts'
+import { returnLink } from '../../retour.ts'
 
 export const metadata = { title: 'Mes adresses' }
 
@@ -53,6 +55,9 @@ export default async function MesAdressesPage({
   const clientName = new Map(accounts.map((account) => [account.clientId, account.clientName]))
   const fait = typeof params.fait === 'string' ? params.fait : undefined
   const toDelete = typeof params.supprimer === 'string' ? params.supprimer : undefined
+  // D'où l'on vient — « Mon compte », la boîte aux lettres filtrée — : gardé jusqu'au retour.
+  const back = returnLink(params.retour, { href: '/compte/courrier', label: 'Ma boîte aux lettres' })
+  const retour = back.href === '/compte/courrier' ? null : back.href
   const countries = forwardCountries.map((code) => ({ code, name: countryName(code) }))
   // Une limite par entreprise : l'ajout se ferme quand chacune l'a atteinte.
   const open = accounts.filter(
@@ -71,11 +76,11 @@ export default async function MesAdressesPage({
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/compte/courrier"
+          href={back.href}
           className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
         >
           <ArrowLeftIcon size={20} />
-          Ma boîte aux lettres
+          {back.label}
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-primary sm:text-3xl">Mes adresses</h1>
         <p className="mt-2 max-w-prose text-muted-foreground">
@@ -188,7 +193,7 @@ export default async function MesAdressesPage({
                     )}
                     {toDelete !== entry.id && (
                       <Link
-                        href={`/compte/courrier/adresses?supprimer=${entry.id}#confirmer-suppression`}
+                        href={withReturn(`/compte/courrier/adresses?supprimer=${entry.id}#confirmer-suppression`, retour)}
                         className="inline-flex min-h-11 items-center justify-center rounded-md px-3 text-sm font-medium text-destructive underline-offset-2 hover:underline"
                       >
                         Retirer « {addressTitle(entry)} »
@@ -217,7 +222,7 @@ export default async function MesAdressesPage({
                           </button>
                         </form>
                         <Link
-                          href="/compte/courrier/adresses"
+                          href={withReturn('/compte/courrier/adresses', retour)}
                           className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-white px-4 text-sm font-medium text-primary hover:bg-muted"
                         >
                           Annuler

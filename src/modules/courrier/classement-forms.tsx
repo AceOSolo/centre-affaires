@@ -106,7 +106,7 @@ export function SelectionBar({
       id={SELECTION_FORM_ID}
       action={formAction}
       aria-label="Actions sur les courriers cochés"
-      className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4"
+      className="flex flex-col gap-3 p-4"
     >
       <input type="hidden" name="retour" value={returnQuery} />
       <ErrorSummary

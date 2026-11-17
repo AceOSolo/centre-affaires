@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { keepPageReturn } from '../../lib/redirection-serveur.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
 import { createCustomCategory, deleteCustomCategory } from './categories-perso.ts'
@@ -35,7 +36,7 @@ export async function createCategoryAction(
   const result = await createCustomCategory(accounts, clientId, String(formData.get('nom') ?? ''))
   if (!result.ok) return { fieldErrors: { nom: result.error } }
   refresh()
-  redirect(`${PAGE}?fait=creee`)
+  redirect(await keepPageReturn(`${PAGE}?fait=creee`))
 }
 
 /**
@@ -65,5 +66,5 @@ export async function deleteCategoryAction(formData: FormData): Promise<void> {
   const id = String(formData.get('id') ?? '')
   const result = isUuid(id) ? await deleteCustomCategory(accounts, id) : null
   refresh()
-  redirect(result ? `${PAGE}?fait=supprimee&plis=${result.declassified}` : PAGE)
+  redirect(await keepPageReturn(result ? `${PAGE}?fait=supprimee&plis=${result.declassified}` : PAGE))
 }

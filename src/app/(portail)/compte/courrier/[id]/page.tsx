@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation'
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { MailOpenIcon } from '../../../../../components/ui/icons.tsx'
 import { formatDateTime } from '../../../../../lib/dates.ts'
+import { withReturn } from '../../../../../lib/redirection.ts'
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { ClientRequestCard } from '../../../../../modules/courrier/demande-carte.tsx'
@@ -36,6 +37,7 @@ import { addressTitle } from '../../../../../modules/courrier/carnet-adresses-re
 import { loadCategoryLists } from '../../../../../modules/courrier/categories-reglages.ts'
 import { categoryLabel, classifiableCategories } from '../../../../../modules/courrier/categories-reglages-regles.ts'
 import { ArchiveIcon } from '../../../../../modules/courrier/icones-client.tsx'
+import { returnLink } from '../../retour.ts'
 
 export const metadata = { title: 'Courrier' }
 
@@ -69,11 +71,15 @@ export default async function PliPage({
   /**
    * `demande=envoi`, `demande=numerisation` : venu du menu « Demander au centre »
    * de la boîte aux lettres, qui ouvre ici le formulaire de la demande.
+   * `retour` : la liste d'où vient la fiche, filtres et page compris.
    */
-  searchParams: Promise<{ fait?: string; classe?: string; demande?: string }>
+  searchParams: Promise<{ fait?: string; classe?: string; demande?: string; retour?: string }>
 }) {
   const { accounts } = await requireClientAccount()
-  const [{ id }, { fait, classe, demande }] = await Promise.all([params, searchParams])
+  const [{ id }, { fait, classe, demande, retour }] = await Promise.all([params, searchParams])
+  const back = returnLink(retour, { href: '/compte/courrier', label: 'Ma boîte aux lettres' })
+  // Cette fiche, retour compris : « Gérer mes catégories » y ramène.
+  const here = withReturn(`/compte/courrier/${id}`, retour)
   // Ouvrir la fiche, c'est lire le pli (ADR 044) : « lu » pour cette personne.
   await markMailRead(accounts, id)
   const [tenant, mail, folders, lists] = await Promise.all([
@@ -114,10 +120,10 @@ export default async function PliPage({
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
         <Link
-          href="/compte/courrier"
+          href={back.href}
           className="inline-flex min-h-11 items-center text-sm text-muted-foreground underline-offset-2 hover:underline"
         >
-          ← Ma boîte aux lettres
+          ← {back.label}
         </Link>
         <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
           {mail.forwardedAt ? (
@@ -222,7 +228,7 @@ export default async function PliPage({
             .map((entry) => ({ id: entry.key, name: entry.name }))}
         />
         <Link
-          href="/compte/courrier/categories"
+          href={withReturn('/compte/courrier/categories', here)}
           className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
         >
           Gérer mes catégories : créer, renommer, masquer, ordonner

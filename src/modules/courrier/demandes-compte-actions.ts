@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { after } from 'next/server'
 
+import { keepPageReturn } from '../../lib/redirection-serveur.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
 import {
@@ -55,7 +56,7 @@ export async function requestScanAction(
   if (!outcome.ok) return { error: outcome.error, values }
   after(() => notifyMailRequestSubmitted(outcome.requestId))
   refresh()
-  redirect(`/compte/courrier/${id}?fait=numerisation`)
+  redirect(await keepPageReturn(`/compte/courrier/${id}?fait=numerisation`))
 }
 
 export async function requestForwardAction(
@@ -111,7 +112,7 @@ export async function requestForwardAction(
     }
   }
   refresh()
-  redirect(`/compte/courrier/${id}?fait=${saved ? 'reexpedition-carnet' : 'reexpedition'}`)
+  redirect(await keepPageReturn(`/compte/courrier/${id}?fait=${saved ? 'reexpedition-carnet' : 'reexpedition'}`))
 }
 
 /** Annulation tracée : la demande reste dans l'historique, au nom de la personne. */
@@ -126,8 +127,10 @@ export async function cancelMailRequestAction(
   refresh()
   const mailItemId = text(formData, 'mailItemId')
   redirect(
-    text(formData, 'retour') === 'demandes' || !isUuid(mailItemId)
-      ? '/compte/courrier/demandes?fait=annulation'
-      : `/compte/courrier/${mailItemId}?fait=annulation`,
+    await keepPageReturn(
+      text(formData, 'retour') === 'demandes' || !isUuid(mailItemId)
+        ? '/compte/courrier/demandes?fait=annulation'
+        : `/compte/courrier/${mailItemId}?fait=annulation`,
+    ),
   )
 }
