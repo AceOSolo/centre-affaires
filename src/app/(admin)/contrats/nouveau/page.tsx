@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { listClients } from '../../../../modules/clients/queries.ts'
 import { ContractForm } from '../../../../modules/contrats/contract-form.tsx'
@@ -25,9 +26,7 @@ export default async function NewContractPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/contrats" className="text-sm text-muted-foreground hover:underline">
-          ← Contrats
-        </Link>
+        <LienRetour href="/contrats" label="Contrats" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau contrat</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Saisie à la main, d’un montant global. Pour partir d’une offre groupée et de ses lignes :{' '}

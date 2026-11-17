@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
@@ -77,9 +78,7 @@ export default async function NewProposalPage({
 
   const header = (
     <div>
-      <Link href="/devis" className="text-sm text-muted-foreground hover:underline">
-        ← Devis
-      </Link>
+      <LienRetour href="/devis" label="Devis" />
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau devis</h1>
       <p className="mt-1 max-w-prose text-sm text-muted-foreground">
         Il naît « À compléter » : vous ajoutez ensuite ses lignes, puis le validez pour qu’il parte vers

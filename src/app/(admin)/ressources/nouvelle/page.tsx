@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { ResourceForm } from '../../../../modules/ressources/resource-form.tsx'
 
@@ -10,12 +9,7 @@ export default async function NewResourcePage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href="/ressources"
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Ressources
-        </Link>
+        <LienRetour href="/ressources" label="Ressources" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouvelle ressource</h1>
       </div>
       <ResourceForm />

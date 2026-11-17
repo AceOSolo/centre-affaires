@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../lib/dates.ts'
@@ -74,9 +75,7 @@ export default async function DemandesCourrierPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/demandes?produit=domiciliation" className="text-sm text-muted-foreground hover:underline">
-          ← Demandes
-        </Link>
+        <LienRetour href="/demandes?produit=domiciliation" label="Demandes" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Demandes de courrier</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {counts.total === 0

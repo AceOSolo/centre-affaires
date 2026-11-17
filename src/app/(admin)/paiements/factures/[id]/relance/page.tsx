@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { can } from '../../../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { emailEnabled } from '../../../../../../lib/courriel.ts'
@@ -51,9 +51,7 @@ export default async function ReminderPage({ params }: { params: Promise<{ id: s
   const { invoice, tenant, recipients } = context
   const draft = reminderDraft(context, today)
   const back = (
-    <Link href={`/paiements/factures/${invoice.id}`} className="text-sm text-muted-foreground hover:underline print:hidden">
-      ← Règlement de la facture {invoice.number}
-    </Link>
+    <LienRetour href={`/paiements/factures/${invoice.id}`} label={<>Règlement de la facture {invoice.number}</>} className="text-sm text-muted-foreground hover:underline print:hidden" />
   )
 
   if (!draft) {

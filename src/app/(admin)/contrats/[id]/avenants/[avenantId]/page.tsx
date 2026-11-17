@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
@@ -140,9 +141,7 @@ export default async function AmendmentPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/contrats/${id}#avenants`} className="text-sm text-muted-foreground hover:underline">
-          ← Contrat {contract.reference}
-        </Link>
+        <LienRetour href={`/contrats/${id}#avenants`} label={<>Contrat {contract.reference}</>} />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">
             Avenant n° {amendment.number}

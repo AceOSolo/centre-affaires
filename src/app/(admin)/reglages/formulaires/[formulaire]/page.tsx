@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
-import { ArrowLeftIcon } from '../../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
@@ -68,10 +68,7 @@ export default async function FormulairePage({
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link href="/reglages/formulaires" className={`${linkClass} gap-1.5 font-normal`}>
-          <ArrowLeftIcon size={20} />
-          Formulaires de demande
-        </Link>
+        <LienRetour href="/reglages/formulaires" label="Formulaires de demande" icone className={`${linkClass} gap-1.5 font-normal`} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Formulaire « {questionnaire.label} »</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           {settings.customized

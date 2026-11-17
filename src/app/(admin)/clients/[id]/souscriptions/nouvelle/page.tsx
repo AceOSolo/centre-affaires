@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../../../lib/dates.ts'
 import { currentTenant } from '../../../../../../lib/tenant.ts'
@@ -42,12 +42,7 @@ export default async function NewSubscriptionPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={`/clients/${client.id}#services`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← {client.name}
-        </Link>
+        <LienRetour href={`/clients/${client.id}#services`} label={<>{client.name}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Souscrire un service</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Le prix et la TVA proposés sont ceux du catalogue ; ils sont figés à l’enregistrement.

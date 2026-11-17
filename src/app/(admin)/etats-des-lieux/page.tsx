@@ -5,6 +5,7 @@ import { can } from '../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import {
   HISTORY_PAGE_SIZE,
   historyHref,
@@ -46,6 +47,8 @@ export default async function InspectionsPage({
 }) {
   const { member } = await requirePermission('etats-des-lieux.gerer')
   const { fait, ...params } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/etats-des-lieux', params)
   const timeZone = await currentTimeZone()
   const filters = parseHistoryFilters(params, timeZone)
   const { values, product } = filters
@@ -264,13 +267,13 @@ export default async function InspectionsPage({
                 {rows.map((row) => (
                   <tr key={row.id}>
                     <td className="whitespace-nowrap px-4 py-3 tabular">
-                      <Link href={`/etats-des-lieux/${row.id}`} className="font-medium underline-offset-2 hover:underline">
+                      <Link href={avecRetour(`/etats-des-lieux/${row.id}`, retour)} className="font-medium underline-offset-2 hover:underline">
                         {formatDateTime(row.performedAt, timeZone)}
                       </Link>
                     </td>
                     <td className="px-4 py-3">{inspectionKindLabels[row.kind]}</td>
                     <td className="px-4 py-3">
-                      <Link href={`/ressources/${row.resourceId}`} className="underline-offset-2 hover:underline">
+                      <Link href={avecRetour(`/ressources/${row.resourceId}`, retour)} className="underline-offset-2 hover:underline">
                         {row.resourceName}
                       </Link>{' '}
                       <span className="text-muted-foreground">

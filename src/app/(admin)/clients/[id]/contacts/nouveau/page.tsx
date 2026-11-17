@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { ContactForm } from '../../../../../../modules/clients/contact-form.tsx'
@@ -23,9 +23,7 @@ export default async function NewContactPage({ params }: { params: Promise<{ id:
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/clients/${client.id}`} className="text-sm text-muted-foreground hover:underline">
-          ← {client.name}
-        </Link>
+        <LienRetour href={`/clients/${client.id}`} label={<>{client.name}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau contact</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           Une personne à joindre chez {client.name}. Le contact ne reçoit aucun accès à l’espace

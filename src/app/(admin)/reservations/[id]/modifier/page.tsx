@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatTime, todayIsoDate, toIsoDate } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
@@ -49,9 +50,7 @@ export default async function MoveBookingPage({
   if (booking.kind === 'contract') {
     return (
       <div className="flex flex-col gap-6">
-        <Link href={`/reservations/${id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Réservation
-        </Link>
+        <LienRetour href={`/reservations/${id}`} label="Réservation" />
         <h1 className="text-2xl font-semibold tracking-tight">Déplacer la réservation</h1>
         <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
           <p>
@@ -74,9 +73,7 @@ export default async function MoveBookingPage({
   if (booking.status === 'cancelled') {
     return (
       <div className="flex flex-col gap-6">
-        <Link href={`/reservations/${id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Réservation
-        </Link>
+        <LienRetour href={`/reservations/${id}`} label="Réservation" />
         <h1 className="text-2xl font-semibold tracking-tight">Déplacer la réservation</h1>
         <p className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
           Cette réservation est annulée : son créneau est libre et elle ne peut plus être
@@ -127,9 +124,7 @@ export default async function MoveBookingPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/reservations/${id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Réservation
-        </Link>
+        <LienRetour href={`/reservations/${id}`} label="Réservation" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Déplacer la réservation</h1>
         <p className="mt-1 text-sm text-muted-foreground">« {booking.title} »</p>
       </div>

@@ -1,6 +1,6 @@
 import Link from 'next/link'
 
-import { ArrowLeftIcon } from '../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { loadAllFormSettings } from '../../../../modules/reservations/questionnaires-queries.ts'
 import { askedQuestions, formulaires } from '../../../../modules/reservations/questionnaires.ts'
@@ -20,13 +20,7 @@ export default async function FormulairesPage() {
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link
-          href="/reglages"
-          className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ArrowLeftIcon size={20} />
-          Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" icone className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Formulaires de demande</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Les questions posées à qui demande une salle, un bureau, le camion, du matériel ou une domiciliation : sur

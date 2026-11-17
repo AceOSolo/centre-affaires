@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
@@ -113,9 +114,7 @@ export default async function ClientPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/clients" className="text-sm text-muted-foreground hover:underline">
-          ← Clients
-        </Link>
+        <LienRetour href="/clients" label="Clients" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
           <span

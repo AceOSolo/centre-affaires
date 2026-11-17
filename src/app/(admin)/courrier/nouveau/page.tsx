@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { toWallClock } from '../../../../lib/dates.ts'
@@ -32,9 +33,7 @@ export default async function NouveauCourrierPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/courrier" className="text-sm text-muted-foreground hover:underline">
-          ← Courrier
-        </Link>
+        <LienRetour href="/courrier" label="Courrier" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Enregistrer un courrier</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Le pli apparaît aussitôt dans l’espace du client, qui peut en demander l’ouverture. Il

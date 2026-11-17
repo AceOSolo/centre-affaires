@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
@@ -21,9 +22,7 @@ export default async function TemplatesPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/etats-des-lieux" className="text-sm text-muted-foreground hover:underline">
-          ← États des lieux
-        </Link>
+        <LienRetour href="/etats-des-lieux" label="États des lieux" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modèles d’état des lieux</h1>
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
           Les champs à relever pour chaque type de ressource : kilométrage et carburant d’un

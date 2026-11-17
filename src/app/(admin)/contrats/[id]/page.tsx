@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { formatDateTime, todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
@@ -150,12 +151,7 @@ export default async function ContractPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={archived ? '/contrats?archives=1' : '/contrats'}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Contrats
-        </Link>
+        <LienRetour href={archived ? '/contrats?archives=1' : '/contrats'} label="Contrats" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight tabular">{contract.reference}</h1>
           <span

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDuration, formatLongDate, formatTime, toIsoDate } from '../../../../lib/dates.ts'
@@ -64,12 +65,7 @@ export default async function BookingPage({ params }: { params: Promise<{ id: st
   return (
     <div className="flex max-w-2xl flex-col gap-6">
       <div>
-        <Link
-          href={`/reservations?date=${isoDate}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Planning
-        </Link>
+        <LienRetour href={`/reservations?date=${isoDate}`} label="Planning" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{bookingLabel(booking)}</h1>
         {booking.seriesId && <Link href={`/reservations/series/${booking.seriesId}`} className="mt-2 inline-block text-sm text-primary underline underline-offset-2">Voir la série et gérer les occurrences à venir</Link>}
         {parent && (

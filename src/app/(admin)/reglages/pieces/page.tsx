@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { listDocumentKinds } from '../../../../modules/clients/pieces-queries.ts'
 import {
@@ -28,9 +27,7 @@ export default async function DocumentKindsPage() {
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link href="/reglages" className="text-sm text-muted-foreground hover:underline">
-          ← Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Pièces justificatives demandées</h1>
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
           Domiciliation : ce que le client dépose dans son espace après sa demande, selon que sa société est en cours de

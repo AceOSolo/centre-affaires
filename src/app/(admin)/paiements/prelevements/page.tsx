@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatDateTime, todayIsoDate } from '../../../../lib/dates.ts'
@@ -49,9 +48,7 @@ export default async function DirectDebitPage({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <Link href="/paiements" className="text-sm text-muted-foreground hover:underline">
-          ← Règlements
-        </Link>
+        <LienRetour href="/paiements" label="Règlements" />
         <h1 className="text-2xl font-semibold tracking-tight">Prélèvements SEPA</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Préparez la remise des factures payables par prélèvement et arrivées à échéance, puis déposez

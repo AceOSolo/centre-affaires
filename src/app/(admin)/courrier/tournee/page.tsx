@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime, formatLongDate, formatTime } from '../../../../lib/dates.ts'
@@ -52,9 +53,7 @@ export default async function TourneePage({
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link href="/courrier" className="text-sm text-muted-foreground hover:underline">
-          ← Courrier
-        </Link>
+        <LienRetour href="/courrier" label="Courrier" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Tournée du courrier</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Enregistrez le courrier du jour, puis terminez la tournée : chaque entreprise reçoit alors

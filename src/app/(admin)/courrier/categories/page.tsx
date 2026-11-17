@@ -1,6 +1,4 @@
-import Link from 'next/link'
-
-import { ArrowLeftIcon } from '../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { saveCentreCategoriesAction } from '../../../../modules/courrier/categories-centre-actions.ts'
 import { listCentreCategories } from '../../../../modules/courrier/categories-reglages.ts'
@@ -24,13 +22,7 @@ export default async function CategoriesCourrierPage() {
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
-        <Link
-          href="/reglages"
-          className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ArrowLeftIcon size={20} />
-          Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" icone className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Catégories du courrier</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Les catégories que l’espace client propose aux domiciliés pour ranger leur courrier, comme

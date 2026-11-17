@@ -1,6 +1,4 @@
-import Link from 'next/link'
-
-import { ArrowLeftIcon } from '../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
@@ -53,13 +51,7 @@ export default async function ConnexionCrmPage() {
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link
-          href="/reglages"
-          className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ArrowLeftIcon size={20} />
-          Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" icone className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Connexion au CRM</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Le CRM du centre tient les tiers, les devis, les contrats et la facturation. Le site lui
