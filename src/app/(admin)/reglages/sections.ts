@@ -80,6 +80,14 @@ export const reglagesLinks: readonly ReglagesLink[] = [
     description: 'La liste des expéditeurs suggérés à la saisie du courrier, dans l’ordre choisi.',
     permission: 'centre.configurer',
   },
+  // Catégories du courrier proposées aux clients (ADR 078).
+  {
+    service: 'domiciliation',
+    href: '/courrier/categories',
+    label: 'Catégories du courrier',
+    description: 'Les catégories proposées aux clients pour ranger leur courrier : nom, ordre, catégories masquées.',
+    permission: 'centre.configurer',
+  },
   // Pièces justificatives demandées au domicilié (ADR 075).
   {
     service: 'domiciliation',

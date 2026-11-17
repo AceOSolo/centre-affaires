@@ -21,15 +21,21 @@ import {
   countryName,
   forwardAddressLines,
   forwardCountries,
+  sameForwardAddress,
 } from '../../../../../modules/courrier/demandes-regles.ts'
 import { EnvelopeThumbnail } from '../../../../../modules/courrier/enveloppe.tsx'
 import { mailKindIcons, SendIcon } from '../../../../../modules/courrier/icones.tsx'
 import { mailKindLabels, mailStatusClientLabels, mailStatusStyles } from '../../../../../modules/courrier/labels.ts'
 import { MailboxRequest } from '../../../../../modules/courrier/mailbox-request.tsx'
 import { markUnreadAction } from '../../../../../modules/courrier/classement-actions.ts'
+import { MailIgnoreButton } from '../../../../../modules/courrier/classement-carte.tsx'
 import { ClassificationForm } from '../../../../../modules/courrier/classement-forms.tsx'
-import { categoryName } from '../../../../../modules/courrier/categories-perso-regles.ts'
 import { mailFolderCounts, markMailRead } from '../../../../../modules/courrier/classement.ts'
+import { listForwardAddresses } from '../../../../../modules/courrier/carnet-adresses.ts'
+import { addressTitle } from '../../../../../modules/courrier/carnet-adresses-regles.ts'
+import { loadCategoryLists } from '../../../../../modules/courrier/categories-reglages.ts'
+import { categoryLabel, classifiableCategories } from '../../../../../modules/courrier/categories-reglages-regles.ts'
+import { ArchiveIcon } from '../../../../../modules/courrier/icones-client.tsx'
 
 export const metadata = { title: 'Courrier' }
 
@@ -38,6 +44,8 @@ const notices: Record<string, string> = {
   numerisation: 'Demande de numérisation envoyée. Le centre vous préviendra par courriel quand elle sera faite.',
   reexpedition:
     'Demande de réexpédition envoyée, à l’adresse indiquée. Le centre vous préviendra par courriel à l’envoi.',
+  'reexpedition-carnet':
+    'Demande de réexpédition envoyée, à l’adresse indiquée, ajoutée à votre carnet d’adresses. Le centre vous préviendra par courriel à l’envoi.',
   annulation: 'Demande annulée. Elle reste dans votre historique, à votre nom.',
 }
 
@@ -58,27 +66,32 @@ export default async function PliPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>
-  /** `demande=envoi` : venu du bouton « Demander l'envoi » de la boîte aux lettres. */
+  /**
+   * `demande=envoi`, `demande=numerisation` : venu du menu « Demander au centre »
+   * de la boîte aux lettres, qui ouvre ici le formulaire de la demande.
+   */
   searchParams: Promise<{ fait?: string; classe?: string; demande?: string }>
 }) {
   const { accounts } = await requireClientAccount()
   const [{ id }, { fait, classe, demande }] = await Promise.all([params, searchParams])
   // Ouvrir la fiche, c'est lire le pli (ADR 044) : « lu » pour cette personne.
   await markMailRead(accounts, id)
-  const [tenant, mail, folders] = await Promise.all([
+  const [tenant, mail, folders, lists] = await Promise.all([
     currentTenant(),
     findMailForAccounts(id, accounts),
     mailFolderCounts(accounts),
+    loadCategoryLists(accounts),
   ])
   if (!mail) notFound()
   const timeZone = tenant.timezone
 
   const options = clientRequestOptions({ ...mail, forwarded: mail.forwardedAt !== null })
   const own = accounts.filter((account) => account.clientId === mail.clientId)
-  const [announcements, previous, pagePricing] = await Promise.all([
+  const [announcements, previous, pagePricing, book] = await Promise.all([
     announceMailActs(own, timeZone),
     options.forward ? previousForwardAddresses(accounts, mail.clientId) : Promise.resolve([]),
     options.open_and_scan ? announcePagePricing(own, timeZone) : Promise.resolve(new Map()),
+    options.forward ? listForwardAddresses(accounts, mail.clientId) : Promise.resolve([]),
   ])
   const prices = announcements.get(mail.clientId)
   const announce = (kind: 'scan' | 'forward') =>
@@ -90,6 +103,12 @@ export default async function PliPage({
   const contents = mail.scans.filter((scan) => scan.side === 'content')
   const KindIcon = mailKindIcons[mail.kind]
   const pendingOpening = mail.pendingRequests.find((request) => request.kind === 'open_and_scan')
+  // La liste de catégories de la personne pour l'entreprise du pli (ADR 078).
+  const list = lists.get(mail.clientId) ?? []
+  const currentCategory = mail.classification.customCategoryId ?? mail.classification.category
+  const classifiable = classifiableCategories(list, currentCategory)
+  const ignored = mail.classification.ignoredAt !== null
+  const pliLabel = `pli de ${mail.sender ?? 'expéditeur non précisé'} reçu le ${formatDateTime(mail.receivedAt, timeZone)}`
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
@@ -125,6 +144,15 @@ export default async function PliPage({
 
       {fait && notices[fait] && <FlashNotice key={fait}>{notices[fait]}</FlashNotice>}
       {classe === 'enregistre' && <FlashNotice key="classe">Votre classement est enregistré.</FlashNotice>}
+      {classe === 'ne-plus-ignorer' && (
+        <FlashNotice key="ne-plus-ignorer">Ce courrier revient dans votre liste.</FlashNotice>
+      )}
+      {ignored && (
+        <p className="flex items-start gap-2 rounded-md border border-border bg-muted px-4 py-3 text-sm">
+          <ArchiveIcon size={20} className="shrink-0 text-primary" />
+          Vous avez ignoré ce courrier : il n’est plus dans votre liste, seulement dans « Ignorés ».
+        </p>
+      )}
 
       <EnvelopeThumbnail {...mail} timeZone={timeZone} size="large" />
 
@@ -171,7 +199,7 @@ export default async function PliPage({
             Mon classement
           </h2>
           <p className="text-sm text-muted-foreground">
-            {categoryName(mail.classification, folders.custom) ?? 'Non classé'}
+            {categoryLabel(mail.classification, list) ?? 'Non classé'}
             {' · '}
             {mail.classification.handledAt ? 'Traité' : 'À traiter'}
           </p>
@@ -184,24 +212,34 @@ export default async function PliPage({
           mailItemId={mail.id}
           classification={mail.classification}
           knownTags={folders.tags.map((entry) => entry.tag)}
-          // Seules les catégories de l'accès à l'entreprise du pli le rangent (ADR 060).
-          customCategories={folders.custom.filter((entry) => entry.clientId === mail.clientId)}
+          // Seules les catégories de l'accès à l'entreprise du pli le rangent (ADR 060),
+          // sous le nom et dans l'ordre que la personne leur donne (ADR 078).
+          proposedCategories={classifiable
+            .filter((entry) => entry.kind === 'proposee')
+            .map((entry) => ({ id: entry.key, name: entry.name }))}
+          customCategories={classifiable
+            .filter((entry) => entry.kind === 'perso')
+            .map((entry) => ({ id: entry.key, name: entry.name }))}
         />
         <Link
           href="/compte/courrier/categories"
           className="inline-flex min-h-11 items-center self-start text-sm font-medium text-primary underline-offset-2 hover:underline"
         >
-          Créer ou renommer mes catégories
+          Gérer mes catégories : créer, renommer, masquer, ordonner
         </Link>
-        <form action={markUnreadAction}>
-          <input type="hidden" name="id" value={mail.id} />
-          <button
-            type="submit"
-            className="inline-flex min-h-11 items-center text-sm font-medium text-primary underline-offset-2 hover:underline"
-          >
-            Marquer comme non lu et revenir à la boîte aux lettres
-          </button>
-        </form>
+        {/* Deux gestes au même rang : marquer non lu, ignorer (ADR 078). */}
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+          <form action={markUnreadAction}>
+            <input type="hidden" name="id" value={mail.id} />
+            <button
+              type="submit"
+              className="press inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-white px-4 text-sm font-medium text-primary transition-colors hover:bg-muted sm:w-auto"
+            >
+              Marquer comme non lu
+            </button>
+          </form>
+          <MailIgnoreButton mailItemId={mail.id} ignored={ignored} pliLabel={pliLabel} from="fiche" />
+        </div>
       </section>
 
       {(options.open_and_scan || options.scan || options.forward || pendingOpening?.status === 'requested') && (
@@ -210,7 +248,7 @@ export default async function PliPage({
             Demander
           </h2>
           {(options.open_and_scan || pendingOpening?.status === 'requested') && (
-            <div className="flex flex-col gap-2 rounded-lg border border-border bg-white p-4">
+            <div id="ouverture" className="flex scroll-mt-36 flex-col gap-2 rounded-lg border border-border bg-white p-4 lg:scroll-mt-24">
               <p className="text-base font-semibold text-primary">Ouverture et numérisation</p>
               <MailboxRequest
                 mailItemId={mail.id}
@@ -220,7 +258,11 @@ export default async function PliPage({
             </div>
           )}
           {options.scan && (
-            <details className="rounded-lg border border-border bg-white px-3 py-2">
+            <details
+              id="numerisation"
+              open={demande === 'numerisation'}
+              className="scroll-mt-36 rounded-lg border border-border bg-white px-3 py-2 lg:scroll-mt-24"
+            >
               <summary className={summaryClass}>Nouvelle numérisation</summary>
               <div className="pb-2 pt-3">
                 <p className="mb-3 text-sm text-muted-foreground">
@@ -245,11 +287,20 @@ export default async function PliPage({
                 <ForwardRequestForm
                   mailItemId={mail.id}
                   clientId={mail.clientId}
-                  previous={previous.map((option) => ({
-                    requestId: option.requestId,
-                    label: `Utilisée le ${formatDateTime(option.requestedAt, timeZone)}`,
-                    lines: forwardAddressLines(option.address),
+                  // Le carnet d'adresses d'abord, celle par défaut en tête (ADR 078) ;
+                  // puis les adresses déjà utilisées qui n'y sont pas.
+                  book={book.map((entry) => ({
+                    requestId: `carnet:${entry.id}`,
+                    label: entry.isDefault ? `${addressTitle(entry)} — par défaut` : addressTitle(entry),
+                    lines: forwardAddressLines(entry.address),
                   }))}
+                  previous={previous
+                    .filter((option) => !book.some((entry) => sameForwardAddress(entry.address, option.address)))
+                    .map((option) => ({
+                      requestId: option.requestId,
+                      label: `Utilisée le ${formatDateTime(option.requestedAt, timeZone)}`,
+                      lines: forwardAddressLines(option.address),
+                    }))}
                   countries={forwardCountries.map((code) => ({ code, name: countryName(code) }))}
                   announcement={`${announce('forward')} Les frais d’affranchissement réels s’y ajoutent.`}
                 />

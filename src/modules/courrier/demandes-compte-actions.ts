@@ -12,6 +12,8 @@ import {
   requestForward,
   requestScan,
 } from './demandes-queries.ts'
+import { createForwardAddress, listForwardAddresses } from './carnet-adresses.ts'
+import { readForwardChoice } from './carnet-adresses-regles.ts'
 import { forwardAddressFieldLabels, readClientNote, readForwardAddress } from './demandes-regles.ts'
 import { notifyMailRequestSubmitted } from './notifications.ts'
 
@@ -66,6 +68,7 @@ export async function requestForwardAction(
   const values: Record<string, string> = {
     adresse: text(formData, 'adresse'),
     forwardNote: text(formData, 'forwardNote'),
+    enregistrerAdresse: text(formData, 'enregistrerAdresse'),
   }
   for (const field of Object.keys(forwardAddressFieldLabels)) values[field] = String(formData.get(field) ?? '')
 
@@ -73,11 +76,17 @@ export async function requestForwardAction(
   const note = readClientNote(values.forwardNote)
   if (note.error !== undefined) fieldErrors.forwardNote = note.error
 
-  // Une adresse déjà utilisée par l'entreprise, relue en base, ou une saisie.
+  // Une adresse du carnet ou déjà utilisée par l'entreprise, relue en base,
+  // ou une saisie (ADR 037, ADR 078).
   let address
-  if (values.adresse && values.adresse !== 'nouvelle') {
+  const choice = readForwardChoice(values.adresse)
+  if (choice.source === 'carnet') {
+    const book = await listForwardAddresses(accounts, clientId)
+    address = book.find((candidate) => candidate.id === choice.id)?.address
+    if (!address) fieldErrors.adresse = 'Cette adresse n’est plus dans votre carnet : choisissez-en une autre.'
+  } else if (choice.source === 'precedente') {
     const previous = await previousForwardAddresses(accounts, clientId)
-    address = previous.find((candidate) => candidate.requestId === values.adresse)?.address
+    address = previous.find((candidate) => candidate.requestId === choice.requestId)?.address
     if (!address) fieldErrors.adresse = 'Cette adresse n’est plus proposée : choisissez-en une autre.'
   } else {
     const read = readForwardAddress(values)
@@ -91,8 +100,18 @@ export async function requestForwardAction(
   const outcome = await requestForward(id, accounts, address, note.value)
   if (!outcome.ok) return { error: outcome.error, values }
   after(() => notifyMailRequestSubmitted(outcome.requestId))
+  // Adresse saisie, « Ajouter à mon carnet » coché : rangée après la demande,
+  // qui ne dépend pas d'elle. Déjà au carnet, ou carnet plein : rien de plus.
+  let saved = false
+  if (choice.source === 'nouvelle' && values.enregistrerAdresse === 'on') {
+    try {
+      saved = (await createForwardAddress(accounts, clientId, { label: null, address, isDefault: false })).ok
+    } catch (error) {
+      console.error('Adresse de réexpédition non ajoutée au carnet', error)
+    }
+  }
   refresh()
-  redirect(`/compte/courrier/${id}?fait=reexpedition`)
+  redirect(`/compte/courrier/${id}?fait=${saved ? 'reexpedition-carnet' : 'reexpedition'}`)
 }
 
 /** Annulation tracée : la demande reste dans l'historique, au nom de la personne. */

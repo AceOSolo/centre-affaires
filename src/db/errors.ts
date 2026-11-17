@@ -229,3 +229,10 @@ export const DB_CLIENT_DOCUMENT_REFUSED = 'CA021'
  * qu'elle publie (pli ouvert, numérisation demandée faite).
  */
 export const DB_MAIL_TEAM_REFUSED = 'CA025'
+
+/**
+ * Courrier côté client refusé par la base (ADR 078, `62-courrier-client.sql`) :
+ * réglage de catégorie déplacé vers une autre personne ou une autre catégorie,
+ * adresse du carnet déplacée vers une autre entreprise.
+ */
+export const DB_CLIENT_MAIL_REFUSED = 'CA024'

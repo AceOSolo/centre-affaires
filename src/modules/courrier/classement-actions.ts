@@ -108,6 +108,76 @@ export async function saveClassificationAction(
   redirect(`/compte/courrier/${id}?classe=enregistre`)
 }
 
+/** État d'un geste fait depuis la carte d'un pli, sans quitter la liste (ADR 078). */
+export type QuickActionState = { ok?: true; value?: string; error?: string } | null
+
+/** La catégorie choisie sur la carte d'un pli : de départ, personnelle, ou « non classé ». */
+function readCategoryChoice(value: string): ClassificationChange | undefined {
+  if (value === '' || value === 'non-classe') return { type: 'category', category: null }
+  if (isMailCategory(value)) return { type: 'category', category: value }
+  if (isCustomCategoryId(value)) return { type: 'customCategory', id: value }
+  return undefined
+}
+
+/**
+ * Classer un pli depuis la liste, sans ouvrir sa fiche (ADR 078). La carte
+ * reste à sa place et dit ce qui a été fait ; plusieurs plis d'un coup : la
+ * barre de sélection.
+ */
+export async function classifyOneAction(_previous: QuickActionState, formData: FormData): Promise<QuickActionState> {
+  const { accounts } = await requireClientAccount()
+  const id = String(formData.get('id') ?? '')
+  const value = String(formData.get('categorie') ?? '')
+  const change = readCategoryChoice(value)
+  if (!isUuid(id) || !change) return { error: 'Choisissez une catégorie de la liste.' }
+  const count = await classifyMail(accounts, [id], change)
+  if (count === 0) {
+    return {
+      error:
+        change.type === 'customCategory'
+          ? 'Cette catégorie ne range que le courrier de son entreprise, ou n’existe plus.'
+          : 'Ce courrier n’est plus dans votre boîte aux lettres.',
+    }
+  }
+  revalidatePath('/compte/courrier')
+  return { ok: true, value }
+}
+
+/**
+ * « Marquer comme lu » et « Marquer comme non lu » depuis la carte d'un pli
+ * (ADR 078) : au même rang que les autres gestes de la carte, sans quitter la
+ * liste.
+ */
+export async function toggleReadAction(_previous: QuickActionState, formData: FormData): Promise<QuickActionState> {
+  const { accounts } = await requireClientAccount()
+  const id = String(formData.get('id') ?? '')
+  const read = formData.get('lu') === '1'
+  if (!isUuid(id)) return { error: 'Courrier introuvable.' }
+  const count = await classifyMail(accounts, [id], { type: read ? 'read' : 'unread' })
+  if (count === 0) return { error: 'Ce courrier n’est plus dans votre boîte aux lettres.' }
+  revalidatePath('/compte/courrier')
+  return { ok: true, value: read ? 'lu' : 'non-lu' }
+}
+
+/**
+ * Ignorer un pli, ou le rendre à la liste (ADR 078). Ignoré, il quitte la
+ * vue : retour à la boîte aux lettres, filtres gardés, avec une confirmation
+ * qui dit où le retrouver — le focus s'y porte, la carte n'étant plus là.
+ */
+export async function ignoreMailAction(formData: FormData): Promise<void> {
+  const { accounts } = await requireClientAccount()
+  const id = String(formData.get('id') ?? '')
+  const ignore = formData.get('ignorer') === '1'
+  if (!isUuid(id)) return
+  const count = await classifyMail(accounts, [id], { type: ignore ? 'ignore' : 'unignore' })
+  revalidatePath('/compte/courrier')
+  const action = ignore ? 'ignorer' : 'ne-plus-ignorer'
+  if (formData.get('depuis') === 'fiche') {
+    redirect(ignore ? `/compte/courrier?classe=${action}-${count}` : `/compte/courrier/${id}?classe=${action}`)
+  }
+  redirect(`/compte/courrier${withParam(returnQuery(formData), 'classe', `${action}-${count}`)}`)
+}
+
 /**
  * « Marquer comme non lu » : retour à la boîte aux lettres, sans quoi la
  * fiche, en se rouvrant, marquerait aussitôt le pli lu de nouveau.

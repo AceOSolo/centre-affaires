@@ -10,7 +10,7 @@ import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { uuidv7 } from '../../lib/uuid.ts'
 import type { ClientAccount } from '../clients/comptes.ts'
 import { toutVider } from '../clients/test-support.ts'
-import { classifyMail, mailFolderCounts, markMailRead } from './classement.ts'
+import { classifyMail, countMailToHandle, listMailSenders, mailFolderCounts, markMailRead } from './classement.ts'
 import { findMailForAccounts, searchMailForAccounts } from './demandes-queries.ts'
 
 /**
@@ -92,6 +92,7 @@ describe('classement du courrier côté client', { skip: raisonDeSaut }, () => {
     assert.deepEqual(vuParJules?.classification, {
       readAt: null,
       handledAt: null,
+      ignoredAt: null,
       category: null,
       customCategoryId: null,
       tags: [],
@@ -169,5 +170,71 @@ describe('classement du courrier côté client', { skip: raisonDeSaut }, () => {
     const [state] = await lire('select category, tags from mail_item_member_states where client_member_id = ?', [JEANNE])
     assert.equal(state.category, 'juridique')
     assert.deepEqual(state.tags, [])
+  })
+
+  describe('ignorer un pli (ADR 078)', () => {
+    it('le pli ignoré quitte toutes les vues et tous les compteurs, sauf « Ignorés » ; réversible', async () => {
+      const [pub, banque, rien] = [await pli(DURAND), await pli(DURAND), await pli(DURAND)]
+      await classifyMail(jeanne, [pub, banque], { type: 'category', category: 'banque' })
+      await classifyMail(jeanne, [pub], { type: 'addTag', tag: 'prospectus' })
+      assert.equal(await classifyMail(jeanne, [pub], { type: 'ignore' }), 1)
+
+      assert.deepEqual(await ids(jeanne, {}), [banque, rien].sort())
+      assert.deepEqual(await ids(jeanne, { followUp: 'non-lus' }), [banque, rien].sort())
+      assert.deepEqual(await ids(jeanne, { followUp: 'a-traiter' }), [banque, rien].sort())
+      assert.deepEqual(await ids(jeanne, { category: 'banque' }), [banque])
+      assert.deepEqual(await ids(jeanne, { followUp: 'ignores' }), [pub])
+      // Combinable : les ignorés d'une catégorie.
+      assert.deepEqual(await ids(jeanne, { followUp: 'ignores', category: 'banque' }), [pub])
+
+      const counts = await mailFolderCounts(jeanne)
+      assert.equal(counts.total, 2)
+      assert.equal(counts.unread, 2)
+      assert.equal(counts.toHandle, 2)
+      assert.equal(counts.ignored, 1)
+      assert.deepEqual(counts.byCategory.banque, { total: 1, unread: 1 })
+      assert.deepEqual(counts.tags, [], 'l’étiquette d’un pli ignoré ne compte pas')
+      assert.deepEqual(await countMailToHandle(jeanne), { unread: 2, toHandle: 2 })
+
+      // Pour Jeanne seule : Jules voit toujours les trois plis.
+      assert.deepEqual(await countMailToHandle(jules), { unread: 3, toHandle: 3 })
+
+      await classifyMail(jeanne, [pub], { type: 'unignore' })
+      assert.deepEqual(await ids(jeanne, {}), [pub, banque, rien].sort())
+      const [state] = await lire('select ignored_at, category from mail_item_member_states where mail_item_id = ?', [pub])
+      assert.equal(state.ignored_at, null)
+      assert.equal(state.category, 'banque', 'le rangement reste')
+    })
+
+    it('« plis à traiter » : non lus et non traités, ni retirés ni ignorés', async () => {
+      const [lu, traite, ignore, retire] = [await pli(DURAND), await pli(DURAND), await pli(DURAND), await pli(DURAND)]
+      await pli(DURAND)
+      await pli(PETIT)
+      await markMailRead(jeanne, lu)
+      await classifyMail(jeanne, [traite], { type: 'handled' })
+      await classifyMail(jeanne, [ignore], { type: 'ignore' })
+      await asTenant((tx) => tx.execute(sql`update mail_items set deleted_at = current_timestamp(3) where id = ${retire}`))
+      // Restent : lu (lu, à traiter) et le dernier (non lu, à traiter).
+      assert.deepEqual(await countMailToHandle(jeanne), { unread: 1, toHandle: 2 })
+      assert.deepEqual(await countMailToHandle([]), { unread: 0, toHandle: 0 })
+    })
+  })
+
+  it('filtre par expéditeur, sans égard à la casse ni aux jokers', async () => {
+    const expediteur = async (sender: string) => {
+      const id = uuidv7()
+      await asTenant((tx) => tx.execute(sql`insert into mail_items (id, client_id, sender) values (${id}, ${DURAND}, ${sender})`))
+      return id
+    }
+    const dgfip = await expediteur('DGFiP Lyon')
+    const urssaf = await expediteur('URSSAF Rhône-Alpes')
+    const pourcent = await expediteur('Remise 100% Cie')
+    assert.deepEqual(await ids(jeanne, { sender: 'dgfip' }), [dgfip])
+    assert.deepEqual(await ids(jeanne, { sender: 'rhône' }), [urssaf])
+    assert.deepEqual(await ids(jeanne, { sender: '%' }), [pourcent], 'le % saisi est un caractère, pas un joker')
+    assert.deepEqual(await ids(jeanne, { sender: 'dgfip', kind: 'colis' }), [], 'combinable avec le type')
+    const senders = await listMailSenders(jeanne)
+    assert.ok(senders.includes('DGFiP Lyon') && senders.includes('Banque') === false)
+    assert.equal(senders.length, 3)
   })
 })

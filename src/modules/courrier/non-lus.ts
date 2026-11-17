@@ -32,7 +32,8 @@ export async function countMailForAccounts(
         .select({
           total: sql<number>`count(*)`,
           // Une personne a un accès par entreprise : un classement au plus par pli.
-          unread: sql<number>`coalesce(sum(${mailItemMemberStates.readAt} is null), 0)`,
+          // Un pli ignoré (ADR 078) n'est plus « à voir » : il sort de la pastille.
+          unread: sql<number>`coalesce(sum(${mailItemMemberStates.readAt} is null and ${mailItemMemberStates.ignoredAt} is null), 0)`,
         })
         .from(mailItems)
         .leftJoin(

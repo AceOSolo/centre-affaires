@@ -148,6 +148,13 @@
       "when": 1794920833014,
       "tag": "0020_courrier_equipe",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1794921218301,
+      "tag": "0021_courrier_client",
+      "breakpoints": true
     }
   ]
 }

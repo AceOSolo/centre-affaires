@@ -253,6 +253,7 @@ function cardSelection() {
     ...cardColumns,
     stateReadAt: mailItemMemberStates.readAt,
     stateHandledAt: mailItemMemberStates.handledAt,
+    stateIgnoredAt: mailItemMemberStates.ignoredAt,
     stateCategory: mailItemMemberStates.category,
     stateCustomCategoryId: mailItemMemberStates.customCategoryId,
     stateTags: mailItemMemberStates.tags,
@@ -270,6 +271,7 @@ type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'conten
   contentScanCount: number
   stateReadAt: Date | null
   stateHandledAt: Date | null
+  stateIgnoredAt: Date | null
   stateCategory: MailCategory | null
   stateCustomCategoryId: string | null
   stateTags: string[] | null
@@ -278,6 +280,7 @@ type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'conten
 const toCard = ({
   stateReadAt,
   stateHandledAt,
+  stateIgnoredAt,
   stateCategory,
   stateCustomCategoryId,
   stateTags,
@@ -292,6 +295,7 @@ const toCard = ({
     classification: {
       readAt: stateReadAt,
       handledAt: stateHandledAt,
+      ignoredAt: stateIgnoredAt,
       category: stateCategory,
       customCategoryId: stateCustomCategoryId,
       tags: Array.isArray(stateTags) ? stateTags : [],
@@ -315,7 +319,16 @@ function mailFilterWhere(
     'non-lus': sql`not ${classified(sql`s.read_at is not null`)}`,
     'a-traiter': sql`not ${classified(sql`s.handled_at is not null`)}`,
     traites: classified(sql`s.handled_at is not null`),
+    ignores: classified(sql`s.ignored_at is not null`),
   } as const
+  // Un pli ignoré quitte toutes les vues, sauf « Ignorés » (ADR 078).
+  const ignoredOut =
+    filters.followUp === 'ignores' ? undefined : sql`not ${classified(sql`s.ignored_at is not null`)}`
+  // Expéditeur : contient le texte saisi, sans égard à la casse (collation
+  // de la base) ; jokers de LIKE neutralisés.
+  const sender = filters.sender
+    ? sql`${mailItems.sender} like ${`%${filters.sender.replace(/[\\%_]/g, (character) => `\\${character}`)}%`}`
+    : undefined
   // Une catégorie de départ par sa clé, une catégorie personnelle par son
   // identifiant (ADR 060) ; « non classé » : ni l'une ni l'autre.
   const category =
@@ -347,8 +360,10 @@ function mailFilterWhere(
     filters.to ? lt(mailItems.receivedAt, dayRangeUtc(filters.to, timeZone).endsAt) : undefined,
     filters.state ? state[filters.state] : undefined,
     filters.followUp ? followUp[filters.followUp] : undefined,
+    ignoredOut,
     category,
     filters.tag ? classified(sql`json_contains(s.tags, json_array(${filters.tag}))`) : undefined,
+    sender,
   )
 }
 

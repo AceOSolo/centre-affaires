@@ -11,11 +11,10 @@ import {
 import { MAX_TAG_LENGTH, MAX_TAGS, type MailClassification } from './classement-regles.ts'
 import { mailCategoryLabels } from './labels.ts'
 import type { MailCategory } from './categories.ts'
+import { SELECTION_FORM_ID } from './classement-ui.ts'
 
-/** Identifiant du formulaire de sélection : les cases des cartes s'y rattachent (`form=`). */
-export const SELECTION_FORM_ID = 'selection-courrier'
 
-/** Une catégorie personnelle proposée dans les listes (ADR 060). */
+/** Une catégorie proposée dans les listes : de départ (sa clé) ou personnelle (ADR 060). */
 export type CategoryOption = { id: string; name: string }
 
 /** Les catégories personnelles, après celles proposées : un groupe à part dans la liste. */
@@ -32,7 +31,26 @@ function CustomOptions({ options }: { options: readonly CategoryOption[] }) {
   )
 }
 
-const categories = Object.keys(mailCategoryLabels) as MailCategory[]
+const codeCategories: CategoryOption[] = (Object.keys(mailCategoryLabels) as MailCategory[]).map((category) => ({
+  id: category,
+  name: mailCategoryLabels[category],
+}))
+
+/**
+ * Les catégories proposées par le centre, telles que la personne les a
+ * nommées, ordonnées et masquées (ADR 078) ; sans elles, la liste du code.
+ */
+function ProposedOptions({ options }: { options: readonly CategoryOption[] }) {
+  return (
+    <>
+      {options.map((option) => (
+        <option key={option.id} value={option.id}>
+          {option.name}
+        </option>
+      ))}
+    </>
+  )
+}
 
 const fieldClass =
   'mt-1 block min-h-11 w-full rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive sm:text-sm'
@@ -56,12 +74,18 @@ function FieldError({ id, error }: { id: string; error?: string }) {
 export function SelectionBar({
   returnQuery,
   knownTags,
+  proposedCategories = codeCategories,
   customCategories = [],
+  showingIgnored = false,
 }: {
   returnQuery: string
   knownTags: string[]
+  /** Catégories proposées, dans l'ordre et sous le nom de la personne, masquées exceptées. */
+  proposedCategories?: readonly CategoryOption[]
   /** Catégories personnelles ; le nom porte l'entreprise quand le compte en a plusieurs. */
   customCategories?: readonly CategoryOption[]
+  /** La vue montre les plis ignorés : « Ne plus ignorer » plutôt qu'« Ignorer ». */
+  showingIgnored?: boolean
 }) {
   const [state, formAction, pending] = useActionState<ClassificationFormState, FormData>(
     classifySelectionAction,
@@ -112,6 +136,16 @@ export function SelectionBar({
         <button type="submit" name="action" value="a-traiter" disabled={pending} className={buttonClass}>
           Remettre à traiter
         </button>
+        {/* Ignorer : les plis quittent la liste à traiter, retrouvés dans « Ignorés » (ADR 078). */}
+        {showingIgnored ? (
+          <button type="submit" name="action" value="ne-plus-ignorer" disabled={pending} className={buttonClass}>
+            Ne plus ignorer
+          </button>
+        ) : (
+          <button type="submit" name="action" value="ignorer" disabled={pending} className={buttonClass}>
+            Ignorer
+          </button>
+        )}
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
@@ -130,11 +164,7 @@ export function SelectionBar({
               <option value="" disabled>
                 Choisir…
               </option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {mailCategoryLabels[category]}
-                </option>
-              ))}
+              <ProposedOptions options={proposedCategories} />
               <CustomOptions options={customCategories} />
               <option value="non-classe">Non classé</option>
             </select>
@@ -185,11 +215,14 @@ export function ClassificationForm({
   mailItemId,
   classification,
   knownTags,
+  proposedCategories = codeCategories,
   customCategories = [],
 }: {
   mailItemId: string
   classification: MailClassification
   knownTags: string[]
+  /** Catégories proposées, sous le nom de la personne ; masquées exceptées, sauf celle du pli. */
+  proposedCategories?: readonly CategoryOption[]
   /** Catégories personnelles de l'accès à l'entreprise du pli (ADR 060). */
   customCategories?: readonly CategoryOption[]
 }) {
@@ -220,11 +253,7 @@ export function ClassificationForm({
           className={fieldClass}
         >
           <option value="">Non classé</option>
-          {categories.map((category) => (
-            <option key={category} value={category}>
-              {mailCategoryLabels[category]}
-            </option>
-          ))}
+          <ProposedOptions options={proposedCategories} />
           <CustomOptions options={customCategories} />
         </select>
         <FieldError id="categorie-error" error={errors.categorie} />

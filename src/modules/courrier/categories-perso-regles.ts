@@ -51,18 +51,23 @@ const reservedNames: readonly string[] = [
  * Le nom saisi, nettoyé, ou l'erreur à afficher : vide, trop long, déjà pris
  * par la liste de départ ou par une autre catégorie de la personne. `exceptId`
  * : la catégorie que l'on renomme, qui peut garder son nom (changer sa casse).
+ * `proposed` : les noms des catégories proposées tels que la personne les voit
+ * (ADR 078) ; sans eux, ceux du code.
  */
 export function validateCategoryName(
   input: string,
   existing: readonly Pick<CustomCategory, 'id' | 'name'>[],
   exceptId?: string,
+  proposed?: readonly string[],
 ): { name: string; error?: undefined } | { name?: undefined; error: string } {
   const name = cleanCategoryName(input)
   if (name === '') return { error: 'Saisissez le nom de la catégorie.' }
   if (name.length > MAX_CUSTOM_CATEGORY_LENGTH) {
     return { error: `Le nom tient en ${MAX_CUSTOM_CATEGORY_LENGTH} caractères au plus (${name.length}).` }
   }
-  const reserved = reservedNames.find((other) => sameCategoryName(other, name))
+  const reserved = (proposed ? [...proposed, 'Non classé', 'Non classe'] : reservedNames).find((other) =>
+    sameCategoryName(other, name),
+  )
   if (reserved) return { error: `« ${reserved} » fait déjà partie des catégories proposées.` }
   const taken = existing.find((other) => other.id !== exceptId && sameCategoryName(other.name, name))
   if (taken) return { error: `Vous avez déjà une catégorie « ${taken.name} ».` }

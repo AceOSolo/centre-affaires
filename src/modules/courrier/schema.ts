@@ -612,6 +612,14 @@ export const mailMemberCategories = mysqlTable(
     clientId: char('client_id', { length: 36 }).notNull(),
     clientMemberId: char('client_member_id', { length: 36 }).notNull(),
     name: varchar('name', { length: 40 }).notNull(),
+    /**
+     * Rang dans la liste de la personne, mêlée aux catégories proposées
+     * (ADR 078). Nul : à sa place par défaut, après les catégories proposées,
+     * par ordre alphabétique.
+     */
+    position: smallint('position'),
+    /** Masquée : plus proposée au classement, ni montrée vide dans les rubriques (ADR 078). */
+    hidden: boolean('hidden').notNull().default(false),
     ...timestamps(),
   },
   (table) => [
@@ -664,6 +672,12 @@ export const mailItemMemberStates = mysqlTable(
     readAt: instant('read_at'),
     /** Marqué traité. Nulle : à traiter. */
     handledAt: instant('handled_at'),
+    /**
+     * Ignoré par la personne (ADR 078) : le pli quitte la liste à traiter et
+     * ses compteurs, sans action demandée au centre ; il se retrouve par le
+     * filtre « Ignorés ». Nulle : non ignoré. Réversible.
+     */
+    ignoredAt: instant('ignored_at'),
     category: mailCategoryEnum('category'),
     /**
      * Catégorie personnelle de la personne (ADR 060), à la place d'une
