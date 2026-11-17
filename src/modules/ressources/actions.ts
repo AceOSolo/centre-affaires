@@ -103,9 +103,11 @@ export async function createResourceAction(
   }
 
   // Hors du `try` : `redirect` interrompt l'exécution en levant, un `catch`
-  // l'avalerait et la page resterait sur le formulaire.
+  // l'avalerait et la page resterait sur le formulaire. Les photos et vidéos
+  // s'ajoutent sur la fiche (ADR 082) : on arrive à leur bloc, avec la
+  // confirmation de la création (recette du 17/11).
   revalidatePath('/ressources')
-  redirect(`/ressources/${id}`)
+  redirect(`/ressources/${id}?creee=1#medias`)
 }
 
 /**

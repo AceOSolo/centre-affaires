@@ -90,14 +90,12 @@ function ResourceFields({
     values?.[name] ?? attributeFormValue(stored)
 
   // Le code est aussi la clé des prix envoyés par Dolibarr (ADR 049, ADR 082) :
-  // la référence se lit sous le champ, à mesure de la saisie.
+  // la référence se lit à côté du champ, à mesure de la saisie, en création
+  // comme en modification (recette du 17/11).
   const [code, setCode] = useState(() => value('code', resource?.code))
   const codeChanged = resource !== undefined && tariffRefSegment(code) !== tariffRefSegment(resource.code)
   const codeHint = [
-    'Unique dans le centre, réutilisable après archivage.',
-    code.trim()
-      ? `Référence Dolibarr de ses prix : ${resourceTariffPattern(resourceType, code)}.`
-      : 'Il donne aussi la référence Dolibarr de ses prix.',
+    'Unique dans le centre, réutilisable après archivage. Il donne la référence Dolibarr de ses prix.',
     codeChanged
       ? `Le code change : renommez aussi dans Dolibarr les produits ${resourceTariffPattern(resourceType, resource.code)}, et les contrats qui désignent cette ressource.`
       : '',
@@ -166,6 +164,24 @@ function ResourceFields({
           error={errors.code}
           maxLength={30}
         />
+
+        {/* Déduite, jamais saisie (ADR 082) : elle suit le type et le code. */}
+        <div className="sm:col-span-2">
+          <p className={labelClass} id="reference-dolibarr">
+            Référence Dolibarr
+          </p>
+          <p
+            aria-labelledby="reference-dolibarr"
+            aria-live="polite"
+            className="mt-1 rounded-sm border border-border bg-muted px-3 py-2 text-sm break-all"
+          >
+            {code.trim() ? resourceTariffPattern(resourceType, code) : 'Saisissez le code interne : la référence s’en déduit.'}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            À donner aux produits Dolibarr qui portent ses prix, l’unité en dernier
+            (heure, demi-journee, journee, mois…). Elle change avec le code.
+          </p>
+        </div>
 
         <div className="sm:col-span-2">
           <TextField
