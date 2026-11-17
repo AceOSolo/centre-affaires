@@ -19,6 +19,7 @@ import { proposalProducts, type ProposalProduct } from '../../modules/facturatio
 import { listServices } from '../../modules/facturation/services-queries.ts'
 import { pickRateItem, resolveRate } from '../../modules/facturation/tarifs.ts'
 import { BookingDialog, ReserveButton, type ServiceChoice } from '../../modules/reservations/booking-dialog.tsx'
+import { loadKnownContact } from '../../modules/reservations/coordonnees-connues.ts'
 import type { PublicBookingResource, SlotProduct } from '../../modules/reservations/public-booking-form.tsx'
 import { loadAllFormSettings, loadDomiciliationOffer } from '../../modules/reservations/questionnaires-queries.ts'
 import {
@@ -148,7 +149,7 @@ export default async function PortailPage({
   // Une URL hors délai ramène au premier jour admissible.
   const isoDate = date && ISO_DATE.test(date) && date >= minDate && date <= maxDate ? date : minDate
 
-  const [resources, tarifs, regles, services, formSettings] = await Promise.all([
+  const [resources, tarifs, regles, services, formSettings, knownContact] = await Promise.all([
     listBookableResources(),
     // Les prix affichés viennent de la grille par défaut en vigueur : la page
     // vitrine et la facturation ne peuvent pas diverger (R08, R11).
@@ -157,6 +158,8 @@ export default async function PortailPage({
     listServices(),
     // Les formulaires de demande réglés par le centre (ADR 074).
     loadAllFormSettings(),
+    // Connecté à son espace client : les coordonnées pré-remplies (ADR 084).
+    loadKnownContact(),
   ])
   const questionnaires = Object.fromEntries(formulaires.map((form) => [form, formSettings[form].questionnaire])) as Record<Formulaire, Questionnaire>
   const domiciliationOffer = await loadDomiciliationOffer(formSettings.domiciliation.serviceCodes)
@@ -456,6 +459,7 @@ export default async function PortailPage({
           startTime: WALL_TIME.test(debut ?? '') ? debut : undefined,
           endTime: WALL_TIME.test(fin ?? '') ? fin : undefined,
         }}
+        knownContact={knownContact}
         timeZone={timeZone}
         currency={currency}
         policy={{ bookingLeadHours: tenant.bookingLeadHours, bookingHorizonDays: tenant.bookingHorizonDays }}

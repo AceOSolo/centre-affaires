@@ -6,6 +6,7 @@ import { requireClientAccount } from '../../../../modules/clients/session.ts'
 import { ProfileForm } from '../../../../modules/clients/mon-compte-form.tsx'
 import { loadMemberProfile } from '../../../../modules/clients/mon-compte-queries.ts'
 import { PasswordForm } from '../../../../modules/clients/mot-de-passe-form.tsx'
+import { nameOf } from '../../../../modules/clients/prenom-nom.ts'
 import { loadClientSpace } from '../espace.ts'
 import { ParametresNav } from './parametres-nav.tsx'
 
@@ -47,7 +48,7 @@ export default async function MonComptePage() {
           <div className="mt-4">
             <ProfileForm
               email={user.email}
-              initial={{ fullName: profile.fullName ?? user.name ?? '', phone: profile.phone ?? '' }}
+              initial={{ ...nameOf(profile, user.name), phone: profile.phone ?? '' }}
             />
           </div>
         </section>

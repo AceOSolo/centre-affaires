@@ -43,5 +43,5 @@ export async function saveProfileAction(_previous: ProfileFormState, formData: F
     console.error('Mon compte : nom du compte non mis à jour', error)
   }
   revalidatePath('/compte', 'layout')
-  return { saved: true, values: { fullName: read.input.fullName, phone: read.input.phone ?? '' } }
+  return { saved: true, values: { firstName: read.input.firstName, lastName: read.input.lastName, phone: read.input.phone ?? '' } }
 }

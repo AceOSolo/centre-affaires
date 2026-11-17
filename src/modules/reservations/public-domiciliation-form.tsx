@@ -7,6 +7,7 @@ import { FieldLabel, RequiredNote } from '../../components/ui/obligatoire.tsx'
 import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
 import { FileTextIcon } from '../../components/ui/icons.tsx'
 import { formatCents } from '../facturation/tarifs.ts'
+import type { KnownContact } from './coordonnees-connues.ts'
 import { domiciliationTotal, UNPRICED_MESSAGE, type DomiciliationOffer } from './domiciliation-tarif.ts'
 import { ChampPiege, fieldClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
 import { requestDomiciliationAction, type PublicFormState } from './public-actions.ts'
@@ -23,12 +24,13 @@ import {
   type Questionnaire,
 } from './questionnaires.ts'
 import { contactRejections, rejectionMessages } from './requests.ts'
+import { joinName, nameErrors } from '../clients/prenom-nom.ts'
 
 /** Deux étapes : la société et ses options, puis les coordonnées avec le récapitulatif. */
 const titles = ['Votre société', 'Vos coordonnées'] as const
 type Step = 1 | 2
 
-/** Prénom et nom séparés (recette du 17/11, ADR 074). */
+/** Prénom et nom séparés (recette du 17/11, ADR 074, ADR 084). */
 const contactFields = [
   { key: 'firstName', label: 'Prénom', type: 'text', autoComplete: 'given-name', maxLength: 100 },
   { key: 'lastName', label: 'Nom', type: 'text', autoComplete: 'family-name', maxLength: 100 },
@@ -48,11 +50,8 @@ function byQuestion(fieldErrors: Record<string, string> | undefined): Record<str
 
 /** Les mêmes règles que le serveur (`contactFromNames`), avant l'envoi. */
 function contactErrorsOf(contact: Record<ContactKey, string>): Record<string, string> {
-  const errors: Record<string, string> = {}
-  if (!contact.firstName.trim()) errors[contactId('firstName')] = 'Saisissez votre prénom.'
-  if (!contact.lastName.trim()) errors[contactId('lastName')] = 'Saisissez votre nom.'
-  const name = `${contact.firstName} ${contact.lastName}`.trim() || '-'
-  for (const [field, rejection] of Object.entries(contactRejections({ name, email: contact.email, phone: contact.phone }))) {
+  const errors: Record<string, string> = Object.fromEntries(Object.entries(nameErrors(contact)).map(([field, message]) => [contactId(field), message]))
+  for (const [field, rejection] of Object.entries(contactRejections({ name: joinName(contact) || '-', email: contact.email, phone: contact.phone }))) {
     if (rejection) errors[contactId(field)] = rejectionMessages[rejection]
   }
   return errors
@@ -69,8 +68,10 @@ const piecesDemandees = 'Rien à envoyer pour l’instant. Avant la signature du
  * choix. Aucune pièce n'est déposée ici : l'accueil les demande avant la
  * signature (RGPD, minimisation).
  */
-export function PublicDomiciliationForm({ questionnaire, offer, onClose, onSent }: {
+export function PublicDomiciliationForm({ questionnaire, offer, knownContact, onClose, onSent }: {
   questionnaire: Questionnaire
+  /** Coordonnées de la personne connectée à son espace, modifiables (ADR 084). */
+  knownContact?: KnownContact
   /** Forfait et options tarifées du centre (`loadDomiciliationOffer`). */
   offer: DomiciliationOffer
   /** Ferme le dialogue qui contient le formulaire. */
@@ -81,7 +82,13 @@ export function PublicDomiciliationForm({ questionnaire, offer, onClose, onSent 
   const [step, setStep] = useState<Step>(1)
   // Contrôlées : React réinitialise le formulaire après chaque envoi, un échec
   // ne doit rien faire retaper.
-  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>({ firstName: '', lastName: '', email: '', phone: '', notes: '' })
+  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>(() => ({
+    firstName: knownContact?.firstName ?? '',
+    lastName: knownContact?.lastName ?? '',
+    email: knownContact?.email ?? '',
+    phone: knownContact?.phone ?? '',
+    notes: '',
+  }))
   const [services, setServices] = useState<string[]>([])
   // Les questions sont non contrôlées : elles repartent des réponses validées.
   const [answers, setAnswers] = useState<Answers>({})

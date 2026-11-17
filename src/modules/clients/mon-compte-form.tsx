@@ -4,14 +4,14 @@ import { useActionState } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { saveProfileAction, type ProfileFormState } from './mon-compte-actions.ts'
-import { PHONE_FORMAT_HINT, profileFieldLabels, type ProfileValues } from './mon-compte.ts'
+import { NAME_PART_MAX, PHONE_FORMAT_HINT, profileFieldLabels, type ProfileValues } from './mon-compte.ts'
 
 const fieldClass =
   'mt-1.5 w-full rounded-lg border border-border bg-white px-3 py-2.5 text-base outline-none transition-colors focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive'
 const labelClass = 'block text-sm font-medium text-foreground'
 
 /**
- * Mes informations (ADR 077) : nom et téléphone, que l'équipe voit sur la
+ * Mes informations (ADR 077) : prénom, nom et téléphone, que l'équipe voit sur la
  * fiche du client. L'adresse se lit, elle ne se change pas ici : c'est
  * l'identifiant du compte (`mon-compte.ts`).
  *
@@ -33,32 +33,37 @@ export function ProfileForm({ initial, email }: { initial: ProfileValues; email:
       </p>
       <ErrorSummary errors={state?.errors} labels={profileFieldLabels} message={state?.error} />
 
-      <div>
-        <label className={labelClass} htmlFor="fullName">
-          {profileFieldLabels.fullName}{' '}
-          <span aria-hidden="true" className="text-primary">
-            *
-          </span>
-        </label>
-        <input
-          id="fullName"
-          name="fullName"
-          type="text"
-          required
-          aria-required="true"
-          autoComplete="name"
-          maxLength={120}
-          defaultValue={values.fullName}
-          key={`nom-${values.fullName}`}
-          aria-invalid={errors.fullName ? true : undefined}
-          aria-describedby={errors.fullName ? 'fullName-error' : undefined}
-          className={fieldClass}
-        />
-        {errors.fullName && (
-          <p id="fullName-error" role="alert" className="mt-1 text-sm text-destructive">
-            {errors.fullName}
-          </p>
-        )}
+      {/* Prénom et nom, toujours deux champs (ADR 084). */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {(['firstName', 'lastName'] as const).map((field) => (
+          <div key={field}>
+            <label className={labelClass} htmlFor={field}>
+              {profileFieldLabels[field]}{' '}
+              <span aria-hidden="true" className="text-primary">
+                *
+              </span>
+            </label>
+            <input
+              id={field}
+              name={field}
+              type="text"
+              required
+              aria-required="true"
+              autoComplete={field === 'firstName' ? 'given-name' : 'family-name'}
+              maxLength={NAME_PART_MAX}
+              defaultValue={values[field]}
+              key={`${field}-${values[field]}`}
+              aria-invalid={errors[field] ? true : undefined}
+              aria-describedby={errors[field] ? `${field}-error` : undefined}
+              className={fieldClass}
+            />
+            {errors[field] && (
+              <p id={`${field}-error`} role="alert" className="mt-1 text-sm text-destructive">
+                {errors[field]}
+              </p>
+            )}
+          </div>
+        ))}
       </div>
 
       <div>

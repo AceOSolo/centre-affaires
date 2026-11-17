@@ -6,6 +6,7 @@ import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 
 import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, TvIcon, UsersIcon, XIcon } from '../../components/ui/icons.tsx'
 import type { ProposalProduct } from '../facturation/schema-devis.ts'
 import type { ResourceType } from '../ressources/schema.ts'
+import type { KnownContact } from './coordonnees-connues.ts'
 import type { DomiciliationOffer } from './domiciliation-tarif.ts'
 import { focusClass, showStep } from './etapes-demande.tsx'
 import { PublicBookingForm, type PublicBookingResource, type SlotProduct } from './public-booking-form.tsx'
@@ -76,7 +77,7 @@ export type ServiceChoice = { form: Formulaire; product: ProposalProduct; type?:
  * bouton d'origine à la fermeture. Feuille montant du bas sur téléphone,
  * fenêtre centrée au-delà.
  */
-export function BookingDialog({ choices, questionnaires, domiciliationOffer, resources, initial, timeZone, currency, policy, minDate, maxDate }: {
+export function BookingDialog({ choices, questionnaires, domiciliationOffer, resources, initial, knownContact, timeZone, currency, policy, minDate, maxDate }: {
   /** Services proposés, un par formulaire (salle et bureau séparés, ADR 074), avec les mots du centre. */
   choices: ServiceChoice[]
   /** Questionnaires du centre, par formulaire. */
@@ -87,6 +88,8 @@ export function BookingDialog({ choices, questionnaires, domiciliationOffer, res
   resources: Record<SlotProduct, PublicBookingResource[]>
   /** Produit, espace, date et horaires lus dans l'adresse (`/?espace=…&date=…#reserver`). */
   initial: { product?: ProposalProduct; resourceId?: string; date: string; startTime?: string; endTime?: string }
+  /** Coordonnées de la personne connectée à son espace : les formulaires partent pré-remplis (ADR 084). */
+  knownContact?: KnownContact
   timeZone: string
   currency: string
   policy: RequestPolicy
@@ -202,7 +205,7 @@ export function BookingDialog({ choices, questionnaires, domiciliationOffer, res
           </div>
         )}
         {target && product === 'domiciliation' && (
-          <PublicDomiciliationForm key={formKey} questionnaire={questionnaires.domiciliation} offer={domiciliationOffer} onClose={close} onSent={markSent} />
+          <PublicDomiciliationForm key={formKey} questionnaire={questionnaires.domiciliation} offer={domiciliationOffer} knownContact={knownContact} onClose={close} onSent={markSent} />
         )}
         {target && (product === 'espace' || product === 'vehicule' || product === 'materiel') && (
           <PublicBookingForm
@@ -212,6 +215,7 @@ export function BookingDialog({ choices, questionnaires, domiciliationOffer, res
             // sans type désigné, l'espace se choisit entre les deux familles.
             resources={type ? resources[product].filter((item) => item.resourceType === type) : resources[product]}
             questionnaires={questionnaires}
+            knownContact={knownContact}
             currency={currency}
             timeZone={timeZone}
             policy={policy}

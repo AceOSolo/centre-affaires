@@ -10,6 +10,7 @@ import { CHAMP_PREUVE, champPiegeRempli } from '../../lib/champs-anti-robot.ts'
 import { preuveHumaine } from '../../lib/preuve-humaine.ts'
 import { toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
+import { joinName, nameErrors } from '../clients/prenom-nom.ts'
 import { clientAccess } from '../clients/session.ts'
 import { sendRequestReceived } from '../comptes/demandes-site.ts'
 import { quote } from '../facturation/devis-queries.ts'
@@ -267,6 +268,9 @@ export async function requestBookingAction(
   const company = text(formData, 'company')
   const notes = text(formData, 'notes')
   const product = text(formData, 'product') as ProposalProduct
+  // Prénom et nom en deux champs (ADR 084) ; la demande garde la personne entière.
+  const person = { firstName: text(formData, 'firstName'), lastName: text(formData, 'lastName') }
+  const requesterName = joinName(person)
 
   // Les produits sur créneau ; la domiciliation a son propre formulaire.
   if (product !== 'espace' && product !== 'vehicule' && product !== 'materiel') {
@@ -320,6 +324,10 @@ export async function requestBookingAction(
   if (Object.keys(errors).length > 0) {
     return { status: 'error', step: 3, message: answersToCorrect, fieldErrors: errorsByField(errors) }
   }
+  const personErrors = nameErrors(person)
+  if (Object.keys(personErrors).length > 0) {
+    return { status: 'error', step: 4, message: 'Vos coordonnées sont à compléter.', fieldErrors: personErrors }
+  }
   if (company.length > COMPANY_MAX_LENGTH) {
     return { status: 'error', step: 4, message: `Le nom de la société compte ${COMPANY_MAX_LENGTH} caractères au plus.` }
   }
@@ -333,7 +341,7 @@ export async function requestBookingAction(
     bookable && email ? await countRecentRequestsByEmail(email, RATE_WINDOW_HOURS) : 0
 
   const rejection = rejectRequest({
-    name: text(formData, 'name'),
+    name: requesterName,
     email,
     phone: text(formData, 'phone'),
     title: text(formData, 'title'),
@@ -369,7 +377,7 @@ export async function requestBookingAction(
       ]
         .filter(Boolean)
         .join('\n\n'),
-      requesterName: text(formData, 'name'),
+      requesterName,
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
       clientId,
@@ -501,22 +509,17 @@ export async function requestDomiciliationAction(
   }
 }
 
-const NAME_PART_MAX_LENGTH = 100
-
 /**
- * Coordonnées d'une demande de domiciliation : prénom et nom séparés, puis
- * les mêmes règles que les autres demandes pour l'adresse et le téléphone.
- * Erreurs rangées par nom de champ (`firstName`, `lastName`, `email`, `phone`).
+ * Coordonnées d'une demande de domiciliation : prénom et nom séparés
+ * (`nameErrors`, ADR 084), puis les mêmes règles que les autres demandes pour
+ * l'adresse et le téléphone. Erreurs rangées par nom de champ (`firstName`,
+ * `lastName`, `email`, `phone`).
  */
 function contactFromNames(firstName: string, lastName: string, email: string, phone: string):
   | { name: string; email: string; phone: string; errors?: undefined }
   | { errors: Record<string, string> } {
-  const errors: Record<string, string> = {}
-  if (!firstName) errors.firstName = 'Saisissez votre prénom.'
-  else if (firstName.length > NAME_PART_MAX_LENGTH) errors.firstName = `${NAME_PART_MAX_LENGTH} caractères au plus.`
-  if (!lastName) errors.lastName = 'Saisissez votre nom.'
-  else if (lastName.length > NAME_PART_MAX_LENGTH) errors.lastName = `${NAME_PART_MAX_LENGTH} caractères au plus.`
-  const name = `${firstName} ${lastName}`.trim()
+  const errors: Record<string, string> = { ...nameErrors({ firstName, lastName }) }
+  const name = joinName({ firstName, lastName })
   for (const [field, rejection] of Object.entries(contactRejections({ name: name || '-', email, phone }))) {
     if (rejection) errors[field] = rejectionMessages[rejection]
   }

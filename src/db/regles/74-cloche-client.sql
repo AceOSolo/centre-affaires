@@ -127,11 +127,13 @@ END;
 --> statement-breakpoint
 
 -- ---------------------------------------------------------------------------
--- 3. Téléphone d'un accès : effacé à l'anonymisation
+-- 3. Téléphone, prénom et nom d'un accès : effacés à l'anonymisation
 -- ---------------------------------------------------------------------------
--- Les routines d'anonymisation (90-rgpd.sql) effacent l'adresse et le nom ;
--- ce trigger efface le téléphone dans la même écriture, sans les modifier.
--- La contrainte `client_members_anonymized_no_phone` le vérifie ensuite.
+-- Les routines d'anonymisation (90-rgpd.sql) effacent l'adresse et le nom
+-- complet ; ce trigger efface le téléphone, et le prénom et le nom saisis
+-- séparément (ADR 084), dans la même écriture, sans les modifier. Les
+-- contraintes `client_members_anonymized_no_phone` et
+-- `client_members_anonymized_no_names` le vérifient ensuite.
 DROP TRIGGER IF EXISTS client_members_clear_phone_when_anonymized;
 --> statement-breakpoint
 CREATE TRIGGER client_members_clear_phone_when_anonymized
@@ -140,5 +142,7 @@ FOR EACH ROW
 BEGIN
   IF NEW.anonymized_at IS NOT NULL THEN
     SET NEW.phone = NULL;
+    SET NEW.first_name = NULL;
+    SET NEW.last_name = NULL;
   END IF;
 END;

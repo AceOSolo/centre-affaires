@@ -160,7 +160,15 @@ export const clientMembers = mysqlTable(
     authUserId: varchar('auth_user_id', { length: 255 }),
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
     email: varchar('email', { length: 255 }).notNull(),
+    /** Nom complet, recomposé « Prénom Nom » quand la personne les saisit (ADR 084). */
     fullName: text('full_name'),
+    /**
+     * Prénom et nom, saisis séparément dans « Mon compte » (ADR 084) ; nuls pour
+     * un accès qui n'a que son nom complet. Effacés à l'anonymisation (trigger,
+     * `74-cloche-client.sql`).
+     */
+    firstName: varchar('first_name', { length: 100 }),
+    lastName: varchar('last_name', { length: 100 }),
     /**
      * Téléphone de la personne, saisi par elle dans « Mon compte » (ADR 077),
      * rangé par `normalisePhone`. Effacé à l'anonymisation (trigger,
@@ -207,6 +215,11 @@ export const clientMembers = mysqlTable(
     check('client_members_anonymization_traced', anonymizationTraceCheck(table)),
     // Une personne anonymisée n'a plus de téléphone (ADR 077).
     check('client_members_anonymized_no_phone', sql`${table.anonymizedAt} is null or ${table.phone} is null`),
+    // Ni prénom ni nom séparés non plus (ADR 084) : le nom complet dit « Personne anonymisée ».
+    check(
+      'client_members_anonymized_no_names',
+      sql`${table.anonymizedAt} is null or (${table.firstName} is null and ${table.lastName} is null)`,
+    ),
     // Une adresse ne vaut qu'une fois par entreprise, et redevient libre après
     // un retrait.
     uniqueIndex('client_members_client_email_key').on(

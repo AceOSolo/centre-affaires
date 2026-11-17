@@ -310,34 +310,39 @@ describe('cloche de l’espace client', { skip: raisonDeSaut }, () => {
   })
 
   describe('« Mon compte »', () => {
-    it('écrit le nom et le téléphone sur chaque accès de la personne, et seulement les siens', async () => {
-      assert.deepEqual(await loadMemberProfile([durand, jeannePetit], bases.app.db), { fullName: 'Jeanne Durand', phone: null })
-      await saveMemberProfile([durand, jeannePetit], { fullName: 'Jeanne Martin', phone: '06 12 34 56 78' }, bases.app.db)
+    it('écrit le prénom, le nom et le téléphone sur chaque accès de la personne, et seulement les siens', async () => {
+      // Accès ouvert avant l'ADR 084 : le prénom et le nom sont tirés du nom complet.
+      assert.deepEqual(await loadMemberProfile([durand, jeannePetit], bases.app.db), { firstName: 'Jeanne', lastName: 'Durand', fullName: 'Jeanne Durand', phone: null })
+      await saveMemberProfile([durand, jeannePetit], { firstName: 'Jeanne Marie', lastName: 'Martin', fullName: 'Jeanne Marie Martin', phone: '06 12 34 56 78' }, bases.app.db)
       const [rows] = (await bases.owner.client.query(
-        'select id, full_name as nom, phone from client_members order by id',
-      )) as unknown as [{ id: string; nom: string | null; phone: string | null }[]]
+        'select id, first_name as prenom, last_name as nom, full_name as complet, phone from client_members order by id',
+      )) as unknown as [{ id: string; prenom: string | null; nom: string | null; complet: string | null; phone: string | null }[]]
       assert.deepEqual(
-        rows.map((row) => [row.id, row.nom, row.phone]),
+        rows.map((row) => [row.id, row.prenom, row.nom, row.complet, row.phone]),
         [
-          [JEANNE, 'Jeanne Martin', '06 12 34 56 78'],
-          [JEANNE_PETIT, 'Jeanne Martin', '06 12 34 56 78'],
-          [PAUL, 'Paul Petit', null],
+          [JEANNE, 'Jeanne Marie', 'Martin', 'Jeanne Marie Martin', '06 12 34 56 78'],
+          [JEANNE_PETIT, 'Jeanne Marie', 'Martin', 'Jeanne Marie Martin', '06 12 34 56 78'],
+          [PAUL, null, null, 'Paul Petit', null],
         ],
       )
+      // Une fois saisis, le prénom composé et le nom se relisent tels quels.
+      assert.deepEqual(await loadMemberProfile([durand], bases.app.db), { firstName: 'Jeanne Marie', lastName: 'Martin', fullName: 'Jeanne Marie Martin', phone: '06 12 34 56 78' })
     })
 
-    it('efface le téléphone à l’anonymisation de l’accès', async () => {
-      await saveMemberProfile([paul], { fullName: 'Paul Petit', phone: '06 00 00 00 01' }, bases.app.db)
+    it('efface le téléphone, le prénom et le nom à l’anonymisation de l’accès', async () => {
+      await saveMemberProfile([paul], { firstName: 'Paul', lastName: 'Petit', fullName: 'Paul Petit', phone: '06 00 00 00 01' }, bases.app.db)
       await asTenant(async (tx) => {
         await tx.execute(sql`update client_members set deleted_at = current_timestamp(3) where id = ${PAUL}`)
         await tx.execute(sql`select anonymize_member_rows('client_members', ${PAUL}, null, 'retention', null)`)
       })
       const [[row]] = (await bases.owner.client.query(
-        'select phone, anonymized_at as anonymise from client_members where id = ?',
+        'select phone, first_name as prenom, last_name as nom, anonymized_at as anonymise from client_members where id = ?',
         [PAUL],
-      )) as unknown as [{ phone: string | null; anonymise: Date | null }[]]
+      )) as unknown as [{ phone: string | null; prenom: string | null; nom: string | null; anonymise: Date | null }[]]
       assert.ok(row?.anonymise)
       assert.equal(row?.phone, null)
+      assert.equal(row?.prenom, null)
+      assert.equal(row?.nom, null)
     })
   })
 

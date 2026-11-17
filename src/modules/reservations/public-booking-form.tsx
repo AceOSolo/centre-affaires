@@ -34,6 +34,8 @@ import {
   type Questionnaire,
 } from './questionnaires.ts'
 import { contactRejections, rejectionMessages } from './requests.ts'
+import { joinName, nameErrors, NAME_PART_MAX } from '../clients/prenom-nom.ts'
+import type { KnownContact } from './coordonnees-connues.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
 
 /** Produits réservés sur un créneau du calendrier (ADR 043), le matériel loué seul compris (ADR 062). */
@@ -83,8 +85,10 @@ function fromServerStep(step: number | undefined): Step | undefined {
   return step <= 2 ? 1 : step === 3 ? QUESTIONS_STEP : CONTACT_STEP
 }
 
+/** Prénom et nom toujours séparés (ADR 084). */
 const contactFields = [
-  { key: 'name', label: 'Nom et prénom', type: 'text', autoComplete: 'name', required: true },
+  { key: 'firstName', label: 'Prénom', type: 'text', autoComplete: 'given-name', required: true },
+  { key: 'lastName', label: 'Nom', type: 'text', autoComplete: 'family-name', required: true },
   { key: 'email', label: 'Adresse e-mail', type: 'email', autoComplete: 'email', required: true },
   { key: 'phone', label: 'Téléphone', type: 'tel', autoComplete: 'tel', required: true },
   { key: 'company', label: 'Société', type: 'text', autoComplete: 'organization', required: false },
@@ -93,6 +97,16 @@ const contactFields = [
 type ContactKey = (typeof contactFields)[number]['key']
 const contactId = (key: string) => `booking-${key}`
 const contactLabels = Object.fromEntries(contactFields.map((field) => [contactId(field.key), field.label]))
+
+/** Les mêmes règles que le serveur (`requestBookingAction`), avant l'envoi. */
+function contactErrorsOf(contact: Record<ContactKey, string>): Record<string, string> {
+  const errors: Record<string, string> = Object.fromEntries(Object.entries(nameErrors(contact)).map(([field, message]) => [contactId(field), message]))
+  for (const [field, rejection] of Object.entries(contactRejections({ name: joinName(contact) || '-', email: contact.email, phone: contact.phone }))) {
+    if (rejection) errors[contactId(field)] = rejectionMessages[rejection]
+  }
+  if (!contact.title.trim()) errors[contactId('title')] = rejectionMessages['objet-manquant']
+  return errors
+}
 
 /** Jours proposés d'un geste avant de passer par le calendrier. */
 const QUICK_DAYS = 6
@@ -112,12 +126,14 @@ export type PublicBookingResource = Pick<Resource, 'id' | 'name' | 'resourceType
   rates: Pick<RateCandidate, 'unit' | 'amountCents'>[]
 }
 
-export function PublicBookingForm({ product, resources, questionnaires, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
+export function PublicBookingForm({ product, resources, questionnaires, knownContact, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
   product: SlotProduct
   /** Ressources du seul produit choisi. */
   resources: PublicBookingResource[]
   /** Questionnaires du centre : celui de la salle, celui du bureau… (ADR 074). */
   questionnaires: Record<Formulaire, Questionnaire>
+  /** Coordonnées de la personne connectée à son espace, modifiables (ADR 084). */
+  knownContact?: KnownContact
   timeZone: string
   currency: string
   policy: RequestPolicy
@@ -151,7 +167,15 @@ export function PublicBookingForm({ product, resources, questionnaires, timeZone
     const empty = emptyChoice(formula, defaultDate)
     return formula === 'libre' || formula === 'heure' ? { ...empty, startTime: defaultStartTime, endTime: defaultEndTime } : empty
   })
-  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>({ name: '', email: '', phone: '', company: '', title: '', notes: '' })
+  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>(() => ({
+    firstName: knownContact?.firstName ?? '',
+    lastName: knownContact?.lastName ?? '',
+    email: knownContact?.email ?? '',
+    phone: knownContact?.phone ?? '',
+    company: knownContact?.company ?? '',
+    title: '',
+    notes: '',
+  }))
   // Réponses validées au passage de l'étape « Votre besoin ». Les questions sont
   // des champs non contrôlés, que React réinitialise après chaque envoi : elles
   // repartent de ces valeurs par défaut, un échec ne fait rien retaper.
@@ -312,8 +336,7 @@ export function PublicBookingForm({ product, resources, questionnaires, timeZone
       goTo(CONTACT_STEP)
       return
     }
-    const rejections: Record<string, string> = Object.fromEntries(Object.entries(contactRejections(contact)).map(([field, rejection]) => [contactId(field), rejectionMessages[rejection]]))
-    if (!contact.title.trim()) rejections[contactId('title')] = rejectionMessages['objet-manquant']
+    const rejections = contactErrorsOf(contact)
     if (Object.keys(rejections).length > 0) { event.preventDefault(); setContactErrors(rejections); return }
     setContactErrors(undefined)
     if (!preuvePrete(event.currentTarget)) { event.preventDefault(); setLocalError(preuveEnCours); return }
@@ -475,7 +498,7 @@ export function PublicBookingForm({ product, resources, questionnaires, timeZone
               return (
                 <div key={field.key}>
                   <FieldLabel htmlFor={id} required={field.required} className="block text-sm font-medium">{field.label}</FieldLabel>
-                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} aria-required={field.required || undefined}maxLength={field.key === 'phone' ? 40 : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
+                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} aria-required={field.required || undefined} maxLength={field.key === 'phone' ? 40 : field.key === 'firstName' || field.key === 'lastName' ? NAME_PART_MAX : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
                   {fieldError && <p id={`${id}-error`} className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
                 </div>
               )
