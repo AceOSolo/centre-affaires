@@ -72,6 +72,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Identité du centre, règles de réservation, durées de conservation.',
         permission: 'centre.configurer',
       },
+      // Tous les services (ADR 081) : ce que l'espace client montre des dépenses.
+      {
+        href: '/reglages/depenses',
+        label: 'Dépenses dans l’espace client',
+        description: 'Dépenses estimées du mois montrées aux clients, actes du courrier, mois passés, phrase sous le total.',
+        permission: 'centre.configurer',
+      },
       // Réservé à la direction (ADR 065).
       {
         href: '/reglages/crm',

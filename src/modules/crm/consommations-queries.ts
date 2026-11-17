@@ -40,6 +40,12 @@ import { crmLinks } from './schema-liens.ts'
 /* Lecture des sources                                                      */
 /* ------------------------------------------------------------------------ */
 
+/*
+ * Les lectures des sources sont aussi celles des dépenses de l'espace client
+ * (`depenses-queries.ts`, ADR 081) : mêmes sources, mêmes règles, filtrées sur
+ * les entreprises du compte.
+ */
+
 /**
  * Une réservation tenue par un devis vivant : le CRM la facture à partir du
  * devis (ADR 043). Le seul endroit qui le dit pour les consommations — une
@@ -48,7 +54,7 @@ import { crmLinks } from './schema-liens.ts'
  */
 // Le matériel en option d'une salle (ADR 062) est chiffré sur le devis de
 // la salle : le devis vivant de sa réservation principale le couvre aussi.
-const coveredByProposal = sql<number>`exists (
+export const coveredByProposal = sql<number>`exists (
   select 1 from proposals as p
    where p.tenant_id = ${bookings.tenantId}
      and (p.booking_id = ${bookings.id} or p.booking_id = ${bookings.parentBookingId})
@@ -62,7 +68,7 @@ function noLiveConsumption(tenantId: string, nature: ConsumptionNature, sourceId
        and c.status <> 'cancelled')`
 }
 
-async function bookingSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
+export async function bookingSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
   const rows = await tx
     .select({
       sourceId: bookings.id,
@@ -125,7 +131,7 @@ async function bookingSources(tx: Transaction, tenantId: string, where: SQL | un
   }))
 }
 
-async function openingSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
+export async function openingSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
   const rows = await tx
     .select({
       sourceId: mailItems.id,
@@ -149,7 +155,7 @@ async function openingSources(tx: Transaction, tenantId: string, where: SQL | un
   }))
 }
 
-async function pageSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
+export async function pageSources(tx: Transaction, tenantId: string, where: SQL | undefined): Promise<ConsumptionSource[]> {
   const rows = await tx
     .select({
       sourceId: mailScans.id,
@@ -178,7 +184,7 @@ async function pageSources(tx: Transaction, tenantId: string, where: SQL | undef
   }))
 }
 
-async function requestSources(
+export async function requestSources(
   tx: Transaction,
   tenantId: string,
   nature: 'mail_scan' | 'mail_forward',

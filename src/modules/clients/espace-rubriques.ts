@@ -25,7 +25,8 @@ export function clientSections(signals: SpaceSignals): SpaceSection[] {
     { href: '/compte', label: 'Accueil', show: true },
     { href: '/compte/reservations', label: 'Réservations', show: true },
     { href: '/compte/courrier', label: 'Courrier', show: signals.domiciliated },
-    { href: '/compte/factures', label: 'Factures', show: signals.invoices > 0 },
+    // Dépenses et factures (ADR 081) : dès qu'un contrat, le courrier ou une facture en donne.
+    { href: '/compte/factures', label: 'Factures', show: signals.invoices > 0 || signals.contracts > 0 || signals.domiciliated },
     { href: '/compte/contrats', label: 'Contrats', show: signals.contracts > 0 },
     { href: '/compte/etats-des-lieux', label: 'États des lieux', show: signals.inspections > 0 },
   ]
