@@ -7,8 +7,14 @@ import { withTenant, type Transaction } from '../../db/index.ts'
 import { ouvrirBasesDeTest, raisonDeSaut, type TestDatabases } from '../../db/test-support.ts'
 import { DEFAULT_TENANT_ID } from '../../db/tenants.ts'
 import { toutVider } from '../clients/test-support.ts'
-import { STARTING_SENDERS, suggestionsFor } from './expediteurs.ts'
-import { findKnownSenders, findSenderSuggestions, updateMailSender } from './expediteurs-queries.ts'
+import { canonicalSender, STARTING_SENDERS, suggestionsFor } from './expediteurs.ts'
+import {
+  findKnownSenders,
+  findSenderListSettings,
+  findSenderSuggestions,
+  saveSenderList,
+  updateMailSender,
+} from './expediteurs-queries.ts'
 import { MailStateError, withdrawMail } from './queries.ts'
 import { registerMailEntry } from './saisie-groupee.ts'
 
@@ -122,5 +128,41 @@ describe('expéditeurs du courrier', { skip: raisonDeSaut }, () => {
       (await lire(`select sender from mail_items where id in (?, ?) order by id`, [retire, efface])).map((row) => row.sender),
       ['Avant', null],
     )
+  })
+
+  it('suit la liste réglée par le centre, puis revient à celle du code (ADR 079)', async () => {
+    await plis(DURAND, ['Cabinet Martin', 'URSSAF'])
+    await plis(PETIT, ['Free', 'Free'])
+    try {
+      let reglage = await findSenderListSettings(bases.app.db)
+      assert.equal(reglage.customized, false)
+      // Le point de départ : ce que l'accueil voit aujourd'hui, le plus saisi d'abord.
+      assert.equal(reglage.list[0], 'Free')
+      assert.deepEqual(reglage.frequentMissing, [])
+
+      await saveSenderList(['Banque du Léman', 'URSSAF'], bases.app.db)
+      reglage = await findSenderListSettings(bases.app.db)
+      assert.equal(reglage.customized, true)
+      assert.deepEqual(reglage.list, ['Banque du Léman', 'URSSAF'])
+      assert.deepEqual(reglage.frequentMissing, ['Free', 'Cabinet Martin'])
+
+      const suggestions = await findSenderSuggestions([DURAND, PETIT], bases.app.db)
+      assert.deepEqual(suggestionsFor(suggestions, null), ['Banque du Léman', 'URSSAF'])
+      // Ceux de l'entreprise restent en tête ; ceux d'une autre ne sont plus proposés.
+      assert.deepEqual(suggestionsFor(suggestions, PETIT), ['Free', 'Banque du Léman', 'URSSAF'])
+      assert.equal(suggestionsFor(suggestions, DURAND).includes('Free'), false)
+      assert.equal(canonicalSender('banque du leman', await findKnownSenders(bases.app.db)), 'Banque du Léman')
+
+      // La base tient le plafond de 200, quel que soit le chemin d'écriture.
+      const trop = JSON.stringify(Array.from({ length: 201 }, (_, i) => `Expéditeur ${i}`))
+      await assert.rejects(asTenant((tx) => tx.execute(sql`update tenants set mail_suggested_senders = cast(${trop} as json)`)))
+
+      await saveSenderList(null, bases.app.db)
+      reglage = await findSenderListSettings(bases.app.db)
+      assert.equal(reglage.customized, false)
+      assert.ok(reglage.list.includes('CAF'))
+    } finally {
+      await saveSenderList(null, bases.app.db)
+    }
   })
 })

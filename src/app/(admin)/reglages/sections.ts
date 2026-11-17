@@ -55,6 +55,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Occupation des ressources et activité du centre.',
         permission: 'indicateurs.consulter',
       },
+      // Lot 6 de la recette du 17/11 (ADR 079) : service Domiciliation.
+      {
+        href: '/courrier/expediteurs',
+        label: 'Expéditeurs proposés',
+        description: 'La liste proposée à la saisie du courrier : ajouter, renommer, retirer, ordonner.',
+        permission: 'centre.configurer',
+      },
     ],
   },
   {

@@ -147,6 +147,14 @@ export const tenants = mysqlTable('tenants', {
    */
   mailOpeningIncludedPages: int('mail_opening_included_pages').notNull().default(0),
   /**
+   * Expéditeurs proposés à la saisie du courrier, dans l'ordre voulu par le
+   * centre (ADR 079) : ajoutés, renommés, retirés, ordonnés depuis Réglages.
+   * Nulle tant que le centre n'y a pas touché : la liste de départ du code
+   * (`STARTING_SENDERS`) et les expéditeurs les plus saisis au centre sont
+   * proposés, comme avant (ADR 058).
+   */
+  mailSuggestedSenders: json('mail_suggested_senders').$type<string[]>(),
+  /**
    * Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
    * comptés depuis la fin du créneau demandé — ou son annulation, si elle est
    * antérieure. Au terme, `anonymize_expired_public_requests()` les efface ; la
@@ -263,6 +271,11 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_mail_included_pages_valid',
     sql`${table.mailOpeningIncludedPages} between 0 and 1000`,
+  ),
+  // Une liste de 200 expéditeurs au plus (ADR 079) ; nulle : celle du code.
+  check(
+    'tenants_mail_suggested_senders_valid',
+    sql`${table.mailSuggestedSenders} is null or (json_type(${table.mailSuggestedSenders}) = 'ARRAY' and json_length(${table.mailSuggestedSenders}) <= 200)`,
   ),
   check(
     'tenants_public_request_retention_valid',
