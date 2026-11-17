@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache'
 import { after } from 'next/server'
 
-import { isCalendarDate } from '../../lib/dates.ts'
+import { isCalendarDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { requireClientAccount } from '../clients/session.ts'
@@ -35,8 +35,8 @@ import {
   type PortalBookingOutcome,
 } from './portail-regles.ts'
 import { periodSelection } from './public-selection.ts'
-import { errorsByField } from './questionnaire-fields.tsx'
-import { parseAnswers, productForResourceType, type Answers } from './questionnaires.ts'
+import { loadQuestionnaire } from './questionnaires-queries.ts'
+import { describeAnswers, errorsByField, formForResourceType, parseAnswers, productOfForm, type Answers } from './questionnaires.ts'
 
 /**
  * Réservation depuis l'espace client (R23, ADR 036). Chaque action revérifie
@@ -197,10 +197,11 @@ export async function bookFromPortalAction(
     // Pris entre-temps : les horaires proposés sont relus.
     if (rejection === 'creneau-indisponible') revalidatePath('/compte/reservations', 'layout')
   }
-  // Les questions du produit de l'espace (ADR 043) : celui de la ressource
-  // relue en base, jamais celui qu'annoncerait le formulaire.
-  const product = productForResourceType(availability.resource.resourceType)
-  const parsed = product ? parseAnswers(product, formData) : undefined
+  // Les questions du formulaire de l'espace (ADR 043, ADR 074) : celui de la
+  // ressource relue en base, jamais celui qu'annoncerait le formulaire.
+  const form = formForResourceType(availability.resource.resourceType)
+  const questionnaire = form ? await loadQuestionnaire(form) : undefined
+  const parsed = questionnaire ? parseAnswers(questionnaire, formData, { today: todayIsoDate(timeZone) }) : undefined
   const answerErrors = parsed ? errorsByField(parsed.errors) : {}
   if (Object.keys(fieldErrors).length > 0 || Object.keys(answerErrors).length > 0 || !account || !selection) {
     return { status: 'error', fieldErrors, answerErrors, answers: parsed?.answers }
@@ -220,8 +221,15 @@ export async function bookFromPortalAction(
       title: portalBookingTitle(title, account.clientName),
       notes: notes || null,
       proposal:
-        product && parsed
-          ? { product, answers: parsed.answers, requesterName: user.name, requesterEmail: user.email, timeZone }
+        form && questionnaire && parsed
+          ? {
+              product: productOfForm(form),
+              answers: parsed.answers,
+              describedAnswers: describeAnswers(questionnaire, parsed.answers),
+              requesterName: user.name,
+              requesterEmail: user.email,
+              timeZone,
+            }
           : undefined,
       equipmentIds,
     })

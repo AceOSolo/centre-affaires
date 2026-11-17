@@ -570,7 +570,7 @@ export type BookingRequestInput = CreateBookingInput & {
    * Le devis de la demande (ADR 043) : produit, réponses au questionnaire,
    * écrit dans la même transaction que la réservation.
    */
-  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'message' | 'requesterCompany'> & { timeZone: string }
+  proposal?: Pick<NewProposalInput, 'product' | 'answers' | 'describedAnswers' | 'message' | 'requesterCompany'> & { timeZone: string }
 }
 
 /**
@@ -628,6 +628,7 @@ export async function createBookingRequest(
         requesterCompany: input.proposal.requesterCompany,
         bookingId: booking.id,
         answers: input.proposal.answers,
+        describedAnswers: input.proposal.describedAnswers,
         message: input.proposal.message,
         currency: booking.quoteCurrency ?? 'EUR',
         lines: line ? [line] : [],

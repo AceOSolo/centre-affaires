@@ -6,6 +6,7 @@ import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 
 import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
+import { RequiredMark, RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
 import { messageRefusAuth, serveurInjoignable, type MessageAuth } from '../../../../lib/auth/messages.ts'
 import { safeRedirect } from '../../../../lib/redirection.ts'
@@ -119,10 +120,12 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
           labels={{ email: 'Adresse professionnelle', password: 'Mot de passe' }}
           message={echec?.message}
         />
+        <RequiredNote />
 
         <div>
           <label className={labelClass} htmlFor="email">
             Adresse professionnelle
+            <RequiredMark />
           </label>
           <input
             id="email"
@@ -144,6 +147,7 @@ export function SignInForm({ audience = 'client' }: { audience?: Audience }) {
         <div>
           <label className={labelClass} htmlFor="password">
             Mot de passe
+            <RequiredMark />
           </label>
           <input
             id="password"

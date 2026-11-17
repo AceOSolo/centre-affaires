@@ -7,7 +7,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { dbRefusalMessage } from '../contrats/erreurs.ts'
-import type { Answers } from '../reservations/questionnaires.ts'
+import type { Answers, DescribedAnswer } from '../reservations/questionnaires.ts'
 import { bookings, type BookingChannel, type BookingStatus } from '../reservations/schema.ts'
 import { resources, type ResourceType } from '../ressources/schema.ts'
 import {
@@ -53,6 +53,12 @@ export type NewProposalInput = {
   requesterCompany?: string | null
   bookingId?: string | null
   answers: Answers
+  /**
+   * Les réponses en clair, figées avec les libellés lus par le demandeur
+   * (ADR 074, `describeAnswers`). Absentes : relues plus tard avec les
+   * questions du code (`answersForDisplay`).
+   */
+  describedAnswers?: readonly DescribedAnswer[] | null
   message?: string | null
   staffNote?: string | null
   currency?: string
@@ -112,6 +118,7 @@ export async function createProposalInTransaction(tx: Transaction, input: NewPro
     requesterCompany: blankToNull(input.requesterCompany),
     bookingId: input.bookingId ?? null,
     answers: input.answers,
+    describedAnswers: input.describedAnswers ? [...input.describedAnswers] : null,
     message: blankToNull(input.message),
     staffNote: blankToNull(input.staffNote),
     currency: input.currency ?? 'EUR',
@@ -457,6 +464,7 @@ export async function listProposalsForDolibarr(filters: {
     return rows.map(({ proposal, client, booking, resourceName }) => ({
       ...proposal,
       answers: proposal.answers as Answers,
+      describedAnswers: proposal.describedAnswers ?? null,
       client: client
         ? {
             id: client.id,

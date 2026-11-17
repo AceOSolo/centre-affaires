@@ -31,8 +31,9 @@ import {
   type PortalBookingMode,
 } from './portail-regles.ts'
 import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
-import type { ProposalProduct } from '../facturation/schema-devis.ts'
-import { QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
+import { RequiredNote } from '../../components/ui/obligatoire.tsx'
+import { QuestionnaireFields } from './questionnaire-fields.tsx'
+import { questionnaireErrorLabels, type Questionnaire } from './questionnaires.ts'
 
 const fieldClass =
   'mt-1 w-full min-h-11 rounded-sm border border-border bg-white px-3 py-2 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive disabled:bg-muted disabled:text-muted-foreground'
@@ -41,7 +42,8 @@ const focusClass = 'focus-visible:outline-2 focus-visible:outline-offset-2 focus
 
 /** Un espace dans la journée : ses plages libres déjà coupées par le préavis du centre. */
 export type PortalBookingFormProps = {
-  resource: { id: string; name: string; typeLabel: string; mode: PortalBookingMode; product?: ProposalProduct }
+  /** `questionnaire` : les questions du formulaire de l'espace, réglées par le centre (ADR 074). */
+  resource: { id: string; name: string; typeLabel: string; mode: PortalBookingMode; questionnaire?: Questionnaire }
   date: string
   dateLabel: string
   timeZone: string
@@ -227,7 +229,7 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
     <form action={formAction} noValidate className="flex flex-col gap-5">
       <ErrorSummary
         errors={state.status === 'error' ? { ...state.fieldErrors, ...state.answerErrors } : undefined}
-        labels={resource.product ? { ...fieldLabels, ...questionnaireErrorLabels(resource.product) } : fieldLabels}
+        labels={resource.questionnaire ? { ...fieldLabels, ...questionnaireErrorLabels(resource.questionnaire) } : fieldLabels}
         message={state.status === 'error' ? state.message : undefined}
       />
       <input type="hidden" name="resourceId" value={resource.id} />
@@ -389,15 +391,16 @@ export function PortalBookingForm(props: PortalBookingFormProps) {
         <FieldError name="title" error={errors.title} />
       </div>
 
-      {resource.product && (
+      {resource.questionnaire && (
         <fieldset className="flex flex-col gap-4 rounded-md border border-border p-4">
           <legend className="px-1 text-sm font-semibold">Votre besoin</legend>
           <p className="text-sm text-muted-foreground">
             Ces réponses accompagnent votre devis : elles permettent à l’accueil de préparer l’espace.
           </p>
+          <RequiredNote />
           <QuestionnaireFields
             key={JSON.stringify(answers ?? {})}
-            product={resource.product}
+            questionnaire={resource.questionnaire}
             defaults={answers}
             errors={answerErrors}
           />

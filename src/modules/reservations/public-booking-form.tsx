@@ -18,8 +18,19 @@ import { formatDays } from './durees.ts'
 import { periodDuration, periodEndDates, periodEnds, periodLabel, periodRejection, spansSeveralDays } from './periode.ts'
 import { loadPublicDayAction, loadPublicQuoteAction, requestBookingAction, type PublicDayAvailability, type PublicFormState, type PublicQuote } from './public-actions.ts'
 import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
-import { errorsByField, QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
-import { ANSWER_FIELD_PREFIX, describeAnswers, parseAnswers, type Answers } from './questionnaires.ts'
+import { FieldLabel, RequiredNote } from '../../components/ui/obligatoire.tsx'
+import { QuestionnaireFields } from './questionnaire-fields.tsx'
+import {
+  ANSWER_FIELD_PREFIX,
+  describeAnswers,
+  errorsByField,
+  formForResourceType,
+  parseAnswers,
+  questionnaireErrorLabels,
+  type Answers,
+  type Formulaire,
+  type Questionnaire,
+} from './questionnaires.ts'
 import { contactRejections, MIN_REQUEST_MINUTES, rejectionMessages } from './requests.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
 
@@ -105,10 +116,12 @@ export type PublicBookingResource = Pick<Resource, 'id' | 'name' | 'resourceType
   rates: Pick<RateCandidate, 'unit' | 'amountCents'>[]
 }
 
-export function PublicBookingForm({ product, resources, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
+export function PublicBookingForm({ product, resources, questionnaires, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
   product: SlotProduct
   /** Ressources du seul produit choisi. */
   resources: PublicBookingResource[]
+  /** Questionnaires du centre : celui de la salle, celui du bureau… (ADR 074). */
+  questionnaires: Record<Formulaire, Questionnaire>
   timeZone: string
   currency: string
   policy: RequestPolicy
@@ -184,7 +197,9 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const quoteKey = validSlot ? `${resourceId}/${date}/${startTime}/${endDate}/${endTime}` : ''
   const [quoteLoaded, setQuoteLoaded] = useState<{ key: string; result: PublicQuote }>()
   const quote = quoteKey && quoteLoaded?.key === quoteKey ? quoteLoaded.result : undefined
-  const describedAnswers = describeAnswers(product, answers)
+  // Les questions du service de l'espace choisi : une salle a les siennes, un bureau les siennes (ADR 074).
+  const questionnaire = questionnaires[(type && formForResourceType(type)) || (product === 'espace' ? 'salle' : product)]
+  const describedAnswers = describeAnswers(questionnaire, answers)
   const quickDays = Array.from({ length: QUICK_DAYS }, (_, index) => addDaysToIsoDate(minDate, index)).filter((day) => day <= maxDate)
 
   // Réponses refusées par le serveur : retour à l'étape concernée, erreurs en ligne et en résumé.
@@ -276,7 +291,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     if (step === QUESTIONS_STEP) {
       event.preventDefault()
       // Les mêmes règles que le serveur (`parseAnswers`), avant de passer à la suite.
-      const parsed = parseAnswers(product, new FormData(event.currentTarget))
+      const parsed = parseAnswers(questionnaire, new FormData(event.currentTarget))
       if (Object.keys(parsed.errors).length > 0) { setQuestionErrors(errorsByField(parsed.errors)); return }
       setQuestionErrors(undefined)
       setAnswers(parsed.answers)
@@ -302,7 +317,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   return (
     <form action={formAction} onSubmit={handleSubmit} noValidate className="flex min-h-full flex-col">
       <div className="flex-1 px-5 pb-8 pt-5 sm:px-8">
-        <StepHeader step={step} titles={titles} headingRef={headingRef} description={step === QUESTIONS_STEP ? 'Quelques questions pour préparer un devis juste. Celles sans mention « facultatif » sont obligatoires.' : undefined} />
+        <StepHeader step={step} titles={titles} headingRef={headingRef} description={step === QUESTIONS_STEP ? 'Quelques questions pour préparer un devis juste.' : undefined} />
+        {step !== 1 && <RequiredNote className="mt-2" />}
 
         {error && (
           <div ref={errorRef} tabIndex={-1} role="alert" className="mt-5 rounded-sm border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive outline-none focus:ring-2 focus:ring-destructive/30">
@@ -310,7 +326,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
             {serverStep && serverStep !== step && <button type="button" className={`mt-2 min-h-11 underline ${focusClass}`} onClick={() => { if (serverStep === 1) setRevision((value) => value + 1); goTo(serverStep) }}>Revenir à l’étape « {titles[serverStep - 1]} »</button>}
           </div>
         )}
-        {step === QUESTIONS_STEP && questionErrors && <div className="mt-5"><ErrorSummary errors={questionErrors} labels={questionnaireErrorLabels(product)} /></div>}
+        {step === QUESTIONS_STEP && questionErrors && <div className="mt-5"><ErrorSummary errors={questionErrors} labels={questionnaireErrorLabels(questionnaire)} /></div>}
         {step === CONTACT_STEP && contactErrors && <div className="mt-5"><ErrorSummary errors={contactErrors} labels={contactLabels} /></div>}
 
         <input type="hidden" name="product" value={product} />
@@ -425,7 +441,7 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
 
         {/* Toujours montées : des champs non contrôlés démontés ne partiraient pas avec la demande. */}
         <div hidden={step !== QUESTIONS_STEP} className="mt-6">
-          <QuestionnaireFields key={JSON.stringify(answers)} product={product} defaults={answers} errors={byQuestion(questionErrors)} />
+          <QuestionnaireFields key={`${questionnaire.form}/${JSON.stringify(answers)}`} questionnaire={questionnaire} defaults={answers} errors={byQuestion(questionErrors)} />
         </div>
 
         {step === CONTACT_STEP && <div className="mt-6 space-y-6">
@@ -455,14 +471,14 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
               const fieldError = contactErrors?.[id]
               return (
                 <div key={field.key}>
-                  <label htmlFor={id} className="block text-sm font-medium">{field.label}{!field.required && <span className="font-normal text-muted-foreground"> (facultatif)</span>}</label>
-                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} maxLength={field.key === 'phone' ? 40 : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
+                  <FieldLabel htmlFor={id} required={field.required} className="block text-sm font-medium">{field.label}</FieldLabel>
+                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} aria-required={field.required || undefined}maxLength={field.key === 'phone' ? 40 : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
                   {fieldError && <p id={`${id}-error`} className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
                 </div>
               )
             })}
             <div className="sm:col-span-2">
-              <label htmlFor="booking-notes" className="block text-sm font-medium">Précisions <span className="font-normal text-muted-foreground">(facultatif)</span></label>
+              <label htmlFor="booking-notes" className="block text-sm font-medium">Précisions</label>
               <textarea id="booking-notes" rows={3} maxLength={2000} value={contact.notes} onChange={(event) => setContact({ ...contact, notes: event.target.value })} className={`${fieldClass} mt-2`} />
             </div>
           </div>

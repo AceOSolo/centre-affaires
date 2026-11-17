@@ -32,6 +32,14 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Les prix des salles, bureaux et du camion, à l’heure, à la demi-journée, à la journée.',
         permission: 'tarifs.gerer',
       },
+      // Lot 1 de la recette du 17/11 (ADR 074) : une page par service vendu
+      // (salles, bureaux, camion, matériel, domiciliation), réunies ici.
+      {
+        href: '/reglages/formulaires',
+        label: 'Formulaires de demande',
+        description: 'Les questions posées pour chaque service, et les options tarifées de la domiciliation.',
+        permission: 'formulaires.gerer',
+      },
     ],
   },
   {

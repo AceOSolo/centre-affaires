@@ -6,11 +6,19 @@ import { currentTenantId } from '../../lib/tenant.ts'
 import { clients } from '../clients/schema.ts'
 import { dbRefusalMessage } from '../contrats/erreurs.ts'
 import { optionLinesInTransaction } from '../reservations/options-queries.ts'
-import { productForResourceType, questionnaires, type Answers } from '../reservations/questionnaires.ts'
+import {
+  defaultQuestionnaires,
+  formForResourceType,
+  formResourceTypes,
+  productOfForm,
+  type Answers,
+  type DescribedAnswer,
+  type Formulaire,
+} from '../reservations/questionnaires.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
 import { bookingLineInTransaction, createProposalInTransaction, ProposalRefusedError } from './propositions-queries.ts'
-import { proposals, type Proposal, type ProposalProduct } from './schema-devis.ts'
+import { proposals, type Proposal } from './schema-devis.ts'
 
 /**
  * Devis établis par l'accueil (ADR 043) : la création depuis le back-office,
@@ -25,7 +33,8 @@ import { proposals, type Proposal, type ProposalProduct } from './schema-devis.t
 export class StaffProposalError extends Error {}
 
 export type StaffProposalInput = {
-  product: ProposalProduct
+  /** Le formulaire du devis (ADR 074) : il dit le produit et le type de ressource. */
+  form: Formulaire
   bookingId: string | null
   clientId: string | null
   requesterName: string | null
@@ -33,6 +42,8 @@ export type StaffProposalInput = {
   requesterPhone: string | null
   requesterCompany: string | null
   answers: Answers
+  /** Les réponses en clair, telles que l'écran les a posées (ADR 074). */
+  describedAnswers: readonly DescribedAnswer[]
   message: string | null
   staffNote: string | null
   currency: string
@@ -47,7 +58,8 @@ export type StaffProposalInput = {
  */
 export async function createStaffProposal(input: StaffProposalInput): Promise<Pick<Proposal, 'id' | 'number'>> {
   const tenantId = currentTenantId()
-  const needsBooking = questionnaires[input.product].resourceTypes.length > 0
+  const product = productOfForm(input.form)
+  const needsBooking = formResourceTypes[input.form].length > 0
   if (needsBooking && !input.bookingId) throw new StaffProposalError('Choisissez la réservation du devis.')
   if (!needsBooking && input.bookingId) throw new StaffProposalError('Une domiciliation ne se rattache à aucune réservation.')
   try {
@@ -76,8 +88,8 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
         if (row.status === 'cancelled') throw new StaffProposalError('Cette réservation est annulée : elle ne se chiffre plus.')
         // Le matériel loué avec une salle n'a pas de devis à lui (ADR 062).
         if (row.parentBookingId) throw new StaffProposalError('Ce matériel est en option d’une salle : son prix est au devis de la salle.')
-        if (productForResourceType(row.resourceType) !== input.product) {
-          throw new StaffProposalError(`Cette réservation ne porte pas sur : ${questionnaires[input.product].label.toLowerCase()}.`)
+        if (formForResourceType(row.resourceType) !== input.form) {
+          throw new StaffProposalError(`Cette réservation ne porte pas sur : ${defaultQuestionnaires[input.form].label.toLowerCase()}.`)
         }
         const [existing] = await tx
           .select({ number: proposals.number })
@@ -98,7 +110,7 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
         ]
       }
       const proposal = await createProposalInTransaction(tx, {
-        product: input.product,
+        product,
         channel: 'staff',
         clientId: input.clientId,
         requesterName: input.requesterName,
@@ -107,6 +119,7 @@ export async function createStaffProposal(input: StaffProposalInput): Promise<Pi
         requesterCompany: input.requesterCompany,
         bookingId: input.bookingId,
         answers: input.answers,
+        describedAnswers: input.describedAnswers,
         message: input.message,
         staffNote: input.staffNote,
         currency,
@@ -135,12 +148,12 @@ export type BookingForProposal = {
 }
 
 /**
- * Réservations à venir d'un produit, pas annulées et sans devis vivant (un
+ * Réservations à venir d'un formulaire (salle, bureau…), pas annulées et sans devis vivant (un
  * devis annulé se refait) : celles auxquelles l'accueil peut rattacher un
  * nouveau devis. Les plus proches d'abord.
  */
-export async function listBookingsForNewProposal(product: ProposalProduct, from: Date): Promise<BookingForProposal[]> {
-  const types = questionnaires[product].resourceTypes
+export async function listBookingsForNewProposal(form: Formulaire, from: Date): Promise<BookingForProposal[]> {
+  const types = formResourceTypes[form]
   if (types.length === 0) return []
   const tenantId = currentTenantId()
   return withTenant(tenantId, (tx) =>

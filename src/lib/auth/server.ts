@@ -161,7 +161,7 @@ export function createAuth(
         if (!CHEMINS_SOUS_PREUVE.has(ctx.path)) return
         if (!(await preuveHumaine().verifier(ctx.headers?.get(EN_TETE_PREUVE)))) {
           throw APIError.from('BAD_REQUEST', {
-            message: 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis réessayez.',
+            message: 'La vérification anti-robot n’a pas abouti ou a expiré : elle recommence d’elle-même. Réessayez dès qu’elle indique « Vérification anti-robot réussie ».',
             code: 'PREUVE_HUMAINE',
           })
         }

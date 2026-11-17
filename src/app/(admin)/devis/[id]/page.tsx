@@ -38,7 +38,7 @@ import {
   formatCents,
 } from '../../../../modules/facturation/tarifs.ts'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
-import { describeAnswers, type Answers } from '../../../../modules/reservations/questionnaires.ts'
+import { answersForDisplay, type Answers } from '../../../../modules/reservations/questionnaires.ts'
 
 export const metadata = { title: 'Devis' }
 
@@ -86,7 +86,8 @@ export default async function ProposalPage({
   const actions = proposalActions(proposal.status)
   const services = actions.edit ? await listServicesForProposal() : []
   const totals = proposalTotals(proposal.lines)
-  const answers = describeAnswers(proposal.product, proposal.answers as Answers)
+  // Telles que le demandeur les a lues (ADR 074).
+  const answers = answersForDisplay({ ...proposal, answers: proposal.answers as Answers })
   const notice = typeof enregistre === 'string' ? notices.get(enregistre) : undefined
   const editedLine = actions.edit ? proposal.lines.find((line) => line.id === ligne) : undefined
   const bookingChangedAfterSending = Boolean(

@@ -11,7 +11,8 @@ import {
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { PortalBookingForm } from '../../../../../modules/reservations/portail-booking-form.tsx'
-import { productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
+import { formForResourceType, productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
+import { loadQuestionnaire } from '../../../../../modules/reservations/questionnaires-queries.ts'
 import { serializePeriod } from '../../../../../modules/reservations/periode.ts'
 import {
   listPortalDayAvailability,
@@ -92,6 +93,10 @@ export default async function NouvelleReservationPage({
         maxDaysSettings: tenant.bookingMaxDays,
       })
     : undefined
+
+  // Les questions du formulaire de l'espace choisi, réglées par le centre (ADR 074).
+  const selectedForm = selected ? formForResourceType(selected.resource.resourceType) : undefined
+  const questionnaire = selectedForm ? await loadQuestionnaire(selectedForm) : undefined
 
   const dateLabel = formatLongDate(date, timeZone)
   const href = (changes: { type?: ResourceType | null; date?: string; ressource?: string }) => {
@@ -219,7 +224,7 @@ export default async function NouvelleReservationPage({
                   name: selected.resource.name,
                   typeLabel: resourceTypeLabels[selected.resource.resourceType],
                   mode: selected.resource.clientBookingMode,
-                  product: productForResourceType(selected.resource.resourceType),
+                  questionnaire,
                 }}
                 date={date}
                 dateLabel={dateLabel}

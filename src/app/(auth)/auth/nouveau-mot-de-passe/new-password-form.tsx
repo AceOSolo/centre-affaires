@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
+import { RequiredMark, RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
 import { MOT_DE_PASSE_MIN, messageRefusAuth, serveurInjoignable } from '../../../../lib/auth/messages.ts'
 import { SignOutButton } from '../../sign-out-button.tsx'
@@ -154,10 +155,12 @@ export function NewPasswordForm({
             labels={{ password: 'Nouveau mot de passe', confirmation: 'Confirmation' }}
             message={echec?.message}
           />
+          <RequiredNote />
 
           <div>
             <label className={labelClass} htmlFor="password">
               Nouveau mot de passe
+              <RequiredMark />
             </label>
             <input
               id="password"
@@ -183,6 +186,7 @@ export function NewPasswordForm({
           <div>
             <label className={labelClass} htmlFor="confirmation">
               Confirmation
+              <RequiredMark />
             </label>
             <input
               id="confirmation"
