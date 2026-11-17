@@ -120,6 +120,13 @@
       "when": 1793870408807,
       "tag": "0016_liens_agenda",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
+      "when": 1794918162341,
+      "tag": "0017_cloche_client_et_mon_compte",
+      "breakpoints": true
     }
   ]
 }
