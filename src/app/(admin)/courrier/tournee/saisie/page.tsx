@@ -16,9 +16,10 @@ const positive = (value: string | undefined) => {
 }
 
 /**
- * Saisie groupée (tournée du courrier, ADR 044, ADR 058) : une photo = un
- * pli. L'accueil choisit l'entreprise et le type, prend les photos des
- * enveloppes, relit le récapitulatif et enregistre tout en un envoi. Les plis
+ * Saisie groupée (tournée du courrier, ADR 044, ADR 058, ADR 079) : un seul
+ * écran, une photo = un pli. L'accueil cherche l'entreprise, photographie les
+ * enveloppes, corrige au besoin type et expéditeur pli par pli, et enregistre
+ * tout en un envoi. Les plis
  * entrent dans la tournée ouverte ; les domiciliés sont prévenus à sa fin,
  * comme pour le reste.
  */
@@ -44,10 +45,10 @@ export default async function SaisieGroupeePage({
         </Link>
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Saisie groupée</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
-          Une photo d’enveloppe, un pli : choisissez l’entreprise et le type, prenez ou déposez les
-          photos, puis passez à l’entreprise suivante. Relisez le récapitulatif, précisez les
-          expéditeurs si vous le souhaitez, et enregistrez. Les plis entrent fermés dans la tournée en
-          cours ; personne n’est prévenu avant sa fin.
+          Cherchez l’entreprise, photographiez ses enveloppes : une photo, un pli, en lettre par défaut.
+          Corrigez le type ou l’expéditeur sur le pli si besoin, passez à l’entreprise suivante, puis
+          enregistrez tout. Les plis entrent fermés dans la tournée en cours ; personne n’est prévenu
+          avant sa fin.
         </p>
       </div>
 

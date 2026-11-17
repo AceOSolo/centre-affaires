@@ -146,6 +146,32 @@ export function groupEntry<T extends { clientId: string; kind: MailKind }>(items
   return [...groups.values()].map((group) => ({ ...group, phrase: mailKindsPhrase(group.byKind) }))
 }
 
+/**
+ * Type d'un pli photographié (ADR 079) : la lettre, de loin la plus courante.
+ * Il ne se choisit plus avant les photos ; il se corrige pli par pli.
+ */
+export const DEFAULT_ENTRY_KIND: MailKind = 'lettre'
+
+/** Une carte de l'écran de saisie : une entreprise, ses plis, sa phrase. */
+export type EntryCard<T extends { clientId: string; kind: MailKind }> = Pick<EntryGroup<T>, 'clientId' | 'items' | 'phrase'>
+
+/**
+ * Les cartes de l'écran de saisie (ADR 079) : une par entreprise, dans
+ * l'ordre de la saisie (`groupEntry`, celui de l'enregistrement), plus celle
+ * de l'entreprise qu'on vient de choisir, encore vide, à la fin. Une
+ * entreprise choisie puis quittée sans pli ne laisse pas de carte.
+ */
+export function entryCards<T extends { clientId: string; kind: MailKind }>(
+  items: readonly T[],
+  activeClientId: string | null,
+): EntryCard<T>[] {
+  const cards: EntryCard<T>[] = groupEntry(items).map(({ clientId, items: own, phrase }) => ({ clientId, items: own, phrase }))
+  if (activeClientId && !cards.some((card) => card.clientId === activeClientId)) {
+    cards.push({ clientId: activeClientId, items: [], phrase: '' })
+  }
+  return cards
+}
+
 /** Les plis dans l'ordre du récapitulatif (`groupEntry`) : celui de leur enregistrement. */
 export const inEntryOrder = <T extends { clientId: string; kind: MailKind }>(items: readonly T[]): T[] =>
   groupEntry(items).flatMap((group) => group.items)
