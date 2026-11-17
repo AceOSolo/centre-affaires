@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { todayIsoDate, toWallClock } from '../../../../../lib/dates.ts'
@@ -40,9 +41,7 @@ export default async function SaisieGroupeePage({
   return (
     <div className="flex max-w-6xl flex-col gap-6">
       <div>
-        <Link href="/courrier/tournee" className="text-sm text-muted-foreground hover:underline">
-          ← Tournée du courrier
-        </Link>
+        <LienRetour href="/courrier/tournee" label="Tournée du courrier" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Saisie groupée</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           Cherchez l’entreprise, photographiez ses enveloppes : une photo, un pli, en lettre par défaut.

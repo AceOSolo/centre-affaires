@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { bpToPercentInput } from '../../../../modules/facturation/saisie.ts'
@@ -25,9 +24,7 @@ export default async function NewServicePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/services" className="text-sm text-muted-foreground hover:underline">
-          ← Services
-        </Link>
+        <LienRetour href="/services" label="Services" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           {expected ? expected.name : 'Nouveau service'}
         </h1>

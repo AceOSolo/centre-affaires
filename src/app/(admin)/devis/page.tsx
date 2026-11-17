@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { ProposalStatusBadge } from '../../../modules/facturation/proposal-status.tsx'
 import {
   emptyGroupMessages,
@@ -31,6 +32,8 @@ export default async function ProposalsPage({
 }) {
   await requirePermission('demandes.traiter')
   const [{ statut, produit }, timeZone] = await Promise.all([searchParams, currentTimeZone()])
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/devis', { statut, produit })
   const group = parseStatusGroup(statut)
   // Le produit se choisit dans la page, par les pastilles (ADR 048) : mêmes
   // clés que Demandes et États des lieux (`?produit=salles`…).
@@ -129,7 +132,7 @@ export default async function ProposalsPage({
                 <tr key={proposal.id} className="align-top">
                   <td className="whitespace-nowrap px-4 py-3">
                     <Link
-                      href={`/devis/${proposal.id}`}
+                      href={avecRetour(`/devis/${proposal.id}`, retour)}
                       className="font-medium text-primary underline-offset-2 hover:underline tabular"
                     >
                       {proposal.number}

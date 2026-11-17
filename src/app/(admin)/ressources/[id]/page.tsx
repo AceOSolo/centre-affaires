@@ -3,7 +3,9 @@ import { Fragment } from 'react'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { CheckIcon, TriangleAlertIcon } from '../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, formatLongDate, todayIsoDate, toIsoDate } from '../../../../lib/dates.ts'
@@ -77,9 +79,18 @@ const HORIZON_DAYS = 14
  * du code (ADR 049, ADR 082), et gère ses photos et vidéos — celles de son
  * annonce (ADR 073), créée en brouillon au besoin.
  */
-export default async function ResourcePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function ResourcePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
   const { member } = await requirePermission('ressources.gerer')
   const { id } = await params
+  // Arrivée depuis « Créer » (recette du 17/11) : on confirme, et on invite
+  // aux photos et vidéos, qui s'ajoutent ici.
+  const created = (await searchParams).creee === '1'
   // Un identifiant mal formé ferait échouer la requête en 22P02 : c'est une
   // page introuvable, pas une erreur serveur.
   if (!UUID.test(id)) notFound()
@@ -113,9 +124,7 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/ressources" className="text-sm text-muted-foreground hover:underline">
-          ← Ressources
-        </Link>
+        <LienRetour href="/ressources" label="Ressources" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{resource.name}</h1>
           <span
@@ -396,8 +405,13 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
 
       {/* Photos et vidéos (ADR 082) : celles de l'annonce du site (ADR 073), sans
           second stockage ; l'annonce se crée en brouillon au besoin. */}
-      {showsMedia &&
-        (listing ? (
+      {created && !showsMedia && <FlashNotice>Ressource créée.</FlashNotice>}
+
+      {/* Ancre de « Créer » ; la confirmation, en tête du bloc, y porte le focus. */}
+      {showsMedia && (
+        <div id="medias" className="flex scroll-mt-24 flex-col gap-3">
+          {created && <FlashNotice>Ressource créée : ajoutez ses photos et vidéos.</FlashNotice>}
+          {listing ? (
           <div className="flex flex-col gap-2">
             <AnnonceMedias listingId={listing.id} headline={listing.headline} media={parseListingMedia(listing.media)} />
             <p className="max-w-4xl text-sm text-muted-foreground">
@@ -426,7 +440,9 @@ export default async function ResourcePage({ params }: { params: Promise<{ id: s
             </div>
             <ResourceMediaStart resourceId={resource.id} />
           </section>
-        ))}
+          )}
+        </div>
+      )}
 
       {!archived && (
         <section

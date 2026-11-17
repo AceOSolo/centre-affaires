@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../lib/auth/staff.ts'
 import { addMonthsToIsoMonth, formatDateTime, todayIsoDate } from '../../../lib/dates.ts'
@@ -55,9 +54,7 @@ export default async function AccountingPage({ searchParams }: { searchParams: P
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <Link href="/paiements" className="text-sm text-muted-foreground hover:underline">
-          ← Règlements
-        </Link>
+        <LienRetour href="/paiements" label="Règlements" />
         <h1 className="text-2xl font-semibold tracking-tight">Export comptable</h1>
         <p className="max-w-3xl text-sm text-muted-foreground">
           Les écritures d’une période pour l’expert-comptable, au format du fichier des écritures

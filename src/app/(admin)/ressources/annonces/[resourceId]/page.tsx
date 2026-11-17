@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { AnnonceForm } from '../../../../../modules/ressources/annonce-form.tsx'
 import { AnnonceMedias } from '../../../../../modules/ressources/annonce-medias.tsx'
@@ -26,12 +27,7 @@ export default async function EditAnnoncePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href="/ressources/annonces"
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Annonces
-        </Link>
+        <LienRetour href="/ressources/annonces" label="Annonces" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           {listing ? 'Modifier l’annonce' : 'Rédiger une annonce'}
         </h1>

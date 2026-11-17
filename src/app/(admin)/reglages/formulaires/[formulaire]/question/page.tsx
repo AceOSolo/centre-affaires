@@ -1,7 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
-import { ArrowLeftIcon } from '../../../../../../components/ui/icons.tsx'
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { QuestionForm } from '../../../../../../modules/reservations/questionnaire-editor.tsx'
 import { loadFormSettings } from '../../../../../../modules/reservations/questionnaires-queries.ts'
@@ -31,13 +30,7 @@ export default async function QuestionPage({
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
-        <Link
-          href={`/reglages/formulaires/${formulaire}`}
-          className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-        >
-          <ArrowLeftIcon size={20} />
-          Formulaire « {questionnaire.label} »
-        </Link>
+        <LienRetour href={`/reglages/formulaires/${formulaire}`} label={<>Formulaire « {questionnaire.label} »</>} icone className="inline-flex items-center gap-1.5 text-sm text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{question ? 'Modifier une question' : 'Ajouter une question'}</h1>
         {question?.hidden && (
           <p className="mt-1 text-sm text-muted-foreground">Cette question est masquée : elle n’est pas posée tant qu’elle n’est pas reposée depuis la liste.</p>

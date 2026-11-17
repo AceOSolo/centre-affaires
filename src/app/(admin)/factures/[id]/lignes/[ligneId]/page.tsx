@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { centsToAmountInput } from '../../../../../../modules/facturation/factures-formulaire.ts'
@@ -33,9 +34,7 @@ export default async function InvoiceLinePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/factures/${invoice.id}#lignes`} className="text-sm text-muted-foreground hover:underline">
-          ← {isCreditNote ? 'Brouillon d’avoir' : 'Brouillon de facture'}
-        </Link>
+        <LienRetour href={`/factures/${invoice.id}#lignes`} label={<>{isCreditNote ? 'Brouillon d’avoir' : 'Brouillon de facture'}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modifier une ligne</h1>
         <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
           {invoiceLineKindLabels[line.kind]}

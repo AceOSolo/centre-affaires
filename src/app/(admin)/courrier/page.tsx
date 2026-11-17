@@ -7,6 +7,7 @@ import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { isUuid } from '../../../lib/uuid.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { findClient } from '../../../modules/clients/queries.ts'
 import {
   mailKindLabels,
@@ -32,6 +33,8 @@ export default async function CourrierPage({
 }) {
   const { member } = await requirePermission('courrier.gerer')
   const { vue, client } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/courrier', { vue, client })
   const clientId = isUuid(client) ? client : undefined
   // L'ancienne vue « À ouvrir » : la file des demandes d'ouverture.
   if (vue === 'a-ouvrir') {
@@ -120,7 +123,7 @@ export default async function CourrierPage({
                 <tr key={row.id}>
                   <td className="whitespace-nowrap px-4 py-3 tabular">
                     <Link
-                      href={`/courrier/${row.id}`}
+                      href={avecRetour(`/courrier/${row.id}`, retour)}
                       className="font-medium underline-offset-2 hover:underline"
                     >
                       {formatDateTime(row.receivedAt, timeZone)}

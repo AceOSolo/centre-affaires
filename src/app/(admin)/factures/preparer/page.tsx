@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
@@ -78,9 +79,7 @@ export default async function PrepareInvoicingPage({
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <Link href="/factures" className="text-sm text-muted-foreground hover:underline">
-          ← Factures
-        </Link>
+        <LienRetour href="/factures" label="Factures" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           Préparer la facturation — {formatIsoMonth(month)}
         </h1>

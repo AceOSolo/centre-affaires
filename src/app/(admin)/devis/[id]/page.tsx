@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
@@ -99,9 +100,7 @@ export default async function ProposalPage({
   return (
     <div className="flex max-w-5xl flex-col gap-6">
       <div>
-        <Link href="/devis" className="text-sm text-muted-foreground hover:underline">
-          ← Devis
-        </Link>
+        <LienRetour href="/devis" label="Devis" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">
             Devis <span className="tabular">{proposal.number}</span>

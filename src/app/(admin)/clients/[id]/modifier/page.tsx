@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { ClientForm } from '../../../../../modules/clients/client-form.tsx'
 import { findClient } from '../../../../../modules/clients/queries.ts'
@@ -16,12 +16,7 @@ export default async function EditClientPage({ params }: { params: Promise<{ id:
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={`/clients/${client.id}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← {client.name}
-        </Link>
+        <LienRetour href={`/clients/${client.id}`} label={<>{client.name}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modifier la fiche</h1>
       </div>
       {/* Une fiche anonymisée ne change plus (CA012, ADR 040). */}

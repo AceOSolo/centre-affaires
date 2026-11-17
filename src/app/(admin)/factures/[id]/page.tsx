@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
@@ -98,9 +99,7 @@ export default async function InvoicePage({
   return (
     <div className="flex flex-col gap-8">
       <div className="flex flex-col gap-2">
-        <Link href="/factures" className="text-sm text-muted-foreground hover:underline">
-          ← Factures
-        </Link>
+        <LienRetour href="/factures" label="Factures" />
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight tabular">{title}</h1>
           <span

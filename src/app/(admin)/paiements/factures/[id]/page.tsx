@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { can } from '../../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
@@ -59,9 +60,7 @@ export default async function InvoiceSettlementPage({
   return (
     <div className="flex flex-col gap-8">
       <div>
-        <Link href="/paiements" className="text-sm text-muted-foreground hover:underline">
-          ← Règlements
-        </Link>
+        <LienRetour href="/paiements" label="Règlements" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight tabular">{title}</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {can(member.role, 'clients.gerer') ? (

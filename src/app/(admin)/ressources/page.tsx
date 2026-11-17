@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { requirePermission } from '../../../lib/auth/staff.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import {
   archiveResourceAction,
   updateResourceStatusAction,
@@ -23,6 +24,8 @@ export default async function ResourcesPage({
 }) {
   await requirePermission('ressources.gerer')
   const { type } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/ressources', { type })
   const filter = resourceTypes.includes(type as ResourceType) ? (type as ResourceType) : undefined
   const resources = await listResources({ resourceType: filter })
 
@@ -81,7 +84,7 @@ export default async function ResourcesPage({
                     <td className="px-4 py-3">
                       {/* L'inventaire mène à la fiche, d'où l'on modifie (R01). */}
                       <Link
-                        href={`/ressources/${resource.id}`}
+                        href={avecRetour(`/ressources/${resource.id}`, retour)}
                         className="font-medium underline-offset-2 hover:underline"
                       >
                         {resource.name}

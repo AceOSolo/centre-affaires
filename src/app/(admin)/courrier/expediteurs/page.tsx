@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { findSenderListSettings } from '../../../../modules/courrier/expediteurs-queries.ts'
@@ -25,9 +24,7 @@ export default async function ExpediteursPage({ searchParams }: { searchParams: 
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div>
-        <Link href="/reglages" className="text-sm text-muted-foreground hover:underline">
-          ← Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Expéditeurs proposés</h1>
         <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
           La liste que l’accueil se voit proposer en tapant l’expéditeur d’un pli, dans cet ordre. En tête

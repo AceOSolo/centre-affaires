@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { loadClientBellSettings } from '../../../../modules/notifications/cloche-client-queries.ts'
 import { ClientBellSettingsForm } from '../../../../modules/notifications/cloche-client-reglages-form.tsx'
@@ -18,9 +17,7 @@ export default async function ClientBellSettingsPage() {
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div>
-        <Link href="/reglages" className="inline-flex min-h-6 items-center text-sm text-muted-foreground underline-offset-2 hover:underline">
-          ← Réglages
-        </Link>
+        <LienRetour href="/reglages" label="Réglages" className="inline-flex min-h-6 items-center text-sm text-muted-foreground underline-offset-2 hover:underline" />
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-primary">Cloche de l’espace client</h1>
         <p className="mt-2 max-w-[70ch] text-sm text-muted-foreground">
           En haut de leur espace, vos clients voient une cloche : le nombre de nouveautés qu’ils n’ont pas encore

@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime, formatIsoMonth, toIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
@@ -97,9 +98,7 @@ export default async function CourrierDetailPage({
   return (
     <div className="flex max-w-4xl flex-col gap-6">
       <div>
-        <Link href="/courrier" className="text-sm text-muted-foreground hover:underline">
-          ← Courrier
-        </Link>
+        <LienRetour href="/courrier" label="Courrier" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">
             {mailKindLabels[mail.kind]} — {mail.sender ?? 'expéditeur non précisé'}

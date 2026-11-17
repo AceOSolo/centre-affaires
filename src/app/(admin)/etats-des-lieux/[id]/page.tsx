@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { ConfirmDialog } from '../../../../components/ui/confirm-dialog.tsx'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
@@ -70,9 +71,7 @@ export default async function InspectionPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/etats-des-lieux" className="text-sm text-muted-foreground hover:underline">
-          ← États des lieux
-        </Link>
+        <LienRetour href="/etats-des-lieux" label="États des lieux" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{inspectionKindTitles[inspection.kind]}</h1>
           <span

@@ -10,6 +10,7 @@ import {
   todayIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { MailRequestQueue } from '../../../modules/courrier/demandes-file.tsx'
 import { listMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { groupStartNotice, pendingRequestStatuses } from '../../../modules/courrier/demandes-regles.ts'
@@ -74,6 +75,8 @@ export default async function DemandesPage({
   const canHandleRequests = can(member.role, 'demandes.traiter')
   const canHandleMail = can(member.role, 'courrier.gerer')
   const params = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/demandes', params)
   // Le produit vient de la ligne « Demandes » du rayon (`?produit=bureaux`,
   // ADR 070) ; les pastilles de la page ont disparu (ADR 082).
   const product = parseProduct(params.produit)
@@ -186,7 +189,7 @@ export default async function DemandesPage({
                     {booking.parentBookingId && (
                       <p className="mt-1 text-sm text-muted-foreground">
                         En option d’une{' '}
-                        <Link href={`/reservations/${booking.parentBookingId}`} className="underline-offset-2 hover:underline">
+                        <Link href={avecRetour(`/reservations/${booking.parentBookingId}`, retour)} className="underline-offset-2 hover:underline">
                           réservation de salle déjà validée
                         </Link>
                         .
@@ -212,7 +215,7 @@ export default async function DemandesPage({
                           <dd>
                             {booking.clientId ? (
                               <Link
-                                href={`/clients/${booking.clientId}`}
+                                href={avecRetour(`/clients/${booking.clientId}`, retour)}
                                 className="underline-offset-2 hover:underline"
                               >
                                 {booking.clientName}
@@ -270,7 +273,7 @@ export default async function DemandesPage({
                             <ul>
                               {equipment.map((option) => (
                                 <li key={option.id}>
-                                  <Link href={`/reservations/${option.id}`} className="underline-offset-2 hover:underline">
+                                  <Link href={avecRetour(`/reservations/${option.id}`, retour)} className="underline-offset-2 hover:underline">
                                     {option.resource.name}
                                   </Link>
                                   <span className="text-muted-foreground tabular">
@@ -289,7 +292,7 @@ export default async function DemandesPage({
                           <dt className="text-muted-foreground">Devis</dt>
                           <dd className="flex flex-wrap items-center gap-2">
                             <Link
-                              href={`/devis/${proposalOfBooking.get(booking.id)!.id}`}
+                              href={avecRetour(`/devis/${proposalOfBooking.get(booking.id)!.id}`, retour)}
                               className="font-medium text-primary underline-offset-2 hover:underline tabular"
                             >
                               {proposalOfBooking.get(booking.id)!.number}
@@ -452,7 +455,7 @@ export default async function DemandesPage({
                   >
                     <td className="px-4 py-3">
                       <Link
-                        href={`/devis/${proposal.id}`}
+                        href={avecRetour(`/devis/${proposal.id}`, retour)}
                         className="font-medium text-primary underline-offset-2 hover:underline tabular"
                       >
                         {proposal.number}
@@ -519,7 +522,7 @@ export default async function DemandesPage({
                       {formatDateTime(request.requestedAt, timeZone)}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/clients/${request.clientId}`} className="underline-offset-2 hover:underline">
+                      <Link href={avecRetour(`/clients/${request.clientId}`, retour)} className="underline-offset-2 hover:underline">
                         {request.clientName}
                       </Link>
                       {request.requestedByName && (
@@ -532,7 +535,7 @@ export default async function DemandesPage({
                     <td className="px-4 py-3">
                       {request.status === 'contracted' && request.contract ? (
                         <Link
-                          href={`/contrats/${request.contract.id}`}
+                          href={avecRetour(`/contrats/${request.contract.id}`, retour)}
                           className="underline-offset-2 hover:underline"
                         >
                           Contrat {request.contract.reference} établi
