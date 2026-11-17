@@ -41,7 +41,6 @@ import { listPendingRequests } from '../../../modules/reservations/demandes-quer
 import { totalWithOptions } from '../../../modules/reservations/options.ts'
 import { listOptionsOf } from '../../../modules/reservations/options-queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
-import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
 import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
 import { demandesPermissions } from '../aujourdhui/journee.ts'
 
@@ -75,8 +74,8 @@ export default async function DemandesPage({
   const canHandleRequests = can(member.role, 'demandes.traiter')
   const canHandleMail = can(member.role, 'courrier.gerer')
   const params = await searchParams
-  // Le produit se choisit par les pastilles de la page (ADR 048) ; les
-  // adresses filtrées (`?produit=bureaux`) restent valables (ADR 046).
+  // Le produit vient de la ligne « Demandes » du rayon (`?produit=bureaux`,
+  // ADR 070) ; les pastilles de la page ont disparu (ADR 082).
   const product = parseProduct(params.produit)
   // « Autres demandes » (ADR 070) : ce qui ne relève d'aucun produit — offres
   // groupées, devis sans ressource —, la ligne de « Tous les services ».
@@ -120,22 +119,30 @@ export default async function DemandesPage({
   return (
     <div className="flex flex-col gap-8">
       <section aria-labelledby="reservations-titre" className="flex flex-col gap-6">
+        {/* Plus de pastilles par produit (ADR 082) : venant du menu, la page est
+            déjà filtrée sur le rayon, et le titre dit lequel. La vue d'ensemble
+            reste à un lien, sans entrée de menu en plus. */}
         <div>
           <h1 id="reservations-titre" className="text-2xl font-semibold tracking-tight">
-            Demandes{product ? ` · ${product.label}` : others ? ' · Autres' : ''}
+            {product ? `Demandes — ${product.label}` : others ? 'Autres demandes' : 'Toutes les demandes'}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou
-            réexpédier, devis à compléter, offres demandées. Une demande de réservation occupe déjà
-            son créneau : la refuser le libère.
+            {others
+              ? 'Ce qui ne relève d’aucun produit : offres groupées demandées depuis l’espace client et devis sans ressource. '
+              : product
+                ? `Ce qui arrive des clients pour le service « ${product.label} ». `
+                : 'Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou réexpédier, devis à compléter, offres demandées. '}
+            {showsBookings && 'Une demande de réservation occupe déjà son créneau : la refuser le libère.'}
           </p>
+          {(product || others) && (
+            <Link
+              href="/demandes"
+              className="mt-2 inline-flex min-h-6 items-center text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Voir toutes les demandes
+            </Link>
+          )}
         </div>
-
-        <ProductFilter
-          active={product}
-          href={(key) => (key ? `/demandes?produit=${key}` : '/demandes')}
-          others={{ href: '/demandes?produit=autres', current: others }}
-        />
 
         {!showsBookings ? null : pending.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">

@@ -5,7 +5,8 @@
 notifications, lues membre par membre, mais les files de « Demandes ») et
 les ADR 048 et 053 (« Demandes » reste la seule boîte de réception, mais n'est
 plus une entrée du menu, chaque rayon a sa ligne « Demandes » filtrée, § 4) ;
-sans migration
+sans migration ; les pastilles par produit de la page sont retirées par
+l'ADR 082 (§ 2 et § 4 amendés)
 
 ## Contexte
 
