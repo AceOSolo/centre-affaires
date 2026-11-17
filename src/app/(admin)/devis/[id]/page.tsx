@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
+import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
@@ -39,6 +40,7 @@ import {
 } from '../../../../modules/facturation/tarifs.ts'
 import { ChannelLabel } from '../../../../modules/reservations/canal.tsx'
 import { answersForDisplay, type Answers } from '../../../../modules/reservations/questionnaires.ts'
+import { ClientDocumentsSection } from '../../../../modules/clients/pieces-section.tsx'
 
 export const metadata = { title: 'Devis' }
 
@@ -76,7 +78,7 @@ export default async function ProposalPage({
   params: Promise<{ id: string }>
   searchParams: Promise<{ enregistre?: string; ligne?: string }>
 }) {
-  await requirePermission('demandes.traiter')
+  const { member } = await requirePermission('demandes.traiter')
   const [{ id }, { enregistre, ligne }, tenant] = await Promise.all([params, searchParams, currentTenant()])
   if (!isUuid(id)) notFound()
   const proposal = await findProposal(id)
@@ -304,6 +306,30 @@ export default async function ProposalPage({
           )}
         </section>
       </div>
+
+      {/* Pièces justificatives de la domiciliation (ADR 075) : celles de
+          l'entreprise du devis ; un prospect sans fiche les déposera une fois
+          son espace créé, par le lien de l'accusé de réception. */}
+      {proposal.product === 'domiciliation' && can(member.role, 'pieces.valider') &&
+        (proposal.client ? (
+          <ClientDocumentsSection
+            clientId={proposal.client.id}
+            timeZone={timeZone}
+            canReview
+            canConfigure={can(member.role, 'centre.configurer')}
+          />
+        ) : (
+          <section aria-labelledby="pieces-titre" className="rounded-lg border border-border bg-white px-5 py-4">
+            <h2 id="pieces-titre" className="text-sm font-semibold tracking-tight">
+              Pièces justificatives
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground">
+              La demande n’est pas encore rattachée à une fiche client. Le demandeur déposera ses pièces depuis son espace
+              client une fois la demande rattachée : à la création de son espace par le lien de l’accusé de réception, ou
+              par l’équipe. Elles apparaîtront alors ici et sur sa fiche.
+            </p>
+          </section>
+        ))}
 
       <section aria-labelledby="reponses-titre" className="rounded-lg border border-border bg-white px-5 py-4">
         <h2 id="reponses-titre" className="text-sm font-semibold tracking-tight">

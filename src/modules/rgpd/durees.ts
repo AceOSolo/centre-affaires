@@ -23,6 +23,10 @@ export const retentionKeys = [
   'notificationLogRetentionMonths',
   'inspectionPhotoRetentionMonths',
   'inspectionAccessLogRetentionMonths',
+  // Pièces justificatives de la domiciliation (ADR 075).
+  'clientDocumentRetentionMonths',
+  'refusedClientDocumentRetentionMonths',
+  'clientDocumentAccessLogRetentionMonths',
 ] as const
 
 export type RetentionKey = (typeof retentionKeys)[number]
@@ -33,7 +37,7 @@ export type RetentionDurations = Record<RetentionKey, number>
 export const RETENTION_MIN_MONTHS = 1
 export const RETENTION_MAX_MONTHS = 120
 
-export type RetentionGroup = 'clients' | 'courrier' | 'reservations' | 'notifications' | 'etats-des-lieux'
+export type RetentionGroup = 'clients' | 'courrier' | 'reservations' | 'notifications' | 'etats-des-lieux' | 'pieces'
 
 export const retentionGroupLabels: Record<RetentionGroup, string> = {
   clients: 'Clients, prospects et personnes retirées',
@@ -41,6 +45,7 @@ export const retentionGroupLabels: Record<RetentionGroup, string> = {
   reservations: 'Demandes de réservation',
   notifications: 'Messages envoyés',
   'etats-des-lieux': 'États des lieux',
+  pieces: 'Pièces justificatives de la domiciliation',
 }
 
 export type RetentionDuration = {
@@ -59,7 +64,7 @@ export type RetentionDuration = {
 }
 
 /**
- * Les neuf durées, dans l'ordre de l'écran. Les défauts sont ceux des
+ * Les douze durées, dans l'ordre de l'écran. Les défauts sont ceux des
  * colonnes de `tenants` (migrations 0024, 0026, 0043).
  */
 export const retentionDurations: readonly RetentionDuration[] = [
@@ -151,6 +156,35 @@ export const retentionDurations: readonly RetentionDuration[] = [
     defaultMonths: 12,
     status: 'à valider',
   },
+  {
+    key: 'clientDocumentRetentionMonths',
+    group: 'pieces',
+    label: 'Pièces reçues ou validées',
+    start:
+      'Depuis la fin de la relation : la dernière activité du client, comme pour la fiche. Tout de suite si la fiche est anonymisée.',
+    effect:
+      'Le fichier est effacé du stockage ; la ligne reste (nature de la pièce, dates, état). 5 ans : obligations du domiciliataire contre le blanchiment (art. L.561-12 du Code monétaire et financier).',
+    defaultMonths: 60,
+    status: 'à valider',
+  },
+  {
+    key: 'refusedClientDocumentRetentionMonths',
+    group: 'pieces',
+    label: 'Pièces refusées',
+    start: 'Depuis le refus par l’équipe.',
+    effect: 'Le fichier est effacé du stockage : une pièce refusée ne sert plus. La ligne et le motif restent.',
+    defaultMonths: 3,
+    status: 'à valider',
+  },
+  {
+    key: 'clientDocumentAccessLogRetentionMonths',
+    group: 'pieces',
+    label: 'Journal des consultations des pièces',
+    start: 'Depuis la consultation.',
+    effect: 'Les lignes du journal sont effacées.',
+    defaultMonths: 12,
+    status: 'à valider',
+  },
 ]
 
 /** Libellés des champs, pour le résumé d'erreurs. */
@@ -168,7 +202,7 @@ export type RetentionResult =
 const BOUNDS_MESSAGE = `Un nombre entier de mois, de ${RETENTION_MIN_MONTHS} à ${RETENTION_MAX_MONTHS} (10 ans).`
 
 /**
- * Lit les neuf durées. Tout ou rien : une durée illisible ou hors bornes
+ * Lit les douze durées. Tout ou rien : une durée illisible ou hors bornes
  * refuse l'enregistrement, avec un message par champ.
  */
 export function parseRetentionDurations(input: RetentionInput): RetentionResult {

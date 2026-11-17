@@ -21,6 +21,8 @@ export type SpaceSignals = {
   inspections: number
   /** Plis non lus par la personne : la pastille de l'onglet « Courrier » (ADR 077). */
   unreadMail?: number
+  /** Pièces justificatives de la domiciliation à déposer ou déposées (ADR 075). */
+  documents?: boolean
 }
 
 export type SpaceSection = {
@@ -41,6 +43,7 @@ export function clientSections(signals: SpaceSignals): SpaceSection[] {
     { href: '/compte/factures', label: 'Factures', show: signals.invoices > 0 },
     { href: '/compte/contrats', label: 'Contrats', show: signals.contracts > 0 },
     { href: '/compte/etats-des-lieux', label: 'États des lieux', show: signals.inspections > 0 },
+    { href: '/compte/pieces', label: 'Pièces justificatives', show: signals.documents === true },
   ]
   return sections.filter((section) => section.show).map(({ show: _show, ...section }) => section)
 }

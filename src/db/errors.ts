@@ -214,3 +214,10 @@ export const DB_CLIENT_BELL_REFUSED = 'CA023'
  * de services, réponses figées d'un devis réécrites hors brouillon.
  */
 export const DB_QUESTIONNAIRE_REFUSED = 'CA020'
+
+/**
+ * Pièce justificative refusée par la base (ADR 075, `34-pieces.sql`) : pièce
+ * du même type déjà reçue ou validée, passage d'état impossible, fichier
+ * réécrit, suppression, liste des pièces écrite depuis l'espace client.
+ */
+export const DB_CLIENT_DOCUMENT_REFUSED = 'CA021'

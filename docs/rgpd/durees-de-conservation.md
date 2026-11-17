@@ -42,6 +42,14 @@ champs personnels. La ligne reste, pour l'historique et la facturation.
 (ADR 014) et reste dans l'historique. On n'y écrit pas de nom de personne ni
 de motif personnel ; on écrit « Réunion Alpha », pas « Entretien M. Dupont ».
 
+### Pièces justificatives de la domiciliation (ADR 075)
+
+| Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
+|---|---|---|---|---|---|
+| Pièces reçues ou validées (stockage objet, chiffrées, `client_documents`) : pièce d'identité du dirigeant, Kbis ou projet de statuts, justificatif de domicile | **60 mois** après la fin de la relation (proposition ; obligations du domiciliataire contre le blanchiment, art. L.561-12 du Code monétaire et financier) | dernière activité de l'entreprise (`client_last_activity_on`) ; tout de suite si la fiche est anonymisée | le fichier est effacé du stockage ; la ligne reste (nature, dates, état), marquée `deleted_at` | M1 (route de nuit), réglage M3 (`client_document_retention_months`) | à valider |
+| Pièces refusées | **3 mois** (proposition) | refus par l'équipe | fichier effacé ; la ligne et le motif restent | M1, réglage M3 (`refused_client_document_retention_months`) | à valider |
+| Journal des consultations des pièces (`client_document_views`) | **12 mois** (proposition) | consultation | lignes effacées | M1, réglage M3 (`client_document_access_log_retention_months`) | à valider |
+
 ### Clients et contrats (ADR 006, R07)
 
 | Donnée | Durée | Départ | Au terme | Mécanisme | Statut |
@@ -128,6 +136,9 @@ Si le centre veut raccourcir cette survie, il réduit
   - `prospect_retention_months`, `client_retention_months`,
     `removed_member_retention_months` (ADR 040) ;
   - `notification_log_retention_months` (ADR 038) ;
+  - `client_document_retention_months`,
+    `refused_client_document_retention_months`,
+    `client_document_access_log_retention_months` (ADR 075) ;
   - `inspection_photo_retention_months`,
     `inspection_access_log_retention_months` (ADR 039).
 - Valeurs du centre : réglées à l'écran **Configuration du centre**,

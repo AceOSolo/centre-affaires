@@ -87,6 +87,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Les nouveautés que la cloche annonce aux clients dans leur espace, et combien de jours elle les garde.',
         permission: 'notifications.gerer',
       },
+      // Domiciliation (ADR 075) : la liste des pièces justificatives demandées.
+      {
+        href: '/reglages/pieces',
+        label: 'Pièces justificatives',
+        description: 'Domiciliation : les pièces que le client dépose dans son espace, selon la situation de sa société.',
+        permission: 'centre.configurer',
+      },
       // Réservé à la direction (ADR 065).
       {
         href: '/reglages/crm',

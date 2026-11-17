@@ -178,6 +178,18 @@ export const tenants = mysqlTable('tenants', {
   inspectionAccessLogRetentionMonths: int('inspection_access_log_retention_months')
     .notNull()
     .default(12),
+  /*
+   * Pièces justificatives de la domiciliation (ADR 075), en mois. Le fichier
+   * part, la ligne reste.
+   */
+  /** Pièces reçues ou validées, comptées depuis la fin de la relation (`client_last_activity_on`). */
+  clientDocumentRetentionMonths: int('client_document_retention_months').notNull().default(60),
+  /** Pièces refusées, comptées depuis le refus : elles ne servent plus. */
+  refusedClientDocumentRetentionMonths: int('refused_client_document_retention_months').notNull().default(3),
+  /** Journal des consultations des pièces. */
+  clientDocumentAccessLogRetentionMonths: int('client_document_access_log_retention_months')
+    .notNull()
+    .default(12),
 
   /*
    * Identité légale du vendeur, figée dans chaque facture émise (mentions
@@ -279,6 +291,10 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_inspection_retention_valid',
     sql`${table.inspectionPhotoRetentionMonths} between 1 and 120 and ${table.inspectionAccessLogRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_client_document_retention_valid',
+    sql`${table.clientDocumentRetentionMonths} between 1 and 120 and ${table.refusedClientDocumentRetentionMonths} between 1 and 120 and ${table.clientDocumentAccessLogRetentionMonths} between 1 and 120`,
   ),
   check('tenants_siren_format', sql`${table.siren} is null or REGEXP_LIKE(${table.siren}, '^[0-9]{9}$', 'c')`),
   check(

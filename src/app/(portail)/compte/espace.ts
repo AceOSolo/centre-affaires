@@ -13,6 +13,7 @@ import { listInvoicesForAccounts } from '../../../modules/facturation/compte-que
 import { listPortalOffers } from '../../../modules/facturation/offres-portail.ts'
 import { listOpenDomiciliationRequests } from '../../../modules/facturation/propositions-portail.ts'
 import { clientBellUnreadCount } from '../../../modules/notifications/cloche-client-queries.ts'
+import { hasDocumentSpace } from '../../../modules/clients/pieces-queries.ts'
 import { splitClientBookings } from '../../../modules/reservations/compte-regles.ts'
 import { listBookingsForAccounts } from '../../../modules/reservations/compte-queries.ts'
 
@@ -40,7 +41,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
   const today = todayIsoDate(tenant.timezone)
   const now = new Date()
 
-  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests, bellCount] =
+  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests, bellCount, documents] =
     await Promise.all([
       listBookingsForAccounts(accounts),
       listInvoicesForAccounts(accounts),
@@ -53,6 +54,8 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
       listOpenDomiciliationRequests(accounts),
       // Nouveautés non lues de la cloche (ADR 077), justes dès le premier affichage.
       clientBellUnreadCount(accounts, { now }),
+      // Pièces justificatives de la domiciliation (ADR 075).
+      hasDocumentSpace(accounts),
     ])
 
   const activeContracts = contracts.filter((contract) => contract.status === 'active')
@@ -88,6 +91,7 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
       contracts: contracts.length,
       inspections: inspections.length,
       unreadMail: mail.unread,
+      documents,
     }),
   }
 })

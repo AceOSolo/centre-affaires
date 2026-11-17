@@ -7,7 +7,7 @@ import { retentionValues } from './durees.ts'
 
 /**
  * Section « Durées de conservation » de la configuration du centre (R29,
- * ADR 040) : les neuf durées, et ce que la prochaine tâche de nuit en fera.
+ * ADR 040) : les douze durées, et ce que la prochaine tâche de nuit en fera.
  * Réservée, comme la page, à `centre.configurer`.
  */
 export async function RetentionSettingsSection({ tenant }: { tenant: Tenant }) {

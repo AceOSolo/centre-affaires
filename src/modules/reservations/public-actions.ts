@@ -343,9 +343,9 @@ export async function requestBookingAction(
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyBookingRequestSubmitted(requestId))
-  // Le visiteur reçoit l'accusé de réception, avec le lien pour créer son
-  // espace et y suivre sa demande (ADR 068). Connecté, il la voit déjà.
-  if (!clientId) after(() => sendRequestReceived({ bookingId: requestId }))
+  // Le demandeur reçoit toujours l'accusé de réception (ADR 068, ADR 075) :
+  // le lien pour créer son espace, ou celui de l'espace où il la retrouve.
+  after(() => sendRequestReceived({ bookingId: requestId }))
   // Le planning du staff doit montrer la demande sans attendre.
   revalidatePath('/reservations')
   revalidatePath('/demandes')
@@ -432,8 +432,9 @@ export async function requestDomiciliationAction(
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyDomiciliationRequestSubmitted(proposal.id))
-  // Le visiteur reçoit l'accusé de réception et le lien de son espace (ADR 068).
-  if (!clientId) after(() => sendRequestReceived({ proposalId: proposal.id }))
+  // Le demandeur reçoit toujours l'accusé de réception, connecté ou non, avec
+  // les pièces justificatives à préparer (ADR 068, ADR 075).
+  after(() => sendRequestReceived({ proposalId: proposal.id }))
   revalidatePath('/devis')
 
   return {

@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { clientSections, isActiveSection, sectionBadge } from './espace-rubriques.ts'
+import { clientSections, isActiveSection, sectionBadge, type SpaceSignals } from './espace-rubriques.ts'
 
-const nothing = { domiciliated: false, invoices: 0, contracts: 0, inspections: 0 }
+const nothing: SpaceSignals = { domiciliated: false, invoices: 0, contracts: 0, inspections: 0 }
 const labels = (signals: typeof nothing) => clientSections(signals).map((section) => section.label)
 
 describe('rubriques de l’espace client', () => {
@@ -24,6 +24,10 @@ describe('rubriques de l’espace client', () => {
       'Contrats',
       'États des lieux',
     ])
+  })
+
+  it('les pièces justificatives apparaissent pour une demande de domiciliation (ADR 075)', () => {
+    assert.deepEqual(labels({ ...nothing, documents: true }), ['Accueil', 'Réservations', 'Pièces justificatives'])
   })
 
   it('une facture sans contrat montre les factures seules', () => {
