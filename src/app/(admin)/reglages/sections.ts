@@ -72,6 +72,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Identité du centre, règles de réservation, durées de conservation.',
         permission: 'centre.configurer',
       },
+      // Recette du 17/11, lot 4 (ADR 077) : service « Tous les services ».
+      {
+        href: '/notifications/cloche-client',
+        label: 'Cloche de l’espace client',
+        description: 'Les nouveautés que la cloche annonce aux clients dans leur espace, et combien de jours elle les garde.',
+        permission: 'notifications.gerer',
+      },
       // Réservé à la direction (ADR 065).
       {
         href: '/reglages/crm',

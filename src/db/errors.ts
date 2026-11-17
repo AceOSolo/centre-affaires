@@ -199,3 +199,11 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Cloche de l'espace client refusée par la base (ADR 077,
+ * `74-cloche-client.sql`) : nouveauté marquée lue pour une autre entreprise
+ * que celle de l'accès, lecture réécrite ou effacée depuis l'espace client,
+ * réglage de la cloche supprimé.
+ */
+export const DB_CLIENT_BELL_REFUSED = 'CA023'

@@ -161,6 +161,12 @@ export const clientMembers = mysqlTable(
     /** Toujours en minuscules : c'est la clé de rattachement au compte. */
     email: varchar('email', { length: 255 }).notNull(),
     fullName: text('full_name'),
+    /**
+     * Téléphone de la personne, saisi par elle dans « Mon compte » (ADR 077),
+     * rangé par `normalisePhone`. Effacé à l'anonymisation (trigger,
+     * `74-cloche-client.sql`).
+     */
+    phone: varchar('phone', { length: 40 }),
     ...timestamps(),
     /** Retrait de l'accès : il cesse, l'historique des demandes reste (décision 6). */
     deletedAt: deletedAt(),
@@ -199,6 +205,8 @@ export const clientMembers = mysqlTable(
       sql`${table.anonymizedAt} is null or (${table.deletedAt} is not null and ${table.authUserId} is null)`,
     ),
     check('client_members_anonymization_traced', anonymizationTraceCheck(table)),
+    // Une personne anonymisée n'a plus de téléphone (ADR 077).
+    check('client_members_anonymized_no_phone', sql`${table.anonymizedAt} is null or ${table.phone} is null`),
     // Une adresse ne vaut qu'une fois par entreprise, et redevient libre après
     // un retrait.
     uniqueIndex('client_members_client_email_key').on(

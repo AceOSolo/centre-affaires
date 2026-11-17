@@ -14,6 +14,7 @@ import { contractTypeLabels } from '../../../modules/contrats/labels.ts'
 import { mailKindLabels } from '../../../modules/courrier/labels.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
 import { domiciliationRequestStatusLabel } from '../../../modules/facturation/propositions-portail.ts'
+import { unreadMailPhrase } from '../../../modules/notifications/cloche-client.ts'
 import { loadClientSpace } from './espace.ts'
 
 export const metadata = { title: 'Mon espace' }
@@ -44,10 +45,11 @@ export default async function CompteAccueilPage() {
       texte: `${toSign} état${toSign > 1 ? 's' : ''} des lieux à signer`,
       detail: 'Relisez-le et signez en ligne.',
     },
+    // Le nombre de plis non lus, dit d'emblée et en toutes lettres (ADR 077).
     domiciliated && mail.unread > 0 && {
       href: '/compte/courrier',
       Icon: MailIcon,
-      texte: `${mail.unread} pli${mail.unread > 1 ? 's' : ''} non lu${mail.unread > 1 ? 's' : ''}`,
+      texte: unreadMailPhrase(mail.unread),
       detail: 'Dans votre boîte aux lettres.',
     },
   ].filter((item): item is Exclude<typeof item, false> => item !== false)
@@ -137,7 +139,11 @@ export default async function CompteAccueilPage() {
         </Carte>
 
         {domiciliated && (
-          <Carte titre="Courrier" Icon={MailIcon}>
+          <Carte
+            titre="Courrier"
+            Icon={MailIcon}
+            pastille={mail.unread > 0 ? unreadMailPhrase(mail.unread) : undefined}
+          >
             {latestMail.length === 0 ? (
               <p className="text-muted-foreground">Aucun pli reçu pour le moment. Nous vous prévenons à chaque arrivée.</p>
             ) : (
@@ -194,12 +200,28 @@ export default async function CompteAccueilPage() {
   )
 }
 
-function Carte({ titre, Icon, children }: { titre: string; Icon: typeof MailIcon; children: React.ReactNode }) {
+function Carte({
+  titre,
+  Icon,
+  pastille,
+  children,
+}: {
+  titre: string
+  Icon: typeof MailIcon
+  /** Un nombre dit en toutes lettres à côté du titre : « 3 nouveaux courriers » (ADR 077). */
+  pastille?: string
+  children: React.ReactNode
+}) {
   return (
     <section className="flex flex-col rounded-xl border border-border bg-background p-6">
-      <h2 className="flex items-center gap-2 text-base font-semibold text-primary">
+      <h2 className="flex flex-wrap items-center gap-2 text-base font-semibold text-primary">
         <Icon size={20} />
         {titre}
+        {pastille && (
+          <span className="rounded-full bg-primary px-2.5 py-0.5 text-sm font-medium text-primary-foreground tabular">
+            {pastille}
+          </span>
+        )}
       </h2>
       <div className="mt-4 flex flex-1 flex-col">{children}</div>
     </section>
