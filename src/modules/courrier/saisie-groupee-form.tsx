@@ -44,9 +44,14 @@ const MAX_RESULTS = 6
 const fieldClass =
   'rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive sm:text-sm'
 // Cibles de 44 px : l'écran sert au téléphone et à la tablette, pendant le tri.
-const actionClass =
-  'relative inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring disabled:cursor-not-allowed disabled:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50'
-const cameraClass = `${actionClass} border-primary bg-primary text-white hover:bg-primary-hover`
+const actionBase =
+  'relative inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring disabled:cursor-not-allowed disabled:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50'
+const actionClass = `${actionBase} border-border bg-white text-foreground hover:bg-muted`
+// Couleurs à part, jamais ajoutées par-dessus celles d'`actionClass` : avec
+// deux `bg-*` sur un même élément, c'est l'ordre de la feuille de style qui
+// gagne, et le bouton sortait blanc sur blanc (recette du 17/11). Blanc sur
+// `--primary` : contraste ≈ 9,7:1.
+const cameraClass = `${actionBase} border-primary bg-primary text-primary-foreground hover:bg-primary-hover`
 // Type d'un pli : quatre puces, une touche pour corriger.
 const kindClass =
   'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-xs font-medium hover:bg-muted has-[:checked]:border-primary has-[:checked]:bg-accent/10 has-[:checked]:text-primary has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring sm:min-h-9'
@@ -62,7 +67,7 @@ const plural = (count: number, word: string, many = `${word}s`) => `${count} ${c
 /**
  * Saisie groupée du courrier (ADR 058, simplifiée par l'ADR 079) : **un seul
  * écran**, sans étape. On cherche l'entreprise ; sur téléphone ou tablette,
- * « Photographier » sur sa ligne la choisit et ouvre l'appareil d'un même
+ * « Ajouter un courrier » sur sa ligne la choisit et ouvre l'appareil d'un même
  * geste. **Une photo = un pli**, en lettre par défaut : le type et
  * l'expéditeur se corrigent pli par pli, sur sa carte, si besoin. Puis
  * l'entreprise suivante, et « Enregistrer » une fois pour tout.
@@ -247,7 +252,6 @@ export function MailEntryForm({
   /** Boutons de photo : l'appareil (téléphone, tablette), des fichiers, ou un pli sans photo. */
   const photoButtons = (target: string, compact = false) => {
     const name = nameOf(target)
-    const hasPhoto = drafts.some((draft) => draft.clientId === target && draft.photo)
     const pick = (capture: boolean) => (
       <input
         type="file"
@@ -272,7 +276,7 @@ export function MailEntryForm({
         {/* Téléphone ou tablette : l'appareil photo s'ouvre directement, un pli après l'autre. */}
         <label className={`${cameraClass} hidden pointer-coarse:inline-flex`}>
           <CameraIcon size={20} />
-          {compact ? 'Photographier' : hasPhoto ? 'Photographier le pli suivant' : 'Photographier un pli'}
+          Ajouter un courrier
           <span className="sr-only"> pour {name}</span>
           {pick(true)}
         </label>
