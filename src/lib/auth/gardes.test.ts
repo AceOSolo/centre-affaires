@@ -37,7 +37,12 @@ const code = (file: string) =>
 const OUVERTES_A_TOUTE_L_EQUIPE = ['app/(admin)/acces-reserve/page.tsx']
 
 /** Actions ouvertes à tous, sans compte : la demande de réservation publique (ADR 005). */
-const ACTIONS_PUBLIQUES = ['modules/reservations/public-actions.ts']
+const ACTIONS_PUBLIQUES = [
+  'modules/reservations/public-actions.ts',
+  // Page de connexion (ADR 083) : lit la session de l'appelant et ne peut que
+  // la refermer ; chaque page et chaque action revérifient le compte.
+  'app/(auth)/porte-actions.ts',
+]
 
 describe('gardes du back-office', () => {
   const portes = walk(ADMIN).filter((file) => /[/\\](page\.tsx|route\.ts)$/.test(file))
