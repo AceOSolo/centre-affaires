@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 import { availableStarts } from './public-selection.ts'
-import { requestableRanges, requestBounds, requestTimingRejection, validRequestPolicy } from './request-policy.ts'
+import { parseClientRules, requestableRanges, requestBounds, requestTimingRejection, validRequestPolicy } from './request-policy.ts'
 import { rejectRequest } from './requests.ts'
 
 const now = new Date('2026-10-23T08:00:00Z')
@@ -47,5 +47,22 @@ describe('délais des demandes publiques', () => {
       { bookingLeadHours: 0, bookingHorizonDays: 366 },
       { bookingLeadHours: NaN, bookingHorizonDays: 90 },
     ]) assert.equal(validRequestPolicy(invalid), false)
+  })
+})
+
+describe('formules des bureaux et délai de modification par le client (ADR 076)', () => {
+  const form = (values: Record<string, string>) => new Map(Object.entries(values))
+
+  it('lit trois entiers dans les bornes de la base', () => {
+    assert.deepEqual(parseClientRules(form({ bookingMaxWeeks: '4', bookingMaxMonths: '12', bookingChangeDays: '0' })), {
+      ok: true,
+      rules: { bookingMaxWeeks: 4, bookingMaxMonths: 12, bookingChangeDays: 0 },
+    })
+  })
+
+  it('refuse champ par champ ce qui sort des bornes', () => {
+    const parsed = parseClientRules(form({ bookingMaxWeeks: '0', bookingMaxMonths: '25', bookingChangeDays: '2,5' }))
+    assert.equal(parsed.ok, false)
+    assert.deepEqual(Object.keys(parsed.ok ? {} : parsed.errors).sort(), ['bookingChangeDays', 'bookingMaxMonths', 'bookingMaxWeeks'])
   })
 })

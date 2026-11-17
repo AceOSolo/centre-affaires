@@ -43,6 +43,15 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Les heures d’ouverture et les jours fermés, par ressource.',
         permission: 'horaires.gerer',
       },
+      // Recette du 17/11, lot 3 (ADR 076) — service : tous les services
+      // (salles, bureaux, camion, matériel ; plafonds semaine et mois : bureaux).
+      {
+        href: '/disponibilites?section=regles-reservation',
+        label: 'Règles de réservation en ligne',
+        description:
+          'Préavis, horizon, durée maximale d’une demande, bureaux à la semaine ou au mois, délai de modification et d’annulation par le client.',
+        permission: 'horaires.gerer',
+      },
       {
         href: '/ressources/agendas',
         label: 'Agendas Google',

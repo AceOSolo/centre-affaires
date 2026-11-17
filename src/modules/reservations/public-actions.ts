@@ -20,9 +20,20 @@ import {
   notifyBookingRequestSubmitted,
   notifyDomiciliationRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
+import { formulasOf, rentalFormulaLabels, type RentalFormula } from '../ressources/formules.ts'
 import { findResource } from '../ressources/queries.ts'
 import { maxRequestDaysFor } from './durees.ts'
-import { dayFreeRanges, periodLabel, periodRejection, periodRejectionMessage, type PeriodAvailability } from './periode.ts'
+import {
+  choiceRejectionMessage,
+  choiceSpanDays,
+  choiceUnit,
+  evaluateChoice,
+  formulaLimitsOf,
+  parseChosenFormula,
+  readChoice,
+  type FormulaLimits,
+} from './formules-periode.ts'
+import { dayFreeRanges, periodLabel, type PeriodAvailability } from './periode.ts'
 import { loadPeriodAvailability } from './periode-queries.ts'
 import {
   BookingConflictError,
@@ -56,6 +67,12 @@ export type PublicDayAvailability =
       period: PeriodAvailability
       /** Jours d'affilée qu'une demande peut couvrir pour ce produit. */
       maxDays: number
+      /** Formules de location réglées sur la ressource (ADR 076) ; vide : le formulaire libre. */
+      formulas: RentalFormula[]
+      /** Plafonds des locations à la semaine et au mois, durée d'une demi-journée. */
+      limits: FormulaLimits
+      /** Premier début permis : maintenant et le préavis du centre. */
+      earliest: Date
     }
   | { status: 'error'; message: string }
 
@@ -73,11 +90,19 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
   if (!resource || resource.status !== 'active' || resource.deletedAt) {
     return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
   }
-  // La période couvre les jours que la demande peut atteindre : le moteur
-  // vérifie la ressource jusqu'au bout, nuits comprises (ADR 061).
+  // La période couvre les jours que la demande peut atteindre — la durée
+  // maximale du produit, la plus longue des formules de la ressource : le
+  // moteur vérifie la ressource jusqu'au bout (ADR 061, ADR 076).
   const maxDays = maxRequestDaysFor(tenant.bookingMaxDays, resource.resourceType)
+  const formulas = formulasOf(resource)
+  const limits = formulaLimitsOf(tenant)
   const period = await withTenant(currentTenantId(), (tx) =>
-    loadPeriodAvailability(tx, { resourceId, firstDate: date, dayCount: maxDays, timeZone }),
+    loadPeriodAvailability(tx, {
+      resourceId,
+      firstDate: date,
+      dayCount: choiceSpanDays(formulas, date, maxDays, limits),
+      timeZone,
+    }),
   )
   return {
     status: 'ready',
@@ -86,6 +111,9 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
     latestStart: latest,
     period,
     maxDays,
+    formulas,
+    limits,
+    earliest,
   }
 }
 
@@ -109,6 +137,8 @@ export async function loadPublicQuoteAction(
   endTime: string,
   /** Jour de fin, pour une demande sur plusieurs jours (ADR 061) ; le jour même par défaut. */
   endDate: string = date,
+  /** Formule de location choisie (ADR 076) : son unité fait le prix. */
+  formula: string = '',
 ): Promise<PublicQuote> {
   const unpriced = (message: string): PublicQuote => ({ status: 'unpriced', message })
   if (!UUID.test(resourceId)) return unpriced(rejectionMessages['ressource-indisponible'])
@@ -119,8 +149,11 @@ export async function loadPublicQuoteAction(
   if (!resource || resource.status !== 'active' || resource.deletedAt) {
     return unpriced(rejectionMessages['ressource-indisponible'])
   }
-  const result = await quote({ resourceId, ...selection, clientId: await requesterClientId() })
-  if (!result.ok) return unpriced('Notre équipe vous précisera le tarif de ce créneau.')
+  const chosen = parseChosenFormula(formula, formulasOf(resource))
+  if (!chosen) return unpriced('Choisissez une formule proposée pour cet espace.')
+  const result = await quote({ resourceId, ...selection, clientId: await requesterClientId(), unit: choiceUnit(chosen) })
+  // Sans prix à l'unité de la formule, rien n'est inventé (ADR 076).
+  if (!result.ok) return unpriced('Tarif communiqué par l’accueil : notre équipe vous le précisera avec votre devis.')
   return {
     status: 'priced',
     quote: toQuoteDisplay(result.quote),
@@ -231,11 +264,6 @@ export async function requestBookingAction(
     return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
   }
   if (!UUID.test(resourceId)) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
-  // Le jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même.
-  const endDate = text(formData, 'endDate') || date
-  const selection = periodSelection(date, text(formData, 'startTime'), endDate, text(formData, 'endTime'), timeZone)
-  if (!selection) return { status: 'error', step: 2, message: rejectionMessages['creneau-illisible'] }
-  const { startsAt, endsAt } = selection
 
   // La ressource est relue en base : l'identifiant vient d'un `<select>` que
   // n'importe qui peut réécrire avant l'envoi. Son produit aussi : on ne pose
@@ -245,6 +273,33 @@ export async function requestBookingAction(
     return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
   }
   const bookable = resource.status === 'active' && !resource.deletedAt
+
+  // La formule et la période, relues sur des disponibilités fraîches, sur
+  // toute l'étendue : le formulaire a pu rester ouvert, ou mentir (ADR 061,
+  // ADR 076). Le trigger anti-chevauchement reste le garde final (décision 3).
+  const formulas = formulasOf(resource)
+  const formula = parseChosenFormula(formData.get('formula'), formulas)
+  const availability = await loadPublicDayAction(resourceId, date)
+  if (availability.status === 'error') return { ...availability, step: 2 }
+  if (!formula) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage('formule-indisponible', availability.maxDays, availability.limits) }
+  }
+  const evaluation = evaluateChoice(
+    readChoice(formData, formula, date),
+    {
+      date,
+      timeZone,
+      availability: availability.period,
+      earliest: availability.earliest,
+      maxDays: availability.maxDays,
+      limits: availability.limits,
+    },
+    formulas,
+  )
+  if (!evaluation.range) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage(evaluation.rejection, availability.maxDays, availability.limits) }
+  }
+  const { startsAt, endsAt } = evaluation.range
 
   // Relu par le serveur, comme la ressource : le formulaire peut mentir.
   const { answers, errors } = parseAnswers(product, formData)
@@ -278,14 +333,8 @@ export async function requestBookingAction(
     return { status: 'error', step, message: rejection === 'preavis-insuffisant' || rejection === 'creneau-trop-lointain' ? requestPolicyMessage(tenant) : rejectionMessages[rejection] }
   }
 
-  // Disponibilités relues sur toute la période, avec la durée maximale du
-  // produit : le formulaire a pu rester ouvert, ou mentir (ADR 061). Le
-  // trigger anti-chevauchement reste le garde final (décision 3).
-  const availability = await loadPublicDayAction(resourceId, date)
-  if (availability.status === 'error') return { ...availability, step: 2 }
-  const periodProblem = periodRejection(selection, availability.period, timeZone, availability.maxDays)
-  if (periodProblem) {
-    return { status: 'error', step: 2, message: periodRejectionMessage(periodProblem, availability.maxDays) }
+  if (evaluation.rejection) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage(evaluation.rejection, availability.maxDays, availability.limits) }
   }
   const refus = await refusAntiRobot(formData)
   if (refus) return { status: 'error', message: refus }
@@ -299,11 +348,19 @@ export async function requestBookingAction(
       startsAt,
       endsAt,
       title: text(formData, 'title'),
-      notes: ['Demande de devis à envoyer par courriel.', notes].filter(Boolean).join('\n\n'),
+      notes: [
+        'Demande de devis à envoyer par courriel.',
+        formula !== 'libre' ? `Formule : ${rentalFormulaLabels[formula].toLocaleLowerCase('fr-FR')}.` : '',
+        notes,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
       requesterName: text(formData, 'name'),
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
       clientId,
+      // Le prix suit l'unité de la formule choisie (ADR 076).
+      pricing: { mode: 'grid', unit: choiceUnit(formula) },
       // Le devis naît avec la demande, dans la même transaction (ADR 043).
       proposal: { product, answers, message: notes, requesterCompany: company, timeZone },
     })

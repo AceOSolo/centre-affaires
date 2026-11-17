@@ -16,7 +16,14 @@ import { periodAvailability, type PeriodAvailability } from './periode.ts'
  */
 export async function loadPeriodAvailability(
   tx: Transaction,
-  input: { resourceId: string; firstDate: string; dayCount: number; timeZone: string },
+  input: {
+    resourceId: string
+    firstDate: string
+    dayCount: number
+    timeZone: string
+    /** Réservation modifiée par son client (ADR 076) : son propre créneau ne la bloque pas. */
+    excludeBookingId?: string
+  },
 ): Promise<PeriodAvailability> {
   const { resourceId, firstDate, timeZone } = input
   const dayCount = Math.max(1, input.dayCount)
@@ -46,6 +53,7 @@ export async function loadPeriodAvailability(
     dayRangeUtc(firstDate, timeZone).startsAt,
     dayRangeUtc(lastDate, timeZone).endsAt,
     [resourceId],
+    input.excludeBookingId,
   )
   return periodAvailability({ firstDate, dayCount, timeZone, resourceId, rules, closures: periods, busy })
 }

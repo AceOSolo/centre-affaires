@@ -94,8 +94,12 @@ export type PeriodDay = { date: string; windows: TimeRange[] }
  * jour : les plages d'ouverture de chaque jour, et les plages **libres en
  * continu** sur toute l'étendue — nuits comprises, réservations et fermetures
  * exceptionnelles retirées. Rien de ce qui occupe la ressource n'y figure.
+ *
+ * `unbooked` : les mêmes, sans retirer les fermetures exceptionnelles. Une
+ * location à la semaine ou au mois (ADR 076) n'est pas interrompue par un jour
+ * férié : le bureau reste au client, le centre est seulement fermé ce jour-là.
  */
-export type PeriodAvailability = { days: PeriodDay[]; free: TimeRange[] }
+export type PeriodAvailability = { days: PeriodDay[]; free: TimeRange[]; unbooked: TimeRange[] }
 
 export function periodAvailability(input: {
   firstDate: string
@@ -123,13 +127,14 @@ export function periodAvailability(input: {
     startsAt: dayRangeUtc(dates[0], timeZone).startsAt,
     endsAt: dayRangeUtc(dates[dates.length - 1], timeZone).endsAt,
   }
-  return { days, free: freeRanges(span, [...input.busy, ...closed]) }
+  return { days, free: freeRanges(span, [...input.busy, ...closed]), unbooked: freeRanges(span, input.busy) }
 }
 
 /** La même, en instants ISO : ce qu'une page serveur passe à un formulaire client. */
 export type SerializedPeriodAvailability = {
   days: { date: string; windows: { startsAt: string; endsAt: string }[] }[]
   free: { startsAt: string; endsAt: string }[]
+  unbooked: { startsAt: string; endsAt: string }[]
 }
 
 const isoRange = (range: TimeRange) => ({ startsAt: range.startsAt.toISOString(), endsAt: range.endsAt.toISOString() })
@@ -142,6 +147,7 @@ export function serializePeriod(availability: PeriodAvailability): SerializedPer
   return {
     days: availability.days.map((day) => ({ date: day.date, windows: day.windows.map(isoRange) })),
     free: availability.free.map(isoRange),
+    unbooked: availability.unbooked.map(isoRange),
   }
 }
 
@@ -149,6 +155,7 @@ export function revivePeriod(serialized: SerializedPeriodAvailability): PeriodAv
   return {
     days: serialized.days.map((day) => ({ date: day.date, windows: day.windows.map(dateRange) })),
     free: serialized.free.map(dateRange),
+    unbooked: serialized.unbooked.map(dateRange),
   }
 }
 

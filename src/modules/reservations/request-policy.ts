@@ -37,3 +37,34 @@ export function requestableRanges(free: readonly TimeRange[], policy: RequestPol
     return startsAt < range.endsAt && startsAt <= latest ? [{ startsAt, endsAt: range.endsAt }] : []
   })
 }
+
+/**
+ * Plafonds des formules de location des bureaux et délai de modification par
+ * le client (ADR 076), tels que « Disponibilités » les saisit : un entier
+ * dans les bornes de la base (`tenants_booking_formulas_valid`), champ par
+ * champ.
+ */
+export type ClientRulesInput = { bookingMaxWeeks: number; bookingMaxMonths: number; bookingChangeDays: number }
+
+export const clientRulesBounds: Record<keyof ClientRulesInput, { min: number; max: number }> = {
+  bookingMaxWeeks: { min: 1, max: 52 },
+  bookingMaxMonths: { min: 1, max: 24 },
+  bookingChangeDays: { min: 0, max: 90 },
+}
+
+export function parseClientRules(
+  source: { get(name: string): unknown },
+): { ok: true; rules: ClientRulesInput } | { ok: false; errors: Partial<Record<keyof ClientRulesInput, string>> } {
+  const errors: Partial<Record<keyof ClientRulesInput, string>> = {}
+  const rules = {} as ClientRulesInput
+  for (const [name, { min, max }] of Object.entries(clientRulesBounds) as [keyof ClientRulesInput, { min: number; max: number }][]) {
+    const raw = String(source.get(name) ?? '').trim()
+    const value = Number(raw)
+    if (!raw || !Number.isInteger(value) || value < min || value > max) {
+      errors[name] = `Un nombre entier, de ${min} à ${max}.`
+    } else {
+      rules[name] = value
+    }
+  }
+  return Object.keys(errors).length > 0 ? { ok: false, errors } : { ok: true, rules }
+}

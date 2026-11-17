@@ -64,7 +64,7 @@ export default async function DisponibilitesPage() {
         </p>
       </div>
 
-      <section className="flex flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4">
+      <section id="regles-reservation" className="flex scroll-mt-6 flex-col gap-4 rounded-lg border border-border bg-white px-5 py-4">
         <h2 className="text-sm font-semibold">Délais et durée des demandes de réservation</h2>
         <RequestPolicyForm
           policy={{ bookingLeadHours: tenant.bookingLeadHours, bookingHorizonDays: tenant.bookingHorizonDays }}
@@ -74,6 +74,11 @@ export default async function DisponibilitesPage() {
             value: maxRequestDays(tenant.bookingMaxDays, product.key),
             defaultValue: defaultMaxRequestDays[product.key] ?? 1,
           }))}
+          rules={{
+            bookingMaxWeeks: tenant.bookingMaxWeeks,
+            bookingMaxMonths: tenant.bookingMaxMonths,
+            bookingChangeDays: tenant.bookingChangeDays,
+          }}
         />
       </section>
 

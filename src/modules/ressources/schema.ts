@@ -73,7 +73,16 @@ export const clientBookingModeEnum = (name: string) => mysqlEnum(name, clientBoo
 /** Champs propres à chaque type, stockés en JSON. */
 export type ResourceAttributes = {
   salle: { superficieM2?: number; equipements?: string[] }
-  bureau: { superficieM2?: number; postes?: number }
+  /**
+   * `agencement` : open space ou bureau fermé ; `formules` : les formules de
+   * location proposées en ligne, réglées sur la fiche (ADR 076, `formules.ts`).
+   */
+  bureau: {
+    superficieM2?: number
+    postes?: number
+    agencement?: 'Open space' | 'Bureau fermé'
+    formules?: ('heure' | 'demi_journee' | 'journee' | 'semaine' | 'mois')[]
+  }
   /** `numero` : celui peint sur la porte, unique parmi les casiers vivants du centre. */
   casier: { numero?: string; taille?: 'S' | 'M' | 'L' }
   vehicule: { immatriculation?: string; kilometrage?: number; places?: number }

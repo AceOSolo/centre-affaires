@@ -14,6 +14,7 @@ import {
   type QuoteFailure,
   type QuotePlan,
   type QuotePlanSource,
+  type QuotableUnit,
   type QuoteRules,
 } from './devis.ts'
 import { defaultRatePlanOn } from './queries.ts'
@@ -38,6 +39,8 @@ export type QuoteRequest = {
   /** Contrat auquel la réservation est rattachée : sa grille passe avant les autres. */
   contractId?: string | null
   discount?: QuoteDiscount | null
+  /** Unité imposée par la formule de location choisie (ADR 076) ; absente : la moins chère. */
+  unit?: QuotableUnit
 }
 
 export type QuoteResultFailure = QuoteFailure | 'ressource-inconnue'
@@ -207,6 +210,7 @@ export async function quoteInTransaction(tx: Transaction, request: QuoteRequest)
     plans: candidates,
     rules,
     discount: request.discount,
+    unit: request.unit,
   })
   return outcome.ok ? outcome : { ...outcome, message: resultMessages[outcome.reason] }
 }

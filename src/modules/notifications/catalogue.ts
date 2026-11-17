@@ -361,6 +361,34 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
       optional: true,
     },
   ],
+  // Modification et annulation par le client depuis son espace (ADR 076).
+  booking_changed_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    { ...creneau, label: 'Nouveau jour et nouveaux horaires, à l’heure du centre' },
+    {
+      name: 'ancien',
+      label: 'Jour et horaires d’avant la modification',
+      example: 'lundi 5 octobre 2026, de 09:00 à 11:00',
+    },
+    { ...montantReservation, label: 'Nouveau montant annoncé au client' },
+    lienCentre('la file des demandes'),
+  ],
+  booking_cancelled_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    creneau,
+    {
+      name: 'etat',
+      label: 'Ce qui est annulé : la demande en attente ou la réservation confirmée',
+      example: 'la réservation confirmée',
+    },
+    lienCentre('la fiche de la réservation'),
+  ],
 }
 
 export type DefaultTemplate = { subject: string; body: string }
@@ -580,6 +608,23 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       '\n\nSi vous n’êtes pas à l’origine de cette demande, ignorez ce message ou prévenez {{centre}}.' +
       signature,
   },
+  booking_changed_by_client: {
+    subject: 'Réservation modifiée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a modifié sa réservation de {{ressource}} depuis son espace client.' +
+      '\n\nAvant : {{ancien}}' +
+      '\nDésormais : {{creneau}}' +
+      '\nMontant annoncé : {{montant}}' +
+      '\n\nLa réservation attend de nouveau votre validation : {{lien}}' +
+      signature,
+  },
+  booking_cancelled_by_client: {
+    subject: 'Réservation annulée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a annulé depuis son espace client {{etat}} de {{ressource}} le {{creneau}}.' +
+      '\n\nLe créneau est libéré. Voir la réservation : {{lien}}' +
+      signature,
+  },
 }
 
 /** Nom de l'événement à l'écran. */
@@ -607,6 +652,8 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   client_broadcast: 'Message du centre aux clients',
   staff_invited: 'Invitation dans l’équipe',
   request_received: 'Demande du site bien reçue',
+  booking_changed_by_client: 'Réservation modifiée par le client',
+  booking_cancelled_by_client: 'Réservation annulée par le client',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -642,6 +689,10 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
     'Quand la direction ou un exploitant ajoute une personne à l’équipe, ou renvoie son invitation : le lien pour choisir son mot de passe et entrer dans le back-office.',
   request_received:
     'Quand un visiteur dépose une demande sur la page publique (salle, bureau, camion, matériel, domiciliation) : l’accusé de réception, et le lien pour créer son espace et y retrouver sa demande.',
+  booking_changed_by_client:
+    'Quand un client change les dates, les heures ou la formule d’une demande ou d’une réservation depuis son espace : elle repasse en attente de validation.',
+  booking_cancelled_by_client:
+    'Quand un client annule une demande ou une réservation depuis son espace, dans le délai réglé par le centre.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {

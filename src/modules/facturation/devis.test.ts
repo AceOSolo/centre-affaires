@@ -7,6 +7,7 @@ import {
   bookingDurationMinutes,
   bookingQuoteColumns,
   frozenQuoteDisplay,
+  monthQuantity,
   parseQuoteDiscount,
   quoteBooking,
   type BookingQuoteInput,
@@ -436,5 +437,57 @@ describe('bookingQuoteColumns', () => {
     })
     // Mêmes clés que la réservation non chiffrée : tout ou rien.
     assert.deepEqual(Object.keys(columns).sort(), Object.keys(NO_BOOKING_QUOTE).sort())
+  })
+})
+
+describe('quoteBooking : unité imposée par la formule de location (ADR 076)', () => {
+  /** Grille d'un bureau vendu à la journée, à la semaine et au mois (`tarif.bureau.<unité>`). */
+  const BUREAUX = grille('bureaux', [
+    prix('bureau', 'day', 3_000),
+    prix('bureau', 'week', 12_000),
+    prix('bureau', 'month', 40_000),
+  ])
+  const bureau = (overrides: Partial<BookingQuoteInput> & { startsAt: Date; endsAt: Date }) =>
+    devis({ resource: BUREAU, plans: [{ plan: BUREAUX, source: { kind: 'default' } }], ...overrides })
+
+  it('chiffre une semaine à la semaine, même si cinq journées coûteraient moins à la journée', () => {
+    // Du lundi 8 h au vendredi 19 h : 5 journées = 150 €, une semaine = 120 € ;
+    // la formule « semaine » impose son unité.
+    const quote = retenu(bureau({ ...creneau('2026-11-16T08:00', '2026-11-20T19:00'), unit: 'week' }))
+    assert.equal(quote.unit, 'week')
+    assert.equal(quote.quantity, 1)
+    assert.equal(quote.netCents, 12_000)
+  })
+
+  it('impose la journée, même quand la semaine serait moins chère', () => {
+    const quote = retenu(bureau({ ...creneau('2026-11-16T08:00', '2026-11-20T19:00'), unit: 'day' }))
+    assert.equal(quote.unit, 'day')
+    assert.equal(quote.quantity, 5)
+    assert.equal(quote.netCents, 15_000)
+  })
+
+  it('compte au mois les mois du calendrier entamés', () => {
+    const quote = retenu(bureau({ ...creneau('2026-11-16T08:00', '2027-01-15T19:00'), unit: 'month' }))
+    assert.equal(quote.unit, 'month')
+    assert.equal(quote.quantity, 2)
+    assert.equal(quote.netCents, 80_000)
+  })
+
+  it('ne chiffre pas sans prix à l’unité de la formule : tarif communiqué par l’accueil', () => {
+    const outcome = bureau({ ...creneau('2026-11-16T08:00', '2026-11-16T12:00'), unit: 'hour' })
+    assert.equal(outcome.ok, false)
+    assert.equal(outcome.ok ? undefined : outcome.reason, 'aucun-tarif')
+  })
+
+  it('compte les mois du jour du début au dernier jour occupé, dans le fuseau du centre', () => {
+    const mois = (debut: string, fin: string) => monthQuantity(wallClockToUtc(debut, PARIS), wallClockToUtc(fin, PARIS), PARIS)
+    assert.equal(mois('2026-11-16T08:00', '2026-12-15T19:00'), 1)
+    assert.equal(mois('2026-11-16T08:00', '2026-12-16T09:00'), 2)
+    assert.equal(mois('2026-11-16T08:00', '2026-11-16T19:00'), 1)
+    // Du 31 janvier : le mois suivant commence le 28 février.
+    assert.equal(mois('2026-01-31T08:00', '2026-02-27T19:00'), 1)
+    assert.equal(mois('2026-01-31T08:00', '2026-02-28T19:00'), 2)
+    // Une fin à minuit pile reste sur la veille.
+    assert.equal(mois('2026-11-16T08:00', '2026-12-16T00:00'), 1)
   })
 })

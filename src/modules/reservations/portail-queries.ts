@@ -17,6 +17,7 @@ import {
   bookingQuoteColumns,
   frozenQuoteDisplay,
   toQuoteDisplay,
+  type QuotableUnit,
   type QuoteDisplay,
 } from '../facturation/devis.ts'
 import { quoteInTransaction } from '../facturation/devis-queries.ts'
@@ -26,7 +27,9 @@ import { closures, openingHours, resources, type Resource } from '../ressources/
 import { isValidRange } from './availability.ts'
 import { listBusyRanges } from './creneaux-occupes.ts'
 import { dayAvailability, type BusyRange, type DayAvailabilityOf } from './disponibilites.ts'
+import { formulasOf, type RentalFormula } from '../ressources/formules.ts'
 import { maxRequestDaysFor, type MaxRequestDaysSettings } from './durees.ts'
+import { choiceSpanDays, DEFAULT_FORMULA_LIMITS, type FormulaLimits } from './formules-periode.ts'
 import { acceptsEquipmentOptions } from './options.ts'
 import {
   insertOptionsInTransaction,
@@ -137,21 +140,33 @@ export async function listPortalDayAvailability(
  */
 export async function loadPortalPeriodAvailability(
   accounts: readonly ClientAccount[],
-  request: { resourceId: string; firstDate: string; timeZone: string; maxDaysSettings: MaxRequestDaysSettings },
-): Promise<{ resource: PortalResource; period: PeriodAvailability; maxDays: number } | undefined> {
+  request: {
+    resourceId: string
+    firstDate: string
+    timeZone: string
+    maxDaysSettings: MaxRequestDaysSettings
+    /** Plafonds des formules de location (ADR 076) : l'étendue à charger. Par défaut, ceux du code. */
+    limits?: Pick<FormulaLimits, 'maxWeeks' | 'maxMonths'>
+    /** Réservation que son client modifie : son propre créneau ne la bloque pas. */
+    excludeBookingId?: string
+  },
+): Promise<{ resource: PortalResource; period: PeriodAvailability; maxDays: number; formulas: RentalFormula[] } | undefined> {
   if (accounts.length === 0 || !isUuid(request.resourceId)) return undefined
   return inClientSpace(accounts, async (tx) => {
     const resource = (await portalResources(tx)).find((candidate) => candidate.id === request.resourceId)
     if (!resource) return undefined
-    // Autant de jours que la demande peut en couvrir pour ce produit.
+    // Autant de jours que la demande peut en couvrir pour ce produit, et pour
+    // la plus longue des formules de la ressource (ADR 076).
     const maxDays = maxRequestDaysFor(request.maxDaysSettings, resource.resourceType)
+    const formulas = formulasOf(resource)
     const period = await loadPeriodAvailability(tx, {
       resourceId: resource.id,
       firstDate: request.firstDate,
-      dayCount: maxDays,
+      dayCount: choiceSpanDays(formulas, request.firstDate, maxDays, request.limits ?? DEFAULT_FORMULA_LIMITS),
       timeZone: request.timeZone,
+      excludeBookingId: request.excludeBookingId,
     })
-    return { resource, period, maxDays }
+    return { resource, period, maxDays, formulas }
   })
 }
 
@@ -173,7 +188,14 @@ export type PortalQuotePreview = {
  */
 export async function previewPortalQuote(
   accounts: readonly ClientAccount[],
-  request: { clientId: string; resourceId: string; startsAt: Date; endsAt: Date },
+  request: {
+    clientId: string
+    resourceId: string
+    startsAt: Date
+    endsAt: Date
+    /** Unité imposée par la formule de location choisie (ADR 076). */
+    unit?: QuotableUnit
+  },
 ): Promise<PortalQuotePreview | undefined> {
   if (!isUuid(request.resourceId) || !accounts.some((account) => account.clientId === request.clientId)) {
     return undefined
@@ -198,7 +220,12 @@ export async function previewPortalQuote(
       quote: result.ok ? toQuoteDisplay(result.quote) : null,
       fromContract: result.ok && result.quote.source.kind === 'contract',
       equipment: acceptsEquipmentOptions(resource.resourceType)
-        ? await listFreeEquipmentInTransaction(tx, { ...request, portal: true })
+        ? await listFreeEquipmentInTransaction(tx, {
+            clientId: request.clientId,
+            startsAt: request.startsAt,
+            endsAt: request.endsAt,
+            portal: true,
+          })
         : [],
     }
   })
@@ -234,6 +261,8 @@ export type PortalBookingInput = {
    * devis. Ignoré pour une ressource qui ne reçoit pas de matériel.
    */
   equipmentIds?: readonly string[]
+  /** Unité imposée par la formule de location choisie (ADR 076) ; absente : la moins chère. */
+  unit?: QuotableUnit
 }
 
 export type CreatedPortalBooking = {
@@ -273,6 +302,7 @@ export async function createPortalBooking(input: PortalBookingInput): Promise<Cr
         startsAt: input.startsAt,
         endsAt: input.endsAt,
         clientId: account.clientId,
+        unit: input.unit,
       })
       const booking = await insertReturning(tx, bookings, {
         resourceId: input.resourceId,

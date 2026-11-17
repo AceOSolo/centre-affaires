@@ -199,3 +199,10 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Modification ou annulation d'une réservation par son client refusée
+ * (ADR 076, `24-formules-et-modifications.sql`) : annulée, commencée, délai du
+ * centre passé, ou matériel en option à déplacer avec elle.
+ */
+export const DB_CLIENT_CHANGE_REFUSED = 'CA022'

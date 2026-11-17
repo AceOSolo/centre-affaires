@@ -65,6 +65,9 @@ export const notificationEvents = [
   // une personne seule, qui n'a pas encore d'entreprise.
   'staff_invited',
   'request_received',
+  // Réservation modifiée ou annulée par son client depuis son espace (ADR 076) : à l'accueil.
+  'booking_changed_by_client',
+  'booking_cancelled_by_client',
 ] as const
 export type NotificationEvent = (typeof notificationEvents)[number]
 export const notificationEventEnum = (name: string) => mysqlEnum(name, notificationEvents)
@@ -122,6 +125,8 @@ export const notificationEventAudience: Record<NotificationEvent, NotificationAu
   client_broadcast: 'client',
   staff_invited: 'person',
   request_received: 'person',
+  booking_changed_by_client: 'centre',
+  booking_cancelled_by_client: 'centre',
 }
 
 /** Miroir de `notification_event_category()` (`70-notifications.sql`). Nul : pas de renoncement possible. */
@@ -149,6 +154,8 @@ export const notificationEventCategory: Record<NotificationEvent, NotificationCa
   client_broadcast: 'centre_info',
   staff_invited: null,
   request_received: null,
+  booking_changed_by_client: null,
+  booking_cancelled_by_client: null,
 }
 
 /**

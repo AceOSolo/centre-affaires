@@ -1,6 +1,13 @@
 import type { ClientBookingMode } from '../ressources/schema.ts'
 import type { TimeRange } from './availability.ts'
-import { periodRejection, periodRejectionMessage, type PeriodAvailability, type PeriodRejection } from './periode.ts'
+import {
+  choiceRejectionMessage,
+  DEFAULT_FORMULA_LIMITS,
+  type ChoiceRejection,
+  type EvaluatedChoice,
+  type FormulaLimits,
+} from './formules-periode.ts'
+import { periodRejection, type PeriodAvailability } from './periode.ts'
 import { requestTimingRejection, type RequestPolicy } from './request-policy.ts'
 import { MIN_REQUEST_MINUTES } from './requests.ts'
 
@@ -62,22 +69,21 @@ export function portalOutcomeMessage(
   if (outcome === 'confirmed') {
     return {
       title: 'Réservation confirmée',
-      body: `« ${facts.resourceName} » vous est réservée ${facts.when}. Elle figure dans vos réservations à venir ; pour l’annuler, contactez le centre.`,
+      body: `« ${facts.resourceName} » vous est réservée ${facts.when}. Elle figure dans vos réservations à venir, d’où vous pouvez la modifier ou l’annuler dans le délai du centre.`,
     }
   }
   return {
     title: 'Demande envoyée à l’accueil',
-    body: `Votre demande pour « ${facts.resourceName} » ${facts.when} attend la validation de l’accueil. Le créneau vous est bloqué en attendant, et vous pouvez annuler la demande tant qu’elle n’est pas validée.`,
+    body: `Votre demande pour « ${facts.resourceName} » ${facts.when} attend la validation de l’accueil. Le créneau vous est bloqué en attendant ; vous pouvez modifier ou annuler la demande depuis vos réservations, dans le délai du centre.`,
   }
 }
 
 /** Raisons de refuser une réservation du portail avant de l'écrire. */
 export type PortalBookingRejection =
-  | 'creneau-illisible'
   | 'creneau-passe'
   | 'preavis-insuffisant'
   | 'creneau-trop-lointain'
-  | PeriodRejection
+  | ChoiceRejection
 
 const portalTimingMessages = {
   'creneau-illisible': 'Choisissez une date, puis une heure de début et une heure de fin.',
@@ -86,11 +92,34 @@ const portalTimingMessages = {
   'creneau-trop-lointain': 'Ce créneau est au-delà de l’horizon de réservation du centre.',
 } as const
 
-/** Le message d'un refus ; `maxDays` : la durée maximale du produit, en jours (ADR 061). */
-export function portalRejectionMessage(rejection: PortalBookingRejection, maxDays: number): string {
+/**
+ * Le message d'un refus ; `maxDays` : la durée maximale du produit, en jours
+ * (ADR 061) ; `limits` : les plafonds des formules de location (ADR 076).
+ */
+export function portalRejectionMessage(
+  rejection: PortalBookingRejection,
+  maxDays: number,
+  limits: FormulaLimits = DEFAULT_FORMULA_LIMITS,
+): string {
   return rejection in portalTimingMessages
     ? portalTimingMessages[rejection as keyof typeof portalTimingMessages]
-    : periodRejectionMessage(rejection as PeriodRejection, maxDays)
+    : choiceRejectionMessage(rejection as ChoiceRejection, maxDays, limits)
+}
+
+/**
+ * Première raison de refuser un choix de formule et de période (ADR 076),
+ * déjà évalué sur les disponibilités (`evaluateChoice`) : durée minimale,
+ * préavis et horizon du centre sur le début, puis la règle de la formule.
+ */
+export function portalChoiceRejection(
+  evaluation: EvaluatedChoice,
+  policy: RequestPolicy,
+  now: Date,
+): PortalBookingRejection | undefined {
+  if (!evaluation.range) return evaluation.rejection
+  const { range } = evaluation
+  if (range.endsAt.getTime() - range.startsAt.getTime() < MIN_REQUEST_MINUTES * 60_000) return 'duree-trop-courte'
+  return requestTimingRejection(range.startsAt, policy, now) ?? evaluation.rejection
 }
 
 /** La ressource sur les jours que la demande peut couvrir, et la durée maximale de son produit. */
@@ -128,4 +157,25 @@ export const MAX_PORTAL_NOTES_LENGTH = 2000
 export function portalBookingTitle(title: string, clientName: string): string {
   const trimmed = title.trim().replace(/\s+/g, ' ')
   return (trimmed || `Réservation ${clientName}`).slice(0, MAX_PORTAL_TITLE_LENGTH)
+}
+
+/** Champs de la période dans les formulaires de l'espace client (ADR 076). */
+export type PortalPeriodField = 'formula' | 'startTime' | 'endDate' | 'endTime' | 'count'
+
+/** Le champ qui porte un refus de la période, pour l'erreur en ligne. */
+export function rejectionField(rejection: PortalBookingRejection): PortalPeriodField {
+  switch (rejection) {
+    case 'formule-indisponible':
+      return 'formula'
+    case 'duree-hors-formule':
+      return 'count'
+    case 'depart-ferme':
+      return 'endDate'
+    case 'duree-trop-courte':
+    case 'duree-trop-longue':
+    case 'fin-hors-ouverture':
+      return 'endTime'
+    default:
+      return 'startTime'
+  }
 }

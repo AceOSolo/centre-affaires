@@ -170,6 +170,14 @@ Lots de `docs/recette/2026-11-04.md`.
 | 9 | Mode SaaS : chaque centre branche son CRM depuis son espace admin ; connexion avec Dolibarr (première partie) | ✅ **ADR 065** : écran Réglages > Connexion au CRM (direction seule) — choix du CRM, adresse, clé d'appel chiffrée, jeton généré à l'écran et montré une fois, qui désigne le centre, flux activés, « Tester la connexion », journal des échanges. Module `crm/`, interface de connecteur, Dolibarr premier branchement ; `/api/dolibarr/*` inchangées, `DOLIBARR_API_TOKEN` accepté tant qu'aucun jeton n'est réglé. Migration 0008. Les flux de la seconde tranche : lot 10 (ADR 066) |
 | 10 | Connexion avec Dolibarr (seconde partie) : clients, contrats, consommations | ✅ côté site **ADR 066** : `POST /api/dolibarr/tiers` (tiers créés ou rapprochés : identifiant Dolibarr, SIRET puis SIREN, contacts), `POST /api/dolibarr/contrats` (copie pour l'occupation, chevauchement refusé par la base, pas de reconduction tacite), `GET /api/dolibarr/consommations` + `/transmis` (réservations sans devis de toute ressource, ouvertures, pages en plus, numérisations, réexpéditions et leurs frais ; prêtes une fois figées, sans doublon, annulées et remplacées quand la source change). Flux coupés par défaut, ouverts à l'écran ; date de départ des consommations réglable. Le site ne facture rien. Migration 0013. Reste : le connecteur, côté Dolibarr, et les points « À valider avec le développeur Dolibarr » de la notice ; écrans Clients et Contrats en lecture seule ; « Mes factures » (R17) et chiffre d'affaires (R31) hors périmètre |
 
+## Recette du 17/11/2026
+
+Lots de `docs/recette/2026-11-17.md`.
+
+| Lot | Note de recette | État |
+|---|---|---|
+| 3 | Jour de départ libre, heures d'ouverture au lieu de « nuits comprises » ; bureaux open space ou fermé, formules journée, semaine, mois ; modifier ou annuler jusqu'à 7 jours avant | ✅ **ADR 076**. À confirmer en recette : plafonds 4 semaines et 12 mois, délai de 7 jours, retour en attente après modification, pas de modification avec matériel en option. Reste : prix `tarif.bureau.semaine` et `tarif.bureau.mois` à créer dans Dolibarr |
+
 ## Phases
 
 Une phase = des tranches livrables, de la base à l'écran, déployées.

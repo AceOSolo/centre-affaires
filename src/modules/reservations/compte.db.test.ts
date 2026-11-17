@@ -99,16 +99,29 @@ describe('réservations de l’espace client', { skip: raisonDeSaut }, () => {
     assert.deepEqual(await listBookingsForAccounts(durand), [])
   })
 
-  it('laisse annuler une demande en attente, à venir', async () => {
-    const id = await reserver(DURAND, 3, { status: 'pending' })
+  it('laisse annuler une demande en attente, avant le délai du centre', async () => {
+    const id = await reserver(DURAND, 10, { status: 'pending' })
     assert.equal(await cancelRequestForAccounts(id, durand), true)
     assert.equal(await statut(id), 'cancelled')
   })
 
-  it('refuse d’annuler une réservation confirmée', async () => {
-    const id = await reserver(DURAND, 3)
-    assert.equal(await cancelRequestForAccounts(id, durand), false)
-    assert.equal(await statut(id), 'confirmed')
+  it('laisse annuler une réservation confirmée avant le délai, pas dedans (ADR 076)', async () => {
+    const loin = await reserver(DURAND, 10)
+    assert.equal(await cancelRequestForAccounts(loin, durand), true)
+    // Sept jours par défaut : à trois jours du début, c'est l'accueil.
+    const proche = await reserver(DURAND, 3)
+    assert.equal(await cancelRequestForAccounts(proche, durand), false)
+    assert.equal(await statut(proche), 'confirmed')
+  })
+
+  it('suit le délai réglé par le centre', async () => {
+    await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 2`))
+    try {
+      const id = await reserver(DURAND, 3)
+      assert.equal(await cancelRequestForAccounts(id, durand), true)
+    } finally {
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+    }
   })
 
   it('refuse d’annuler une demande passée', async () => {
@@ -117,7 +130,7 @@ describe('réservations de l’espace client', { skip: raisonDeSaut }, () => {
   })
 
   it('refuse d’annuler la demande d’une autre entreprise', async () => {
-    const id = await reserver(PETIT, 3, { status: 'pending' })
+    const id = await reserver(PETIT, 10, { status: 'pending' })
     assert.equal(await cancelRequestForAccounts(id, durand), false)
     assert.equal(await statut(id), 'pending')
   })
@@ -125,9 +138,9 @@ describe('réservations de l’espace client', { skip: raisonDeSaut }, () => {
   it('libère le créneau à l’annulation', async () => {
     // Le garde anti-chevauchement ne compte plus la demande annulée : le même
     // créneau se réserve de nouveau (décision 3).
-    const id = await reserver(DURAND, 3, { status: 'pending' })
+    const id = await reserver(DURAND, 10, { status: 'pending' })
     await cancelRequestForAccounts(id, durand)
-    await assert.doesNotReject(reserver(PETIT, 3))
+    await assert.doesNotReject(reserver(PETIT, 10))
   })
 
   describe('portée client : ce qu’un client ne voit ni n’écrit chez un autre', () => {

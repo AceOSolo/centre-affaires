@@ -84,6 +84,20 @@ export const tenants = mysqlTable('tenants', {
     .$type<Partial<Record<string, number>>>()
     .notNull()
     .default(sql`(JSON_OBJECT())`),
+  /**
+   * Formules de location des bureaux (ADR 076) : une demande en ligne à la
+   * semaine couvre au plus tant de semaines, une demande au mois tant de mois.
+   * Au-delà, le client passe par l'accueil.
+   */
+  bookingMaxWeeks: int('booking_max_weeks').notNull().default(4),
+  bookingMaxMonths: int('booking_max_months').notNull().default(12),
+  /**
+   * Modification et annulation par le client depuis son espace (ADR 076) :
+   * possibles jusqu'à tant de jours avant le début de la réservation, à l'heure
+   * du centre (0 : jusqu'au début). Vérifié aussi par la base
+   * (`booking_client_change_deadline`, `24-formules-et-modifications.sql`).
+   */
+  bookingChangeDays: int('booking_change_days').notNull().default(7),
 
   /*
    * Identité publique du centre.
@@ -256,6 +270,10 @@ export const tenants = mysqlTable('tenants', {
   deletedAt: deletedAt(),
 }, (table) => [
   check('tenants_booking_delays_valid', sql`${table.bookingLeadHours} >= 0 and ${table.bookingHorizonDays} between 1 and 365 and ${table.bookingLeadHours} < ${table.bookingHorizonDays} * 24`),
+  check(
+    'tenants_booking_formulas_valid',
+    sql`${table.bookingMaxWeeks} between 1 and 52 and ${table.bookingMaxMonths} between 1 and 24 and ${table.bookingChangeDays} between 0 and 90`,
+  ),
   check(
     'tenants_mail_retention_valid',
     sql`${table.mailScanRetentionMonths} between 1 and 120 and ${table.mailAccessLogRetentionMonths} between 1 and 120`,

@@ -3,7 +3,9 @@
 -- créneaux occupés, anonymisation des demandes publiques), 0038 (devis
 -- facturé), 0041 (mode de réservation du portail, garde de l'espace client) et
 -- 0044 (datation de la confirmation). Voir
--- docs/migration-mysql/routines-reservations.md.
+-- docs/migration-mysql/routines-reservations.md. Depuis l'ADR 076, le client
+-- modifie ou annule aussi une réservation confirmée, dans le délai du centre :
+-- la règle est dans `24-formules-et-modifications.sql` (`CA022`).
 --
 -- Un trigger MySQL ne porte qu'un événement : les triggers d'origine sont
 -- regroupés en un par événement, dans l'ordre d'exécution de PostgreSQL. Les
@@ -207,23 +209,23 @@ BEGIN
   DECLARE v_count int;
   DECLARE v_option_status varchar(20);
 
-  -- Réservation du portail : l'auteur ne change pas, et le client n'annule
-  -- lui-même qu'une demande en attente, pas commencée (`canClientCancel`).
+  -- Réservation du portail : l'auteur ne change pas. Le client annule
+  -- lui-même une demande ou une réservation, ni commencée ni dans le délai du
+  -- centre (`canClientCancel`, ADR 076, `24-formules-et-modifications.sql`).
   IF NOT (NEW.booked_by_member_id <=> OLD.booked_by_member_id) THEN
     SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
       'CA009: L''auteur d''une réservation faite depuis l''espace client ne change pas.';
   END IF;
   IF NEW.cancelled_by_member_id IS NOT NULL
-     AND NOT (NEW.cancelled_by_member_id <=> OLD.cancelled_by_member_id)
-     AND NOT (OLD.status = 'pending' AND NEW.status = 'cancelled'
-              AND OLD.starts_at > CURRENT_TIMESTAMP(3)) THEN
-    SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
-      'CA009: Le client n''annule lui-même qu''une demande en attente, avant son début : le reste, auprès du centre.';
+     AND NOT (NEW.cancelled_by_member_id <=> OLD.cancelled_by_member_id) THEN
+    CALL booking_assert_client_change(NEW.tenant_id, OLD.id, OLD.status, NEW.status, OLD.starts_at);
   END IF;
 
   -- Espace client : la ligne et son résultat sont de la portée (politique
-  -- RESTRICTIVE d'origine), et la seule modification permise est l'annulation
-  -- d'une demande en attente au nom d'une personne de l'entreprise.
+  -- RESTRICTIVE d'origine). Deux modifications permises, au nom d'une
+  -- personne de l'entreprise (ADR 076) : l'annulation d'une demande ou d'une
+  -- réservation, et le changement de ses dates et de son prix, qui la remet
+  -- en attente de l'accueil. Rien d'autre ne bouge.
   IF @app_client_ids IS NOT NULL THEN
     IF OLD.client_id IS NULL OR FIND_IN_SET(OLD.client_id, @app_client_ids) = 0
        OR NEW.client_id IS NULL OR FIND_IN_SET(NEW.client_id, @app_client_ids) = 0 THEN
@@ -231,16 +233,31 @@ BEGIN
         'CA015: Cette réservation n''appartient à aucune entreprise du compte connecté.';
     END IF;
     IF NOT (
-         OLD.status = 'pending' AND NEW.status = 'cancelled'
-         AND NEW.cancelled_by_member_id IS NOT NULL
+         OLD.status IN ('pending', 'confirmed')
+         AND (
+           -- Annulation : le statut et son auteur seulement.
+           (NEW.status = 'cancelled' AND NEW.cancelled_by_member_id IS NOT NULL
+            AND NEW.starts_at <=> OLD.starts_at
+            AND NEW.ends_at <=> OLD.ends_at
+            AND NEW.quote_unit <=> OLD.quote_unit
+            AND NEW.quote_quantity <=> OLD.quote_quantity
+            AND NEW.quote_unit_price_cents <=> OLD.quote_unit_price_cents
+            AND NEW.quote_discount_bp <=> OLD.quote_discount_bp
+            AND NEW.quote_discount_amount_cents <=> OLD.quote_discount_amount_cents
+            AND NEW.quote_vat_rate_bp <=> OLD.quote_vat_rate_bp
+            AND NEW.quote_currency <=> OLD.quote_currency
+            AND NEW.quote_rate_plan_item_id <=> OLD.quote_rate_plan_item_id
+            AND NEW.quoted_at <=> OLD.quoted_at)
+           -- Modification : les dates et le devis, la réservation en attente.
+           OR (NEW.status = 'pending' AND NEW.cancelled_by_member_id IS NULL
+               AND NEW.cancelled_at IS NULL)
+         )
          AND NEW.id <=> OLD.id
          AND NEW.tenant_id <=> OLD.tenant_id
          AND NEW.resource_id <=> OLD.resource_id
          AND NEW.series_id <=> OLD.series_id
          AND NEW.kind <=> OLD.kind
          AND NEW.channel <=> OLD.channel
-         AND NEW.starts_at <=> OLD.starts_at
-         AND NEW.ends_at <=> OLD.ends_at
          AND NEW.title <=> OLD.title
          AND NEW.notes <=> OLD.notes
          AND NEW.requester_name <=> OLD.requester_name
@@ -250,15 +267,7 @@ BEGIN
          AND NEW.client_id <=> OLD.client_id
          AND NEW.contract_id <=> OLD.contract_id
          AND NEW.contract_amendment_id <=> OLD.contract_amendment_id
-         AND NEW.quote_unit <=> OLD.quote_unit
-         AND NEW.quote_quantity <=> OLD.quote_quantity
-         AND NEW.quote_unit_price_cents <=> OLD.quote_unit_price_cents
-         AND NEW.quote_discount_bp <=> OLD.quote_discount_bp
-         AND NEW.quote_discount_amount_cents <=> OLD.quote_discount_amount_cents
-         AND NEW.quote_vat_rate_bp <=> OLD.quote_vat_rate_bp
-         AND NEW.quote_currency <=> OLD.quote_currency
-         AND NEW.quote_rate_plan_item_id <=> OLD.quote_rate_plan_item_id
-         AND NEW.quoted_at <=> OLD.quoted_at
+         AND NEW.parent_booking_id <=> OLD.parent_booking_id
          AND NEW.booked_by_member_id <=> OLD.booked_by_member_id
          AND NEW.confirmed_at <=> OLD.confirmed_at
          AND NEW.confirmed_by_staff_id <=> OLD.confirmed_by_staff_id
@@ -266,7 +275,11 @@ BEGIN
          AND NEW.created_at <=> OLD.created_at
        ) THEN
       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT =
-        'CA009: Espace client : une demande en attente peut seulement être annulée, au nom d''une personne de l''entreprise.';
+        'CA009: Espace client : une réservation s''annule ou change de dates, au nom d''une personne de l''entreprise.';
+    END IF;
+    -- Une modification suit la règle du délai, comme l'annulation.
+    IF NEW.status = 'pending' THEN
+      CALL booking_assert_client_change(NEW.tenant_id, OLD.id, OLD.status, NEW.status, OLD.starts_at);
     END IF;
   END IF;
 
