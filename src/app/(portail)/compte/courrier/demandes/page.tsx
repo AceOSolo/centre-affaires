@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
+import { clientReturnPath, withReturn } from '../../../../../lib/redirection.ts'
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { ClientRequestCard } from '../../../../../modules/courrier/demande-carte.tsx'
@@ -16,6 +17,7 @@ import {
   type RequestStateFilter,
 } from '../../../../../modules/courrier/demandes-regles.ts'
 import { mailRequestKindLabels } from '../../../../../modules/courrier/labels.ts'
+import { returnLink } from '../../retour.ts'
 
 export const metadata = { title: 'Mes demandes de courrier' }
 
@@ -57,16 +59,20 @@ export default async function MesDemandesPage({
   ])
   const pages = pageCount(result.total, REQUEST_PAGE_SIZE)
   const fait = typeof params.fait === 'string' ? params.fait : undefined
-  const query = (page: number) => requestFiltersQuery({ state, kindSlug: filters.kindSlug }, page)
+  // D'où l'on vient (la boîte aux lettres filtrée…) : gardé par les filtres et les pages.
+  const retour = clientReturnPath(Array.isArray(params.retour) ? params.retour[0] : params.retour, '') || null
+  const back = returnLink(retour, { href: '/compte/courrier', label: 'Ma boîte aux lettres' })
+  const query = (page: number) =>
+    withReturn(requestFiltersQuery({ state, kindSlug: filters.kindSlug }, page), retour)
 
   return (
     <div className="flex max-w-3xl flex-col gap-6">
       <div>
         <Link
-          href="/compte/courrier"
+          href={back.href}
           className="inline-flex min-h-11 items-center text-sm text-muted-foreground underline-offset-2 hover:underline"
         >
-          ← Ma boîte aux lettres
+          ← {back.label}
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-primary sm:text-3xl">
           Mes demandes de courrier
@@ -107,6 +113,7 @@ export default async function MesDemandesPage({
             ))}
           </select>
         </div>
+        {retour && <input type="hidden" name="retour" value={retour} />}
         <button
           type="submit"
           className="press inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
@@ -145,6 +152,7 @@ export default async function MesDemandesPage({
                 from="demandes"
                 showMail
                 showClient={accounts.length > 1}
+                returnTo={`/compte/courrier/demandes${query(filters.page)}`}
               />
             </li>
           ))}

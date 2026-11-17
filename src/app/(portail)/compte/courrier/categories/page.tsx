@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { ArrowLeftIcon } from '../../../../../components/ui/icons.tsx'
+import { withReturn } from '../../../../../lib/redirection.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { mailFolderCounts } from '../../../../../modules/courrier/classement.ts'
 import {
@@ -16,6 +17,7 @@ import {
 import { loadCategoryLists } from '../../../../../modules/courrier/categories-reglages.ts'
 import { CategoryListForm } from '../../../../../modules/courrier/categories-reglages-forms.tsx'
 import type { MailCategory } from '../../../../../modules/courrier/categories.ts'
+import { returnLink } from '../../retour.ts'
 
 export const metadata = { title: 'Mes catégories de courrier' }
 
@@ -40,6 +42,9 @@ export default async function MesCategoriesPage({
   const [lists, folders] = await Promise.all([loadCategoryLists(accounts), mailFolderCounts(accounts)])
   const several = accounts.length > 1
   const toDelete = typeof params.supprimer === 'string' ? params.supprimer : undefined
+  // D'où l'on vient — la boîte aux lettres filtrée, la fiche d'un pli — : gardé jusqu'au retour.
+  const back = returnLink(params.retour, { href: '/compte/courrier', label: 'Ma boîte aux lettres' })
+  const retour = back.href === '/compte/courrier' ? null : back.href
   const fait = typeof params.fait === 'string' ? params.fait : undefined
   const declassified = Number(typeof params.plis === 'string' ? params.plis : 0) || 0
   const ownCount = (clientId: string) => (lists.get(clientId) ?? []).filter((entry) => entry.kind === 'perso').length
@@ -54,11 +59,11 @@ export default async function MesCategoriesPage({
     <div className="flex flex-col gap-6">
       <div>
         <Link
-          href="/compte/courrier"
+          href={back.href}
           className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
         >
           <ArrowLeftIcon size={20} />
-          Ma boîte aux lettres
+          {back.label}
         </Link>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight text-primary sm:text-3xl">
           Mes catégories de courrier
@@ -114,7 +119,7 @@ export default async function MesCategoriesPage({
               </button>
             </form>
             <Link
-              href="/compte/courrier/categories"
+              href={withReturn('/compte/courrier/categories', retour)}
               className="inline-flex min-h-11 items-center justify-center rounded-md border border-border bg-white px-4 text-sm font-medium text-primary hover:bg-muted"
             >
               Annuler
@@ -143,7 +148,9 @@ export default async function MesCategoriesPage({
               hidden: entry.hidden,
               count: entry.kind === 'perso' ? (customCount.get(entry.key) ?? 0) : several ? undefined : proposedCount(entry.key),
               deleteHref:
-                entry.kind === 'perso' ? `/compte/courrier/categories?supprimer=${entry.key}#confirmer-suppression` : undefined,
+                entry.kind === 'perso'
+                  ? withReturn(`/compte/courrier/categories?supprimer=${entry.key}#confirmer-suppression`, retour)
+                  : undefined,
             }))}
             submitLabel="Enregistrer ma liste"
             audience="client"

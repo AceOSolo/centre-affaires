@@ -7,11 +7,16 @@ import {
   ClockIcon,
   FileTextIcon,
   MailIcon,
+  TriangleAlertIcon,
 } from '../../../components/ui/icons.tsx'
+import { RequiredNote } from '../../../components/ui/obligatoire.tsx'
 import { formatCalendarDate, formatDateTime, formatLongDate, toIsoDate } from '../../../lib/dates.ts'
 import { formatBookingHours } from '../../../modules/reservations/affichage.ts'
 import { contractTypeLabels } from '../../../modules/contrats/labels.ts'
 import { mailKindLabels } from '../../../modules/courrier/labels.ts'
+import { DepositForm } from '../../../modules/clients/pieces-depot.tsx'
+import { loadClientDocumentSpace } from '../../../modules/clients/pieces-queries.ts'
+import { clientStateLabels, missingCount, type ChecklistState } from '../../../modules/clients/pieces-regles.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
 import { domiciliationRequestStatusLabel } from '../../../modules/facturation/propositions-portail.ts'
 import { unreadMailPhrase } from '../../../modules/notifications/cloche-client.ts'
@@ -20,6 +25,20 @@ import { loadClientSpace } from './espace.ts'
 export const metadata = { title: 'Mon espace' }
 
 const primaire = 'press inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover'
+/** L'état d'une pièce se lit à l'icône et au libellé ; la teinte ne fait que l'appuyer. */
+const pieceStateStyles: Record<ChecklistState, string> = {
+  missing: 'border border-primary text-primary',
+  received: 'border border-accent bg-accent/10 text-primary',
+  accepted: 'bg-primary text-primary-foreground',
+  refused: 'border border-destructive/40 bg-destructive/5 text-destructive',
+}
+const pieceStateIcons = {
+  missing: FileTextIcon,
+  received: ClockIcon,
+  accepted: CheckIcon,
+  refused: TriangleAlertIcon,
+} satisfies Record<ChecklistState, unknown>
+
 const lien = 'inline-flex min-h-11 items-center gap-1.5 text-sm font-medium text-primary underline-offset-4 hover:underline'
 
 /**
@@ -37,6 +56,10 @@ export default async function CompteAccueilPage() {
   const timeZone = tenant.timezone
   const prenom = user.name?.trim().split(/\s+/)[0]
   const prochaine = upcoming[0]
+  // Une demande de domiciliation en cours : ses pièces justificatives se
+  // déposent depuis sa carte (ADR 075, recette du 17/11).
+  const pieces = space.domiciliationRequests.length > 0 ? await loadClientDocumentSpace(space.accounts) : []
+  const piecesToDeposit = pieces.some((entry) => entry.items.some((item) => item.canDeposit))
 
   const aFaire = [
     toSign > 0 && {
@@ -111,9 +134,65 @@ export default async function CompteAccueilPage() {
                 </li>
               ))}
             </ul>
-            <p className="mt-3 text-sm text-muted-foreground">
-              Notre équipe vous recontacte pour le devis et les pièces à fournir avant la signature.
-            </p>
+            {pieces.some((entry) => entry.items.length > 0) ? (
+              <div className="mt-4 flex flex-col gap-4 border-t border-border pt-4">
+                <div>
+                  <h3 className="text-base font-semibold text-foreground">Vos pièces justificatives</h3>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Déposez chaque pièce en PDF ou en photo : l’équipe la vérifie avant la signature.
+                  </p>
+                  {piecesToDeposit && <RequiredNote className="mt-1" />}
+                </div>
+                {pieces.map((entry) => (
+                  <div key={entry.clientId} className="flex flex-col gap-3">
+                    {pieces.length > 1 && <p className="text-sm font-medium text-foreground">{entry.clientName}</p>}
+                    <p className="text-sm text-muted-foreground">
+                      {missingCount(entry.items) === 0
+                        ? 'Toutes les pièces sont déposées.'
+                        : `${missingCount(entry.items)} pièce${missingCount(entry.items) > 1 ? 's' : ''} à déposer.`}
+                    </p>
+                    <ul className="flex flex-col gap-3">
+                      {entry.items.map((item) => {
+                        const StateIcon = pieceStateIcons[item.state]
+                        return (
+                          <li key={item.kind.code} className="flex flex-col gap-2 rounded-lg border border-border p-3">
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <span className="min-w-0 font-medium text-foreground">{item.kind.label}</span>
+                              <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${pieceStateStyles[item.state]}`}>
+                                <StateIcon size={16} />
+                                {clientStateLabels[item.state]}
+                              </span>
+                            </div>
+                            {item.state === 'refused' && item.latest?.refusalReason && (
+                              <p className="text-sm text-foreground">
+                                <span className="font-medium">Motif du refus : </span>
+                                <span className="whitespace-pre-line">{item.latest.refusalReason}</span>
+                              </p>
+                            )}
+                            <DepositForm
+                              clientId={entry.clientId}
+                              kindCode={item.kind.code}
+                              kindLabel={item.kind.label}
+                              replacing={item.state === 'refused'}
+                              open={item.canDeposit}
+                            />
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="mt-3 text-sm text-muted-foreground">
+                Notre équipe vous recontacte pour le devis et les pièces à fournir avant la signature.
+              </p>
+            )}
+            <Actions>
+              <Link href="/compte/pieces" className={lien}>
+                Mes pièces justificatives <ArrowRightIcon size={20} />
+              </Link>
+            </Actions>
           </Carte>
         )}
 

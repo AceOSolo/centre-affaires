@@ -2,6 +2,7 @@
 
 import { useActionState, useId, useRef, useState } from 'react'
 
+import { RequiredMark } from '../../components/ui/obligatoire.tsx'
 import { compressPhoto, PhotoDecodeError } from '../etats-des-lieux/compression.ts'
 import { depositClientDocumentAction, type DepositState } from './pieces-compte-actions.ts'
 import { DOCUMENT_ACCEPT, DOCUMENT_MAX_BYTES, DOCUMENT_MAX_PHOTOS } from './pieces-regles.ts'
@@ -128,10 +129,8 @@ export function DepositForm({
           <input type="hidden" name="kind" value={kindCode} />
           <div>
             <label htmlFor={inputId} className="block text-sm font-medium text-foreground">
-              {replacing ? 'Nouveau fichier' : 'Fichier'}{' '}
-              <span aria-hidden="true" className="text-destructive">
-                *
-              </span>
+              {replacing ? 'Nouveau fichier' : 'Fichier'}
+              <RequiredMark />
             </label>
             <input
               ref={inputRef}

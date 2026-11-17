@@ -28,3 +28,31 @@ export function safeRedirect(value: string | null | undefined): string | null {
   if (url.origin !== ORIGINE || url.pathname.startsWith('//')) return null
   return url.pathname + url.search + url.hash
 }
+
+/**
+ * Adresse de retour dans l'espace client (`?retour=`, recette du 17/11) : le
+ * lien « ← … » d'une page ramène là où l'on était — la boîte aux lettres
+ * avec ses filtres et sa page, « Mon compte »… Même garde que `safeRedirect`,
+ * et en plus le chemin doit rester dans l'espace client (`/compte`). Sinon,
+ * `fallback`.
+ */
+export function clientReturnPath(value: unknown, fallback: string): string {
+  const path = typeof value === 'string' ? safeRedirect(value) : null
+  if (!path) return fallback
+  const pathname = path.split(/[?#]/, 1)[0]
+  return pathname === '/compte' || pathname.startsWith('/compte/') ? path : fallback
+}
+
+/**
+ * `href` avec le paramètre `retour` quand `returnTo` est une adresse de
+ * retour valable (`clientReturnPath`) ; `href` tel quel sinon. L'ancre de
+ * `href` reste à la fin.
+ */
+export function withReturn(href: string, returnTo: unknown): string {
+  const path = clientReturnPath(returnTo, '')
+  if (!path) return href
+  const hashAt = href.indexOf('#')
+  const base = hashAt === -1 ? href : href.slice(0, hashAt)
+  const hash = hashAt === -1 ? '' : href.slice(hashAt)
+  return `${base}${base.includes('?') ? '&' : '?'}retour=${encodeURIComponent(path)}${hash}`
+}

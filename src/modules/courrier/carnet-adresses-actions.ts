@@ -3,6 +3,8 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 
+import { keepPageReturn } from '../../lib/redirection-serveur.ts'
+
 import { requireClientAccount } from '../clients/session.ts'
 import {
   createForwardAddress,
@@ -52,7 +54,7 @@ export async function createAddressAction(
   const result = await createForwardAddress(accounts, clientId, read.input)
   if (!result.ok) return { error: result.error, values }
   refresh()
-  redirect(`${PAGE}?fait=ajoutee`)
+  redirect(await keepPageReturn(`${PAGE}?fait=ajoutee`))
 }
 
 /** Modifier une adresse du carnet. */
@@ -67,7 +69,7 @@ export async function updateAddressAction(
   const result = await updateForwardAddress(accounts, String(formData.get('id') ?? ''), read.input)
   if (!result.ok) return { error: result.error, values }
   refresh()
-  redirect(`${PAGE}?fait=modifiee`)
+  redirect(await keepPageReturn(`${PAGE}?fait=modifiee`))
 }
 
 /** « Utiliser par défaut » : l'adresse proposée en premier à chaque envoi. */
@@ -75,7 +77,7 @@ export async function setDefaultAddressAction(formData: FormData): Promise<void>
   const { accounts } = await requireClientAccount()
   const result = await setDefaultForwardAddress(accounts, String(formData.get('id') ?? ''))
   refresh()
-  redirect(result.ok ? `${PAGE}?fait=par-defaut` : PAGE)
+  redirect(await keepPageReturn(result.ok ? `${PAGE}?fait=par-defaut` : PAGE))
 }
 
 /** Retirer une adresse, après confirmation sur la page. */
@@ -83,5 +85,5 @@ export async function deleteAddressAction(formData: FormData): Promise<void> {
   const { accounts } = await requireClientAccount()
   const result = await deleteForwardAddress(accounts, String(formData.get('id') ?? ''))
   refresh()
-  redirect(result.ok ? `${PAGE}?fait=retiree` : PAGE)
+  redirect(await keepPageReturn(result.ok ? `${PAGE}?fait=retiree` : PAGE))
 }

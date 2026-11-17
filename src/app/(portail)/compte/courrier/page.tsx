@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
 import { ArrowRightIcon, CheckIcon, ClockIcon, MailIcon, MailOpenIcon, MapPinIcon } from '../../../../components/ui/icons.tsx'
 import { formatDateTime } from '../../../../lib/dates.ts'
+import { withReturn } from '../../../../lib/redirection.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../modules/clients/session.ts'
 import {
@@ -27,7 +28,7 @@ import {
 } from '../../../../modules/courrier/demandes-regles.ts'
 import { EnvelopeThumbnail } from '../../../../modules/courrier/enveloppe.tsx'
 import { mailKindIcons, SendIcon } from '../../../../modules/courrier/icones.tsx'
-import { ArchiveIcon, ChevronDownIcon } from '../../../../modules/courrier/icones-client.tsx'
+import { ArchiveIcon, ChevronDownIcon, FilterIcon } from '../../../../modules/courrier/icones-client.tsx'
 import {
   mailKindLabels,
   mailRequestKindLabels,
@@ -61,6 +62,11 @@ const statusIcons: Record<MailStatus, typeof MailIcon> = {
   opening_requested: ClockIcon,
   opened: MailOpenIcon,
 }
+
+/** En-tête d'un bloc repliable : cible de 44 px, chevron qui dit l'état. */
+const foldSummaryClass =
+  'flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 text-sm font-medium text-primary [&::-webkit-details-marker]:hidden'
+const foldChevronClass = 'shrink-0 transition-transform duration-150 ease-out group-open:rotate-180 motion-reduce:transition-none'
 
 const fieldClass =
   'mt-1 block min-h-11 w-full rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 sm:text-sm'
@@ -114,6 +120,10 @@ export default async function BoiteAuxLettresPage({
   const retention = tenant.mailScanRetentionMonths
   const several = accounts.length > 1
   const pages = pageCount(mail.total, CLIENT_MAIL_PAGE_SIZE)
+  // L'adresse de cette vue, filtres et page compris : les pages ouvertes
+  // d'ici y ramènent par leur lien « ← … » (`?retour=`).
+  const listQuery = clientMailQuery(filters, page)
+  const here = listQuery ? `/compte/courrier${listQuery}` : null
   const filtered = Boolean(
     filters.kind ||
       filters.from ||
@@ -159,7 +169,7 @@ export default async function BoiteAuxLettresPage({
         <ul className="mt-3 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:gap-x-6">
           <li>
             <Link
-              href="/compte/courrier/demandes"
+              href={withReturn('/compte/courrier/demandes', here)}
               className="inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-2 hover:underline"
             >
               Suivre mes demandes
@@ -173,7 +183,7 @@ export default async function BoiteAuxLettresPage({
           </li>
           <li>
             <Link
-              href="/compte/courrier/adresses"
+              href={withReturn('/compte/courrier/adresses', here)}
               className="inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-2 hover:underline"
             >
               <MapPinIcon size={20} />
@@ -188,7 +198,11 @@ export default async function BoiteAuxLettresPage({
       )}
 
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
+      {/* Sur ordinateur, les rubriques restent sous la main au défilement,
+          sous l'en-tête collant du site ; au téléphone, elles restent en tête. */}
+      <div className="lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain">
       <MailFolders
+        here={here}
         folders={folders}
         filters={filters}
         entries={[
@@ -197,9 +211,20 @@ export default async function BoiteAuxLettresPage({
         ]}
         companyOf={several ? new Map(ownEntries.map(({ entry, company }) => [entry.key, company ?? ''])) : undefined}
       />
+      </div>
       <div className="flex min-w-0 flex-col gap-6">
-      {/* Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
-      <form className="grid max-w-3xl gap-3 rounded-lg border border-border bg-muted p-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Filtrer le courrier">
+      {/* Replié par défaut, ouvert quand un filtre est actif (recette du 17/11).
+          Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
+      <details open={filtered} className="group max-w-3xl rounded-lg border border-border bg-muted">
+        <summary className={foldSummaryClass}>
+          <span className="inline-flex items-center gap-2">
+            <FilterIcon size={20} />
+            Filtrer le courrier
+            {filtered && <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">filtres actifs</span>}
+          </span>
+          <ChevronDownIcon size={20} className={foldChevronClass} />
+        </summary>
+      <form className="grid gap-3 border-t border-border p-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Filtrer le courrier">
         <div>
           <label htmlFor="du" className="block text-sm font-medium">
             Reçu à partir du
@@ -318,6 +343,7 @@ export default async function BoiteAuxLettresPage({
           )}
         </div>
       </form>
+      </details>
 
       <p className="text-sm text-muted-foreground" aria-live="polite">
         {mail.total === 0
@@ -350,13 +376,23 @@ export default async function BoiteAuxLettresPage({
         </div>
       ) : (
         <>
-          <SelectionBar
-            returnQuery={clientMailQuery(filters, page)}
-            knownTags={folders.tags.map((entry) => entry.tag)}
-            proposedCategories={proposedOptions}
-            customCategories={customOptions}
-            showingIgnored={filters.followUp === 'ignores'}
-          />
+          {/* Les gestes groupés, repliés par défaut : on coche d'abord, on agit ensuite. */}
+          <details className="group max-w-3xl rounded-lg border border-border bg-white">
+            <summary className={foldSummaryClass}>
+              <span>Actions sur les courriers cochés</span>
+              <ChevronDownIcon size={20} className={foldChevronClass} />
+            </summary>
+            <div className="border-t border-border">
+              {/* Le cadre est celui du bloc repliable. */}
+              <SelectionBar
+                returnQuery={listQuery}
+                knownTags={folders.tags.map((entry) => entry.tag)}
+                proposedCategories={proposedOptions}
+                customCategories={customOptions}
+                showingIgnored={filters.followUp === 'ignores'}
+              />
+            </div>
+          </details>
           <ul className="flex max-w-3xl flex-col gap-4">
             {mail.rows.map((item) => {
               const list = lists.get(item.clientId) ?? []
@@ -373,7 +409,8 @@ export default async function BoiteAuxLettresPage({
                     current={current}
                     proposed={classifiable.filter((entry) => entry.kind === 'proposee').map((entry) => toOption(entry))}
                     custom={classifiable.filter((entry) => entry.kind === 'perso').map((entry) => toOption(entry))}
-                    returnQuery={clientMailQuery(filters, page)}
+                    returnQuery={listQuery}
+                    here={here}
                   />
                 </li>
               )
@@ -423,11 +460,14 @@ export default async function BoiteAuxLettresPage({
  * les autres filtres, la page se partage et se recharge.
  */
 function MailFolders({
+  here,
   folders,
   filters,
   entries,
   companyOf,
 }: {
+  /** Adresse de la vue en cours, pour le retour de « Gérer mes catégories ». */
+  here: string | null
   folders: MailFolderCounts
   filters: ClientMailFilters
   /** La liste de la personne : catégories proposées et les siennes, dans son ordre. */
@@ -504,7 +544,7 @@ function MailFolders({
         )}
         <li>
           <Link
-            href="/compte/courrier/categories"
+            href={withReturn('/compte/courrier/categories', here)}
             className="flex min-h-11 items-center gap-2 rounded-md px-3 font-medium text-primary underline-offset-2 hover:underline"
           >
             Gérer mes catégories
@@ -579,6 +619,7 @@ function MailCard({
   proposed,
   custom,
   returnQuery,
+  here,
 }: {
   item: ClientMailCard
   timeZone: string
@@ -591,6 +632,8 @@ function MailCard({
   proposed: CategoryOption[]
   custom: CategoryOption[]
   returnQuery: string
+  /** Adresse de la liste, filtres et page compris : la fiche du pli y ramène. */
+  here: string | null
 }) {
   const StatusIcon = statusIcons[item.status]
   const KindIcon = mailKindIcons[item.kind]
@@ -667,7 +710,7 @@ function MailCard({
                 son expéditeur. Cible de 44 px, les marges négatives gardent la
                 hauteur de la ligne. */}
             <Link
-              href={`/compte/courrier/${item.id}`}
+              href={withReturn(`/compte/courrier/${item.id}`, here)}
               className="relative -my-2.5 flex min-h-11 items-center underline-offset-2 hover:underline"
             >
               <span className="truncate">{sender}</span>
@@ -714,6 +757,7 @@ function MailCard({
       <div className="flex flex-col gap-3 border-t border-border pt-3">
         <MailCardClassify
           mailItemId={item.id}
+          clientId={item.clientId}
           current={current}
           proposed={proposed}
           custom={custom}
@@ -755,7 +799,7 @@ function MailCard({
               )}
               {options.scan && (
                 <Link
-                  href={`/compte/courrier/${item.id}?demande=numerisation#numerisation`}
+                  href={withReturn(`/compte/courrier/${item.id}?demande=numerisation#numerisation`, here)}
                   className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
                 >
                   Demander une nouvelle numérisation…
@@ -764,7 +808,7 @@ function MailCard({
               {/* L'envoi demande une adresse : la fiche du pli s'ouvre sur son formulaire. */}
               {options.forward && (
                 <Link
-                  href={`/compte/courrier/${item.id}?demande=envoi#reexpedition`}
+                  href={withReturn(`/compte/courrier/${item.id}?demande=envoi#reexpedition`, here)}
                   className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
                 >
                   <SendIcon size={20} />

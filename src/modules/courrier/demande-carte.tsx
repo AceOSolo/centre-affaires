@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { formatDateTime } from '../../lib/dates.ts'
+import { withReturn } from '../../lib/redirection.ts'
 import { formatCents } from '../facturation/tarifs.ts'
 import { CancelMailRequestButton } from './demandes-compte-forms.tsx'
 import type { MailRequestRow } from './demandes-queries.ts'
@@ -25,6 +26,7 @@ export function ClientRequestCard({
   from,
   showMail,
   showClient,
+  returnTo,
 }: {
   request: MailRequestRow
   timeZone: string
@@ -32,6 +34,8 @@ export function ClientRequestCard({
   /** Rappeler le pli concerné, dans l'historique de toutes les demandes. */
   showMail: boolean
   showClient: boolean
+  /** Page d'où l'on ouvre le pli, filtres compris : sa fiche y ramène (`?retour=`). */
+  returnTo?: string | null
 }) {
   const KindIcon = mailRequestKindIcons[request.kind]
   const StatusIcon = mailRequestStatusIcons[request.status]
@@ -57,7 +61,7 @@ export function ClientRequestCard({
         </h3>
         {showMail && (
           <p className="text-sm text-muted-foreground">
-            <Link href={`/compte/courrier/${request.mailItemId}`} className="inline-flex min-h-11 items-center underline underline-offset-2 hover:text-primary sm:min-h-0">
+            <Link href={withReturn(`/compte/courrier/${request.mailItemId}`, returnTo)} className="inline-flex min-h-11 items-center underline underline-offset-2 hover:text-primary sm:min-h-0">
               {mailKindLabels[request.mailKind]} — {request.mailSender ?? 'expéditeur non précisé'}, reçu le{' '}
               {formatDateTime(request.mailReceivedAt, timeZone)}
             </Link>
