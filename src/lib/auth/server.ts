@@ -6,9 +6,9 @@ import { eq } from 'drizzle-orm'
 
 import { createDatabase, databaseOptionsFromEnv, withTenant, type Database } from '../../db/index.ts'
 import { activeBan } from '../../modules/comptes/comptes.ts'
+import { sendBrandedMessage } from '../../modules/notifications/identite-queries.ts'
 import { adresseIpDerriereLeRelais } from '../anti-robot.ts'
 import { EN_TETE_PREUVE } from '../champs-anti-robot.ts'
-import { sendMessage } from '../courriel.ts'
 import { preuveHumaine } from '../preuve-humaine.ts'
 import { currentTenantId } from '../tenant.ts'
 import { MOT_DE_PASSE_MIN } from './messages.ts'
@@ -107,16 +107,17 @@ export function createAuth(
       // Mot de passe oublié (`app/(auth)/auth/mot-de-passe-oublie`). Better
       // Auth répond de la même façon que l'adresse ait un compte ou non ;
       // l'envoi n'est pas attendu, pour que la durée de la réponse ne le
-      // dise pas non plus. `sendMessage` ne lève jamais.
+      // dise pas non plus. `sendBrandedMessage` ne lève jamais ; il met le
+      // message aux couleurs du centre, comme tous les courriels (ADR 080).
       resetPasswordTokenExpiresIn: LIEN_REINITIALISATION_SECONDES,
       async sendResetPassword({ user, url }) {
-        void sendMessage({
+        void sendBrandedMessage({
           to: [user.email],
           subject: 'Choisissez un nouveau mot de passe',
           text:
             `Bonjour,\n\nPour choisir un nouveau mot de passe, ouvrez ce lien dans l’heure :\n${url}\n\n` +
             'Si vous n’êtes pas à l’origine de cette demande, ignorez ce message : votre mot de passe reste inchangé.',
-        })
+        }, { database: db })
       },
       // Une réinitialisation suit souvent un doute sur le compte : les
       // sessions ouvertes avec l'ancien mot de passe sont fermées.
@@ -135,13 +136,13 @@ export function createAuth(
       sendOnSignIn: verify,
       autoSignInAfterVerification: true,
       async sendVerificationEmail({ user, url }) {
-        await sendMessage({
+        await sendBrandedMessage({
           to: [user.email],
           subject: 'Confirmez votre adresse',
           text:
             `Bonjour,\n\nConfirmez votre adresse pour accéder à votre espace :\n${url}\n\n` +
             'Si vous n’êtes pas à l’origine de cette demande, ignorez ce message.',
-        })
+        }, { database: db })
       },
     },
     // Raison sociale du demandeur d'une demande du site (ADR 068), posée sur

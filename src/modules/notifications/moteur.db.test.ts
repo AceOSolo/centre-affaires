@@ -70,12 +70,12 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
                  related_type, related_id
             from notification_deliveries order by sent_at, id`)
 
-  let centre: { name: string; email: string | null }
+  let centre: { name: string; email: string | null; signature: string | null }
 
   before(async () => {
     bases = await ouvrirBasesDeTest()
-    const [row] = await lire('select name, email from tenants where id = ?', [DEFAULT_TENANT_ID])
-    centre = { name: row.name as string, email: row.email as string | null }
+    const [row] = await lire('select name, email, email_signature from tenants where id = ?', [DEFAULT_TENANT_ID])
+    centre = { name: row.name as string, email: row.email as string | null, signature: row.email_signature as string | null }
   })
 
   beforeEach(async () => {
@@ -90,7 +90,11 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
       'clients',
       'staff_members',
     )
-    await lire(`update tenants set email = 'accueil@centre.exemple' where id = ?`, [DEFAULT_TENANT_ID])
+    // Signature des courriels fixée (ADR 080) : le texte envoyé ne dépend pas
+    // des coordonnées que d'autres fichiers de test ont pu poser sur le centre.
+    await lire(`update tenants set email = 'accueil@centre.exemple', email_signature = 'Ligne de signature' where id = ?`, [
+      DEFAULT_TENANT_ID,
+    ])
     await asTenant(async (tx) => {
       await tx.execute(sql`
         insert into clients (id, name, status) values
@@ -106,7 +110,7 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
 
   after(async () => {
     await viderTables(bases.owner, 'notification_deliveries', 'notification_templates', 'notification_preferences')
-    await lire('update tenants set email = ? where id = ?', [centre.email, DEFAULT_TENANT_ID])
+    await lire('update tenants set email = ?, email_signature = ? where id = ?', [centre.email, centre.signature, DEFAULT_TENANT_ID])
     await bases.fermer()
   })
 
@@ -127,7 +131,10 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
       assert.deepEqual([...envoyes[0].to].sort(), ['jeanne@durand.fr', 'jules@durand.fr'])
       assert.equal(envoyes[0].subject, 'Nouveau courrier pour Atelier Durand')
       assert.match(envoyes[0].text, /JETON-DU-CORPS-7f3a/)
-      assert.ok(envoyes[0].text.endsWith(`—\n${centre.name}`))
+      // Signé du centre, et sous son nom les lignes de sa signature (ADR 080) :
+      // ici celles posées pour le test.
+      assert.ok(envoyes[0].text.endsWith(`—\n${centre.name}\nLigne de signature`), envoyes[0].text)
+      assert.match(envoyes[0].html ?? '', /^<!DOCTYPE html>/)
 
       const [ligne] = await journal()
       assert.equal(ligne.event, 'mail_received')
@@ -153,7 +160,11 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
       )
       await notify(arrivee({ lien: undefined }), options)
       assert.equal(envoyes[0].subject, 'Pli pour Atelier Durand')
-      assert.equal(envoyes[0].text, 'Bonjour Atelier Durand,\n\nÀ bientôt.')
+      // Un modèle qui ne signe pas reçoit la signature du centre (ADR 080).
+      assert.equal(
+        envoyes[0].text,
+        `Bonjour Atelier Durand,\n\nÀ bientôt.\n\n—\n${centre.name}\nLigne de signature`,
+      )
       const [ligne] = await journal()
       assert.equal(ligne.subject, 'Pli pour Atelier Durand')
     })
@@ -233,7 +244,7 @@ describe('moteur de notifications', { skip: raisonDeSaut }, () => {
       assert.equal(issue.status, 'sent')
       assert.deepEqual(envoyes[0].to, ['jeanne@durand.fr', 'compta@durand.fr'])
       assert.equal(envoyes[0].subject, 'Relance — facture FA-1')
-      assert.equal(envoyes[0].text, 'Madame, Monsieur,')
+      assert.ok(envoyes[0].text.startsWith('Madame, Monsieur,\n\n—\n'), envoyes[0].text)
     })
   })
 

@@ -72,6 +72,13 @@ export const reglagesSections: readonly { title: string; links: readonly Reglage
         description: 'Identité du centre, règles de réservation, durées de conservation.',
         permission: 'centre.configurer',
       },
+      // Lot 7 de la recette du 17/11 (ADR 080) : tous les services.
+      {
+        href: '/configuration#identite-courriels',
+        label: 'Logo et signature des courriels',
+        description: 'L’en-tête, la signature et l’aperçu de tous les courriels envoyés par le centre.',
+        permission: 'centre.configurer',
+      },
       // Réservé à la direction (ADR 065).
       {
         href: '/reglages/crm',

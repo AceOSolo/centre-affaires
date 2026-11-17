@@ -6,6 +6,8 @@ import { normalizeRecipients, sendMessage, type Message, type SendResult } from 
 import { currentTenantId } from '../../lib/tenant.ts'
 import { clientMembers, clients } from '../clients/schema.ts'
 import { defaultTemplates, notificationCategoryLabels, notificationEventLabels } from './catalogue.ts'
+import { brandMessage, type EmailBranding } from './gabarit.ts'
+import { loadEmailBranding } from './identite-queries.ts'
 import { renderMessage, type TemplateValues } from './rendu.ts'
 import {
   notificationDeliveries,
@@ -25,9 +27,11 @@ import {
  *
  * Pour un événement, il prend le modèle du centre — ou, sans modèle, le texte
  * par défaut du code —, remplit les variables, écarte les personnes qui ont
- * renoncé à la catégorie du message, envoie par `sendMessage()` et inscrit
- * l'issue au journal des envois : envoyé, échec, SMTP non configuré, ou non
- * envoyé avec sa raison. Le journal garde l'objet, jamais le corps.
+ * renoncé à la catégorie du message, le met aux couleurs du centre (logo,
+ * signature, version HTML : `gabarit.ts`, ADR 080), envoie par
+ * `sendMessage()` et inscrit l'issue au journal des envois : envoyé, échec,
+ * SMTP non configuré, ou non envoyé avec sa raison. Le journal garde l'objet,
+ * jamais le corps.
  *
  * Ne lève jamais : un message qui ne part pas ne fait pas échouer
  * l'enregistrement d'un courrier, d'une facture ou d'une réservation. Les
@@ -91,6 +95,8 @@ type Prepared = {
   recipients: string[]
   /** Raison de ne rien envoyer : modèle désactivé, aucun destinataire, renoncement. */
   skip: string | null
+  /** Logo et signature du centre ; nul s'ils n'ont pas pu être lus : le texte part seul. */
+  branding: EmailBranding | null
 }
 
 /**
@@ -171,7 +177,18 @@ async function prepare(tx: Transaction, request: NotificationRequest, tenantId: 
     { centre: tenant?.name, ...request.values },
     notificationEventLabels[event],
   )
-  const prepared = (recipients: string[], skip: string | null): Prepared => ({ ...rendered, recipients, skip })
+  // Un habillage illisible (logo absent du disque, adresse publique mal
+  // écrite) ne retient pas le message : il part en texte seul.
+  const branding = await loadEmailBranding(tx, tenantId).catch((error: unknown) => {
+    console.error(`Message « ${event} » : mise en page des courriels illisible, envoi en texte seul`, error)
+    return null
+  })
+  const prepared = (recipients: string[], skip: string | null): Prepared => ({
+    ...rendered,
+    recipients,
+    skip,
+    branding,
+  })
 
   if (template && !template.active) {
     return prepared([], 'Modèle désactivé par le centre : rien n’est envoyé pour cet événement.')
@@ -215,6 +232,20 @@ async function prepare(tx: Transaction, request: NotificationRequest, tenantId: 
         [],
         `Les personnes à prévenir ont renoncé aux messages « ${notificationCategoryLabels[category]} ».`,
       )
+}
+
+/**
+ * Ce qui part : le texte, signature du centre complétée, et sa version HTML
+ * (ADR 080). Le corps rendu du modèle reste celui rendu à l'appelant.
+ */
+function contentOf(prepared: Prepared): { text: string; html?: string } {
+  if (!prepared.branding) return { text: prepared.body }
+  try {
+    return brandMessage({ subject: prepared.subject, text: prepared.body }, prepared.branding)
+  } catch (error) {
+    console.error(`Message « ${prepared.subject} » envoyé sans mise en page`, error)
+    return { text: prepared.body }
+  }
 }
 
 function describeError(error: unknown): string {
@@ -276,7 +307,7 @@ export async function notify(
     let result: SendResult | null = null
     if (prepared.skip === null) {
       try {
-        result = await send({ to: prepared.recipients, subject: prepared.subject, text: prepared.body })
+        result = await send({ to: prepared.recipients, subject: prepared.subject, ...contentOf(prepared) })
       } catch (error) {
         // `sendMessage()` ne lève pas ; un transport qui le ferait vaut échec.
         result = {

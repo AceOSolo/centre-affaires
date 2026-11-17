@@ -57,6 +57,21 @@ export const DEFAULT_LATE_PAYMENT_PENALTY_TEXT =
 export const DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT = 'Pas d’escompte pour paiement anticipé.'
 
 /**
+ * Logo des courriels (ADR 080), tel que `tenants.email_logo` le garde : le
+ * fichier est dans le stockage objet, ses dimensions servent aux attributs
+ * `width` et `height` que certaines messageries exigent.
+ */
+export type EmailLogo = {
+  id: string
+  /** Clé dans le stockage objet. */
+  key: string
+  contentType: 'image/png' | 'image/jpeg' | 'image/svg+xml'
+  byteSize: number
+  width: number
+  height: number
+}
+
+/**
  * Centre unique tant que le produit est mono-centre. Cet identifiant est aussi
  * écrit en dur dans la migration 0002 (création de la ligne) et dans la
  * fonction `tenant_id_default()` : les trois doivent rester synchronisés.
@@ -130,6 +145,18 @@ export const tenants = mysqlTable('tenants', {
     .$type<{ label: string; url: string }[]>()
     .notNull()
     .default(sql`(JSON_ARRAY())`),
+  /**
+   * Logo déposé pour l'en-tête des courriels (ADR 080), rangé dans le
+   * stockage européen et servi par `/medias/centre/logo/…`. Nul : les
+   * courriels prennent le logo du site (`logo_path`).
+   */
+  emailLogo: json('email_logo').$type<EmailLogo | null>(),
+  /**
+   * Lignes de la signature des courriels, sous le nom du centre (ADR 080).
+   * Nulle : adresse, téléphone, adresse électronique et site du centre, lus
+   * dans les colonnes ci-dessus.
+   */
+  emailSignature: varchar('email_signature', { length: 600 }),
 
   /*
    * Durées de conservation du courrier (RGPD, ADR 015), en mois. Par centre :
@@ -317,6 +344,16 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_accounting_journals_valid',
     sql`REGEXP_LIKE(${table.accountingSalesJournal}, '^[0-9A-Z]{1,8}$', 'c') and REGEXP_LIKE(${table.accountingBankJournal}, '^[0-9A-Z]{1,8}$', 'c')`,
+  ),
+  // Courriels (ADR 080) : une signature vide s'écrit nulle (signature
+  // automatique), le logo est un objet.
+  check(
+    'tenants_email_signature_valid',
+    sql`${table.emailSignature} is null or trim(${table.emailSignature}) <> ''`,
+  ),
+  check(
+    'tenants_email_logo_valid',
+    sql`${table.emailLogo} is null or json_type(${table.emailLogo}) = 'OBJECT'`,
   ),
 ])
 
