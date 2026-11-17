@@ -4,7 +4,9 @@
 **Statut** : accepté — lot 2 de la recette du 04/11/2026
 (`docs/recette/2026-11-04.md`) ; **amende l'ADR 055 § 5** (« Pas de pli créé
 à partir des photos » est remplacé) ; complète les ADR 044 (tournée, saisie
-groupée) et 057 (repère du pli) ; sans migration ni dépendance
+groupée) et 057 (repère du pli) ; sans migration ni dépendance ;
+**amendé par l'ADR 079** (saisie en un écran, type corrigé sur le pli ;
+liste des expéditeurs proposés réglée par le centre)
 
 ## Contexte
 

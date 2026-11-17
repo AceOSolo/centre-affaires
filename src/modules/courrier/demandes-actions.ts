@@ -5,13 +5,12 @@ import { redirect, unstable_rethrow } from 'next/navigation'
 import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
-import { DocumentKeyError } from '../../lib/chiffrement-documents.ts'
 import { isUuid } from '../../lib/uuid.ts'
+import { discardRequestDrafts } from './depots.ts'
 import {
   MailRequestError,
   cancelMailRequestForClient,
   completeForwardRequest,
-  completeScanRequest,
   refuseMailRequest,
   startMailRequest,
   startMailRequests,
@@ -24,8 +23,6 @@ import {
   readTrackingNumber,
   requestFiltersQuery,
 } from './demandes-regles.ts'
-import { readScans } from './fichiers.ts'
-import { withPageCount } from './pages.ts'
 import { notifyMailRequestDone, notifyMailRequestRefused } from './notifications.ts'
 
 /**
@@ -33,7 +30,8 @@ import { notifyMailRequestDone, notifyMailRequestRefused } from './notifications
  * protège elle-même (`requirePermission`, ADR 008, ADR 019) : le droit est
  * celui du courrier.
  *
- * Succès : retour au pli, avec une confirmation annoncée (`?fait=`). Échec :
+ * Succès : retour à l'écran de traitement de la demande (ADR 079), avec une
+ * confirmation annoncée (`?fait=`). Échec :
  * l'état rendu au formulaire — un refus de la base (CA008) dit pourquoi. Une
  * erreur imprévue est journalisée pour l'exploitation et dite en français,
  * jamais en page d'erreur du serveur (ADR 057).
@@ -46,10 +44,11 @@ export type RequestActionState = {
 
 const text = (formData: FormData, key: string) => String(formData.get(key) ?? '').trim()
 
-function done(mailItemId: string, notice: string): never {
+function done(requestId: string, notice: string): never {
   revalidatePath('/courrier', 'layout')
   revalidatePath('/compte/courrier', 'layout')
-  redirect(`/courrier/${mailItemId}?fait=${notice}`)
+  revalidatePath('/demandes')
+  redirect(`/courrier/demandes/${requestId}?fait=${notice}`)
 }
 
 const UNEXPECTED =
@@ -78,17 +77,19 @@ export async function startMailRequestAction(
   try {
     result = await startMailRequest(id, member.id)
   } catch (error) {
-    return refusal(error, `Prise en charge de la demande de courrier ${id}`)
+    return refusal(error, `Validation de la demande de courrier ${id}`)
   }
-  done(result.mailItemId, 'prise-en-charge')
+  // L'écran de traitement ne montre que ce qui sert à cette demande (ADR 079).
+  done(result.id, 'validee')
 }
 
-/** Files d'où part une prise en charge groupée, et où elle revient. */
+/** Files d'où part une validation groupée, et où elle revient. */
 const groupReturns = ['/courrier/demandes', '/demandes'] as const
 
 /**
- * Prise en charge groupée, depuis la file du courrier ou depuis « Demandes »
- * (ADR 048, ADR 057) : chaque demande cochée pour son compte — une demande
+ * Validation groupée (« Prendre en charge » jusqu'à l'ADR 079), depuis la file
+ * du courrier ou depuis « Demandes » (ADR 048, ADR 057) : chaque demande
+ * cochée pour son compte — une demande
  * annulée entre-temps par le client est comptée à part, une panne sur l'une
  * n'arrête pas les autres. Retour à la file d'origine, filtres gardés, avec
  * le bilan.
@@ -135,8 +136,13 @@ export async function refuseMailRequestAction(
   } catch (error) {
     return { ...refusal(error, `Refus de la demande de courrier ${text(formData, 'id')}`), values }
   }
+  // Un contenu déposé pour cette demande ne sera jamais validé (ADR 079) :
+  // purgé tout de suite. Un échec ne revient pas sur le refus, déjà écrit.
+  await discardRequestDrafts(result.id).catch((error: unknown) =>
+    console.error(`Purge des dépôts de la demande refusée ${result.id} impossible`, error),
+  )
   after(() => notifyMailRequestRefused(result.id))
-  done(result.mailItemId, 'refus')
+  done(result.id, 'refus')
 }
 
 export async function cancelMailRequestForClientAction(
@@ -150,7 +156,7 @@ export async function cancelMailRequestForClientAction(
   } catch (error) {
     return refusal(error, `Annulation de la demande de courrier ${text(formData, 'id')}`)
   }
-  done(result.mailItemId, 'annulation')
+  done(result.id, 'annulation')
 }
 
 /** Suivi et frais saisis : lus et vérifiés ensemble, pour un résumé d'erreurs complet. */
@@ -183,7 +189,7 @@ export async function completeForwardRequestAction(
     return { ...refusal(error, `Réexpédition de la demande de courrier ${text(formData, 'id')}`), values: read.values }
   }
   after(() => notifyMailRequestDone(result.id))
-  done(result.mailItemId, 'reexpediee')
+  done(result.id, 'reexpediee')
 }
 
 export async function updateForwardShippingAction(
@@ -200,40 +206,5 @@ export async function updateForwardShippingAction(
   } catch (error) {
     return { ...refusal(error, `Suivi de la réexpédition ${text(formData, 'id')}`), values: read.values }
   }
-  done(result.mailItemId, 'envoi')
-}
-
-export async function completeScanRequestAction(
-  _previous: RequestActionState,
-  formData: FormData,
-): Promise<RequestActionState> {
-  const { member } = await requirePermission('courrier.gerer')
-  // Plusieurs photos des pages demandées font un seul PDF (ADR 055).
-  const read = await readScans(formData.getAll('requestContent'))
-  if (read.error) return { fieldErrors: { requestContent: read.error } }
-  if (!read.scan) return { fieldErrors: { requestContent: 'Joignez la numérisation demandée.' } }
-  // Pages comptées comme à l'ouverture (ADR 044) ; la numérisation demandée,
-  // elle, se facture par sa demande.
-  const content = withPageCount(formData, 'requestContent', read.scan)
-  if (content.error || !content.scan) {
-    return { fieldErrors: { requestContentPages: content.error ?? '' } }
-  }
-
-  let result
-  try {
-    result = await completeScanRequest(text(formData, 'id'), member.id, content.scan)
-  } catch (error) {
-    if (error instanceof MailRequestError) return { error: error.message }
-    console.error('Dépôt de numérisation impossible', error)
-    // Jamais de dépôt en clair faute de clé (ADR 020) : le dire.
-    return {
-      error:
-        error instanceof DocumentKeyError
-          ? 'Le fichier n’a pas été déposé : le chiffrement des documents n’est pas configuré sur ce serveur. Prévenez la personne qui administre l’application.'
-          : 'Le fichier n’a pas pu être déposé. Réessayez ; si le problème persiste, le stockage est peut-être indisponible.',
-    }
-  }
-  // « Demande traitée » (ADR 038) : la numérisation est dans l'espace.
-  after(() => notifyMailRequestDone(result.id))
-  done(result.mailItemId, 'numerisee')
+  done(result.id, 'envoi')
 }

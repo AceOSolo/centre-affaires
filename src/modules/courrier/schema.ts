@@ -1,5 +1,6 @@
 import { sql } from 'drizzle-orm'
 import {
+  boolean,
   char,
   check,
   foreignKey,
@@ -458,6 +459,17 @@ export const mailScans = mysqlTable(
      * Elle survit à la purge du fichier : la facture reste justifiée.
      */
     pageCount: smallint('page_count'),
+    /**
+     * Contenu déposé par l'accueil, **à valider** avant d'être montré au client
+     * (ADR 079) : l'accueil le relit dans l'aperçu, le remplace au besoin, puis
+     * le valide — le client le voit et en est prévenu à ce moment, pas avant.
+     * Tant qu'il est à valider, l'ouverture du pli ou la numérisation demandée
+     * n'est pas faite, et aucune lecture du client ne le rend. Vrai pour un
+     * contenu seulement ; une fois validé, il ne redevient jamais à valider
+     * (`64-courrier-equipe.sql`, `CA025`). Un contenu remplacé avant
+     * validation reste à valider et purgé (`deleted_at`) : jamais compté.
+     */
+    pendingValidation: boolean('pending_validation').notNull().default(false),
     ...timestamps(),
     /** Purge au terme de la durée de conservation : le fichier part, la ligne reste. */
     deletedAt: deletedAt(),
@@ -492,6 +504,11 @@ export const mailScans = mysqlTable(
     check(
       'mail_scans_request_content_only',
       sql`${table.mailRequestId} is null or ${table.side} = 'content'`,
+    ),
+    // Seul un contenu se valide avant d'être montré (ADR 079) : l'enveloppe se voit aussitôt.
+    check(
+      'mail_scans_pending_content_only',
+      sql`${table.pendingValidation} = false or ${table.side} = 'content'`,
     ),
     check(
       'mail_scans_content_type_allowed',

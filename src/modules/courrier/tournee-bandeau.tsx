@@ -1,15 +1,46 @@
 import Link from 'next/link'
 
-import { ClockIcon, MailIcon } from '../../components/ui/icons.tsx'
+import { CheckIcon, ClockIcon, MailIcon } from '../../components/ui/icons.tsx'
 import { formatTime } from '../../lib/dates.ts'
-import type { OpenBatch } from './tournees.ts'
+import type { DayReport, OpenBatch } from './tournees.ts'
 
 /**
  * Où en est la tournée du courrier (ADR 044), en tête des écrans du courrier :
  * tant qu'elle est ouverte, rien n'est parti vers les domiciliés. L'état se
  * lit au texte et à l'icône, jamais à la seule couleur.
+ *
+ * Une fois la tournée du jour terminée (`dayReport`), plus de « Pas de
+ * courrier aujourd'hui ? » (ADR 079) : les domiciliés ont été prévenus, le
+ * courrier arrivé depuis ouvre une nouvelle tournée.
  */
-export function BatchBanner({ batch, timeZone }: { batch: OpenBatch | undefined; timeZone: string }) {
+export function BatchBanner({
+  batch,
+  dayReport,
+  timeZone,
+}: {
+  batch: OpenBatch | undefined
+  dayReport: DayReport | undefined
+  timeZone: string
+}) {
+  if (!batch && dayReport) {
+    return (
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white px-4 py-3 text-sm">
+        <p className="flex items-center gap-2 text-muted-foreground">
+          <CheckIcon size={20} className="shrink-0 text-primary" />
+          <span>
+            Tournée du jour terminée à <span className="tabular">{formatTime(dayReport.closedAt, timeZone)}</span>
+            {dayReport.closedByName && ` par ${dayReport.closedByName}`} : les domiciliés ont été prévenus.
+          </span>
+        </p>
+        <Link
+          href="/courrier/tournee/saisie"
+          className="rounded-md border border-border bg-white px-3 py-1.5 text-sm font-medium hover:bg-muted"
+        >
+          Du courrier arrive encore ? Le saisir
+        </Link>
+      </div>
+    )
+  }
   if (!batch) {
     return (
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-white px-4 py-3 text-sm">

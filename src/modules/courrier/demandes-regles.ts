@@ -318,7 +318,7 @@ export function pageCount(total: number, pageSize: number): number {
 }
 
 /**
- * Bilan d'une prise en charge groupée, lu dans l'URL de retour
+ * Bilan d'une validation groupée (« Valider la sélection », ADR 079), lu dans l'URL de retour
  * (`?prises=2&ignorees=1&echecs=1`) : la confirmation, et à part ce qui n'a
  * pas pu se faire (ADR 057). `undefined` sans bilan dans l'adresse.
  */
@@ -334,14 +334,14 @@ export function groupStartNotice(params: SearchParams): { done: string; failure?
   const plural = (n: number, word: string) => `${word}${n > 1 ? 's' : ''}`
   const done =
     (started === 0
-      ? 'Aucune demande prise en charge.'
-      : `${started} ${plural(started, 'demande')} ${plural(started, 'prise')} en charge.`) +
+      ? 'Aucune demande validée.'
+      : `${started} ${plural(started, 'demande')} ${plural(started, 'validée')}.`) +
     (skipped > 0
-      ? ` ${skipped} ${plural(skipped, 'ignorée')} : déjà ${plural(skipped, 'prise')} en charge, ${plural(skipped, 'faite')} ou ${plural(skipped, 'annulée')} entre-temps.`
+      ? ` ${skipped} ${plural(skipped, 'ignorée')} : déjà ${plural(skipped, 'validée')}, ${plural(skipped, 'faite')} ou ${plural(skipped, 'annulée')} entre-temps.`
       : '')
   const failure =
     failed > 0
-      ? `${failed} ${plural(failed, 'demande')} n’${failed > 1 ? 'ont' : 'a'} pas pu être ${plural(failed, 'prise')} en charge : le serveur a rencontré une erreur, rien n’a été modifié pour ${failed > 1 ? 'elles' : 'elle'}. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.`
+      ? `${failed} ${plural(failed, 'demande')} n’${failed > 1 ? 'ont' : 'a'} pas pu être ${plural(failed, 'validée')} : le serveur a rencontré une erreur, rien n’a été modifié pour ${failed > 1 ? 'elles' : 'elle'}. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.`
       : undefined
   return { done, failure }
 }
@@ -434,8 +434,8 @@ export type RequestStateFilter = keyof typeof requestStateFilters
 
 export const requestStateFilterLabels: Record<RequestStateFilter, string> = {
   'a-traiter': 'À traiter',
-  demandee: 'Pas encore prises en charge',
-  'en-cours': 'En cours',
+  demandee: 'Pas encore validées',
+  'en-cours': 'Validées',
   faite: 'Faites',
   refusee: 'Refusées',
   annulee: 'Annulées',

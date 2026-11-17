@@ -29,6 +29,7 @@ export function EnvelopeForm({ mailItemId }: { mailItemId: string }) {
         </p>
       </div>
 
+      <p className="text-xs text-muted-foreground">Les champs marqués * sont obligatoires.</p>
       <ErrorSummary errors={state?.fieldErrors} labels={{ envelope: 'Enveloppe' }} message={state?.error} />
 
       <PhotosField

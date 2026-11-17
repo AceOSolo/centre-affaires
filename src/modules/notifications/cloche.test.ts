@@ -168,7 +168,7 @@ describe('cloche de l’équipe : les lignes', () => {
     assert.equal(b2.createdAt, at(5).toISOString())
   })
 
-  it('dit le visiteur à défaut de nom, et la prise en charge', () => {
+  it('dit le visiteur à défaut de nom, et la demande validée', () => {
     const anonyme = buildInboxFeed(
       { ...sources, bookings: [booking('b3', 1, { clientName: null, requesterName: '  ' })], proposals: [] },
       paris,
@@ -178,7 +178,7 @@ describe('cloche de l’équipe : les lignes', () => {
 
     const feed = buildInboxFeed(sources, paris, now)
     const state = (id: string) => feed.items.find((item) => item.id === id)?.state
-    assert.equal(state('m2'), 'Prise en charge')
+    assert.equal(state('m2'), 'Validée')
     assert.equal(state('m1'), null)
   })
 

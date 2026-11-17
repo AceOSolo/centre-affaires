@@ -114,7 +114,8 @@ export function buildInboxFeed(sources: InboxSources, timeZone: string, now: Dat
           `${mailKindLabels[request.mailKind]} du ${formatInstant(request.mailReceivedAt, timeZone)}`,
         ),
         who: firstName(request.clientName),
-        state: request.status === 'in_progress' ? 'Prise en charge' : null,
+        // « Valider » remplace « Prendre en charge » (ADR 079).
+        state: request.status === 'in_progress' ? 'Validée' : null,
         at: request.requestedAt,
       }),
     ),

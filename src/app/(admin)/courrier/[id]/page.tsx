@@ -8,6 +8,9 @@ import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { withdrawMailAction } from '../../../../modules/courrier/actions.ts'
 import { MailRequestsSection } from '../../../../modules/courrier/demandes-centre.tsx'
 import { listRequestsForMail } from '../../../../modules/courrier/demandes-queries.ts'
+import { isPendingRequest } from '../../../../modules/courrier/demandes-regles.ts'
+import { DraftReview } from '../../../../modules/courrier/depot-a-valider.tsx'
+import { findContentDrafts } from '../../../../modules/courrier/depots.ts'
 import { EnvelopeForm } from '../../../../modules/courrier/enveloppe-form.tsx'
 import { SenderDatalist, SenderForm } from '../../../../modules/courrier/expediteur-form.tsx'
 import { senderListId, suggestionsFor } from '../../../../modules/courrier/expediteurs.ts'
@@ -36,15 +39,16 @@ function formatBytes(bytes: number): string {
     : `${format.format(Math.max(1, Math.round(bytes / 1024)))} ko`
 }
 
-/** Confirmations, après le traitement d'une demande (`?fait=`). */
+/**
+ * Confirmations (`?fait=`). Les demandes se traitent sur leur propre écran
+ * (`/courrier/demandes/…`, ADR 079) ; restent ici l'enveloppe et l'ouverture à
+ * l'initiative du centre.
+ */
 const notices: Record<string, string> = {
-  'prise-en-charge': 'Demande prise en charge. Le client voit que le centre s’en occupe.',
-  refus: 'Demande refusée. Le client lit le motif dans son espace ; il est prévenu par courriel.',
-  annulation: 'Demande annulée à la demande du client, à votre nom.',
-  numerisee: 'Numérisation déposée et demande faite. Le client est prévenu par courriel.',
-  reexpediee: 'Réexpédition notée comme faite. Le client est prévenu par courriel.',
-  envoi: 'Suivi et frais d’affranchissement enregistrés.',
   enveloppe: 'Photo de l’enveloppe ajoutée. Le client la voit dans son espace.',
+  deposee: 'Contenu déposé. Relisez l’aperçu, puis validez : le client ne le voit pas encore.',
+  ouverte: 'Ouverture validée. Le client voit le contenu dans son espace et en est prévenu par courriel.',
+  abandon: 'Dépôt abandonné : rien n’a été publié, le pli reste fermé.',
 }
 
 /** « 1 page », « 12 pages ». */
@@ -60,10 +64,11 @@ export default async function CourrierDetailPage({
   await requirePermission('courrier.gerer')
   const [{ id }, { fait, pages }] = await Promise.all([params, searchParams])
   const timeZone = await currentTimeZone()
-  const [mail, requests, spots] = await Promise.all([
+  const [mail, requests, spots, drafts] = await Promise.all([
     findMail(id),
     listRequestsForMail(id),
     findMailSpots([id], timeZone),
+    findContentDrafts(id),
   ])
   if (!mail) notFound()
 
@@ -73,6 +78,14 @@ export default async function CourrierDetailPage({
   const suggestions = senderEditable ? await findSenderSuggestions([mail.clientId]) : undefined
   const forwarded = requests.find((request) => request.kind === 'forward' && request.status === 'done')
   const scanOrigin = new Map(requests.map((request) => [request.id, request]))
+  // Une ouverture demandée par le client se traite depuis sa demande (ADR 079).
+  const openingRequest = requests.find(
+    (request) => request.kind === 'open_and_scan' && isPendingRequest(request.status),
+  )
+  // Contenu d'une ouverture d'office, déposé et pas encore validé : relu et validé ici.
+  const officeDraft = openingRequest ? undefined : drafts.find((draft) => draft.purpose === 'opening')
+  // Ce que le client voit : les contenus validés. Les dépôts à valider sont à part.
+  const published = mail.scans.filter((scan) => !scan.pendingValidation)
   // La plus récente : une enveloppe ajoutée après coup remplace la première à l'écran.
   const envelope = mail.scans.filter((scan) => scan.side === 'envelope').at(-1)
   const hasEnvelope = Boolean(envelope)
@@ -233,13 +246,13 @@ export default async function CourrierDetailPage({
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">Numérisations</h2>
-        {mail.scans.length === 0 ? (
+        {published.length === 0 ? (
           <p className="text-sm text-muted-foreground">
             Aucune numérisation. Le client voit le pli dans sa liste, sans image.
           </p>
         ) : (
           <ul className="flex flex-wrap gap-3">
-            {mail.scans.map((scan) => (
+            {published.map((scan) => (
               <li key={scan.id}>
                 <a
                   href={`/courrier/scans/${scan.id}`}
@@ -260,7 +273,7 @@ export default async function CourrierDetailPage({
             ))}
           </ul>
         )}
-        {mail.scans
+        {published
           .filter((scan) => scan.side === 'content' && scan.pageCount !== null)
           .map((scan) => {
             const label = `contenu du ${formatDateTime(scan.createdAt, timeZone)}`
@@ -293,12 +306,28 @@ export default async function CourrierDetailPage({
       {/* Enveloppe à photographier après coup : saisie groupée, pli enregistré sans photo (ADR 055). */}
       {!withdrawn && !hasEnvelope && <EnvelopeForm mailItemId={mail.id} />}
 
-      {/* Un pli réexpédié a quitté le centre : il ne s'ouvre plus ici. */}
-      {!withdrawn && !forwarded && canOpen(mail.status) && (
-        <OpenForm mailItemId={mail.id} requested={mail.status === 'opening_requested'} />
+      {/* Ouverture demandée : elle se traite depuis la demande, qui ne montre que ce qui la sert. */}
+      {!withdrawn && openingRequest && (
+        <p className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/40 bg-accent/5 px-5 py-3 text-sm">
+          <span>Le client a demandé l’ouverture de ce pli.</span>
+          <Link
+            href={`/courrier/demandes/${openingRequest.id}`}
+            className="inline-flex min-h-10 items-center rounded-md bg-primary px-4 font-medium text-white hover:bg-primary-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            Traiter la demande d’ouverture
+          </Link>
+        </p>
       )}
 
-      <MailRequestsSection requests={requests} timeZone={timeZone} withdrawn={withdrawn} />
+      {/* Ouverture d'office : déposée, relue, puis validée (ADR 079). */}
+      {!withdrawn && officeDraft && <DraftReview draft={officeDraft} timeZone={timeZone} back="fiche" />}
+
+      {/* Un pli réexpédié a quitté le centre : il ne s'ouvre plus ici. */}
+      {!withdrawn && !forwarded && !openingRequest && !officeDraft && canOpen(mail.status) && (
+        <OpenForm mailItemId={mail.id} />
+      )}
+
+      <MailRequestsSection requests={requests} timeZone={timeZone} />
 
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold tracking-tight">

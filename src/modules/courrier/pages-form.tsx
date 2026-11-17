@@ -35,9 +35,10 @@ export function CorrectPagesForm({
       <form action={formAction} className="mt-2 flex flex-wrap items-end gap-3">
         <input type="hidden" name="mailItemId" value={mailItemId} />
         <input type="hidden" name="scanId" value={scanId} />
+        <p className="w-full text-xs text-muted-foreground">Les champs marqués * sont obligatoires.</p>
         <div>
           <label htmlFor={fieldId} className="block text-sm font-medium">
-            Nombre de pages
+            Nombre de pages<span aria-hidden="true"> *</span>
           </label>
           <input
             id={fieldId}
@@ -45,6 +46,7 @@ export function CorrectPagesForm({
             inputMode="numeric"
             defaultValue={pages}
             required
+            aria-required
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? `${fieldId}-error` : undefined}
             className={`${fieldClass} mt-1 tabular`}

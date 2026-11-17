@@ -12,6 +12,7 @@ import { mailKindLabels } from '../../../../modules/courrier/labels.ts'
 import { CloseBatchForm } from '../../../../modules/courrier/tournee-form.tsx'
 import {
   batchRecipients,
+  findDayReport,
   findOpenBatch,
   listRecentBatches,
   type BatchRecipients,
@@ -35,10 +36,11 @@ export default async function TourneePage({
   await requirePermission('courrier.gerer')
   const { terminee } = await searchParams
   const closedId = isUuid(terminee) ? terminee : undefined
-  const [timeZone, open, recent] = await Promise.all([
+  const [timeZone, open, recent, dayReport] = await Promise.all([
     currentTimeZone(),
     findOpenBatch(),
     listRecentBatches(),
+    findDayReport(),
   ])
   const batchClientIds = [...new Set(open?.items.map((item) => item.clientId) ?? [])]
   const [preview, closed, suggestions] = await Promise.all([
@@ -184,10 +186,24 @@ export default async function TourneePage({
             <Link href="/courrier/nouveau" className="font-medium text-primary underline-offset-2 hover:underline">
               pli par pli
             </Link>
-            . Si rien n’est arrivé aujourd’hui, signalez-le : les domiciliés en sont prévenus.
+            .{' '}
+            {dayReport
+              ? 'La tournée du jour est déjà terminée : du courrier arrivé depuis ouvre une nouvelle tournée.'
+              : 'Si rien n’est arrivé aujourd’hui, signalez-le : les domiciliés en sont prévenus.'}
           </p>
-          <Recap preview={preview} timeZone={timeZone} />
-          <CloseBatchForm batchId={null} label="Signaler qu’aucun courrier n’est arrivé" />
+          {dayReport ? (
+            // Plus de « aucun courrier » une fois la tournée du jour close (ADR 079) :
+            // les domiciliés ont été prévenus, l'avis ne repartirait pas.
+            <p className="text-sm tabular">
+              Tournée du jour terminée à {formatTime(dayReport.closedAt, timeZone)}
+              {dayReport.closedByName && ` par ${dayReport.closedByName}`}.
+            </p>
+          ) : (
+            <>
+              <Recap preview={preview} timeZone={timeZone} />
+              <CloseBatchForm batchId={null} label="Signaler qu’aucun courrier n’est arrivé" />
+            </>
+          )}
         </section>
       )}
 

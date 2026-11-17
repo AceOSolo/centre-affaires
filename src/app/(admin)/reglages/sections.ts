@@ -72,6 +72,14 @@ export const reglagesLinks: readonly ReglagesLink[] = [
     description: 'Les questions posées sur le site, leur ordre, ce qui est obligatoire et ce qui s’affiche selon les réponses.',
     permission: 'formulaires.gerer' as const,
   })),
+  // Expéditeurs proposés à la saisie du courrier (ADR 079).
+  {
+    service: 'domiciliation',
+    href: '/courrier/expediteurs',
+    label: 'Expéditeurs proposés',
+    description: 'La liste des expéditeurs suggérés à la saisie du courrier, dans l’ordre choisi.',
+    permission: 'centre.configurer',
+  },
   // Pièces justificatives demandées au domicilié (ADR 075).
   {
     service: 'domiciliation',

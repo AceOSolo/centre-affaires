@@ -16,7 +16,7 @@ import {
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { listMail } from '../../../modules/courrier/queries.ts'
 import { BatchBanner } from '../../../modules/courrier/tournee-bandeau.tsx'
-import { findOpenBatch } from '../../../modules/courrier/tournees.ts'
+import { findDayReport, findOpenBatch } from '../../../modules/courrier/tournees.ts'
 
 export const metadata = { title: 'Courrier' }
 
@@ -38,12 +38,13 @@ export default async function CourrierPage({
     redirect(`/courrier/demandes?nature=ouverture${clientId ? `&client=${clientId}` : ''}`)
   }
 
-  const [timeZone, rows, pending, filteredClient, batch] = await Promise.all([
+  const [timeZone, rows, pending, filteredClient, batch, dayReport] = await Promise.all([
     currentTimeZone(),
     listMail({ clientId }),
     countPendingMailRequests(),
     clientId ? findClient(clientId) : undefined,
     findOpenBatch(),
+    findDayReport(),
   ])
   const requestCount = pending.total
 
@@ -60,7 +61,7 @@ export default async function CourrierPage({
 
       {/* Les gestes du jour tiennent tous dans le bandeau de la tournée : saisir, puis terminer.
           Le pli par pli reste accessible depuis la tournée et la fiche du client. */}
-      <BatchBanner batch={batch} timeZone={timeZone} />
+      <BatchBanner batch={batch} dayReport={dayReport} timeZone={timeZone} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">

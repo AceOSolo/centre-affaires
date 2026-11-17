@@ -41,6 +41,68 @@ export class MailBatchOpenedError extends Error {
   }
 }
 
+/**
+ * Levée quand l'accueil signale qu'aucun courrier n'est arrivé alors qu'une
+ * tournée a déjà été terminée aujourd'hui (ADR 079) : les domiciliés ont déjà
+ * été prévenus, « pas de courrier » ne repartirait pas et serait faux pour
+ * ceux qui ont reçu des plis.
+ */
+export class MailDayReportedError extends Error {
+  constructor() {
+    super(
+      'La tournée du jour est déjà terminée : les domiciliés ont été prévenus. Du courrier arrivé depuis s’enregistre et ouvre une nouvelle tournée.',
+    )
+    this.name = 'MailDayReportedError'
+  }
+}
+
+/** Fuseau du centre, lu dans la transaction. */
+async function tenantTimeZone(tx: Transaction): Promise<string> {
+  const [tenant] = await tx.select({ timeZone: tenants.timezone }).from(tenants).where(eq(tenants.id, currentTenantId()))
+  return tenant?.timeZone ?? 'Europe/Paris'
+}
+
+/** Première tournée terminée aujourd'hui (jour du centre), s'il y en a une. */
+async function closedToday(tx: Transaction, at: Date = new Date()): Promise<{ id: string; closedAt: Date } | undefined> {
+  const timeZone = await tenantTimeZone(tx)
+  const { startsAt } = dayRangeUtc(toIsoDate(at, timeZone), timeZone)
+  const [batch] = await tx
+    .select({ id: mailBatches.id, closedAt: mailBatches.closedAt })
+    .from(mailBatches)
+    .where(and(isNotNull(mailBatches.closedAt), gte(mailBatches.closedAt, startsAt)))
+    .orderBy(asc(mailBatches.closedAt))
+    .limit(1)
+  return batch ? { id: batch.id, closedAt: batch.closedAt as Date } : undefined
+}
+
+export type DayReport = {
+  /** Première tournée terminée du jour : heure de fin et qui l'a terminée. */
+  closedAt: Date
+  closedByName: string | null
+}
+
+/**
+ * La tournée du jour, si elle est déjà terminée (ADR 079) : dès lors, plus de
+ * « Pas de courrier aujourd'hui ? » à l'écran — les domiciliés ont été
+ * prévenus une fois, la règle de l'ADR 044 ne le redit pas.
+ */
+export async function findDayReport(database?: Database): Promise<DayReport | undefined> {
+  return withTenant(
+    currentTenantId(),
+    async (tx) => {
+      const first = await closedToday(tx)
+      if (!first) return undefined
+      const [row] = await tx
+        .select({ closedByName: sql<string | null>`coalesce(${staffMembers.fullName}, ${staffMembers.email})` })
+        .from(mailBatches)
+        .leftJoin(staffMembers, eq(staffMembers.id, mailBatches.closedBy))
+        .where(eq(mailBatches.id, first.id))
+      return { closedAt: first.closedAt, closedByName: row?.closedByName ?? null }
+    },
+    database,
+  )
+}
+
 /** La tournée ouverte, en la créant au besoin. Dans la transaction appelante. */
 export async function ensureOpenBatch(tx: Transaction, staffMemberId: string): Promise<string> {
   const open = async () => {
@@ -274,7 +336,11 @@ export async function batchRecipients(batchId: string | null, database?: Databas
  * La ligne de la tournée est verrouillée : un pli en cours d'enregistrement
  * finit d'entrer avant, ou entre dans la tournée suivante (`CA017`).
  */
-export async function closeOpenBatch(staffMemberId: string, expectedBatchId: string | null): Promise<string> {
+export async function closeOpenBatch(
+  staffMemberId: string,
+  expectedBatchId: string | null,
+  database?: Database,
+): Promise<string> {
   return withTenant(currentTenantId(), async (tx) => {
     const [open] = await tx
       .select({ id: mailBatches.id })
@@ -287,6 +353,9 @@ export async function closeOpenBatch(staffMemberId: string, expectedBatchId: str
       // Une tournée ouverte depuis l'affichage : du courrier est en cours
       // d'enregistrement, « pas de courrier » serait faux pour ses domiciliés.
       if (open) throw new MailBatchOpenedError()
+      // Une tournée déjà terminée aujourd'hui a prévenu les domiciliés : le
+      // bouton n'existe plus, une page restée ouverte ne le rejoue pas (ADR 079).
+      if (await closedToday(tx)) throw new MailDayReportedError()
       batchId = uuidv7()
       // Un pli enregistré au même instant ouvre la sienne : l'index unique
       // `mail_batches_open_key` la garde, cette insertion ne fait rien et la
@@ -309,7 +378,7 @@ export async function closeOpenBatch(staffMemberId: string, expectedBatchId: str
       .set({ closedAt: maintenant(), closedBy: staffMemberId })
       .where(and(eq(mailBatches.id, batchId), isNull(mailBatches.closedAt)))
     return batchId
-  })
+  }, database)
 }
 
 export type BatchSummary = {

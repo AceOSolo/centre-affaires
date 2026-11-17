@@ -9,7 +9,7 @@ import { findSenderSuggestions } from '../../../../modules/courrier/expediteurs-
 import { MailForm } from '../../../../modules/courrier/mail-form.tsx'
 import { findMail } from '../../../../modules/courrier/queries.ts'
 import { BatchBanner } from '../../../../modules/courrier/tournee-bandeau.tsx'
-import { findOpenBatch } from '../../../../modules/courrier/tournees.ts'
+import { findDayReport, findOpenBatch } from '../../../../modules/courrier/tournees.ts'
 
 export const metadata = { title: 'Enregistrer un courrier' }
 
@@ -20,11 +20,12 @@ export default async function NouveauCourrierPage({
 }) {
   await requirePermission('courrier.gerer')
   const { clientId, enregistre } = await searchParams
-  const [timeZone, clients, registered, batch] = await Promise.all([
+  const [timeZone, clients, registered, batch, dayReport] = await Promise.all([
     currentTimeZone(),
     listClients(),
     enregistre ? findMail(enregistre) : undefined,
     findOpenBatch(),
+    findDayReport(),
   ])
   const suggestions = await findSenderSuggestions(clients.map((client) => client.id))
 
@@ -42,7 +43,7 @@ export default async function NouveauCourrierPage({
       </div>
 
       <div className="max-w-3xl">
-        <BatchBanner batch={batch} timeZone={timeZone} />
+        <BatchBanner batch={batch} dayReport={dayReport} timeZone={timeZone} />
       </div>
 
       {registered && (

@@ -1,10 +1,20 @@
 import { and, desc, eq, gte, isNotNull, isNull, sql } from 'drizzle-orm'
 
 import { maintenant } from '../../db/columns.ts'
-import { withTenant, type Database } from '../../db/index.ts'
+import { withTenant, type Database, type Transaction } from '../../db/index.ts'
+import { tenants } from '../../db/tenants.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
-import { knownSenders, senderSuggestions, type SenderSuggestions, type SenderUse } from './expediteurs.ts'
+import {
+  currentSenderList,
+  frequentMissing,
+  knownSenders,
+  MAX_SUGGESTED_SENDERS,
+  senderSuggestions,
+  type SenderList,
+  type SenderSuggestions,
+  type SenderUse,
+} from './expediteurs.ts'
 import { MailStateError } from './queries.ts'
 import { mailItems } from './schema.ts'
 
@@ -53,17 +63,71 @@ async function senderUses(database?: Database): Promise<SenderUse[]> {
   }))
 }
 
+/** La liste réglée par le centre (ADR 079) ; `null` tant qu'il n'y a pas touché. */
+async function readSenderList(tx: Transaction, tenantId: string): Promise<SenderList> {
+  const [tenant] = await tx
+    .select({ list: tenants.mailSuggestedSenders })
+    .from(tenants)
+    .where(eq(tenants.id, tenantId))
+    .limit(1)
+  const list = tenant?.list
+  return Array.isArray(list) ? list.filter((sender): sender is string => typeof sender === 'string') : null
+}
+
+async function suggestedSenderList(database?: Database): Promise<SenderList> {
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, (tx) => readSenderList(tx, tenantId), database)
+}
+
 /** Suggestions d'expéditeurs pour les entreprises d'un écran, et celles du centre. */
 export async function findSenderSuggestions(
   clientIds: readonly string[],
   database?: Database,
 ): Promise<SenderSuggestions> {
-  return senderSuggestions(await senderUses(database), clientIds.filter(isUuid))
+  const [uses, list] = await Promise.all([senderUses(database), suggestedSenderList(database)])
+  return senderSuggestions(uses, clientIds.filter(isUuid), list)
 }
 
 /** Toutes les écritures connues au centre, pour ramener une saisie à la sienne (`canonicalSender`). */
 export async function findKnownSenders(database?: Database): Promise<string[]> {
-  return knownSenders(await senderUses(database))
+  const [uses, list] = await Promise.all([senderUses(database), suggestedSenderList(database)])
+  return knownSenders(uses, list)
+}
+
+/** L'écran du réglage : la liste proposée aujourd'hui, et ce qu'on pourrait y ajouter. */
+export type SenderListSettings = {
+  /** La liste telle que l'accueil la voit : réglée, ou celle du code. */
+  list: string[]
+  /** Le centre l'a-t-il déjà réglée ? */
+  customized: boolean
+  /** Souvent saisis au centre, absents de la liste. */
+  frequentMissing: string[]
+}
+
+export async function findSenderListSettings(database?: Database): Promise<SenderListSettings> {
+  const [uses, list] = await Promise.all([senderUses(database), suggestedSenderList(database)])
+  const current = currentSenderList(uses, list)
+  return { list: current, customized: list !== null, frequentMissing: frequentMissing(uses, current) }
+}
+
+/**
+ * Enregistre la liste du centre, déjà lue (`readSenderList`), ou revient à
+ * celle du code (`null`). La base tient le plafond (`tenants_mail_suggested_senders_valid`).
+ */
+export async function saveSenderList(list: readonly string[] | null, database?: Database): Promise<void> {
+  if (list && list.length > MAX_SUGGESTED_SENDERS) {
+    throw new Error(`Au plus ${MAX_SUGGESTED_SENDERS} expéditeurs dans la liste.`)
+  }
+  const tenantId = currentTenantId()
+  await withTenant(
+    tenantId,
+    (tx) =>
+      tx
+        .update(tenants)
+        .set({ mailSuggestedSenders: list === null ? null : [...list] })
+        .where(eq(tenants.id, tenantId)),
+    database,
+  )
 }
 
 /**

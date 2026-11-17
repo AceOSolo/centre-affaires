@@ -374,26 +374,9 @@ export class MailStateError extends Error {
 }
 
 /**
- * Ouverture et numérisation du contenu : la prestation facturée.
- *
- * La condition sur le statut vit dans le `where` : deux personnes de l'équipe
- * qui ouvrent le même pli en même temps ne produisent qu'une ouverture.
- */
-export async function openMail(id: string, staffMemberId: string, content: ScanFile): Promise<void> {
-  const tenantId = currentTenantId()
-  const stored = await store(tenantId, { content })
-
-  try {
-    await recordOpening(id, staffMemberId, stored)
-  } catch (error) {
-    await discard(stored)
-    throw error
-  }
-}
-
-/**
- * Écriture de l'ouverture, une fois le contenu déposé : séparée du dépôt pour
- * s'éprouver contre la base sans stockage réel.
+ * Ouverture et contenu écrits d'un coup, sans l'étape de validation de
+ * l'écran (ADR 079, `depots.ts`) : sert aux jeux d'essai du relevé et de la
+ * facturation, qui partent d'un pli ouvert. L'écran, lui, dépose puis valide.
  *
  * La demande d'ouverture en cours (ADR 037) est verrouillée d'abord : le
  * client ne l'annule pas pendant qu'on ouvre. L'ouverture du pli la clôt
@@ -517,11 +500,13 @@ export async function listOpenings(range: { startsAt: Date; endsAt: Date }): Pro
         openedBy: displayName(opener),
         // Pages du contenu de l'ouverture (ADR 044) : déposé d'office, ou sur
         // demande d'ouverture — pas une numérisation demandée ensuite.
+        // Jamais un dépôt remplacé avant sa validation (ADR 079).
         pageCount: sql<number | null>`(
           select s.page_count from mail_scans as s
             left join mail_requests as r on r.tenant_id = s.tenant_id and r.id = s.mail_request_id
            where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
              and s.side = 'content' and (s.mail_request_id is null or r.kind = 'open_and_scan')
+             and s.pending_validation = 0
            order by s.created_at
            limit 1)`,
       })
@@ -586,7 +571,7 @@ export async function listDoneRequests(range: { startsAt: Date; endsAt: Date }):
         pageCount: sql<number | null>`(
           select s.page_count from mail_scans as s
            where s.tenant_id = ${mailRequests.tenantId} and s.mail_request_id = ${mailRequests.id}
-             and s.side = 'content'
+             and s.side = 'content' and s.pending_validation = 0
            order by s.created_at
            limit 1)`,
         postageCents: mailRequests.postageCents,
@@ -657,6 +642,7 @@ export async function listMailForAccounts(accounts: ClientAccount[]): Promise<Cl
       where ${mailScans.mailItemId} = ${mailItems.id}
         and ${mailScans.side} = ${side}
         and ${mailScans.deletedAt} is null
+        and ${mailScans.pendingValidation} = 0
       order by ${mailScans.createdAt} desc
       limit 1
     )`
@@ -807,7 +793,10 @@ export async function findScanForStaff(scanId: string): Promise<ScanToServe | un
   return scan
 }
 
-/** Le client ne lit que les numérisations de ses entreprises, pli non retiré. */
+/**
+ * Le client ne lit que les numérisations de ses entreprises, pli non retiré,
+ * et jamais un contenu encore à valider par l'accueil (ADR 079).
+ */
 export async function findScanForAccounts(
   scanId: string,
   accounts: ClientAccount[],
@@ -822,6 +811,7 @@ export async function findScanForAccounts(
         and(
           eq(mailScans.id, scanId),
           isNull(mailScans.deletedAt),
+          eq(mailScans.pendingValidation, false),
           isNull(mailItems.deletedAt),
           inArray(
             mailItems.clientId,

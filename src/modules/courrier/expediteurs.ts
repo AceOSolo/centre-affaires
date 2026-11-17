@@ -9,6 +9,13 @@
  * 2. de ceux du centre, toutes entreprises confondues ;
  * 3. d'une liste de départ (`STARTING_SENDERS`), pour un centre qui commence.
  *
+ * Depuis l'ADR 079, le centre règle **sa liste** dans Réglages
+ * (`tenants.mail_suggested_senders`) : ajouter, renommer, retirer, ordonner.
+ * Réglée, elle remplace les points 2 et 3 — l'accueil ne se voit plus proposer
+ * un expéditeur que le centre a retiré — ; l'écran du réglage propose
+ * d'ajouter les expéditeurs souvent saisis qui n'y sont pas. Tant qu'elle ne
+ * l'est pas (`null`), rien ne change.
+ *
  * Elles se calculent sur `mail_items.sender`, sans table à part. La saisie
  * est normalisée (espaces) et ramenée à l'écriture déjà connue quand elle ne
  * s'en distingue que par la casse, les accents ou la ponctuation : « urssaf »
@@ -136,11 +143,14 @@ function rank(uses: readonly SenderUse[]): Tally[] {
   return [...byKey.values()].sort((a, b) => b.uses - a.uses || b.lastAt - a.lastAt || (a.key < b.key ? -1 : 1))
 }
 
+/** Liste réglée par le centre (ADR 079) ; `null` : pas réglée, celle du code. */
+export type SenderList = readonly string[] | null
+
 /**
- * L'écriture retenue pour chaque clé : celle de la liste de départ si elle y
- * figure, sinon la plus employée au centre.
+ * L'écriture retenue pour chaque clé : celle de la liste du centre (ou de
+ * départ) si elle y figure, sinon la plus employée au centre.
  */
-function spellings(uses: readonly SenderUse[]): Map<string, string> {
+function spellings(uses: readonly SenderUse[], list: SenderList = null): Map<string, string> {
   const counts = new Map<string, Map<string, number>>()
   for (const use of uses) {
     const key = senderKey(use.sender)
@@ -153,23 +163,34 @@ function spellings(uses: readonly SenderUse[]): Map<string, string> {
   for (const [key, forms] of counts) {
     chosen.set(key, [...forms].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1))[0][0])
   }
-  for (const sender of STARTING_SENDERS) chosen.set(senderKey(sender), sender)
+  for (const sender of list ?? STARTING_SENDERS) chosen.set(senderKey(sender), sender)
   return chosen
 }
 
 /**
  * Suggestions d'expéditeurs, calculées sur les plis déjà saisis
  * (`SenderUse`, un par entreprise et par expéditeur). `clientIds` : les
- * entreprises dont l'écran a besoin.
+ * entreprises dont l'écran a besoin. `list` : la liste réglée par le centre ;
+ * elle tient alors lieu de suggestions du centre, dans son ordre.
  */
-export function senderSuggestions(uses: readonly SenderUse[], clientIds: readonly string[]): SenderSuggestions {
-  const spelling = spellings(uses)
-  const centreKeys = rank(uses)
-    .slice(0, MAX_CENTRE_SUGGESTIONS)
-    .map((tally) => tally.key)
+export function senderSuggestions(
+  uses: readonly SenderUse[],
+  clientIds: readonly string[],
+  list: SenderList = null,
+): SenderSuggestions {
+  const spelling = spellings(uses, list)
+  const centreKeys =
+    list === null
+      ? [
+          ...rank(uses)
+            .slice(0, MAX_CENTRE_SUGGESTIONS)
+            .map((tally) => tally.key),
+          ...STARTING_SENDERS.map(senderKey),
+        ]
+      : list.map(senderKey)
   const seen = new Set<string>()
   const centre: string[] = []
-  for (const key of [...centreKeys, ...STARTING_SENDERS.map(senderKey)]) {
+  for (const key of centreKeys) {
     if (seen.has(key)) continue
     seen.add(key)
     centre.push(spelling.get(key) as string)
@@ -191,10 +212,86 @@ export function senderSuggestions(uses: readonly SenderUse[], clientIds: readonl
 
 /**
  * Toutes les écritures connues, pour ramener une saisie à la sienne
- * (`canonicalSender`) : la liste de départ, puis celles du centre.
+ * (`canonicalSender`) : la liste du centre (ou de départ), puis celles du centre.
  */
-export function knownSenders(uses: readonly SenderUse[]): string[] {
-  return [...new Set([...STARTING_SENDERS, ...spellings(uses).values()])]
+export function knownSenders(uses: readonly SenderUse[], list: SenderList = null): string[] {
+  return [...new Set([...(list ?? STARTING_SENDERS), ...spellings(uses, list).values()])]
+}
+
+/* -------------------------------------------------------------------------- */
+/* La liste réglée par le centre (ADR 079)                                    */
+/* -------------------------------------------------------------------------- */
+
+/** Au plus dans la liste du centre : au-delà, la liste ne se parcourt plus. */
+export const MAX_SUGGESTED_SENDERS = 200
+
+/** Expéditeurs souvent saisis proposés à l'ajout, sur l'écran du réglage. */
+export const MAX_FREQUENT_MISSING = 15
+
+/**
+ * La liste telle qu'elle est proposée aujourd'hui, point de départ de
+ * l'écran du réglage : la liste réglée, sinon les expéditeurs les plus saisis
+ * au centre puis la liste de départ — exactement ce que l'accueil voit.
+ * L'enregistrer sans y toucher ne change donc rien.
+ */
+export function currentSenderList(uses: readonly SenderUse[], list: SenderList): string[] {
+  return senderSuggestions(uses, [], list).centre
+}
+
+/** Expéditeurs souvent saisis au centre, absents de la liste : proposés à l'ajout. */
+export function frequentMissing(uses: readonly SenderUse[], list: readonly string[]): string[] {
+  const listed = new Set(list.map(senderKey))
+  const spelling = spellings(uses, list)
+  return rank(uses)
+    .filter((tally) => !listed.has(tally.key))
+    .slice(0, MAX_FREQUENT_MISSING)
+    .map((tally) => spelling.get(tally.key) as string)
+}
+
+export type SenderListReading = {
+  /** La liste à enregistrer, dans l'ordre, lignes vides ôtées. */
+  list: string[]
+  /** Par rang de la ligne saisie (0, 1, …) : ce qui ne va pas. */
+  lineErrors: Record<number, string>
+  /** Erreur de la liste entière. */
+  error?: string
+}
+
+/**
+ * Lit la liste saisie à l'écran : chaque ligne normalisée comme une saisie
+ * (`readSender`), les lignes vides ôtées (vider une ligne la retire), un
+ * doublon — à la casse, aux accents et à la ponctuation près — refusé sur sa
+ * seconde ligne, 200 expéditeurs au plus.
+ */
+export function readSenderList(lines: readonly unknown[]): SenderListReading {
+  const list: string[] = []
+  const lineErrors: Record<number, string> = {}
+  const seen = new Map<string, number>()
+  lines.forEach((line, index) => {
+    const read = readSender(line)
+    if (read.error) {
+      lineErrors[index] = read.error
+      return
+    }
+    if (read.sender === null) return
+    const key = senderKey(read.sender)
+    if (key === '') {
+      lineErrors[index] = 'Un expéditeur s’écrit avec au moins une lettre ou un chiffre.'
+      return
+    }
+    const first = seen.get(key)
+    if (first !== undefined) {
+      lineErrors[index] = `Déjà dans la liste, ligne ${first + 1} : « ${list[[...seen.keys()].indexOf(key)]} ».`
+      return
+    }
+    seen.set(key, index)
+    list.push(read.sender)
+  })
+  const error =
+    list.length > MAX_SUGGESTED_SENDERS
+      ? `${list.length} expéditeurs : la liste en garde ${MAX_SUGGESTED_SENDERS} au plus. Retirez les moins utiles.`
+      : undefined
+  return { list, lineErrors, ...(error ? { error } : {}) }
 }
 
 /** Les suggestions pour une entreprise : les siennes, puis celles du centre, sans doublon. */

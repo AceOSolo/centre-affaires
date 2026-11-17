@@ -217,8 +217,9 @@ export function PhotosField({
   return (
     <div>
       <label className={labelClass} htmlFor={name}>
-        {label}{' '}
-        {!required && <span className="font-normal text-muted-foreground">(facultatif)</span>}
+        {label}
+        {/* Astérisque des champs obligatoires (recette du 17/11) ; `required` et `aria-required` le doublent. */}
+        {required ? <span aria-hidden="true"> *</span> : <span className="font-normal text-muted-foreground"> (facultatif)</span>}
       </label>
       <div className="mt-1 flex flex-wrap items-center gap-3">
         {enhanced && (
@@ -255,6 +256,7 @@ export function PhotosField({
           accept={SCAN_ACCEPT}
           multiple={multiple}
           required={required}
+          aria-required={required || undefined}
           aria-invalid={error ? true : undefined}
           aria-describedby={describedBy}
           onChange={(event) => {

@@ -221,3 +221,11 @@ export const DB_QUESTIONNAIRE_REFUSED = 'CA020'
  * réécrit, suppression, liste des pièces écrite depuis l'espace client.
  */
 export const DB_CLIENT_DOCUMENT_REFUSED = 'CA021'
+
+/**
+ * Courrier côté équipe refusé par la base (ADR 079, `64-courrier-equipe.sql`) :
+ * contenu déposé sur un pli retiré ou pour une demande close, contenu validé
+ * remis « à valider », dépôt remplacé validé, validation sans le geste
+ * qu'elle publie (pli ouvert, numérisation demandée faite).
+ */
+export const DB_MAIL_TEAM_REFUSED = 'CA025'
