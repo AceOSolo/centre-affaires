@@ -23,7 +23,7 @@ import { reglagesLinks, reglagesOf, reglagesPermissions, reglagesSections } from
  */
 const pageExists = (href: string) => {
   let dir = import.meta.dirname
-  for (const segment of href.split('?')[0].split('/').filter(Boolean)) {
+  for (const segment of href.split(/[?#]/)[0].split('/').filter(Boolean)) {
     if (existsSync(join(dir, segment))) {
       dir = join(dir, segment)
       continue

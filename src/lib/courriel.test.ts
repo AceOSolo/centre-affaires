@@ -252,6 +252,24 @@ describe('envoi réel vers un serveur SMTP de la boucle locale', () => {
     }
   })
 
+  it('joint la version HTML au texte brut, en deux parties (ADR 080)', async () => {
+    const serveur = await serveurSmtp()
+    try {
+      const result = await sendMessage(
+        { to: ['camille@exemple.test'], subject: 'Essai', text: 'Bonjour texte', html: '<p>Bonjour HTML</p>' },
+        serveur.env,
+      )
+      assert.equal(result.status, 'sent')
+      assert.match(serveur.recus[0], /multipart\/alternative/)
+      assert.match(serveur.recus[0], /Content-Type: text\/plain/)
+      assert.match(serveur.recus[0], /Content-Type: text\/html/)
+      assert.match(serveur.recus[0], /Bonjour texte/)
+      assert.match(serveur.recus[0], /Bonjour HTML/)
+    } finally {
+      await serveur.fermer()
+    }
+  })
+
   it('journalise un refus d’authentification en clair pour l’équipe', async (t) => {
     t.mock.method(console, 'error', () => {})
     const serveur = await serveurSmtp({ auth: '535 5.7.8 Authentication failed\r\n' })

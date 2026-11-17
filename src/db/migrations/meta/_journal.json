@@ -155,6 +155,13 @@
       "when": 1794921218301,
       "tag": "0021_courrier_client",
       "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1794921968499,
+      "tag": "0022_courriels-logo-signature",
+      "breakpoints": true
     }
   ]
 }

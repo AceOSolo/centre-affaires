@@ -165,6 +165,14 @@ export const reglagesLinks: readonly ReglagesLink[] = [
     description: 'Identité du centre, règles de réservation, durées de conservation.',
     permission: 'centre.configurer',
   },
+  // Logo et signature des courriels (ADR 080).
+  {
+    service: 'centre',
+    href: '/configuration#identite-courriels',
+    label: 'Logo et signature des courriels',
+    description: 'Le logo en tête des courriels envoyés, la signature et les coordonnées du centre, avec un aperçu.',
+    permission: 'centre.configurer',
+  },
   // Réservé à la direction (ADR 065).
   {
     service: 'centre',

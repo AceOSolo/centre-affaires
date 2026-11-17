@@ -56,6 +56,7 @@ describe('réglages par service', () => {
       '/indicateurs',
       '/equipe',
       '/configuration',
+      '/configuration#identite-courriels',
       '/reglages/crm',
     ])
   })

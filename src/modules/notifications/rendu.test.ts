@@ -3,6 +3,7 @@ import { describe, it } from 'node:test'
 
 import {
   TEMPLATE_BODY_MAX,
+  exampleValuesFor,
   placeholdersOf,
   renderBody,
   renderMessage,
@@ -113,5 +114,35 @@ describe('vérification d’un modèle', () => {
   it('refuse un texte vide ou trop long', () => {
     assert.ok(validateTemplate('mail_received', { subject: 'Objet', body: '\n ' }).body)
     assert.ok(validateTemplate('mail_received', { subject: 'Objet', body: 'a'.repeat(TEMPLATE_BODY_MAX + 1) }).body)
+  })
+})
+
+describe('valeurs d’un aperçu ou d’un essai d’envoi', () => {
+  it('mènent les liens d’exemple au site, et nomment le centre', () => {
+    const values = exampleValuesFor('member_invited', { centre: 'Handfield', origin: 'https://www.handfield.fr/' })
+    assert.equal(values.centre, 'Handfield')
+    assert.equal(values.connexion, 'https://www.handfield.fr/auth/connexion')
+    assert.match(values.lien, /^https:\/\/www\.handfield\.fr\/api\/auth\/reset-password\//)
+    // Les autres valeurs restent fictives.
+    assert.equal(values.adresse, 'camille@exemple.fr')
+  })
+
+  it('gardent les liens fictifs sans adresse du site', () => {
+    assert.equal(exampleValuesFor('mail_scanned', { centre: 'Handfield' }).lien, 'https://centre.exemple/compte')
+  })
+})
+
+describe('valeurs d’un aperçu ou d’un essai d’envoi', () => {
+  it('mènent les liens d’exemple au site, et nomment le centre', () => {
+    const values = exampleValuesFor('member_invited', { centre: 'Handfield', origin: 'https://www.handfield.fr/' })
+    assert.equal(values.centre, 'Handfield')
+    assert.equal(values.connexion, 'https://www.handfield.fr/auth/connexion')
+    assert.match(values.lien, /^https:\/\/www\.handfield\.fr\/api\/auth\/reset-password\//)
+    // Les autres valeurs restent fictives.
+    assert.equal(values.adresse, 'camille@exemple.fr')
+  })
+
+  it('gardent les liens fictifs sans adresse du site', () => {
+    assert.equal(exampleValuesFor('mail_scanned', { centre: 'Handfield' }).lien, 'https://centre.exemple/compte')
   })
 })

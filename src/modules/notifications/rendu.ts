@@ -8,11 +8,13 @@ import type { NotificationEvent } from './schema.ts'
  * `{{ lien }}`. Module pur, partagé par l'éditeur (aperçu dans le navigateur),
  * l'action qui enregistre (vérification) et le moteur qui envoie (rendu).
  *
- * Les messages partent en texte brut : il n'y a pas de HTML à échapper. Les
- * valeurs sont en revanche insérées telles quelles, en une seule passe — une
- * valeur qui contient elle-même `{{…}}` (un nom de société saisi ainsi, un
- * motif) n'est jamais réinterprétée comme une variable — et nettoyées de leurs
- * caractères de contrôle ; dans l'objet, elles tiennent sur une ligne.
+ * Un modèle est du texte brut : il n'y a pas de HTML à échapper ici. La mise
+ * en page (logo, boutons, signature) vient ensuite, du gabarit commun
+ * (`gabarit.ts`, ADR 080), qui échappe tout ce qu'il reçoit. Les valeurs sont
+ * insérées telles quelles, en une seule passe — une valeur qui contient
+ * elle-même `{{…}}` (un nom de société saisi ainsi, un motif) n'est jamais
+ * réinterprétée comme une variable — et nettoyées de leurs caractères de
+ * contrôle ; dans l'objet, elles tiennent sur une ligne.
  */
 
 /** Longueurs maximales, celles que la base vérifie (`notification_templates_text_valid`). */
@@ -142,6 +144,29 @@ export function validateTemplate(
 /** Valeurs d'exemple de l'événement : celles de l'aperçu de l'éditeur. */
 export function exampleValues(event: NotificationEvent): Record<string, string> {
   return Object.fromEntries(eventVariables[event].map((variable) => [variable.name, variable.example]))
+}
+
+/** Origine des liens d'exemple du catalogue (`https://centre.exemple/…`). */
+export const EXAMPLE_ORIGIN = 'https://centre.exemple'
+
+/**
+ * Valeurs d'exemple d'un aperçu ou d'un essai d'envoi (ADR 080) : le nom du
+ * centre, et des liens qui mènent au site (`origin`) plutôt qu'à l'adresse
+ * fictive du catalogue — le gabarit n'en fait des boutons que vers le site.
+ * Les autres valeurs restent fictives (`CLAUDE.md`, RGPD).
+ */
+export function exampleValuesFor(
+  event: NotificationEvent,
+  context: { centre: string; origin?: string | null },
+): Record<string, string> {
+  const values = exampleValues(event)
+  const origin = context.origin?.replace(/\/+$/, '')
+  if (origin) {
+    for (const [name, value] of Object.entries(values)) {
+      if (value.startsWith(`${EXAMPLE_ORIGIN}/`)) values[name] = `${origin}${value.slice(EXAMPLE_ORIGIN.length)}`
+    }
+  }
+  return { ...values, centre: context.centre }
 }
 
 export type RenderedMessage = { subject: string; body: string }

@@ -15,8 +15,8 @@ import { mailItemMemberStates, mailItems } from './schema.ts'
  * sans `read_at`. Un pli retiré par l'accueil ne compte pas.
  *
  * Fonction à part, et non `mailFolderCounts` : la pastille ne doit compter
- * que ce que la boîte montre « à voir ». À la fusion de la recette du 17/11,
- * les plis « ignorés » du lot 5 (ADR 078) en sortiront peut-être.
+ * que ce que la boîte montre « à voir » : un pli « ignoré » (ADR 078) n'y
+ * compte pas comme non lu.
  */
 export async function countMailForAccounts(
   accounts: readonly ClientAccount[],

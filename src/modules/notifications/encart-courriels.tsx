@@ -6,6 +6,7 @@ import { smtpStatus, SMTP_VARIABLES } from '../../lib/courriel.ts'
 import { notificationEventLabels } from './catalogue.ts'
 import { listRecentFailures } from './courriels-queries.ts'
 import { TestEmailForm } from './essai-courriel-form.tsx'
+import { notificationEvents } from './schema.ts'
 
 /**
  * Encart « Courriels » de Réglages (ADR 059) : l'envoi est-il configuré, un
@@ -63,7 +64,23 @@ export async function EmailSettingsPanel({ address, timeZone }: { address: strin
           )}
         </div>
 
-        <TestEmailForm address={address} />
+        <div className="flex flex-col gap-2">
+          <TestEmailForm
+            address={address}
+            choices={notificationEvents.map((event) => ({ value: event, label: notificationEventLabels[event] }))}
+          />
+          {/* Mise en page commune à tous les courriels (ADR 080). */}
+          <p className="text-sm text-muted-foreground">
+            Logo, signature et aperçu des courriels :{' '}
+            <Link
+              href="/configuration#identite-courriels"
+              className="font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              Configuration du centre
+            </Link>
+            .
+          </p>
+        </div>
 
         <div className="flex flex-col gap-2">
           <h3 className="text-sm font-semibold text-foreground">Derniers échecs d’envoi</h3>
