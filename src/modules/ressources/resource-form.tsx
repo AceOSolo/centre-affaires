@@ -13,6 +13,7 @@ import {
   resourceFieldLabels,
   type AttributeField,
 } from './attributs.ts'
+import { resourceTariffPattern, tariffRefProblem, tariffRefSegment } from './fiche-ressource.ts'
 import { resourceStatusLabels, resourceTypeLabels } from './labels.ts'
 import { clientBookingModeLabels, defaultClientBookingMode } from './reservation-client.ts'
 import {
@@ -88,11 +89,34 @@ function ResourceFields({
   const value = (name: string, stored?: unknown) =>
     values?.[name] ?? attributeFormValue(stored)
 
+  // Le code est aussi la clé des prix envoyés par Dolibarr (ADR 049, ADR 082) :
+  // la référence se lit sous le champ, à mesure de la saisie.
+  const [code, setCode] = useState(() => value('code', resource?.code))
+  const codeChanged = resource !== undefined && tariffRefSegment(code) !== tariffRefSegment(resource.code)
+  const codeHint = [
+    'Unique dans le centre, réutilisable après archivage.',
+    code.trim()
+      ? `Référence Dolibarr de ses prix : ${resourceTariffPattern(resourceType, code)}.`
+      : 'Il donne aussi la référence Dolibarr de ses prix.',
+    codeChanged
+      ? `Le code change : renommez aussi dans Dolibarr les produits ${resourceTariffPattern(resourceType, resource.code)}, et les contrats qui désignent cette ressource.`
+      : '',
+    tariffRefProblem(code) ?? '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   const statuses = resource ? resourceStatuses : (['active', 'maintenance'] as const)
 
   return (
     <form action={formAction} className="flex max-w-2xl flex-col gap-5">
       {resource && <input type="hidden" name="id" value={resource.id} />}
+
+      {/* Astérisque des champs obligatoires (recette du 17/11) ; le composant
+          commun du lot 1 le remplacera à la fusion. */}
+      <p className="text-sm text-muted-foreground">
+        Les champs marqués <span className="font-medium text-primary">*</span> sont obligatoires.
+      </p>
 
       <ErrorSummary errors={state?.fieldErrors} labels={formLabels} message={state?.error} />
 
@@ -111,8 +135,11 @@ function ResourceFields({
           <div>
             <label className={labelClass} htmlFor="resourceType">
               Type
+              <RequiredMark />
             </label>
             <select
+              required
+              aria-required
               id="resourceType"
               name="resourceType"
               className={`${fieldClass} mt-1`}
@@ -133,8 +160,9 @@ function ResourceFields({
           label="Code interne"
           required
           placeholder="S-101"
-          hint="Unique dans le centre, réutilisable après archivage."
-          defaultValue={value('code', resource?.code)}
+          hint={codeHint}
+          value={code}
+          onChange={(event) => setCode(event.target.value)}
           error={errors.code}
           maxLength={30}
         />
@@ -165,8 +193,11 @@ function ResourceFields({
         <div>
           <label className={labelClass} htmlFor="status">
             État
+            <RequiredMark />
           </label>
           <select
+            required
+            aria-required
             id="status"
             name="status"
             defaultValue={values?.status ?? resource?.status ?? 'active'}
@@ -189,8 +220,11 @@ function ResourceFields({
           <div className="sm:col-span-2">
             <label className={labelClass} htmlFor="clientBookingMode">
               Réservation depuis l’espace client
+              <RequiredMark />
             </label>
             <select
+              required
+              aria-required
               key={resourceType}
               id="clientBookingMode"
               name="clientBookingMode"
@@ -291,12 +325,15 @@ function AttributeInput({
     return (
       <div>
         <label className={labelClass} htmlFor={field.name}>
-          {field.label}{' '}
+          {field.label}
+          {field.required && <RequiredMark />}{' '}
           {!field.required && <span className="font-normal text-muted-foreground">(facultatif)</span>}
         </label>
         <select
           id={field.name}
           name={field.name}
+          required={field.required}
+          aria-required={field.required ? true : undefined}
           defaultValue={defaultValue}
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? `${field.name}-error` : undefined}
@@ -354,12 +391,14 @@ function TextField({
     <div>
       {/* Le libellé est visible, jamais remplacé par un placeholder. */}
       <label className={labelClass} htmlFor={name}>
-        {label}{' '}
+        {label}
+        {props.required && <RequiredMark />}{' '}
         {optional && <span className="font-normal text-muted-foreground">(facultatif)</span>}
       </label>
       <input
         id={name}
         name={name}
+        aria-required={props.required ? true : undefined}
         aria-invalid={error ? true : undefined}
         aria-describedby={describedBy || undefined}
         className={`${fieldClass} mt-1 ${className}`}
@@ -372,6 +411,18 @@ function TextField({
       )}
       <FieldError name={name} error={error} />
     </div>
+  )
+}
+
+/**
+ * Astérisque d'un champ obligatoire : visuel seulement, le contrôle porte
+ * `required` et `aria-required`, et la phrase en tête du formulaire l'explique.
+ */
+function RequiredMark() {
+  return (
+    <span aria-hidden="true" className="ml-0.5 font-medium text-primary">
+      *
+    </span>
   )
 }
 

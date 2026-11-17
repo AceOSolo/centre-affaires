@@ -4,13 +4,16 @@ import { maintenant } from '../../db/columns.ts'
 import { DB_UNIQUE_VIOLATION, dbConstraintName, dbErrorCode } from '../../db/errors.ts'
 import { withTenant, type Transaction } from '../../db/index.ts'
 import { insertReturning, updateReturning } from '../../db/returning.ts'
+import { uniqueSlug } from '../../lib/slug.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import { hasCapacity, mergeAttributes } from './attributs.ts'
 import { centreRanges } from './ouverture.ts'
 import {
+  listings,
   openingHours,
   resources,
   type ClientBookingMode,
+  type Listing,
   type Resource,
   type ResourceAttributes,
   type ResourceStatus,
@@ -277,4 +280,46 @@ export async function archiveResource(id: string): Promise<void> {
       .set({ deletedAt: maintenant(), status: 'retired' })
       .where(and(eq(resources.id, id), isNull(resources.deletedAt))),
   )
+}
+
+/**
+ * L'annonce d'une ressource, créée en brouillon si elle n'en a pas, pour
+ * ranger ses photos et vidéos depuis sa fiche (ADR 082) : les médias sont
+ * ceux de l'annonce (ADR 073), sans second stockage. Le brouillon reste
+ * invisible du public tant que personne ne le publie ; son titre est le nom
+ * de la ressource, son adresse en est tirée, comme à l'écran des annonces.
+ *
+ * Une annonce existante est rendue telle quelle, jamais réécrite. La ligne de
+ * la ressource est verrouillée le temps de la création : deux clics
+ * simultanés ne créent qu'une annonce (l'index `listings_tenant_resource_key`
+ * le garantirait de toute façon).
+ *
+ * `undefined` : ressource absente, archivée, ou dont l'annonce a été retirée.
+ */
+export async function ensureListingForResource(resourceId: string): Promise<Listing | undefined> {
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const [resource] = await tx
+      .select({ id: resources.id, name: resources.name })
+      .from(resources)
+      .where(and(eq(resources.tenantId, tenantId), eq(resources.id, resourceId), isNull(resources.deletedAt)))
+      .for('update')
+    if (!resource) return undefined
+
+    // Retirée ou non : une ressource n'a qu'une annonce, la clé unique ne
+    // distingue pas les archivées.
+    const [existing] = await tx
+      .select()
+      .from(listings)
+      .where(and(eq(listings.tenantId, tenantId), eq(listings.resourceId, resourceId)))
+      .limit(1)
+    if (existing) return existing.deletedAt ? undefined : existing
+
+    const taken = await tx.select({ slug: listings.slug }).from(listings).where(eq(listings.tenantId, tenantId))
+    return insertReturning(tx, listings, {
+      resourceId,
+      headline: resource.name,
+      slug: uniqueSlug(resource.name, taken.map((row) => row.slug)),
+    })
+  })
 }
