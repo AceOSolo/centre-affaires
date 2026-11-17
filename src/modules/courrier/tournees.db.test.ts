@@ -14,6 +14,8 @@ import { notifyMailBatchClosed } from '../notifications/declencheurs-courrier.ts
 import {
   batchRecipients,
   closeOpenBatch,
+  findDayReport,
+  MailDayReportedError,
   findOpenBatch,
   inOpenBatch,
   listRecentBatches,
@@ -199,6 +201,26 @@ describe('tournées du courrier', { skip: raisonDeSaut }, () => {
       assert.equal(ouverte?.id, batchId)
       assert.equal(ouverte?.items.length, 1)
       assert.deepEqual(await lire('select id from mail_batches where closed_at is not null'), [])
+    })
+
+    it('n’offre plus « aucun courrier » une fois la tournée du jour terminée (ADR 079)', async () => {
+      assert.equal(await findDayReport(), undefined)
+      const { batchId } = await enregistre(DURAND)
+      await closeOpenBatch(ACCUEIL, batchId)
+      const report = await findDayReport()
+      assert.ok(report?.closedAt instanceof Date)
+      await assert.rejects(() => closeOpenBatch(ACCUEIL, null), MailDayReportedError)
+      // Rien n'a été ouvert ni terminé de plus.
+      assert.equal((await lire('select id from mail_batches')).length, 1)
+      // Le courrier de l'après-midi, lui, ouvre et termine sa tournée comme avant.
+      const apresMidi = await enregistre(PETIT)
+      assert.equal(await closeOpenBatch(ACCUEIL, apresMidi.batchId), apresMidi.batchId)
+    })
+
+    it('ne signale pas deux fois « aucun courrier » dans la journée', async () => {
+      await closeOpenBatch(ACCUEIL, null)
+      await assert.rejects(() => closeOpenBatch(ACCUEIL, null), MailDayReportedError)
+      assert.equal((await lire('select id from mail_batches')).length, 1)
     })
   })
 
