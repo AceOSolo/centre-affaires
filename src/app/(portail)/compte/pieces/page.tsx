@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { CheckIcon, ClockIcon, FileTextIcon, TriangleAlertIcon } from '../../../../components/ui/icons.tsx'
+import { RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { formatDateTime } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { DepositForm } from '../../../../modules/clients/pieces-depot.tsx'
@@ -54,13 +55,7 @@ export default async function ClientDocumentsPage() {
           chaque consultation est enregistrée.
         </p>
         {spaces.some((space) => space.items.some((item) => item.canDeposit)) && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            Les champs marqués{' '}
-            <span aria-hidden="true" className="text-destructive">
-              *
-            </span>
-            <span className="sr-only">d’un astérisque</span> sont obligatoires.
-          </p>
+          <RequiredNote className="mt-2" />
         )}
       </div>
 
