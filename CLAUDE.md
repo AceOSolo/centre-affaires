@@ -135,6 +135,8 @@ Dolibarr appelle (`/api/dolibarr/*`, `docs/integrations/dolibarr.md`) :
 devis vers Dolibarr (ADR 043), produits et tarifs depuis Dolibarr (ADR 049) ;
 tiers et contrats depuis Dolibarr, consommations facturables vers Dolibarr
 (seconde tranche, ADR 066 : des données transmises, jamais des factures).
+Par choix du centre (Réglages > Connexion au CRM, ADR 073), le site crée lui-même
+ses devis dans Dolibarr au lieu d'attendre que le connecteur vienne les chercher.
 Jeton, flux et journal se règlent par centre dans Réglages > Connexion au CRM
 (direction, ADR 065) ; toute route d'un CRM passe par `serveCrmCall`.
 Les droits de facturation ne sont accordés à aucun rôle et

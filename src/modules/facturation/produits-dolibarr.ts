@@ -44,6 +44,28 @@ export const tariffUnitWords: Record<string, RateUnit> = {
   unite: 'unit',
 }
 
+/**
+ * Références des produits de Dolibarr qui portent le prix d'une ligne de
+ * devis, du plus précis au plus général (ADR 073) : c'est le chemin inverse de
+ * la lecture ci-dessous, `tarif.<type>.<code ressource>.<unité>` puis
+ * `tarif.<type>.<unité>` pour un prix de la grille, la référence du service
+ * pour un service du catalogue.
+ */
+export function productRefsOfLine(line: {
+  serviceCode?: string | null
+  resourceType?: ResourceType | null
+  resourceCode?: string | null
+  unit: RateUnit
+}): string[] {
+  if (line.serviceCode) return [line.serviceCode.toLowerCase()]
+  if (!line.resourceType) return []
+  const word = Object.entries(tariffUnitWords).find(([, unit]) => unit === line.unit)?.[0]
+  if (!word) return []
+  const byType = `tarif.${line.resourceType}.${word}`
+  const code = line.resourceCode?.trim().toLowerCase()
+  return code ? [`tarif.${line.resourceType}.${code}.${word}`, byType] : [byType]
+}
+
 export type ServiceFromDolibarr = {
   kind: 'service'
   code: string

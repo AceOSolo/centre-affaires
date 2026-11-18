@@ -40,7 +40,8 @@ export type CrmFlowDefinition = {
 export const crmFlowDefinitions: Record<CrmFlowId, CrmFlowDefinition> = {
   quotes: {
     label: 'Devis',
-    description: 'Les devis prêts, que le CRM vient chercher, puis leur reprise, leur issue et leur annulation.',
+    description:
+      'Les devis prêts, que le CRM vient chercher (ou que le site crée lui-même dans le CRM si la direction l’a voulu, ADR 073), puis leur reprise, leur issue et leur annulation.',
     direction: 'to_crm',
     enabledByDefault: true,
   },

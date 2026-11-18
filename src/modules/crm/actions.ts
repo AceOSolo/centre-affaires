@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { parseKey } from '../../lib/chiffrement.ts'
 import { isCalendarDate, todayIsoDate } from '../../lib/dates.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
+import { parseQuoteExtrafields } from '../facturation/devis-dolibarr.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { parseCrmBaseUrl } from './adresse.ts'
 import { crmConnectors } from './catalogue.ts'
@@ -18,6 +19,7 @@ import {
   recordCrmExchange,
   removeCrmToken,
   saveCrmFlows,
+  saveCrmQuotePush,
   saveCrmSettings,
   setCrmToken,
 } from './queries.ts'
@@ -35,8 +37,10 @@ const PAGE = '/reglages/crm'
 export type CrmFormState = {
   ok?: string
   message?: string
-  fieldErrors?: Partial<Record<'connector' | 'baseUrl' | 'key' | 'flows' | 'consumptionsFrom', string>>
-  values?: { connector: string; baseUrl: string }
+  fieldErrors?: Partial<
+    Record<'connector' | 'baseUrl' | 'key' | 'flows' | 'consumptionsFrom' | 'pushQuotes' | 'quoteExtrafields', string>
+  >
+  values?: { connector: string; baseUrl: string; quoteExtrafields?: string }
 } | null
 
 /** Clé du serveur présente et lisible : sans elle, aucun secret n'entre en base. */
@@ -151,6 +155,35 @@ export async function saveCrmFlowsAction(_previous: CrmFormState, formData: Form
   await saveCrmFlows(flows, member.id, consumptionsFrom)
   revalidatePath(PAGE)
   return { ok: flows.length > 0 ? 'Flux enregistrés.' : 'Flux enregistrés : tous sont coupés, le CRM ne reçoit et n’envoie plus rien.' }
+}
+
+/**
+ * « Le site crée les devis dans le CRM » et les champs complémentaires de ces
+ * devis (ADR 073). L'envoi exige l'adresse et la clé du CRM : sans elles, il
+ * n'y a rien à appeler.
+ */
+export async function saveCrmQuotePushAction(_previous: CrmFormState, formData: FormData): Promise<CrmFormState> {
+  const { member } = await requirePermission('crm.gerer')
+  const enabled = formData.get('pushQuotes') === 'on'
+  const text = String(formData.get('quoteExtrafields') ?? '')
+  const values = { connector: '', baseUrl: '', quoteExtrafields: text }
+  const parsed = parseQuoteExtrafields(text)
+  if (!parsed.ok) return { fieldErrors: { quoteExtrafields: parsed.message }, values }
+  const view = await crmConnectionView()
+  if (enabled && (!view.baseUrl || !view.hasKey)) {
+    return {
+      fieldErrors: { pushQuotes: 'Réglez d’abord l’adresse du CRM et sa clé d’API, plus haut sur cette page.' },
+      values,
+    }
+  }
+  await saveCrmQuotePush({ enabled, quoteExtrafields: parsed.value }, member.id)
+  revalidatePath(PAGE)
+  return {
+    ok: enabled
+      ? 'Enregistré : les devis prêts sont créés dans le CRM, dès qu’ils sont prêts puis à chaque passage de la tâche de reprise.'
+      : 'Enregistré : le CRM vient chercher les devis (GET /api/dolibarr/devis).',
+    values,
+  }
 }
 
 export type CrmTestState = { lines?: CrmTestLine[]; at?: string } | null

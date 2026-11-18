@@ -2,6 +2,7 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { after } from 'next/server'
 
 import { requirePermission } from '../../lib/auth/staff.ts'
 import { currentTenant } from '../../lib/tenant.ts'
@@ -34,6 +35,7 @@ import {
   validateProposal,
 } from './propositions-queries.ts'
 import { proposalProducts, type ProposalProduct } from './schema-devis.ts'
+import { sendReadyProposalsToDolibarr } from './devis-dolibarr-declencheur.ts'
 
 /**
  * Actions de l'accueil sur les devis (ADR 043). Chacune vérifie le droit
@@ -174,6 +176,8 @@ export async function validateProposalAction(
   } catch (error) {
     return { error: refusedMessage(error) }
   }
+  // Validé : il part vers Dolibarr, si le centre l'a voulu (ADR 073).
+  after(() => sendReadyProposalsToDolibarr())
   revalidateProposal(proposalId, bookingId)
   redirect(`/devis/${proposalId}?enregistre=valide`)
 }
@@ -274,6 +278,7 @@ export async function createStaffProposalAction(
   } catch (error) {
     return { message: refusedMessage(error), values }
   }
+  after(() => sendReadyProposalsToDolibarr())
   revalidateProposal(created.id, needsBooking ? reservation : null)
   redirect(`/devis/${created.id}?enregistre=cree`)
 }

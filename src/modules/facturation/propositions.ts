@@ -254,6 +254,12 @@ export type DolibarrProposal = {
     montantHtCentimes: number
     ressourceId: string | null
     serviceId: string | null
+    /**
+     * Références des produits de Dolibarr qui portent ce prix, du plus précis
+     * au plus général : `tarif.salle.sal-mb.heure`, `tarif.salle.heure`, ou le
+     * code d'un service. Vide pour une ligne saisie à la main.
+     */
+    produitRefs: string[]
   }[]
   totaux: { htCentimes: number; tvaCentimes: number; ttcCentimes: number }
 }
@@ -290,7 +296,7 @@ export type ProposalForDolibarr = {
     country: string
   } | null
   booking: { id: string; startsAt: Date; endsAt: Date; resourceName: string } | null
-  lines: (LineDraft & { position: number; amountCents: number })[]
+  lines: (LineDraft & { position: number; amountCents: number; productRefs?: string[] })[]
 }
 
 /** Centimes en décimal à deux chiffres, point décimal : `12345` → `"123.45"`. */
@@ -379,6 +385,7 @@ export function toDolibarrProposal(proposal: ProposalForDolibarr): DolibarrPropo
       montantHtCentimes: line.amountCents,
       ressourceId: line.resourceId,
       serviceId: line.serviceId,
+      produitRefs: line.productRefs ?? [],
     })),
     totaux: { htCentimes: totals.netCents, tvaCentimes: totals.vatCents, ttcCentimes: totals.totalCents },
   }

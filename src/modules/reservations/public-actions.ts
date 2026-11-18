@@ -42,6 +42,7 @@ import {
 import { requestableRanges, requestBounds, requestPolicyMessage } from './request-policy.ts'
 import { periodSelection, publicSelection } from './public-selection.ts'
 import type { TimeRange } from './availability.ts'
+import { sendReadyProposalsToDolibarr } from '../facturation/devis-dolibarr-declencheur.ts'
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -328,6 +329,8 @@ export async function requestBookingAction(
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyBookingRequestSubmitted(requestId))
+  // Le devis prêt de la demande part vers Dolibarr, si le centre l'a voulu (ADR 073).
+  after(() => sendReadyProposalsToDolibarr())
   // Le visiteur reçoit l'accusé de réception, avec le lien pour créer son
   // espace et y suivre sa demande (ADR 068). Connecté, il la voit déjà.
   if (!clientId) after(() => sendRequestReceived({ bookingId: requestId }))

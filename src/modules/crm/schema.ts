@@ -71,6 +71,17 @@ export const crmConnections = mysqlTable(
      * l'activation du flux, réglable par la direction.
      */
     consumptionsFrom: date('consumptions_from', { mode: 'string' }),
+    /**
+     * Le site crée lui-même ses devis dans le CRM (ADR 073), avec l'adresse et
+     * la clé ci-dessus. Faux tant que la direction ne l'a pas voulu : le CRM
+     * continue de venir chercher les devis prêts (ADR 043).
+     */
+    pushQuotes: boolean('push_quotes').notNull().default(false),
+    /**
+     * Champs complémentaires des devis (`options_*` de Dolibarr), propres au
+     * CRM du centre : `{ "options_typage_devis": 1 }`. Recopiés tels quels.
+     */
+    quoteExtrafields: json('quote_extrafields').$type<Record<string, string | number | boolean | null>>(),
     updatedBy: char('updated_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     ...timestamps(),
   },

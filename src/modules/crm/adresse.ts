@@ -138,6 +138,8 @@ const systemResolver: Resolver = async (hostname) =>
 export const CRM_HTTP_TIMEOUT_MS = 8000
 /** Ce que l'appel lit de la réponse, au plus : de quoi trouver une version. */
 const MAX_BODY_BYTES = 16 * 1024
+/** Ce que lit un appel qui écrit : l'identifiant créé, ou le message d'erreur du CRM. */
+const MAX_WRITE_BODY_BYTES = 64 * 1024
 
 /** Échec d'un appel sortant, avec la phrase que l'écran affiche. */
 export class CrmCallError extends Error {}
@@ -148,10 +150,33 @@ export class CrmCallError extends Error {}
  * quel), le délai est court, la réponse est lue sur 16 Kio au plus.
  */
 export function guardedHttp(options: { resolve?: Resolver; fetchImpl?: typeof fetch; timeoutMs?: number } = {}): CrmHttp {
+  const request = guardedRequest(options, MAX_BODY_BYTES)
+  return (target, headers) => request({ url: target, method: 'GET', headers })
+}
+
+/** Appel sortant complet : méthode, en-têtes, corps JSON. */
+export type CrmRequest = (input: {
+  url: string
+  method: 'GET' | 'POST'
+  headers: Record<string, string>
+  /** Corps JSON, sérialisé ici : `content-type` est posé en conséquence. */
+  json?: unknown
+}) => Promise<{ status: number; text(): Promise<string> }>
+
+/**
+ * Même garde que `guardedHttp`, pour les appels qui écrivent dans le CRM
+ * (ADR 073) : https, adresse publique, aucune redirection suivie, délai
+ * court. La réponse est lue sur 64 Kio au plus : de quoi lire l'identifiant
+ * d'un tiers ou d'une proposition, pas une base.
+ */
+export function guardedRequest(
+  options: { resolve?: Resolver; fetchImpl?: typeof fetch; timeoutMs?: number } = {},
+  maxBodyBytes = MAX_WRITE_BODY_BYTES,
+): CrmRequest {
   const resolve = options.resolve ?? systemResolver
   const fetchImpl = options.fetchImpl ?? fetch
   const timeoutMs = options.timeoutMs ?? CRM_HTTP_TIMEOUT_MS
-  return async (target, headers) => {
+  return async ({ url: target, method, headers, json }) => {
     const url = new URL(target)
     if (url.protocol !== 'https:') throw new CrmCallError('Appel refusé : https seulement.')
     const host = url.hostname.replace(/^\[|\]$/g, '')
@@ -171,8 +196,9 @@ export function guardedHttp(options: { resolve?: Resolver; fetchImpl?: typeof fe
     let response: Response
     try {
       response = await fetchImpl(url, {
-        method: 'GET',
-        headers,
+        method,
+        headers: json === undefined ? headers : { ...headers, 'content-type': 'application/json' },
+        body: json === undefined ? undefined : JSON.stringify(json),
         redirect: 'manual',
         signal: AbortSignal.timeout(timeoutMs),
       })
@@ -185,18 +211,18 @@ export function guardedHttp(options: { resolve?: Resolver; fetchImpl?: typeof fe
     }
     return {
       status: response.status,
-      text: () => readLimited(response),
+      text: () => readLimited(response, maxBodyBytes),
     }
   }
 }
 
-async function readLimited(response: Response): Promise<string> {
+async function readLimited(response: Response, maxBytes = MAX_BODY_BYTES): Promise<string> {
   if (!response.body) return ''
   const reader = response.body.getReader()
   const chunks: Uint8Array[] = []
   let size = 0
   try {
-    while (size < MAX_BODY_BYTES) {
+    while (size < maxBytes) {
       const { done, value } = await reader.read()
       if (done) break
       chunks.push(value)
@@ -205,5 +231,5 @@ async function readLimited(response: Response): Promise<string> {
   } finally {
     await reader.cancel().catch(() => {})
   }
-  return Buffer.concat(chunks).subarray(0, MAX_BODY_BYTES).toString('utf8')
+  return Buffer.concat(chunks).subarray(0, maxBytes).toString('utf8')
 }

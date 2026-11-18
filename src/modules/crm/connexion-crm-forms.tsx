@@ -8,6 +8,7 @@ import {
   clearCrmKeyAction,
   crmTokenAction,
   saveCrmFlowsAction,
+  saveCrmQuotePushAction,
   saveCrmSettingsAction,
   testCrmConnectionAction,
   type CrmFormState,
@@ -442,6 +443,95 @@ export function CrmFlowsForm({
         <div>
           <button type="submit" disabled={pending} className={primaryButton}>
             {pending ? 'Enregistrement…' : 'Enregistrer les flux'}
+          </button>
+        </div>
+      </form>
+      <Outcome ok={state?.ok} />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------------ */
+/* Envoi des devis au CRM (ADR 073)                                         */
+/* ------------------------------------------------------------------------ */
+
+export function CrmQuotePushForm({
+  enabled,
+  extrafields,
+  ready,
+}: {
+  enabled: boolean
+  /** Champs complémentaires réglés, en JSON mis en forme. */
+  extrafields: string
+  /** L'adresse et la clé du CRM sont réglées : sans elles, l'envoi ne peut pas être voulu. */
+  ready: boolean
+}) {
+  const [state, formAction, pending] = useActionState<CrmFormState, FormData>(saveCrmQuotePushAction, null)
+  const errors = state?.fieldErrors
+  return (
+    <div className="flex flex-col gap-3">
+      <form action={formAction} className="flex flex-col gap-4" noValidate>
+        <ErrorSummary
+          errors={errors as Record<string, string> | undefined}
+          labels={{ pushQuotes: 'Envoi des devis', quoteExtrafields: 'Champs complémentaires' }}
+        />
+        <div className="flex gap-3">
+          <label htmlFor="pushQuotes" className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center">
+            <input
+              id="pushQuotes"
+              type="checkbox"
+              name="pushQuotes"
+              defaultChecked={enabled}
+              aria-describedby={['pushQuotes-aide', errors?.pushQuotes ? 'pushQuotes-erreur' : ''].filter(Boolean).join(' ')}
+              className={`size-4 accent-primary ${focus}`}
+            />
+          </label>
+          <div className="min-w-0">
+            <label htmlFor="pushQuotes" className="text-sm font-medium">
+              Le site crée les devis dans le CRM
+            </label>
+            <p id="pushQuotes-aide" className={helpClass}>
+              Dès qu’un devis est prêt (demande d’une salle ou d’un bureau, devis validé par l’accueil), le
+              site retrouve ou crée le tiers et son contact dans le CRM, puis y crée la proposition. Le CRM
+              n’a plus à venir chercher ces devis. Désactivé : le CRM les récupère comme avant.
+              {!ready && ' Réglez d’abord l’adresse et la clé du CRM, plus haut sur cette page.'}
+            </p>
+            {errors?.pushQuotes && (
+              <p id="pushQuotes-erreur" role="alert" className="mt-1 text-xs text-destructive">
+                {errors.pushQuotes}
+              </p>
+            )}
+          </div>
+        </div>
+        <div className="max-w-xl">
+          <label className={labelClass} htmlFor="quoteExtrafields">
+            Champs complémentaires des devis <span className="font-normal text-muted-foreground">(JSON, facultatif)</span>
+          </label>
+          <textarea
+            id="quoteExtrafields"
+            name="quoteExtrafields"
+            rows={6}
+            spellCheck={false}
+            defaultValue={state?.values?.quoteExtrafields ?? extrafields}
+            aria-invalid={errors?.quoteExtrafields ? true : undefined}
+            aria-describedby={['quoteExtrafields-aide', errors?.quoteExtrafields ? 'quoteExtrafields-erreur' : ''].filter(Boolean).join(' ')}
+            className={`${fieldClass} mt-1`}
+          />
+          <p id="quoteExtrafields-aide" className={helpClass}>
+            Les champs « options_… » de vos devis Dolibarr que le site ne peut pas deviner, avec leur valeur,
+            par exemple {'{ "options_typage_devis": 1, "options_origine_dde": "centre" }'}. Ils s’ajoutent à
+            ceux que le site remplit seul (dates de la demande, lieu, période souhaitée, nombre de
+            participants, détail de la demande) et l’emportent sur eux.
+          </p>
+          {errors?.quoteExtrafields && (
+            <p id="quoteExtrafields-erreur" role="alert" className="mt-1 text-xs text-destructive">
+              {errors.quoteExtrafields}
+            </p>
+          )}
+        </div>
+        <div>
+          <button type="submit" disabled={pending} className={primaryButton}>
+            {pending ? 'Enregistrement…' : 'Enregistrer l’envoi des devis'}
           </button>
         </div>
       </form>

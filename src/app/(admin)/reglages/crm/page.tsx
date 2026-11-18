@@ -9,6 +9,7 @@ import { crmConnectorIds } from '../../../../modules/crm/connecteurs.ts'
 import {
   ClearCrmKeyForm,
   CrmFlowsForm,
+  CrmQuotePushForm,
   CrmSettingsForm,
   CrmTestForm,
   CrmTokenPanel,
@@ -17,7 +18,7 @@ import {
 import { crmFlowDefinitions, crmFlowDirectionLabels, crmFlows } from '../../../../modules/crm/flux.ts'
 import { CrmExchangesTable } from '../../../../modules/crm/journal-echanges.tsx'
 import { consumptionCounts } from '../../../../modules/crm/consommations-queries.ts'
-import { crmConnectionView, listCrmExchanges } from '../../../../modules/crm/queries.ts'
+import { crmConnectionView, crmQuotePushSettings, listCrmExchanges } from '../../../../modules/crm/queries.ts'
 
 export const metadata = { title: 'Connexion au CRM' }
 
@@ -29,11 +30,12 @@ export const metadata = { title: 'Connexion au CRM' }
  */
 export default async function ConnexionCrmPage() {
   await requirePermission('crm.gerer')
-  const [view, exchanges, timeZone, counts] = await Promise.all([
+  const [view, exchanges, timeZone, counts, quotePush] = await Promise.all([
     crmConnectionView(),
     listCrmExchanges(30),
     currentTimeZone(),
     consumptionCounts(),
+    crmQuotePushSettings(),
   ])
   const connector = crmConnectors[view.connector]
   const serverTokenSet = Boolean(connector.legacyTokenEnv && process.env[connector.legacyTokenEnv])
@@ -149,6 +151,28 @@ export default async function ConnexionCrmPage() {
             {counts.sent > 1 ? 's' : ''} par le CRM, {counts.cancelled} annulée{counts.cancelled > 1 ? 's' : ''}.
           </p>
         )}
+      </section>
+
+      <section aria-labelledby="crm-devis" className={section}>
+        <div>
+          <h2 id="crm-devis" className="text-lg font-semibold tracking-tight">
+            Envoi des devis
+          </h2>
+          <p className="mt-1 max-w-[70ch] text-sm text-muted-foreground">
+            Par défaut, le CRM vient chercher les devis prêts. Ici, c’est le site qui les crée dans le CRM,
+            avec l’adresse et la clé réglées plus haut. Un devis qui n’a pas pu partir reste « prêt » : il
+            est renvoyé au passage suivant, et le journal ci-dessous dit pourquoi.
+          </p>
+        </div>
+        <CrmQuotePushForm
+          enabled={quotePush?.enabled ?? false}
+          extrafields={
+            quotePush && Object.keys(quotePush.quoteExtrafields).length > 0
+              ? JSON.stringify(quotePush.quoteExtrafields, null, 2)
+              : ''
+          }
+          ready={Boolean(view.baseUrl && view.hasKey)}
+        />
       </section>
 
       <section aria-labelledby="crm-test" className={section}>

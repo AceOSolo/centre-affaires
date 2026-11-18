@@ -1,7 +1,8 @@
 # ADR 065 — Connexion au CRM réglée par centre, depuis le back-office
 
 **Date** : 2026-11-04
-**Statut** : accepté — amende l'ADR 043 § 5 et l'ADR 049 § 2 (le jeton de
+**Statut** : accepté — § 8 amendé par l'ADR 073 (l'adresse et la clé servent
+aussi à créer les devis dans le CRM) — amende l'ADR 043 § 5 et l'ADR 049 § 2 (le jeton de
 l'API Dolibarr se règle à l'écran, par centre ; `DOLIBARR_API_TOKEN` reste
 accepté tant qu'aucun jeton n'y est réglé), amende l'ADR 046 § 2 (le site peut
 tenir une clé pour appeler le CRM, chiffrée), complète l'ADR 054 (droit

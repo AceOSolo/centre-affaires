@@ -346,3 +346,51 @@ export async function crmOutboundCredentials(): Promise<
     return { connector: row.connector, baseUrl: row.baseUrl, key: null, unreadable: true }
   }
 }
+
+/* ------------------------------------------------------------------------ */
+/* Envoi des devis au CRM (ADR 073)                                         */
+/* ------------------------------------------------------------------------ */
+
+export type CrmQuotePushSettings = {
+  connector: CrmConnectorId
+  /** La direction veut que le site crée les devis dans le CRM. */
+  enabled: boolean
+  /** Le flux « Devis » est ouvert (sinon le centre a coupé tout échange de devis). */
+  flowEnabled: boolean
+  quoteExtrafields: Record<string, string | number | boolean | null>
+}
+
+/** Le réglage d'envoi des devis, avec ce qu'il faut pour décider s'il part. */
+export async function crmQuotePushSettings(): Promise<CrmQuotePushSettings | undefined> {
+  const tenantId = currentTenantId()
+  const [row] = await withTenant(tenantId, (tx) =>
+    tx
+      .select({
+        connector: crmConnections.connector,
+        pushQuotes: crmConnections.pushQuotes,
+        enabledFlows: crmConnections.enabledFlows,
+        quoteExtrafields: crmConnections.quoteExtrafields,
+      })
+      .from(crmConnections)
+      .where(eq(crmConnections.tenantId, tenantId))
+      .limit(1),
+  )
+  if (!row) return undefined
+  return {
+    connector: row.connector,
+    enabled: row.pushQuotes,
+    flowEnabled: readEnabledFlows(row.enabledFlows).includes('quotes'),
+    quoteExtrafields: row.quoteExtrafields ?? {},
+  }
+}
+
+/** Active ou coupe l'envoi des devis, et règle les champs complémentaires. */
+export async function saveCrmQuotePush(
+  input: { enabled: boolean; quoteExtrafields: Record<string, string | number | boolean | null> },
+  staffMemberId: string,
+): Promise<void> {
+  await upsertConnection(staffMemberId, {
+    pushQuotes: input.enabled,
+    quoteExtrafields: Object.keys(input.quoteExtrafields).length > 0 ? input.quoteExtrafields : null,
+  })
+}

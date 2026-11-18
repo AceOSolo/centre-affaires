@@ -659,6 +659,18 @@ Dans la crontab du compte `deploy` (`sudo -u deploy crontab -e`) :
 5 3 * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/contrats',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
 ```
 
+**Envoi des devis à Dolibarr** (ADR 073), si la direction a coché « Le site crée
+les devis dans le CRM ». Un devis que Dolibarr n'a pas pu recevoir reste « prêt » ;
+la reprise le renvoie, toutes les 5 minutes :
+
+```cron
+*/5 * * * * cd /home/deploy/centre-affaires && docker compose exec -T app node -e "fetch('http://127.0.0.1:3000/api/maintenance/devis-dolibarr',{method:'POST',headers:{authorization:'Bearer '+process.env.MAINTENANCE_TOKEN}}).then(async r=>{console.log(r.status,await r.text());process.exit(r.ok?0:1)})"
+```
+
+Sans l'envoi coché, la route répond `{"skipped":"desactive",…}` et ne fait rien. Avec
+pm2 au lieu de Docker : même appel, `curl -X POST -H "Authorization: Bearer $MAINTENANCE_TOKEN"
+http://127.0.0.1:3000/api/maintenance/devis-dolibarr`.
+
 La reconduction répond `{"renewed":[…],"failures":[…]}` : un contrat dont la
 ressource est déjà prise après le terme n'est pas prolongé, et figure dans
 `failures` avec la cause, chaque nuit, jusqu'à ce que l'équipe libère la

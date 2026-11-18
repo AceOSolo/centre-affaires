@@ -16,6 +16,7 @@ import {
   type LineDraft,
   type ProposalForDolibarr,
 } from './propositions.ts'
+import { productRefsOfLine } from './produits-dolibarr.ts'
 import { services } from './schema.ts'
 import {
   proposalLines,
@@ -454,6 +455,34 @@ export async function listProposalsForDolibarr(filters: {
         ),
       )
       .orderBy(asc(proposalLines.position))
+    // Les produits de Dolibarr qui portent le prix de chaque ligne (ADR 073).
+    const resourceIds = [...new Set(lines.map((line) => line.resourceId).filter((id): id is string => Boolean(id)))]
+    const serviceIds = [...new Set(lines.map((line) => line.serviceId).filter((id): id is string => Boolean(id)))]
+    const [lineResources, lineServices] = await Promise.all([
+      resourceIds.length === 0
+        ? []
+        : tx
+            .select({ id: resources.id, type: resources.resourceType, code: resources.code })
+            .from(resources)
+            .where(and(eq(resources.tenantId, tenantId), inArray(resources.id, resourceIds))),
+      serviceIds.length === 0
+        ? []
+        : tx
+            .select({ id: services.id, code: services.code })
+            .from(services)
+            .where(and(eq(services.tenantId, tenantId), inArray(services.id, serviceIds))),
+    ])
+    const resourceById = new Map(lineResources.map((resource) => [resource.id, resource]))
+    const serviceById = new Map(lineServices.map((service) => [service.id, service]))
+    const productRefsOf = (line: (typeof lines)[number]) => {
+      const resource = line.resourceId ? resourceById.get(line.resourceId) : undefined
+      return productRefsOfLine({
+        serviceCode: line.serviceId ? (serviceById.get(line.serviceId)?.code ?? null) : null,
+        resourceType: line.source === 'booking' ? (resource?.type ?? null) : null,
+        resourceCode: resource?.code ?? null,
+        unit: line.unit,
+      })
+    }
     return rows.map(({ proposal, client, booking, resourceName }) => ({
       ...proposal,
       answers: proposal.answers as Answers,
@@ -475,7 +504,7 @@ export async function listProposalsForDolibarr(filters: {
       booking: booking ? { id: booking.id, startsAt: booking.startsAt, endsAt: booking.endsAt, resourceName: resourceName ?? '' } : null,
       lines: lines
         .filter((line) => line.proposalId === proposal.id)
-        .map((line) => ({ ...line, amountCents: line.amountCents ?? 0 })),
+        .map((line) => ({ ...line, amountCents: line.amountCents ?? 0, productRefs: productRefsOf(line) })),
     }))
   })
 }

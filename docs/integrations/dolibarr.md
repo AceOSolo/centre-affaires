@@ -36,6 +36,37 @@ Un devis **prêt** a été validé : chiffré d'office (salle réservée au prix
 grille) ou relu par l'accueil (camion, domiciliation, tout devis complété à la
 main). Un devis **à compléter** n'apparaît jamais dans l'API.
 
+## Variante : le site crée lui-même les devis
+
+[ADR 073](../decisions/073-le-site-cree-les-devis-dans-dolibarr.md). Si la
+direction coche « Le site crée les devis dans le CRM » (Réglages > Connexion au
+CRM, avec l'adresse de Dolibarr et la clé d'API d'un utilisateur dédié), **le
+site fait le travail du connecteur pour les devis** : dès qu'un devis est
+prêt, il retrouve ou crée le tiers (prospect) et son contact, crée la
+proposition (`POST /proposals`), rattache le contact
+(`POST /proposals/{id}/contact/{contactId}/CUSTOMER`), puis marque le devis
+« transmis » avec l'identifiant et la référence rendus par Dolibarr.
+
+Pour vous, développeur du connecteur :
+
+- les devis créés par le site **ne sont plus servis** par `GET /api/dolibarr/devis`
+  (ils sont « transmis ») : n'écrivez pas le même devis deux fois ;
+- `ref_client` porte le numéro du devis (`DV-2026-0007`) : cherchez-le avant de
+  créer quoi que ce soit ;
+- la proposition reste **brouillon** dans Dolibarr ; l'issue (`/issue`) et
+  l'annulation (`?statut=cancelled`) restent à votre charge, inchangées ;
+- un devis que le site n'a pas pu créer reste « prêt » : `GET /api/dolibarr/devis`
+  le sert toujours, et une tâche du serveur (`POST /api/maintenance/devis-dolibarr`)
+  le renvoie ;
+- chaque ligne porte `produitRefs`, les références des produits Dolibarr qui
+  portent son prix (`tarif.salle.sal-mb.heure`, `tarif.salle.heure`, ou le code
+  d'un service), du plus précis au plus général.
+
+Les champs `options_*` propres à votre Dolibarr (type de devis, origine,
+statut…) se règlent à l'écran, en JSON ; le site remplit seul les dates de la
+demande, le lieu, la période souhaitée, le nombre de participants et le détail
+de la demande.
+
 ## Accès
 
 - Base : l'adresse publique de l'application (`APP_URL`), par exemple
@@ -125,7 +156,8 @@ répond **400** `{ "erreur": "…" }`.
           "tauxTva": "20",
           "montantHtCentimes": 9000,
           "ressourceId": "0199a3c4-0000-7000-8000-0000000000b1",
-          "serviceId": null
+          "serviceId": null,
+          "produitRefs": ["tarif.salle.sal-mb.heure", "tarif.salle.heure"]
         }
       ],
       "totaux": { "htCentimes": 9000, "tvaCentimes": 1800, "ttcCentimes": 10800 }

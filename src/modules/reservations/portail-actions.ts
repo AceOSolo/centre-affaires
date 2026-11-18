@@ -37,6 +37,7 @@ import {
 import { periodSelection } from './public-selection.ts'
 import { errorsByField } from './questionnaire-fields.tsx'
 import { parseAnswers, productForResourceType, type Answers } from './questionnaires.ts'
+import { sendReadyProposalsToDolibarr } from '../facturation/devis-dolibarr-declencheur.ts'
 
 /**
  * Réservation depuis l'espace client (R23, ADR 036). Chaque action revérifie
@@ -249,6 +250,8 @@ export async function bookFromPortalAction(
     // L'accueil est prévenu qu'un créneau attend sa réponse (ADR 038).
     after(() => notifyBookingRequestSubmitted(bookingId))
   }
+  // Le devis prêt de la réservation part vers Dolibarr, si le centre l'a voulu (ADR 073).
+  after(() => sendReadyProposalsToDolibarr())
   revalidatePath('/compte/reservations', 'layout')
   revalidatePath('/reservations', 'layout')
   revalidatePath('/demandes')

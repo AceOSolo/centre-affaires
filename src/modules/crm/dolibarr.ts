@@ -7,7 +7,8 @@ import { shortExternalText, type CrmConnector, type CrmTestOutcome } from './con
  * et le connecteur écrit par le développeur Dolibarr vient la chercher ; les
  * produits arrivent par le module Webhook. Tiers et contrats, le connecteur
  * les envoie ; consommations, il vient les chercher et en accuse réception
- * (ADR 066). Le site n'appelle Dolibarr que pour le test de connexion.
+ * (ADR 066). Le site n'appelle Dolibarr que pour le test de connexion et,
+ * si le centre l'a voulu, pour y créer ses devis (ADR 073, `dolibarr-api.ts`).
  */
 
 export const dolibarrConnector: CrmConnector = {
