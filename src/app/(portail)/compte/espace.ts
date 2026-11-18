@@ -6,12 +6,14 @@ import { currentTenant } from '../../../lib/tenant.ts'
 import type { ClientAccount } from '../../../modules/clients/comptes.ts'
 import { clientSections } from '../../../modules/clients/espace-rubriques.ts'
 import { listContractsForAccounts } from '../../../modules/contrats/compte-queries.ts'
-import { mailFolderCounts } from '../../../modules/courrier/classement.ts'
 import { searchMailForAccounts } from '../../../modules/courrier/demandes-queries.ts'
+import { countMailForAccounts } from '../../../modules/courrier/non-lus.ts'
 import { countToSign, listInspectionsForAccounts } from '../../../modules/etats-des-lieux/queries.ts'
 import { listInvoicesForAccounts } from '../../../modules/facturation/compte-queries.ts'
 import { listPortalOffers } from '../../../modules/facturation/offres-portail.ts'
 import { listOpenDomiciliationRequests } from '../../../modules/facturation/propositions-portail.ts'
+import { clientBellUnreadCount } from '../../../modules/notifications/cloche-client-queries.ts'
+import { hasDocumentSpace } from '../../../modules/clients/pieces-queries.ts'
 import { splitClientBookings } from '../../../modules/reservations/compte-regles.ts'
 import { listBookingsForAccounts } from '../../../modules/reservations/compte-queries.ts'
 
@@ -20,8 +22,9 @@ const LATEST_MAIL = 3
 
 /**
  * Ce que l'espace sait d'une entreprise, lu une fois par requête : la coque
- * s'en sert pour ses onglets, l'accueil pour ses cartes. `cache` évite de
- * relire la même chose deux fois dans un même rendu.
+ * s'en sert pour ses onglets et sa cloche, l'accueil pour ses cartes, les
+ * préférences pour leurs groupes. `cache` évite de relire la même chose deux
+ * fois dans un même rendu.
  *
  * Reçoit le compte vérifié par l'appelant : chaque page et la coque appellent
  * `requireClientAccount()` elles-mêmes (`gardes-espace-client.test.ts`). Le
@@ -38,16 +41,22 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
   const today = todayIsoDate(tenant.timezone)
   const now = new Date()
 
-  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests] = await Promise.all([
-    listBookingsForAccounts(accounts),
-    listInvoicesForAccounts(accounts),
-    listContractsForAccounts(accounts, today),
-    listInspectionsForAccounts(accounts),
-    mailFolderCounts(accounts),
-    searchMailForAccounts(accounts, {}, { number: 1, size: LATEST_MAIL }, tenant.timezone),
-    listPortalOffers(accounts, today),
-    listOpenDomiciliationRequests(accounts),
-  ])
+  const [bookings, invoices, contracts, inspections, mail, latestMail, offers, domiciliationRequests, bellCount, documents] =
+    await Promise.all([
+      listBookingsForAccounts(accounts),
+      listInvoicesForAccounts(accounts),
+      listContractsForAccounts(accounts, today),
+      listInspectionsForAccounts(accounts),
+      // Plis non lus par la personne (ADR 077) : la pastille de l'onglet et l'accueil.
+      countMailForAccounts(accounts),
+      searchMailForAccounts(accounts, {}, { number: 1, size: LATEST_MAIL }, tenant.timezone),
+      listPortalOffers(accounts, today),
+      listOpenDomiciliationRequests(accounts),
+      // Nouveautés non lues de la cloche (ADR 077), justes dès le premier affichage.
+      clientBellUnreadCount(accounts, { now }),
+      // Pièces justificatives de la domiciliation (ADR 075).
+      hasDocumentSpace(accounts),
+    ])
 
   const activeContracts = contracts.filter((contract) => contract.status === 'active')
   const domiciliated = mail.total > 0 || activeContracts.some((contract) => contract.contractType === 'domiciliation')
@@ -67,11 +76,22 @@ export const loadClientSpace = cache(async ({ user, accounts }: { user: Authenti
     // Demandes de domiciliation en cours (ADR 068) : seule trace, dans
     // l'espace, d'une demande qui n'est qu'un devis.
     domiciliationRequests,
+    bell: { count: bellCount, unreadMail: mail.unread },
+    // Ce que l'entreprise utilise : les groupes de préférences à montrer (ADR 077).
+    usage: {
+      domiciliated,
+      bookings: bookings.length,
+      contracts: contracts.length,
+      inspections: inspections.length,
+      invoices: invoices.length,
+    },
     sections: clientSections({
       domiciliated,
       invoices: invoices.length,
       contracts: contracts.length,
       inspections: inspections.length,
+      unreadMail: mail.unread,
+      documents,
     }),
   }
 })

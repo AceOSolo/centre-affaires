@@ -116,7 +116,13 @@ function transport(env: Env): Transporter | undefined {
   return found
 }
 
-export type Message = { to: string[]; subject: string; text: string }
+/**
+ * Un message : le texte brut, toujours, et sa version mise en page quand le
+ * gabarit des courriels l'a produite (ADR 080). Les deux partent ensemble
+ * (`multipart/alternative`) : la messagerie montre le HTML, ou le texte si
+ * elle n'affiche pas le HTML ou si le lecteur l'a choisi.
+ */
+export type Message = { to: string[]; subject: string; text: string; html?: string }
 
 /**
  * Issue d'un envoi, telle que le journal des messages la garde (ADR 038) :
@@ -196,7 +202,15 @@ export async function sendMessage(message: Message, env: Env = process.env): Pro
   }
 
   const results = await Promise.allSettled(
-    recipients.map((to) => smtp.sendMail({ from, to, subject: message.subject, text: message.text })),
+    recipients.map((to) =>
+      smtp.sendMail({
+        from,
+        to,
+        subject: message.subject,
+        text: message.text,
+        ...(message.html ? { html: message.html } : {}),
+      }),
+    ),
   )
   const failed = recipients.filter((_to, index) => results[index].status === 'rejected')
   if (failed.length === 0) return { status: 'sent', recipients, failed: [], error: null }

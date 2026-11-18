@@ -106,6 +106,7 @@ export async function classifyMail(
           ? {
               readAt: row.readAt,
               handledAt: row.handledAt,
+              ignoredAt: row.ignoredAt,
               category: row.category,
               customCategoryId: row.customCategoryId,
               tags: row.tags ?? [],
@@ -115,6 +116,7 @@ export async function classifyMail(
         const values = {
           readAt: next.readAt,
           handledAt: next.handledAt,
+          ignoredAt: next.ignoredAt,
           category: next.category,
           customCategoryId: next.customCategoryId,
           tags: next.tags,
@@ -150,10 +152,13 @@ export async function markMailRead(accounts: ClientAccount[], mailItemId: string
 }
 
 export type MailFolderCounts = {
+  /** Plis de la boîte, ignorés exceptés (ADR 078) : comme tous les compteurs qui suivent. */
   total: number
   unread: number
   toHandle: number
   handled: number
+  /** Plis ignorés par la personne : la rubrique « Ignorés ». */
+  ignored: number
   /** Par catégorie de départ, et `non-classe` pour les plis sans catégorie. */
   byCategory: Record<MailCategory | 'non-classe', { total: number; unread: number }>
   /**
@@ -165,12 +170,24 @@ export type MailFolderCounts = {
   tags: { tag: string; count: number }[]
 }
 
-/** Compteurs des rubriques de la boîte aux lettres, pour la personne connectée. */
+/**
+ * Compteurs des rubriques de la boîte aux lettres, pour la personne connectée.
+ * Un pli ignoré ne compte que dans « Ignorés » (ADR 078).
+ */
 export async function mailFolderCounts(accounts: ClientAccount[], database?: Database): Promise<MailFolderCounts> {
   const byCategory = Object.fromEntries(
     [...mailCategories, 'non-classe'].map((key) => [key, { total: 0, unread: 0 }]),
   ) as MailFolderCounts['byCategory']
-  const counts: MailFolderCounts = { total: 0, unread: 0, toHandle: 0, handled: 0, byCategory, custom: [], tags: [] }
+  const counts: MailFolderCounts = {
+    total: 0,
+    unread: 0,
+    toHandle: 0,
+    handled: 0,
+    ignored: 0,
+    byCategory,
+    custom: [],
+    tags: [],
+  }
   if (accounts.length === 0) return counts
   const clientIds = accounts.map((account) => account.clientId)
   const memberIds = accounts.map((account) => account.memberId)
@@ -192,13 +209,17 @@ export async function mailFolderCounts(accounts: ClientAccount[], database?: Dat
       counts.custom = custom.map((entry) => ({ ...entry, total: 0, unread: 0 }))
       const customById = new Map(counts.custom.map((entry) => [entry.id, entry]))
 
+      // Sans classement (jointure vide), le pli n'est ni lu, ni traité, ni
+      // ignoré : chaque somme le compte comme tel.
+      const live = sql`${mailItemMemberStates.ignoredAt} is null`
       const rows = await tx
         .select({
           category: mailItemMemberStates.category,
           customCategoryId: mailItemMemberStates.customCategoryId,
-          total: sql<number>`count(*)`,
-          unread: sql<number>`sum(${mailItemMemberStates.readAt} is null)`,
-          handled: sql<number>`sum(${mailItemMemberStates.handledAt} is not null)`,
+          total: sql<number>`sum(${live})`,
+          unread: sql<number>`sum(${mailItemMemberStates.readAt} is null and ${live})`,
+          handled: sql<number>`sum(${mailItemMemberStates.handledAt} is not null and ${live})`,
+          ignored: sql<number>`sum(${mailItemMemberStates.ignoredAt} is not null)`,
         })
         .from(mailItems)
         .leftJoin(
@@ -212,13 +233,13 @@ export async function mailFolderCounts(accounts: ClientAccount[], database?: Dat
         .where(and(inArray(mailItems.clientId, clientIds), isNull(mailItems.deletedAt)))
         .groupBy(mailItemMemberStates.category, mailItemMemberStates.customCategoryId)
       for (const row of rows) {
-        const total = Number(row.total)
-        // Sans classement, le pli n'est pas lu : la ligne absente compte non lue.
+        const total = Number(row.total ?? 0)
         const unread = Number(row.unread ?? 0)
         const handled = Number(row.handled ?? 0)
         counts.total += total
         counts.unread += unread
         counts.handled += handled
+        counts.ignored += Number(row.ignored ?? 0)
         const own = row.customCategoryId ? customById.get(row.customCategoryId) : undefined
         if (own) {
           own.total += total
@@ -240,10 +261,94 @@ export async function mailFolderCounts(accounts: ClientAccount[], database?: Dat
          where s.client_member_id in ${memberIds}
            and i.client_id in ${clientIds}
            and i.deleted_at is null
+           and s.ignored_at is null
          group by jt.tag
          order by jt.tag`)) as unknown as [{ tag: string; count: number }[]]
       counts.tags = tagRows.map((row) => ({ tag: row.tag, count: Number(row.count) }))
       return counts
+    },
+    database,
+  )
+}
+
+/**
+ * Plis à traiter de la personne connectée, ignorés exceptés (ADR 078) : ce
+ * que disent la pastille « Courrier » de la navigation et l'accueil de
+ * l'espace (« 3 nouveaux courriers », lot 4 de la recette du 17/11).
+ *
+ * - `unread` : plis non lus, ni retirés ni ignorés ;
+ * - `toHandle` : plis pas encore marqués traités, ni retirés ni ignorés.
+ *
+ * Une seule requête, sans les rubriques : de quoi l'appeler à chaque page.
+ */
+export async function countMailToHandle(
+  accounts: ClientAccount[],
+  database?: Database,
+): Promise<{ unread: number; toHandle: number }> {
+  if (accounts.length === 0) return { unread: 0, toHandle: 0 }
+  const memberIds = accounts.map((account) => account.memberId)
+  return inClientSpace(
+    accounts,
+    async (tx) => {
+      const live = sql`${mailItemMemberStates.ignoredAt} is null`
+      const [row] = await tx
+        .select({
+          unread: sql<number>`sum(${mailItemMemberStates.readAt} is null and ${live})`,
+          toHandle: sql<number>`sum(${mailItemMemberStates.handledAt} is null and ${live})`,
+        })
+        .from(mailItems)
+        .leftJoin(
+          mailItemMemberStates,
+          and(
+            eq(mailItemMemberStates.tenantId, mailItems.tenantId),
+            eq(mailItemMemberStates.mailItemId, mailItems.id),
+            inArray(mailItemMemberStates.clientMemberId, memberIds),
+          ),
+        )
+        .where(
+          and(
+            eq(mailItems.tenantId, currentTenantId()),
+            inArray(
+              mailItems.clientId,
+              accounts.map((account) => account.clientId),
+            ),
+            isNull(mailItems.deletedAt),
+          ),
+        )
+      return { unread: Number(row?.unread ?? 0), toHandle: Number(row?.toHandle ?? 0) }
+    },
+    database,
+  )
+}
+
+/**
+ * Expéditeurs du courrier des entreprises du compte, du plus récent au plus
+ * ancien : les suggestions du filtre « Expéditeur ». Lus sur l'enveloppe par
+ * l'accueil ; un pli retiré n'en propose pas.
+ */
+export async function listMailSenders(accounts: ClientAccount[], limit = 50, database?: Database): Promise<string[]> {
+  if (accounts.length === 0) return []
+  return inClientSpace(
+    accounts,
+    async (tx) => {
+      const rows = await tx
+        .select({ sender: mailItems.sender })
+        .from(mailItems)
+        .where(
+          and(
+            eq(mailItems.tenantId, currentTenantId()),
+            inArray(
+              mailItems.clientId,
+              accounts.map((account) => account.clientId),
+            ),
+            isNull(mailItems.deletedAt),
+            sql`${mailItems.sender} is not null and trim(${mailItems.sender}) <> ''`,
+          ),
+        )
+        .groupBy(mailItems.sender)
+        .orderBy(sql`max(${mailItems.receivedAt}) desc`)
+        .limit(limit)
+      return rows.map((row) => row.sender as string)
     },
     database,
   )

@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../../lib/uuid.ts'
 import { ContactForm } from '../../../../../../modules/clients/contact-form.tsx'
@@ -32,9 +32,7 @@ export default async function EditContactPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/clients/${client.id}`} className="text-sm text-muted-foreground hover:underline">
-          ← {client.name}
-        </Link>
+        <LienRetour href={`/clients/${client.id}`} label={<>{client.name}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">{contact.fullName}</h1>
         <p className="mt-1 text-sm text-muted-foreground">Contact de {client.name}</p>
       </div>

@@ -1,5 +1,6 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { formatLongDate, formatTime, toIsoDate } from '../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../lib/tenant.ts'
@@ -19,7 +20,7 @@ export default async function BookingSeriesPage({ params }: { params: Promise<{ 
   const future = bookings.filter((booking) => booking.status !== 'cancelled' && booking.startsAt > now)
   return <div className="flex flex-col gap-6">
     <div>
-      <Link href="/reservations" className="text-sm text-muted-foreground hover:underline">← Planning</Link>
+      <LienRetour href="/reservations" label="Planning" />
       <h1 className="mt-2 text-2xl font-semibold">{bookings[0].title}</h1>
       <p className="mt-1 text-sm text-muted-foreground">Série enregistrée · {bookings.length} occurrences · {future.length} à venir</p>
     </div>

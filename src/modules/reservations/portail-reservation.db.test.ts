@@ -315,7 +315,13 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
   describe('suivi et annulation, tracés', () => {
     it('annule une demande en attente au nom de la personne, et le montre dans « Mes réservations »', async () => {
       const created = await reserver(durand, SALLE)
-      assert.equal(await cancelRequestForAccounts(created.id, durand), true)
+      // Le créneau tombe à 7–13 jours selon le jour du test : délai du centre ramené à zéro (ADR 076).
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 0`))
+      try {
+        assert.equal(await cancelRequestForAccounts(created.id, durand), true)
+      } finally {
+        await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+      }
       const row = await ligne(created.id)
       assert.equal(row.status, 'cancelled')
       assert.equal(row.cancelledByMemberId, JEANNE)
@@ -326,9 +332,16 @@ describe('réservation depuis l’espace client, de la disponibilité à l’éc
       assert.equal(frozenQuoteDisplay(vue)?.unitPriceCents, 2_000)
     })
 
-    it('n’annule pas depuis l’espace une réservation confirmée : elle s’annule auprès du centre', async () => {
+    it('n’annule pas depuis l’espace une réservation confirmée dans le délai du centre (ADR 076)', async () => {
       const created = await reserver(durand, VEHICULE)
-      assert.equal(await cancelRequestForAccounts(created.id, durand), false)
+      // Le créneau tombe à 7–13 jours selon le jour où tourne le test : un délai
+      // de 30 jours le place toujours dans le délai du centre.
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 30`))
+      try {
+        assert.equal(await cancelRequestForAccounts(created.id, durand), false)
+      } finally {
+        await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+      }
       assert.equal((await ligne(created.id)).status, 'confirmed')
     })
 

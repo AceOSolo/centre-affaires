@@ -6,6 +6,7 @@ import { withTenant } from '../../db/index.ts'
 import { insertReturning, updateReturning } from '../../db/returning.ts'
 import { uniqueSlug } from '../../lib/slug.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { parseListingMedia, type ListingMedia } from './annonces-medias.ts'
 import { listings, resources, type Listing, type Resource } from './schema.ts'
 
 /** Une annonce et la ressource qu'elle met en vitrine. */
@@ -171,4 +172,67 @@ export async function unpublishListing(id: string): Promise<void> {
   await withTenant(currentTenantId(), (tx) =>
     tx.update(listings).set({ publishedAt: null }).where(eq(listings.id, id)),
   )
+}
+
+/**
+ * Médias d'une annonce pour la route qui les sert (ADR 073), et si l'annonce
+ * est visible du public — mêmes trois conditions que `listPublishedListings`.
+ * Un brouillon ne se montre qu'à l'équipe.
+ */
+export async function findListingMediaForServing(
+  listingId: string,
+): Promise<{ media: ListingMedia[]; visible: boolean } | undefined> {
+  const tenantId = currentTenantId()
+  const [row] = await withTenant(tenantId, (tx) =>
+    tx
+      .select({
+        media: listings.media,
+        publishedAt: listings.publishedAt,
+        resourceStatus: resources.status,
+        resourceDeletedAt: resources.deletedAt,
+      })
+      .from(listings)
+      .innerJoin(resources, eq(resources.id, listings.resourceId))
+      .where(
+        and(eq(listings.tenantId, tenantId), eq(listings.id, listingId), isNull(listings.deletedAt)),
+      )
+      .limit(1),
+  )
+  if (!row) return undefined
+  return {
+    media: parseListingMedia(row.media),
+    visible:
+      row.publishedAt !== null && row.resourceDeletedAt === null && row.resourceStatus === 'active',
+  }
+}
+
+/**
+ * Modifie la liste des médias d'une annonce : ajout, retrait, ordre,
+ * description. La ligne est verrouillée le temps du changement — deux
+ * personnes qui ajoutent une photo en même temps ne s'effacent pas l'une
+ * l'autre. `change` rend la nouvelle liste, ou lève pour tout annuler.
+ *
+ * `undefined` : annonce introuvable ou retirée.
+ */
+export async function changeListingMedia(
+  listingId: string,
+  change: (current: ListingMedia[]) => ListingMedia[],
+): Promise<{ before: ListingMedia[]; after: ListingMedia[]; slug: string } | undefined> {
+  const tenantId = currentTenantId()
+  return withTenant(tenantId, async (tx) => {
+    const [row] = await tx
+      .select({ media: listings.media, slug: listings.slug })
+      .from(listings)
+      .where(
+        and(eq(listings.tenantId, tenantId), eq(listings.id, listingId), isNull(listings.deletedAt)),
+      )
+      .for('update')
+    if (!row) return undefined
+    const before = parseListingMedia(row.media)
+    const after = change(before)
+    if (after !== before) {
+      await tx.update(listings).set({ media: after }).where(eq(listings.id, listingId))
+    }
+    return { before, after, slug: row.slug }
+  })
 }

@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
+import { RequiredMark, RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { PreuveHumaine, preuveEnCours, reponsePreuve } from '../../../../components/ui/preuve-humaine.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
 import { messageRefusAuth, serveurInjoignable } from '../../../../lib/auth/messages.ts'
@@ -114,10 +115,12 @@ export function ResetRequestForm({ equipe }: { equipe: boolean }) {
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-4">
         <ErrorSummary key={tentative} labels={{}} message={echec ?? undefined} />
+        <RequiredNote />
 
         <div>
           <label className={labelClass} htmlFor="email">
             Adresse du compte
+            <RequiredMark />
           </label>
           <input
             id="email"

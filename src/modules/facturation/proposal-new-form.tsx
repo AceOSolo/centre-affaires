@@ -3,8 +3,15 @@
 import { useActionState, useState } from 'react'
 
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
-import { QuestionnaireFields, questionnaireErrorLabels } from '../reservations/questionnaire-fields.tsx'
-import { ANSWER_FIELD_PREFIX, questionnaires, type Answers } from '../reservations/questionnaires.ts'
+import { RequiredNote } from '../../components/ui/obligatoire.tsx'
+import { QuestionnaireFields } from '../reservations/questionnaire-fields.tsx'
+import {
+  ANSWER_FIELD_PREFIX,
+  formResourceTypes,
+  questionnaireErrorLabels,
+  type Answers,
+  type Questionnaire,
+} from '../reservations/questionnaires.ts'
 import {
   FieldError,
   FieldHint,
@@ -16,7 +23,6 @@ import {
 } from './champs.tsx'
 import { createStaffProposalAction, type NewProposalFormState } from './propositions-actions.ts'
 import { MAX_NOTE_LENGTH, requesterFieldLabels, type RequesterFormValues } from './propositions-ecran.ts'
-import type { ProposalProduct } from './schema-devis.ts'
 
 /**
  * Devis établi par l'accueil (ADR 043) : la réservation (espace, véhicule),
@@ -27,13 +33,14 @@ import type { ProposalProduct } from './schema-devis.ts'
  * (`key`) : React 19 vide les champs non contrôlés à chaque envoi.
  */
 export function NewProposalForm({
-  product,
+  questionnaire,
   clients,
   bookings,
   fixedBooking,
   defaults,
 }: {
-  product: ProposalProduct
+  /** Le questionnaire du formulaire choisi, tel que le centre l'a réglé (ADR 074). */
+  questionnaire: Questionnaire
   clients: readonly { id: string; name: string }[]
   /** Réservations rattachables, pour un espace ou un véhicule ; vide pour une domiciliation. */
   bookings: readonly { id: string; label: string }[]
@@ -49,17 +56,18 @@ export function NewProposalForm({
       .filter(([field]) => field.startsWith(ANSWER_FIELD_PREFIX))
       .map(([field, message]) => [field.slice(ANSWER_FIELD_PREFIX.length), message]),
   )
-  const needsBooking = questionnaires[product].resourceTypes.length > 0
+  const needsBooking = formResourceTypes[questionnaire.form].length > 0
 
   return (
     <form action={formAction} noValidate className="flex flex-col gap-6">
-      <input type="hidden" name="product" value={product} />
+      <input type="hidden" name="formulaire" value={questionnaire.form} />
 
       <ErrorSummary
         errors={state?.fieldErrors}
-        labels={{ ...requesterFieldLabels, reservation: 'Réservation', ...questionnaireErrorLabels(product) }}
+        labels={{ ...requesterFieldLabels, reservation: 'Réservation', ...questionnaireErrorLabels(questionnaire) }}
         message={state?.message}
       />
+      <RequiredNote className="-mt-2" />
 
       <div key={JSON.stringify(state?.values ?? '')} className="flex flex-col gap-6">
         {needsBooking && (
@@ -87,7 +95,7 @@ export function NewProposalForm({
           <h2 id="questions-titre" className="text-sm font-semibold tracking-tight">
             Questions du devis
           </h2>
-          <QuestionnaireFields product={product} defaults={values.answers} errors={answerErrors} density="compact" />
+          <QuestionnaireFields questionnaire={questionnaire} defaults={values.answers} errors={answerErrors} density="compact" />
         </section>
       </div>
 

@@ -20,6 +20,7 @@ import {
 
 import { deletedAt, instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { tenantId } from '../../db/tenants.ts'
+import type { ListingMedia } from './annonces-medias.ts'
 
 /**
  * Une seule table pour tous les types de ressources (décision 2). Le calendrier,
@@ -72,7 +73,16 @@ export const clientBookingModeEnum = (name: string) => mysqlEnum(name, clientBoo
 /** Champs propres à chaque type, stockés en JSON. */
 export type ResourceAttributes = {
   salle: { superficieM2?: number; equipements?: string[] }
-  bureau: { superficieM2?: number; postes?: number }
+  /**
+   * `agencement` : open space ou bureau fermé ; `formules` : les formules de
+   * location proposées en ligne, réglées sur la fiche (ADR 076, `formules.ts`).
+   */
+  bureau: {
+    superficieM2?: number
+    postes?: number
+    agencement?: 'Open space' | 'Bureau fermé'
+    formules?: ('heure' | 'demi_journee' | 'journee' | 'semaine' | 'mois')[]
+  }
   /** `numero` : celui peint sur la porte, unique parmi les casiers vivants du centre. */
   casier: { numero?: string; taille?: 'S' | 'M' | 'L' }
   vehicule: { immatriculation?: string; kilometrage?: number; places?: number }
@@ -267,8 +277,13 @@ export const listings = mysqlTable(
     description: text('description'),
     /** Points forts, affichés en liste courte. */
     highlights: json('highlights').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
-    /** Clés de stockage des photos, dans l'ordre d'affichage. */
-    photos: json('photos').$type<string[]>().notNull().default(sql`(JSON_ARRAY())`),
+    /**
+     * Photos et vidéos, dans l'ordre d'affichage (ADR 073). La colonne garde
+     * son nom d'origine : la renommer coûterait une migration pour rien.
+     * Une liste courte, réordonnée d'un bloc, sans requête dessus : du JSON,
+     * comme les points forts. Relue par `parseListingMedia()`.
+     */
+    media: json('photos').$type<ListingMedia[]>().notNull().default(sql`(JSON_ARRAY())`),
     /** Nul : brouillon, invisible du public. */
     publishedAt: instant('published_at'),
     ...timestamps(),

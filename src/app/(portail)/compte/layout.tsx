@@ -2,6 +2,7 @@ import Link from 'next/link'
 
 import { staffAccess } from '../../../lib/auth/staff.ts'
 import { requireClientAccount } from '../../../modules/clients/session.ts'
+import { ClientNotificationBell } from '../../../modules/notifications/cloche-client.tsx'
 import { SignOutButton } from '../../(auth)/sign-out-button.tsx'
 import { CompteNav } from './compte-nav.tsx'
 import { loadClientSpace } from './espace.ts'
@@ -18,11 +19,16 @@ const secondaryLink = 'inline-flex min-h-11 items-center rounded-md px-3 text-sm
  * passent pas toutes par cette coque (ADR 008).
  *
  * Les onglets sont ceux que l'entreprise utilise (`clientSections`) ; ce qui
- * se consulte rarement — historique, préférences de notification — passe en
- * liens discrets à côté du compte.
+ * se consulte rarement — historique, « Mon compte » et ses notifications —
+ * passe en liens discrets à côté du compte (ADR 077).
+ *
+ * La cloche des nouveautés (ADR 077) se tient toujours au bout de la ligne,
+ * à droite : sur téléphone, à côté du nom de l'entreprise, les liens passant
+ * dessous ; sur grand écran, après les liens. Son panneau s'ouvre vers la
+ * gauche sans sortir de l'écran.
  */
 export default async function CompteLayout({ children }: { children: React.ReactNode }) {
-  const [{ user, accounts, sections }, staff] = await Promise.all([
+  const [{ user, accounts, sections, bell }, staff] = await Promise.all([
     requireClientAccount().then(loadClientSpace),
     // Un membre de l'équipe peut aussi être client : il retrouve le back-office.
     staffAccess(),
@@ -30,25 +36,26 @@ export default async function CompteLayout({ children }: { children: React.React
 
   return (
     <div className="mx-auto w-full max-w-[1200px] px-5 py-8 sm:px-8 sm:py-10">
-      <div className="flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0">
+      <div className="flex flex-wrap items-start gap-x-6 gap-y-3 md:flex-nowrap md:items-end">
+        <div className="min-w-0 flex-1 basis-48">
           <p className="text-sm text-muted-foreground">Espace client</p>
           <p className="mt-0.5 text-xl font-semibold tracking-tight text-primary">
             {accounts.map((account) => account.clientName).join(', ')}
           </p>
           <p className="mt-0.5 truncate text-sm text-muted-foreground">{user.email}</p>
         </div>
-        <div className="-mx-3 flex flex-wrap items-center gap-1 sm:mx-0">
+        <div className="order-last -mx-3 flex w-full flex-wrap items-center gap-1 md:order-none md:mx-0 md:w-auto md:justify-end">
           <Link href="/compte/historique" className={secondaryLink}>Historique</Link>
-          <Link href="/compte/preferences" className={secondaryLink}>Préférences</Link>
+          <Link href="/compte/mon-compte" className={secondaryLink}>Mon compte</Link>
           {staff.status === 'membre' && (
             <Link href="/aujourdhui" className={secondaryLink}>Back-office</Link>
           )}
           <SignOutButton className="inline-flex min-h-11 items-center rounded-md border border-border bg-white px-4 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-60" />
         </div>
+        <ClientNotificationBell initial={bell} />
       </div>
       <div className="mt-6">
-        <CompteNav sections={sections} />
+        <CompteNav sections={sections} initial={bell} />
       </div>
       <div className="mt-8">{children}</div>
     </div>

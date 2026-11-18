@@ -3,12 +3,15 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 
-import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, TvIcon, XIcon } from '../../components/ui/icons.tsx'
+import { ArrowRightIcon, BuildingIcon, CarIcon, MapPinIcon, TvIcon, UsersIcon, XIcon } from '../../components/ui/icons.tsx'
 import type { ProposalProduct } from '../facturation/schema-devis.ts'
 import type { ResourceType } from '../ressources/schema.ts'
+import type { KnownContact } from './coordonnees-connues.ts'
+import type { DomiciliationOffer } from './domiciliation-tarif.ts'
 import { focusClass, showStep } from './etapes-demande.tsx'
 import { PublicBookingForm, type PublicBookingResource, type SlotProduct } from './public-booking-form.tsx'
 import { PublicDomiciliationForm } from './public-domiciliation-form.tsx'
+import { formForResourceType, requestProducts, type Formulaire, type Questionnaire } from './questionnaires.ts'
 import type { RequestPolicy } from './request-policy.ts'
 
 /**
@@ -63,7 +66,10 @@ export function ReserveLink({ className, children }: { className?: string; child
   )
 }
 
-const productIcons = { espace: BuildingIcon, vehicule: CarIcon, domiciliation: MapPinIcon, materiel: TvIcon } as const
+const formIcons = { salle: UsersIcon, bureau: BuildingIcon, vehicule: CarIcon, domiciliation: MapPinIcon, materiel: TvIcon } as const
+
+/** Un service proposé au choix : un formulaire (ADR 074), son produit et, pour un espace, son type. */
+export type ServiceChoice = { form: Formulaire; product: ProposalProduct; type?: ResourceType; label: string; description: string }
 
 /**
  * Dialogue natif (`showModal`), comme `ConfirmDialog` : le navigateur rend la
@@ -71,13 +77,19 @@ const productIcons = { espace: BuildingIcon, vehicule: CarIcon, domiciliation: M
  * bouton d'origine à la fermeture. Feuille montant du bas sur téléphone,
  * fenêtre centrée au-delà.
  */
-export function BookingDialog({ products, resources, initial, timeZone, currency, policy, minDate, maxDate }: {
-  /** Produits proposés, avec leurs mots (`questionnaires`). */
-  products: { product: ProposalProduct; label: string; description: string }[]
+export function BookingDialog({ choices, questionnaires, domiciliationOffer, resources, initial, knownContact, timeZone, currency, policy, minDate, maxDate }: {
+  /** Services proposés, un par formulaire (salle et bureau séparés, ADR 074), avec les mots du centre. */
+  choices: ServiceChoice[]
+  /** Questionnaires du centre, par formulaire. */
+  questionnaires: Record<Formulaire, Questionnaire>
+  /** Forfait et options tarifées de la domiciliation. */
+  domiciliationOffer: DomiciliationOffer
   /** Ressources réservables sur créneau, par produit. */
   resources: Record<SlotProduct, PublicBookingResource[]>
   /** Produit, espace, date et horaires lus dans l'adresse (`/?espace=…&date=…#reserver`). */
   initial: { product?: ProposalProduct; resourceId?: string; date: string; startTime?: string; endTime?: string }
+  /** Coordonnées de la personne connectée à son espace : les formulaires partent pré-remplis (ADR 084). */
+  knownContact?: KnownContact
   timeZone: string
   currency: string
   policy: RequestPolicy
@@ -91,9 +103,12 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
   // disponibilités dès qu'il a un espace, inutile de le faire à chaque visite.
   const [target, setTarget] = useState<Target & { fromUrl?: boolean; picked?: boolean; session: number }>()
   const titleId = useId()
-  const offered = products.map((item) => item.product)
-  // Un espace désigné dit son produit ; un seul produit proposé n'a pas à être choisi.
-  const product = target?.product ?? productOf(target?.resourceId, resources) ?? (offered.length === 1 ? offered[0] : undefined)
+  // Un espace désigné dit son produit et son type ; un seul service proposé n'a pas à être choisi.
+  const only = choices.length === 1 ? choices[0] : undefined
+  const product = target?.product ?? productOf(target?.resourceId, resources) ?? only?.product
+  const type = target?.type ?? typeOf(target?.resourceId, resources) ?? only?.type
+  // Le formulaire du service : celui du type pour un espace (salle ou bureau).
+  const form: Formulaire | undefined = product === 'espace' ? (type ? formForResourceType(type) : undefined) : product
   const choosing = Boolean(target && !product)
   const choiceHeadingRef = useRef<HTMLHeadingElement>(null)
 
@@ -154,12 +169,12 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
     >
       <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border px-5 py-2 sm:px-8">
         <h2 id={titleId} className="text-base font-semibold text-primary">
-          {product ? (products.find((item) => item.product === product)?.label ?? 'Réserver') : 'Réserver'}
+          {form ? questionnaires[form].label : product ? requestProducts[product].label : 'Réserver'}
         </h2>
         <div className="flex items-center gap-2">
           {/* Produit choisi dans la fenêtre même : on peut revenir sur ce choix. */}
           {target?.picked && (
-            <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: undefined, picked: false })} className={`min-h-11 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted ${focusClass}`}>Changer</button>
+            <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: undefined, type: undefined, resourceId: undefined, picked: false })} className={`min-h-11 rounded-md px-3 text-sm font-medium text-primary hover:bg-muted ${focusClass}`}>Changer</button>
           )}
           <button type="button" onClick={close} aria-label="Fermer" className={`-mr-2 inline-flex size-11 items-center justify-center rounded-full text-primary transition-colors hover:bg-muted ${focusClass}`}>
             <XIcon size={20} />
@@ -171,11 +186,11 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
           <div className="px-5 pb-8 pt-6 sm:px-8">
             <h3 ref={choiceHeadingRef} tabIndex={-1} className={`rounded-sm text-2xl font-semibold tracking-tight text-primary ${focusClass}`}>Que souhaitez-vous réserver&nbsp;?</h3>
             <ul className="mt-6 grid gap-3">
-              {products.map((item) => {
-                const Icon = productIcons[item.product]
+              {choices.map((item) => {
+                const Icon = formIcons[item.form]
                 return (
-                  <li key={item.product}>
-                    <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: item.product, picked: true })} className={`flex min-h-11 w-full items-center gap-4 rounded-lg border-2 border-border p-4 text-left transition-colors hover:border-primary ${focusClass}`}>
+                  <li key={item.form}>
+                    <button type="button" onClick={() => setTarget((previous) => previous && { ...previous, product: item.product, type: item.type, picked: true })} className={`flex min-h-11 w-full items-center gap-4 rounded-lg border-2 border-border p-4 text-left transition-colors hover:border-primary ${focusClass}`}>
                       <span className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted text-primary"><Icon size={20} /></span>
                       <span className="min-w-0 flex-1">
                         <span className="block font-medium text-primary">{item.label}</span>
@@ -189,12 +204,18 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
             </ul>
           </div>
         )}
-        {target && product === 'domiciliation' && <PublicDomiciliationForm key={formKey} onClose={close} onSent={markSent} />}
+        {target && product === 'domiciliation' && (
+          <PublicDomiciliationForm key={formKey} questionnaire={questionnaires.domiciliation} offer={domiciliationOffer} knownContact={knownContact} onClose={close} onSent={markSent} />
+        )}
         {target && (product === 'espace' || product === 'vehicule' || product === 'materiel') && (
           <PublicBookingForm
             key={formKey}
             product={product}
-            resources={resources[product]}
+            // Un service choisi (salle ou bureau) ne montre que ses espaces ;
+            // sans type désigné, l'espace se choisit entre les deux familles.
+            resources={type ? resources[product].filter((item) => item.resourceType === type) : resources[product]}
+            questionnaires={questionnaires}
+            knownContact={knownContact}
             currency={currency}
             timeZone={timeZone}
             policy={policy}
@@ -217,4 +238,9 @@ export function BookingDialog({ products, resources, initial, timeZone, currency
 function productOf(resourceId: string | undefined, resources: Record<SlotProduct, PublicBookingResource[]>): SlotProduct | undefined {
   if (!resourceId) return undefined
   return (Object.keys(resources) as SlotProduct[]).find((product) => resources[product].some((item) => item.id === resourceId))
+}
+
+function typeOf(resourceId: string | undefined, resources: Record<SlotProduct, PublicBookingResource[]>): ResourceType | undefined {
+  if (!resourceId) return undefined
+  return Object.values(resources).flat().find((item) => item.id === resourceId)?.resourceType
 }

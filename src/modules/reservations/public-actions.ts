@@ -10,6 +10,7 @@ import { CHAMP_PREUVE, champPiegeRempli } from '../../lib/champs-anti-robot.ts'
 import { preuveHumaine } from '../../lib/preuve-humaine.ts'
 import { toIsoDate, todayIsoDate } from '../../lib/dates.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
+import { joinName, nameErrors } from '../clients/prenom-nom.ts'
 import { clientAccess } from '../clients/session.ts'
 import { sendRequestReceived } from '../comptes/demandes-site.ts'
 import { quote } from '../facturation/devis-queries.ts'
@@ -20,9 +21,20 @@ import {
   notifyBookingRequestSubmitted,
   notifyDomiciliationRequestSubmitted,
 } from '../notifications/declencheurs-reservations.ts'
+import { formulasOf, rentalFormulaLabels, type RentalFormula } from '../ressources/formules.ts'
 import { findResource } from '../ressources/queries.ts'
 import { maxRequestDaysFor } from './durees.ts'
-import { dayFreeRanges, periodLabel, periodRejection, periodRejectionMessage, type PeriodAvailability } from './periode.ts'
+import {
+  choiceRejectionMessage,
+  choiceSpanDays,
+  choiceUnit,
+  evaluateChoice,
+  formulaLimitsOf,
+  parseChosenFormula,
+  readChoice,
+  type FormulaLimits,
+} from './formules-periode.ts'
+import { dayFreeRanges, periodLabel, type PeriodAvailability } from './periode.ts'
 import { loadPeriodAvailability } from './periode-queries.ts'
 import {
   BookingConflictError,
@@ -30,8 +42,17 @@ import {
   countRecentRequestsByEmail,
   createBookingRequest,
 } from './queries.ts'
-import { errorsByField } from './questionnaire-fields.tsx'
-import { parseAnswers, productForResourceType } from './questionnaires.ts'
+import { describeDomiciliationPrice, domiciliationLines, parseChosenServices } from './domiciliation-tarif.ts'
+import { loadDomiciliationOffer, loadFormSettings, loadQuestionnaire } from './questionnaires-queries.ts'
+import {
+  describeAnswers,
+  DOMICILIATION_KEYS,
+  errorsByField,
+  formForResourceType,
+  parseAnswers,
+  productForResourceType,
+  SERVICES_ANSWER_KEY,
+} from './questionnaires.ts'
 import {
   MAX_REQUESTS_PER_EMAIL,
   RATE_WINDOW_HOURS,
@@ -57,6 +78,12 @@ export type PublicDayAvailability =
       period: PeriodAvailability
       /** Jours d'affilée qu'une demande peut couvrir pour ce produit. */
       maxDays: number
+      /** Formules de location réglées sur la ressource (ADR 076) ; vide : le formulaire libre. */
+      formulas: RentalFormula[]
+      /** Plafonds des locations à la semaine et au mois, durée d'une demi-journée. */
+      limits: FormulaLimits
+      /** Premier début permis : maintenant et le préavis du centre. */
+      earliest: Date
     }
   | { status: 'error'; message: string }
 
@@ -74,11 +101,19 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
   if (!resource || resource.status !== 'active' || resource.deletedAt) {
     return { status: 'error', message: rejectionMessages['ressource-indisponible'] }
   }
-  // La période couvre les jours que la demande peut atteindre : le moteur
-  // vérifie la ressource jusqu'au bout, nuits comprises (ADR 061).
+  // La période couvre les jours que la demande peut atteindre — la durée
+  // maximale du produit, la plus longue des formules de la ressource : le
+  // moteur vérifie la ressource jusqu'au bout (ADR 061, ADR 076).
   const maxDays = maxRequestDaysFor(tenant.bookingMaxDays, resource.resourceType)
+  const formulas = formulasOf(resource)
+  const limits = formulaLimitsOf(tenant)
   const period = await withTenant(currentTenantId(), (tx) =>
-    loadPeriodAvailability(tx, { resourceId, firstDate: date, dayCount: maxDays, timeZone }),
+    loadPeriodAvailability(tx, {
+      resourceId,
+      firstDate: date,
+      dayCount: choiceSpanDays(formulas, date, maxDays, limits),
+      timeZone,
+    }),
   )
   return {
     status: 'ready',
@@ -87,6 +122,9 @@ export async function loadPublicDayAction(resourceId: string, date: string): Pro
     latestStart: latest,
     period,
     maxDays,
+    formulas,
+    limits,
+    earliest,
   }
 }
 
@@ -110,6 +148,8 @@ export async function loadPublicQuoteAction(
   endTime: string,
   /** Jour de fin, pour une demande sur plusieurs jours (ADR 061) ; le jour même par défaut. */
   endDate: string = date,
+  /** Formule de location choisie (ADR 076) : son unité fait le prix. */
+  formula: string = '',
 ): Promise<PublicQuote> {
   const unpriced = (message: string): PublicQuote => ({ status: 'unpriced', message })
   if (!UUID.test(resourceId)) return unpriced(rejectionMessages['ressource-indisponible'])
@@ -120,8 +160,11 @@ export async function loadPublicQuoteAction(
   if (!resource || resource.status !== 'active' || resource.deletedAt) {
     return unpriced(rejectionMessages['ressource-indisponible'])
   }
-  const result = await quote({ resourceId, ...selection, clientId: await requesterClientId() })
-  if (!result.ok) return unpriced('Notre équipe vous précisera le tarif de ce créneau.')
+  const chosen = parseChosenFormula(formula, formulasOf(resource))
+  if (!chosen) return unpriced('Choisissez une formule proposée pour cet espace.')
+  const result = await quote({ resourceId, ...selection, clientId: await requesterClientId(), unit: choiceUnit(chosen) })
+  // Sans prix à l'unité de la formule, rien n'est inventé (ADR 076).
+  if (!result.ok) return unpriced('Tarif communiqué par l’accueil : notre équipe vous le précisera avec votre devis.')
   return {
     status: 'priced',
     quote: toQuoteDisplay(result.quote),
@@ -182,7 +225,7 @@ const refusRobot = 'Votre demande n’a pas pu être envoyée. Contactez-nous di
  */
 async function refusAntiRobot(formData: FormData): Promise<string | null> {
   if (!(await preuveHumaine().verifier(formData.get(CHAMP_PREUVE)))) {
-    return 'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis renvoyez.'
+    return 'La vérification anti-robot n’a pas abouti ou a expiré : elle recommence d’elle-même. Renvoyez votre demande dès qu’elle indique « Vérification anti-robot réussie ».'
   }
   const ip = ipDuVisiteur(await headers()) ?? 'inconnue'
   const depasse = compteur.passer([
@@ -226,17 +269,15 @@ export async function requestBookingAction(
   const company = text(formData, 'company')
   const notes = text(formData, 'notes')
   const product = text(formData, 'product') as ProposalProduct
+  // Prénom et nom en deux champs (ADR 084) ; la demande garde la personne entière.
+  const person = { firstName: text(formData, 'firstName'), lastName: text(formData, 'lastName') }
+  const requesterName = joinName(person)
 
   // Les produits sur créneau ; la domiciliation a son propre formulaire.
   if (product !== 'espace' && product !== 'vehicule' && product !== 'materiel') {
     return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
   }
   if (!UUID.test(resourceId)) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
-  // Le jour de fin d'une demande sur plusieurs jours (ADR 061) ; absent, le jour même.
-  const endDate = text(formData, 'endDate') || date
-  const selection = periodSelection(date, text(formData, 'startTime'), endDate, text(formData, 'endTime'), timeZone)
-  if (!selection) return { status: 'error', step: 2, message: rejectionMessages['creneau-illisible'] }
-  const { startsAt, endsAt } = selection
 
   // La ressource est relue en base : l'identifiant vient d'un `<select>` que
   // n'importe qui peut réécrire avant l'envoi. Son produit aussi : on ne pose
@@ -247,10 +288,46 @@ export async function requestBookingAction(
   }
   const bookable = resource.status === 'active' && !resource.deletedAt
 
-  // Relu par le serveur, comme la ressource : le formulaire peut mentir.
-  const { answers, errors } = parseAnswers(product, formData)
+  // La formule et la période, relues sur des disponibilités fraîches, sur
+  // toute l'étendue : le formulaire a pu rester ouvert, ou mentir (ADR 061,
+  // ADR 076). Le trigger anti-chevauchement reste le garde final (décision 3).
+  const formulas = formulasOf(resource)
+  const formula = parseChosenFormula(formData.get('formula'), formulas)
+  const availability = await loadPublicDayAction(resourceId, date)
+  if (availability.status === 'error') return { ...availability, step: 2 }
+  if (!formula) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage('formule-indisponible', availability.maxDays, availability.limits) }
+  }
+  const evaluation = evaluateChoice(
+    readChoice(formData, formula, date),
+    {
+      date,
+      timeZone,
+      availability: availability.period,
+      earliest: availability.earliest,
+      maxDays: availability.maxDays,
+      limits: availability.limits,
+    },
+    formulas,
+  )
+  if (!evaluation.range) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage(evaluation.rejection, availability.maxDays, availability.limits) }
+  }
+  const { startsAt, endsAt } = evaluation.range
+
+  // Relu par le serveur, comme la ressource : le formulaire peut mentir. Les
+  // questions sont celles du formulaire de la ressource (salle, bureau…), telles
+  // que le centre les a réglées (ADR 074).
+  const form = formForResourceType(resource.resourceType)
+  if (!form) return { status: 'error', step: 1, message: rejectionMessages['ressource-indisponible'] }
+  const questionnaire = await loadQuestionnaire(form)
+  const { answers, errors } = parseAnswers(questionnaire, formData, { today: todayIsoDate(timeZone) })
   if (Object.keys(errors).length > 0) {
     return { status: 'error', step: 3, message: answersToCorrect, fieldErrors: errorsByField(errors) }
+  }
+  const personErrors = nameErrors(person)
+  if (Object.keys(personErrors).length > 0) {
+    return { status: 'error', step: 4, message: 'Vos coordonnées sont à compléter.', fieldErrors: personErrors }
   }
   if (company.length > COMPANY_MAX_LENGTH) {
     return { status: 'error', step: 4, message: `Le nom de la société compte ${COMPANY_MAX_LENGTH} caractères au plus.` }
@@ -265,7 +342,7 @@ export async function requestBookingAction(
     bookable && email ? await countRecentRequestsByEmail(email, RATE_WINDOW_HOURS) : 0
 
   const rejection = rejectRequest({
-    name: text(formData, 'name'),
+    name: requesterName,
     email,
     phone: text(formData, 'phone'),
     title: text(formData, 'title'),
@@ -279,14 +356,8 @@ export async function requestBookingAction(
     return { status: 'error', step, message: rejection === 'preavis-insuffisant' || rejection === 'creneau-trop-lointain' ? requestPolicyMessage(tenant) : rejectionMessages[rejection] }
   }
 
-  // Disponibilités relues sur toute la période, avec la durée maximale du
-  // produit : le formulaire a pu rester ouvert, ou mentir (ADR 061). Le
-  // trigger anti-chevauchement reste le garde final (décision 3).
-  const availability = await loadPublicDayAction(resourceId, date)
-  if (availability.status === 'error') return { ...availability, step: 2 }
-  const periodProblem = periodRejection(selection, availability.period, timeZone, availability.maxDays)
-  if (periodProblem) {
-    return { status: 'error', step: 2, message: periodRejectionMessage(periodProblem, availability.maxDays) }
+  if (evaluation.rejection) {
+    return { status: 'error', step: 2, message: choiceRejectionMessage(evaluation.rejection, availability.maxDays, availability.limits) }
   }
   const refus = await refusAntiRobot(formData)
   if (refus) return { status: 'error', message: refus }
@@ -300,13 +371,22 @@ export async function requestBookingAction(
       startsAt,
       endsAt,
       title: text(formData, 'title'),
-      notes: ['Demande de devis à envoyer par courriel.', notes].filter(Boolean).join('\n\n'),
-      requesterName: text(formData, 'name'),
+      notes: [
+        'Demande de devis à envoyer par courriel.',
+        formula !== 'libre' ? `Formule : ${rentalFormulaLabels[formula].toLocaleLowerCase('fr-FR')}.` : '',
+        notes,
+      ]
+        .filter(Boolean)
+        .join('\n\n'),
+      requesterName,
       requesterEmail: email,
       requesterPhone: text(formData, 'phone'),
       clientId,
-      // Le devis naît avec la demande, dans la même transaction (ADR 043).
-      proposal: { product, answers, message: notes, requesterCompany: company, timeZone },
+      // Le prix suit l'unité de la formule choisie (ADR 076).
+      pricing: { mode: 'grid', unit: choiceUnit(formula) },
+      // Le devis naît avec la demande, dans la même transaction (ADR 043), avec
+      // les réponses telles que le demandeur les a lues (ADR 074).
+      proposal: { product, answers, describedAnswers: describeAnswers(questionnaire, answers), message: notes, requesterCompany: company, timeZone },
     })
     requestId = created.id
     proposal = created.proposal && { number: created.proposal.number, status: created.proposal.status }
@@ -331,9 +411,9 @@ export async function requestBookingAction(
   after(() => notifyBookingRequestSubmitted(requestId))
   // Le devis prêt de la demande part vers Dolibarr, si le centre l'a voulu (ADR 073).
   after(() => sendReadyProposalsToDolibarr())
-  // Le visiteur reçoit l'accusé de réception, avec le lien pour créer son
-  // espace et y suivre sa demande (ADR 068). Connecté, il la voit déjà.
-  if (!clientId) after(() => sendRequestReceived({ bookingId: requestId }))
+  // Le demandeur reçoit toujours l'accusé de réception (ADR 068, ADR 075) :
+  // le lien pour créer son espace, ou celui de l'espace où il la retrouve.
+  after(() => sendRequestReceived({ bookingId: requestId }))
   // Le planning du staff doit montrer la demande sans attendre.
   revalidatePath('/reservations')
   revalidatePath('/demandes')
@@ -363,22 +443,26 @@ export async function requestDomiciliationAction(
 ): Promise<PublicFormState> {
   if (champPiegeRempli(formData)) return { status: 'error', message: refusRobot }
   const tenant = await currentTenant()
-  const { answers, errors } = parseAnswers('domiciliation', formData, { today: todayIsoDate(tenant.timezone) })
-  if (Object.keys(errors).length > 0) {
-    return { status: 'error', step: 1, message: answersToCorrect, fieldErrors: errorsByField(errors) }
-  }
-
-  const contact = { name: text(formData, 'name'), email: text(formData, 'email'), phone: text(formData, 'phone') }
-  const rejections = contactRejections(contact)
-  if (Object.keys(rejections).length > 0) {
+  // Les questions et les options que le centre a réglées (ADR 074).
+  const settings = await loadFormSettings('domiciliation')
+  const offer = await loadDomiciliationOffer(settings.serviceCodes)
+  const { answers, errors } = parseAnswers(settings.questionnaire, formData, { today: todayIsoDate(tenant.timezone) })
+  const chosen = parseChosenServices(offer, formData.getAll(SERVICES_ANSWER_KEY))
+  if (Object.keys(errors).length > 0 || chosen.error) {
     return {
       status: 'error',
-      step: 2,
-      message: 'Vos coordonnées sont à compléter.',
-      fieldErrors: Object.fromEntries(
-        Object.entries(rejections).map(([field, rejection]) => [field, rejectionMessages[rejection]]),
-      ),
+      step: 1,
+      message: answersToCorrect,
+      fieldErrors: { ...errorsByField(errors), ...(chosen.error ? { [SERVICES_ANSWER_KEY]: chosen.error } : {}) },
     }
+  }
+  const codes = chosen.codes ?? []
+  if (codes.length > 0) answers[SERVICES_ANSWER_KEY] = codes
+
+  // Prénom et nom en deux champs (recette du 17/11) ; le devis garde la personne entière.
+  const contact = contactFromNames(text(formData, 'firstName'), text(formData, 'lastName'), text(formData, 'email'), text(formData, 'phone'))
+  if (contact.errors) {
+    return { status: 'error', step: 2, message: 'Vos coordonnées sont à compléter.', fieldErrors: contact.errors }
   }
   const message = text(formData, 'notes')
   if (message.length > NOTES_MAX_LENGTH) {
@@ -391,7 +475,8 @@ export async function requestDomiciliationAction(
   if (refus) return { status: 'error', message: refus }
 
   const clientId = await requesterClientId()
-  const raisonSociale = String(answers.raisonSociale ?? '')
+  // La raison sociale d'une société immatriculée, le nom du projet d'une société en création.
+  const raisonSociale = String(answers[DOMICILIATION_KEYS.companyName] ?? answers[DOMICILIATION_KEYS.projectName] ?? '')
   const proposal = await withTenant(currentTenantId(), (tx) =>
     createProposalInTransaction(tx, {
       product: 'domiciliation',
@@ -404,20 +489,42 @@ export async function requestDomiciliationAction(
       requesterPhone: contact.phone,
       requesterCompany: raisonSociale,
       answers,
+      // Ce que le demandeur a lu, options et tarif annoncé compris (ADR 074).
+      describedAnswers: [...describeAnswers(settings.questionnaire, answers), ...describeDomiciliationPrice(offer, codes)],
       message,
-      lines: [],
+      currency: offer.currency,
+      // Le forfait et les options cochées, au prix annoncé : l'accueil relit le brouillon.
+      lines: domiciliationLines(offer, codes),
     }),
   )
 
   // L'accueil est prévenu à l'adresse du centre, après la réponse (ADR 038).
   after(() => notifyDomiciliationRequestSubmitted(proposal.id))
-  // Le visiteur reçoit l'accusé de réception et le lien de son espace (ADR 068).
-  if (!clientId) after(() => sendRequestReceived({ proposalId: proposal.id }))
+  // Le demandeur reçoit toujours l'accusé de réception, connecté ou non, avec
+  // les pièces justificatives à préparer (ADR 068, ADR 075).
+  after(() => sendRequestReceived({ proposalId: proposal.id }))
   revalidatePath('/devis')
 
   return {
     status: 'sent',
-    summary: `Domiciliation de ${raisonSociale}`,
+    summary: raisonSociale ? `Domiciliation de ${raisonSociale}` : 'Domiciliation',
     proposal: { number: proposal.number, status: proposal.status },
   }
+}
+
+/**
+ * Coordonnées d'une demande de domiciliation : prénom et nom séparés
+ * (`nameErrors`, ADR 084), puis les mêmes règles que les autres demandes pour
+ * l'adresse et le téléphone. Erreurs rangées par nom de champ (`firstName`,
+ * `lastName`, `email`, `phone`).
+ */
+function contactFromNames(firstName: string, lastName: string, email: string, phone: string):
+  | { name: string; email: string; phone: string; errors?: undefined }
+  | { errors: Record<string, string> } {
+  const errors: Record<string, string> = { ...nameErrors({ firstName, lastName }) }
+  const name = joinName({ firstName, lastName })
+  for (const [field, rejection] of Object.entries(contactRejections({ name: name || '-', email, phone }))) {
+    if (rejection) errors[field] = rejectionMessages[rejection]
+  }
+  return Object.keys(errors).length > 0 ? { errors } : { name, email, phone }
 }

@@ -10,7 +10,9 @@ import { formatCents } from '../../../../modules/facturation/tarifs.ts'
 import { ClientCancel } from '../../../../modules/reservations/client-cancel.tsx'
 import {
   canClientCancel,
+  canClientModify,
   clientBookingTrace,
+  clientChangeNotice,
   isClientBookingInProgress,
   splitClientBookings,
 } from '../../../../modules/reservations/compte-regles.ts'
@@ -45,8 +47,8 @@ const statusStyles: Record<BookingStatus, string> = {
  * Réservations des entreprises du compte (R23, R24) : à venir — en cours
  * comprises — puis l'historique, chacune avec son statut en toutes lettres,
  * son montant figé, qui l'a faite et qui l'a annulée (ADR 036). Une demande
- * en attente s'annule ici ; une réservation confirmée se modifie auprès du
- * centre, dont les conditions d'annulation relèvent du contrat (ADR 015).
+ * ou une réservation se modifie et s'annule ici jusqu'à N jours avant son
+ * début, N réglé par le centre (ADR 076) ; au-delà, auprès de l'accueil.
  */
 export default async function MesReservationsPage() {
   const { accounts } = await requireClientAccount()
@@ -55,12 +57,17 @@ export default async function MesReservationsPage() {
   const now = new Date()
   const { upcoming, history } = splitClientBookings(rows, now)
   const several = accounts.length > 1
+  // Délai de modification et d'annulation du centre (ADR 076).
+  const policy = { days: tenant.bookingChangeDays, timeZone }
 
   const card = (booking: (typeof rows)[number]) => {
     const Icon = statusIcons[booking.status]
     const trace = clientBookingTrace(booking)
     const quote = frozenQuoteDisplay(booking)
     const inProgress = isClientBookingInProgress(booking, now)
+    const notice = clientChangeNotice(booking, now, policy)
+    const modifiable = canClientModify(booking, now, policy)
+    const cancellable = canClientCancel(booking, now, policy)
     return (
       <li key={booking.id} className="rounded-lg border border-border bg-white p-4 sm:p-5">
         <article aria-labelledby={`resa-${booking.id}`} className="flex flex-col gap-3">
@@ -103,7 +110,29 @@ export default async function MesReservationsPage() {
               <p className="text-sm text-muted-foreground">Motif : {booking.cancellationReason}</p>
             )}
           </div>
-          {canClientCancel(booking, now) && <ClientCancel bookingId={booking.id} />}
+          {notice && <p className="text-sm text-muted-foreground">{notice}</p>}
+          {modifiable && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
+              <Link
+                href={`/compte/reservations/${booking.id}/modifier`}
+                aria-describedby={`resa-${booking.id}`}
+                className="inline-flex min-h-11 items-center justify-center rounded-md border border-primary bg-white px-5 py-2.5 text-sm font-medium text-primary transition-colors duration-150 ease-out hover:bg-accent/10 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary"
+              >
+                Modifier les dates
+              </Link>
+              <ClientCancel bookingId={booking.id} confirmed={booking.status === 'confirmed'} />
+            </div>
+          )}
+          {!modifiable && cancellable && (
+            <>
+              {booking.optionCount > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  Avec du matériel en option, les dates se modifient auprès de l’accueil.
+                </p>
+              )}
+              <ClientCancel bookingId={booking.id} confirmed={booking.status === 'confirmed'} />
+            </>
+          )}
         </article>
       </li>
     )
@@ -150,8 +179,11 @@ export default async function MesReservationsPage() {
           <ul className="flex max-w-3xl flex-col gap-4">{upcoming.map(card)}</ul>
         )}
         <p className="max-w-prose text-sm text-muted-foreground">
-          Une demande en attente de validation s’annule ici, avant son début. Pour modifier ou
-          annuler une réservation confirmée, contactez le centre
+          Une demande ou une réservation se modifie ou s’annule ici jusqu’à{' '}
+          {policy.days === 0
+            ? 'son début'
+            : `${policy.days} jour${policy.days > 1 ? 's' : ''} avant son début`}
+          ; une modification repasse par la validation de l’accueil. Passé ce délai, contactez le centre
           {tenant.phone && (
             <>
               {' '}

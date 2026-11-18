@@ -32,6 +32,7 @@ describe('matrice des droits', () => {
     'etats-des-lieux.gerer',
     'comptes.rattacher',
     'espace-client.personnel',
+    'pieces.valider',
   ]
   /** Ce qui engage le centre : l'exploitant et la direction. */
   const reserve: Permission[] = [
@@ -45,6 +46,7 @@ describe('matrice des droits', () => {
     'contrats.archiver',
     'contrats.avenants',
     'services.gerer',
+    'formulaires.gerer',
     'souscriptions.gerer',
     'indicateurs.consulter',
     'clients.archiver',

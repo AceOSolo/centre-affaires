@@ -11,12 +11,14 @@ import {
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../../modules/clients/session.ts'
 import { PortalBookingForm } from '../../../../../modules/reservations/portail-booking-form.tsx'
-import { productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
+import { formForResourceType, productForResourceType } from '../../../../../modules/reservations/questionnaires.ts'
+import { loadQuestionnaire } from '../../../../../modules/reservations/questionnaires-queries.ts'
 import { serializePeriod } from '../../../../../modules/reservations/periode.ts'
 import {
   listPortalDayAvailability,
   loadPortalPeriodAvailability,
 } from '../../../../../modules/reservations/portail-queries.ts'
+import { formulaLimitsOf } from '../../../../../modules/reservations/formules-periode.ts'
 import { portalModeLabels } from '../../../../../modules/reservations/portail-regles.ts'
 import { availableStarts } from '../../../../../modules/reservations/public-selection.ts'
 import {
@@ -90,8 +92,13 @@ export default async function NouvelleReservationPage({
         firstDate: date,
         timeZone,
         maxDaysSettings: tenant.bookingMaxDays,
+        limits: formulaLimitsOf(tenant),
       })
     : undefined
+
+  // Les questions du formulaire de l'espace choisi, réglées par le centre (ADR 074).
+  const selectedForm = selected ? formForResourceType(selected.resource.resourceType) : undefined
+  const questionnaire = selectedForm ? await loadQuestionnaire(selectedForm) : undefined
 
   const dateLabel = formatLongDate(date, timeZone)
   const href = (changes: { type?: ResourceType | null; date?: string; ressource?: string }) => {
@@ -118,7 +125,8 @@ export default async function NouvelleReservationPage({
         </h1>
         <p className="mt-2 max-w-prose text-muted-foreground">
           Choisissez le jour du début, puis un espace : seuls les créneaux libres sont proposés, avec
-          le tarif de votre contrat. Une réservation peut s’étendre sur plusieurs jours d’affilée.{' '}
+          le tarif de votre contrat. Une réservation peut s’étendre sur plusieurs jours d’affilée ; un bureau
+          se loue selon les formules que le centre propose (à la journée, à la semaine, au mois…).{' '}
           {requestPolicyMessage(tenant)}
         </p>
       </div>
@@ -219,7 +227,7 @@ export default async function NouvelleReservationPage({
                   name: selected.resource.name,
                   typeLabel: resourceTypeLabels[selected.resource.resourceType],
                   mode: selected.resource.clientBookingMode,
-                  product: productForResourceType(selected.resource.resourceType),
+                  questionnaire,
                 }}
                 date={date}
                 dateLabel={dateLabel}
@@ -230,7 +238,10 @@ export default async function NouvelleReservationPage({
                 }))}
                 period={serializePeriod(selectedPeriod.period)}
                 maxDays={selectedPeriod.maxDays}
+                formulas={selectedPeriod.formulas}
+                limits={formulaLimitsOf(tenant)}
                 now={now.toISOString()}
+                earliest={earliest.toISOString()}
                 latestStart={latest.toISOString()}
                 accounts={accounts.map(({ clientId, clientName }) => ({ clientId, clientName }))}
               />

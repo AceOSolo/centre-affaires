@@ -3,10 +3,14 @@ import { describe, it } from 'node:test'
 
 import {
   canonicalSender,
+  currentSenderList,
+  frequentMissing,
   knownSenders,
+  MAX_SUGGESTED_SENDERS,
   MAX_OWN_SUGGESTIONS,
   MAX_SENDER_LENGTH,
   readSender,
+  readSenderList,
   senderKey,
   senderSuggestions,
   STARTING_SENDERS,
@@ -109,5 +113,68 @@ describe('suggestions d’expéditeurs', () => {
     const many = Array.from({ length: MAX_OWN_SUGGESTIONS + 5 }, (_, i) => use(ACME, `Expéditeur ${i}`, i + 1))
     assert.equal(senderSuggestions(many, [ACME]).byClient[ACME].length, MAX_OWN_SUGGESTIONS)
     assert.equal(senderSuggestions(many, [ACME]).byClient[ACME][0], `Expéditeur ${MAX_OWN_SUGGESTIONS + 4}`)
+  })
+})
+
+describe('liste des expéditeurs réglée par le centre (ADR 079)', () => {
+  const uses = [
+    use(ACME, 'URSSAF', 4),
+    use(ACME, 'Cabinet Martin', 3),
+    use(BETA, 'Fournisseur Delta', 9),
+    use(BETA, 'Free', 2),
+  ]
+
+  it('ne change rien tant que le centre n’y a pas touché', () => {
+    assert.deepEqual(senderSuggestions(uses, [ACME], null), senderSuggestions(uses, [ACME]))
+    // Le point de départ de l'écran : exactement ce que l'accueil voit.
+    assert.deepEqual(currentSenderList(uses, null), senderSuggestions(uses, []).centre)
+    assert.equal(currentSenderList(uses, null)[0], 'Fournisseur Delta')
+  })
+
+  it('réglée, elle remplace les suggestions du centre, dans son ordre', () => {
+    const list = ['Impôts / DGFiP', 'URSSAF', 'Banque du Léman']
+    const suggestions = senderSuggestions(uses, [ACME], list)
+    assert.deepEqual(suggestions.centre, list)
+    // Un expéditeur retiré de la liste n'est plus proposé à une autre entreprise…
+    assert.equal(suggestionsFor(suggestions, BETA).includes('Free'), false)
+    assert.deepEqual(suggestionsFor(suggestions, null), list)
+    // … mais ceux déjà saisis pour l'entreprise du pli restent en tête.
+    assert.deepEqual(suggestionsFor(suggestions, ACME).slice(0, 2), ['URSSAF', 'Cabinet Martin'])
+    assert.equal(suggestionsFor(suggestions, ACME).filter((sender) => sender === 'URSSAF').length, 1)
+  })
+
+  it('ramène une saisie à l’écriture de la liste du centre', () => {
+    const list = ['Banque du Léman']
+    assert.equal(canonicalSender('banque du leman', knownSenders(uses, list)), 'Banque du Léman')
+    // Les écritures déjà saisies au centre restent connues.
+    assert.equal(canonicalSender('fournisseur delta', knownSenders(uses, list)), 'Fournisseur Delta')
+  })
+
+  it('propose d’ajouter les expéditeurs souvent saisis qui n’y sont pas', () => {
+    assert.deepEqual(frequentMissing(uses, ['urssaf', 'Free']), ['Fournisseur Delta', 'Cabinet Martin'])
+    assert.deepEqual(frequentMissing(uses, currentSenderList(uses, null)), [])
+  })
+
+  it('lit la liste saisie : lignes normalisées, lignes vides retirées, ordre gardé', () => {
+    assert.deepEqual(readSenderList(['  URSSAF ', '', 'Impôts   /  DGFiP', '   ']), {
+      list: ['URSSAF', 'Impôts / DGFiP'],
+      lineErrors: {},
+    })
+    assert.deepEqual(readSenderList([]), { list: [], lineErrors: {} })
+  })
+
+  it('refuse un doublon, à la casse, aux accents et à la ponctuation près, sur sa seconde ligne', () => {
+    const read = readSenderList(['Impôts / DGFiP', 'URSSAF', 'impots dgfip'])
+    assert.deepEqual(read.list, ['Impôts / DGFiP', 'URSSAF'])
+    assert.match(read.lineErrors[2], /Déjà dans la liste, ligne 1 : « Impôts \/ DGFiP »/)
+  })
+
+  it('refuse une ligne trop longue ou sans lettre ni chiffre, et une liste trop longue', () => {
+    const read = readSenderList(['x'.repeat(MAX_SENDER_LENGTH + 1), '---'])
+    assert.deepEqual(read.list, [])
+    assert.ok(read.lineErrors[0])
+    assert.ok(read.lineErrors[1])
+    const many = readSenderList(Array.from({ length: MAX_SUGGESTED_SENDERS + 1 }, (_, i) => `Expéditeur ${i}`))
+    assert.match(many.error ?? '', /200 au plus/)
   })
 })

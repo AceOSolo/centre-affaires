@@ -2,6 +2,7 @@ import { cookies } from 'next/headers'
 import Image from 'next/image'
 import Link from 'next/link'
 
+import { SuiviHistorique } from '../../components/ui/lien-retour.tsx'
 import { withTenant } from '../../db/index.ts'
 import { staffRoleLabels } from '../../db/staff.ts'
 import { can, permissionsOf } from '../../lib/auth/permissions.ts'
@@ -167,6 +168,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
       </header>
 
       <main id="contenu" className="mx-auto w-full min-w-0 max-w-6xl flex-1 px-6 py-8">
+        <SuiviHistorique />
         {children}
       </main>
     </div>

@@ -62,10 +62,13 @@ export const mailRequestKindLabels: Record<MailRequestKind, string> = {
   forward: 'Réexpédition',
 }
 
-/** Vu du centre : où en est le traitement. */
+/**
+ * Vu du centre : où en est le traitement. « Validée » : le centre a accepté la
+ * demande (« Valider », ADR 079), il reste à la faire.
+ */
 export const mailRequestStatusLabels: Record<MailRequestStatus, string> = {
   requested: 'À traiter',
-  in_progress: 'En cours',
+  in_progress: 'Validée',
   done: 'Faite',
   refused: 'Refusée',
   cancelled: 'Annulée',

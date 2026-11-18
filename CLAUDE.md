@@ -217,10 +217,16 @@ seuls écrans (planning, parc, courrier, états des lieux) en adresses filtrées
 page « Demandes »** (ADR 048) : chaque rayon s'ouvre sur sa ligne « Demandes »,
 filtrée sur son produit et comptée, « Tous les services » sur « Autres
 demandes » ; la cloche de l'en-tête en dit le total et mène à chaque demande
-(ADR 070). Ce qui sert à tous les produits est sous « Tous les services », ce
-qui se règle une fois dans Réglages (`(admin)/reglages/sections.ts`). **Pas
-d'écran répété dans le menu** : pas de « Demandes » générale ni de vue
-d'ensemble doublée — la pastille « Tous » de la page y mène. Le menu est décrit dans `(admin)/menu.ts` et vérifié par
+(ADR 070). La page n'a pas de pastilles par produit : son titre dit le service
+(« Demandes — Salles ») et « Voir toutes les demandes » mène à la vue
+d'ensemble (ADR 082). Ce qui sert à tous les produits est sous « Tous les
+services ». Ce qui se règle une fois est dans Réglages, rangé comme le menu :
+un groupe par produit, puis « Tous les services » et « Le centre » ; chaque
+rayon finit sur sa ligne « Réglages », ceux de son seul produit (ADR 082).
+Un réglage = une ligne de `(admin)/reglages/sections.ts`, avec son
+`service`. **Pas d'écran répété dans le menu** : pas de « Demandes » générale
+ni de vue d'ensemble doublée — le lien « Voir toutes les demandes » de la page
+y mène. Le menu est décrit dans `(admin)/menu.ts` et vérifié par
 `menu.test.ts`. Le regroupement des types de ressource vit dans `produits.ts`,
 jamais en base.
 

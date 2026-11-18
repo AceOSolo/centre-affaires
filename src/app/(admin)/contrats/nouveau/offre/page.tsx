@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../../lib/dates.ts'
 import { currentTenant } from '../../../../../lib/tenant.ts'
@@ -49,9 +50,7 @@ export default async function NewContractFromOfferPage({
 
   const header = (
     <div>
-      <Link href="/contrats/nouveau" className="text-sm text-muted-foreground hover:underline">
-        ← Nouveau contrat
-      </Link>
+      <LienRetour href="/contrats/nouveau" label="Nouveau contrat" />
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau contrat depuis une offre</h1>
       <p className="mt-1 text-sm text-muted-foreground">
         Les lignes de l’offre sont copiées dans le contrat, au prix de l’offre ou du catalogue, puis

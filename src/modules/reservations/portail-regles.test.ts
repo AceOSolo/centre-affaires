@@ -8,9 +8,11 @@ import {
   isPortalBookable,
   portalBookingRejection,
   portalBookingTitle,
+  portalChoiceRejection,
   portalOutcomeMessage,
   portalOutcomeNotice,
   portalRejectionMessage,
+  rejectionField,
   type PortalPeriod,
 } from './portail-regles.ts'
 
@@ -150,5 +152,25 @@ describe('objet de la réservation', () => {
     assert.equal(portalBookingTitle('  Comité   de direction ', 'Atelier Durand'), 'Comité de direction')
     assert.equal(portalBookingTitle('', 'Atelier Durand'), 'Réservation Atelier Durand')
     assert.equal(portalBookingTitle('x'.repeat(300), 'Atelier Durand').length, 200)
+  })
+})
+
+describe('formule de location choisie depuis l’espace client (ADR 076)', () => {
+  const plage = range('2026-10-06T09:00:00Z', '2026-10-06T11:00:00Z')
+
+  it('applique le préavis du centre au début, puis la règle de la formule', () => {
+    assert.equal(portalChoiceRejection({ range: plage }, policy, now), undefined)
+    assert.equal(portalChoiceRejection({ range: plage, rejection: 'creneau-indisponible' }, policy, now), 'creneau-indisponible')
+    assert.equal(portalChoiceRejection({ range: range('2026-10-05T07:00:00Z', '2026-10-05T09:00:00Z') }, policy, now), 'preavis-insuffisant')
+    assert.equal(portalChoiceRejection({ rejection: 'jour-ferme' }, policy, now), 'jour-ferme')
+  })
+
+  it('porte chaque refus sur son champ', () => {
+    assert.equal(rejectionField('duree-hors-formule'), 'count')
+    assert.equal(rejectionField('depart-ferme'), 'endDate')
+    assert.equal(rejectionField('formule-indisponible'), 'formula')
+    assert.equal(rejectionField('fin-hors-ouverture'), 'endTime')
+    assert.equal(rejectionField('creneau-indisponible'), 'startTime')
+    assert.match(portalRejectionMessage('duree-hors-formule', 5), /de 1 à 4 semaines/)
   })
 })

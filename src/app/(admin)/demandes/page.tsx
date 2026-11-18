@@ -10,6 +10,7 @@ import {
   todayIsoDate,
 } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { MailRequestQueue } from '../../../modules/courrier/demandes-file.tsx'
 import { listMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { groupStartNotice, pendingRequestStatuses } from '../../../modules/courrier/demandes-regles.ts'
@@ -41,7 +42,6 @@ import { listPendingRequests } from '../../../modules/reservations/demandes-quer
 import { totalWithOptions } from '../../../modules/reservations/options.ts'
 import { listOptionsOf } from '../../../modules/reservations/options-queries.ts'
 import { resourceTypeLabels } from '../../../modules/ressources/labels.ts'
-import { ProductFilter } from '../../../modules/ressources/product-filter.tsx'
 import { parseProduct, typesOf } from '../../../modules/ressources/produits.ts'
 import { demandesPermissions } from '../aujourdhui/journee.ts'
 
@@ -75,8 +75,10 @@ export default async function DemandesPage({
   const canHandleRequests = can(member.role, 'demandes.traiter')
   const canHandleMail = can(member.role, 'courrier.gerer')
   const params = await searchParams
-  // Le produit se choisit par les pastilles de la page (ADR 048) ; les
-  // adresses filtrées (`?produit=bureaux`) restent valables (ADR 046).
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/demandes', params)
+  // Le produit vient de la ligne « Demandes » du rayon (`?produit=bureaux`,
+  // ADR 070) ; les pastilles de la page ont disparu (ADR 082).
   const product = parseProduct(params.produit)
   // « Autres demandes » (ADR 070) : ce qui ne relève d'aucun produit — offres
   // groupées, devis sans ressource —, la ligne de « Tous les services ».
@@ -120,22 +122,30 @@ export default async function DemandesPage({
   return (
     <div className="flex flex-col gap-8">
       <section aria-labelledby="reservations-titre" className="flex flex-col gap-6">
+        {/* Plus de pastilles par produit (ADR 082) : venant du menu, la page est
+            déjà filtrée sur le rayon, et le titre dit lequel. La vue d'ensemble
+            reste à un lien, sans entrée de menu en plus. */}
         <div>
           <h1 id="reservations-titre" className="text-2xl font-semibold tracking-tight">
-            Demandes{product ? ` · ${product.label}` : others ? ' · Autres' : ''}
+            {product ? `Demandes — ${product.label}` : others ? 'Autres demandes' : 'Toutes les demandes'}
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou
-            réexpédier, devis à compléter, offres demandées. Une demande de réservation occupe déjà
-            son créneau : la refuser le libère.
+            {others
+              ? 'Ce qui ne relève d’aucun produit : offres groupées demandées depuis l’espace client et devis sans ressource. '
+              : product
+                ? `Ce qui arrive des clients pour le service « ${product.label} ». `
+                : 'Tout ce qui arrive des clients : réservations à valider, courrier à ouvrir, numériser ou réexpédier, devis à compléter, offres demandées. '}
+            {showsBookings && 'Une demande de réservation occupe déjà son créneau : la refuser le libère.'}
           </p>
+          {(product || others) && (
+            <Link
+              href="/demandes"
+              className="mt-2 inline-flex min-h-6 items-center text-sm font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Voir toutes les demandes
+            </Link>
+          )}
         </div>
-
-        <ProductFilter
-          active={product}
-          href={(key) => (key ? `/demandes?produit=${key}` : '/demandes')}
-          others={{ href: '/demandes?produit=autres', current: others }}
-        />
 
         {!showsBookings ? null : pending.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center">
@@ -179,7 +189,7 @@ export default async function DemandesPage({
                     {booking.parentBookingId && (
                       <p className="mt-1 text-sm text-muted-foreground">
                         En option d’une{' '}
-                        <Link href={`/reservations/${booking.parentBookingId}`} className="underline-offset-2 hover:underline">
+                        <Link href={avecRetour(`/reservations/${booking.parentBookingId}`, retour)} className="underline-offset-2 hover:underline">
                           réservation de salle déjà validée
                         </Link>
                         .
@@ -205,7 +215,7 @@ export default async function DemandesPage({
                           <dd>
                             {booking.clientId ? (
                               <Link
-                                href={`/clients/${booking.clientId}`}
+                                href={avecRetour(`/clients/${booking.clientId}`, retour)}
                                 className="underline-offset-2 hover:underline"
                               >
                                 {booking.clientName}
@@ -263,7 +273,7 @@ export default async function DemandesPage({
                             <ul>
                               {equipment.map((option) => (
                                 <li key={option.id}>
-                                  <Link href={`/reservations/${option.id}`} className="underline-offset-2 hover:underline">
+                                  <Link href={avecRetour(`/reservations/${option.id}`, retour)} className="underline-offset-2 hover:underline">
                                     {option.resource.name}
                                   </Link>
                                   <span className="text-muted-foreground tabular">
@@ -282,7 +292,7 @@ export default async function DemandesPage({
                           <dt className="text-muted-foreground">Devis</dt>
                           <dd className="flex flex-wrap items-center gap-2">
                             <Link
-                              href={`/devis/${proposalOfBooking.get(booking.id)!.id}`}
+                              href={avecRetour(`/devis/${proposalOfBooking.get(booking.id)!.id}`, retour)}
                               className="font-medium text-primary underline-offset-2 hover:underline tabular"
                             >
                               {proposalOfBooking.get(booking.id)!.number}
@@ -445,7 +455,7 @@ export default async function DemandesPage({
                   >
                     <td className="px-4 py-3">
                       <Link
-                        href={`/devis/${proposal.id}`}
+                        href={avecRetour(`/devis/${proposal.id}`, retour)}
                         className="font-medium text-primary underline-offset-2 hover:underline tabular"
                       >
                         {proposal.number}
@@ -512,7 +522,7 @@ export default async function DemandesPage({
                       {formatDateTime(request.requestedAt, timeZone)}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={`/clients/${request.clientId}`} className="underline-offset-2 hover:underline">
+                      <Link href={avecRetour(`/clients/${request.clientId}`, retour)} className="underline-offset-2 hover:underline">
                         {request.clientName}
                       </Link>
                       {request.requestedByName && (
@@ -525,7 +535,7 @@ export default async function DemandesPage({
                     <td className="px-4 py-3">
                       {request.status === 'contracted' && request.contract ? (
                         <Link
-                          href={`/contrats/${request.contract.id}`}
+                          href={avecRetour(`/contrats/${request.contract.id}`, retour)}
                           className="underline-offset-2 hover:underline"
                         >
                           Contrat {request.contract.reference} établi

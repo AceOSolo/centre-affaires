@@ -7,6 +7,7 @@ import { requirePermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
 import { isUuid } from '../../../lib/uuid.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { findClient } from '../../../modules/clients/queries.ts'
 import {
   mailKindLabels,
@@ -16,7 +17,7 @@ import {
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
 import { listMail } from '../../../modules/courrier/queries.ts'
 import { BatchBanner } from '../../../modules/courrier/tournee-bandeau.tsx'
-import { findOpenBatch } from '../../../modules/courrier/tournees.ts'
+import { findDayReport, findOpenBatch } from '../../../modules/courrier/tournees.ts'
 
 export const metadata = { title: 'Courrier' }
 
@@ -32,18 +33,21 @@ export default async function CourrierPage({
 }) {
   const { member } = await requirePermission('courrier.gerer')
   const { vue, client } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/courrier', { vue, client })
   const clientId = isUuid(client) ? client : undefined
   // L'ancienne vue « À ouvrir » : la file des demandes d'ouverture.
   if (vue === 'a-ouvrir') {
     redirect(`/courrier/demandes?nature=ouverture${clientId ? `&client=${clientId}` : ''}`)
   }
 
-  const [timeZone, rows, pending, filteredClient, batch] = await Promise.all([
+  const [timeZone, rows, pending, filteredClient, batch, dayReport] = await Promise.all([
     currentTimeZone(),
     listMail({ clientId }),
     countPendingMailRequests(),
     clientId ? findClient(clientId) : undefined,
     findOpenBatch(),
+    findDayReport(),
   ])
   const requestCount = pending.total
 
@@ -60,7 +64,7 @@ export default async function CourrierPage({
 
       {/* Les gestes du jour tiennent tous dans le bandeau de la tournée : saisir, puis terminer.
           Le pli par pli reste accessible depuis la tournée et la fiche du client. */}
-      <BatchBanner batch={batch} timeZone={timeZone} />
+      <BatchBanner batch={batch} dayReport={dayReport} timeZone={timeZone} />
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-3">
@@ -119,7 +123,7 @@ export default async function CourrierPage({
                 <tr key={row.id}>
                   <td className="whitespace-nowrap px-4 py-3 tabular">
                     <Link
-                      href={`/courrier/${row.id}`}
+                      href={avecRetour(`/courrier/${row.id}`, retour)}
                       className="font-medium underline-offset-2 hover:underline"
                     >
                       {formatDateTime(row.receivedAt, timeZone)}

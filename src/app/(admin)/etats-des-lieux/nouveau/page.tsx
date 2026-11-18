@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { formatDateTime, formatTime, toIsoDate, toWallClock } from '../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
@@ -123,9 +124,7 @@ export default async function NewInspectionPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={backHref} className="text-sm text-muted-foreground hover:underline">
-          ← Revenir à {backLabel}
-        </Link>
+        <LienRetour href={backHref} label={<>Revenir à {backLabel}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouvel état des lieux</h1>
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
           Le formulaire suit le modèle du type de la ressource, dans sa version du jour. La saisie

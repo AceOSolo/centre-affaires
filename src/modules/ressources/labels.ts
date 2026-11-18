@@ -1,4 +1,5 @@
 import type { ResourceStatus, ResourceType } from './schema.ts'
+import { describeFormulas, isRentalFormula } from './formules.ts'
 
 /**
  * Libellés d'affichage. Séparés des valeurs stockées : celles-ci sont des
@@ -59,6 +60,9 @@ export function describeAttributes(attributes: Record<string, unknown>): string 
     modele: (value) => String(value),
     numeroSerie: (value) => `n° de série ${value}`,
     accessoires: (value) => `avec ${Array.isArray(value) ? value.join(', ') : String(value)}`,
+    // Un bureau (ADR 076) : « Open space », « à la journée, au mois ».
+    agencement: (value) => String(value),
+    formules: (value) => (Array.isArray(value) ? describeFormulas(value.filter(isRentalFormula)) : ''),
   }
 
   return Object.entries(attributes)

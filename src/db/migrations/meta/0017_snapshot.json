@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "b599235f-11e4-4739-8140-9253e5b93031",
+  "id": "8125d8eb-16ac-4230-bbef-2e7cc4685da0",
   "prevId": "bcb5470f-1ab0-4a8b-a11e-05f19d7196ed",
   "tables": {
     "tenants": {
@@ -2779,6 +2779,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "phone": {
+          "name": "phone",
+          "type": "varchar(40)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "datetime(3)",
@@ -2954,6 +2961,10 @@
         "client_members_anonymization_traced": {
           "name": "client_members_anonymization_traced",
           "value": "(`client_members`.`anonymized_at` is not null or (`client_members`.`anonymized_by` is null and `client_members`.`anonymization_basis` is null and `client_members`.`erasure_requested_on` is null))\n    and (`client_members`.`erasure_requested_on` is null) = (`client_members`.`anonymization_basis` is null or `client_members`.`anonymization_basis` <> 'erasure_request')\n    and (`client_members`.`anonymization_basis` is null or (`client_members`.`anonymized_by` is null) = (`client_members`.`anonymization_basis` = 'retention'))"
+        },
+        "client_members_anonymized_no_phone": {
+          "name": "client_members_anonymized_no_phone",
+          "value": "`client_members`.`anonymized_at` is null or `client_members`.`phone` is null"
         }
       }
     },
@@ -12969,21 +12980,6 @@
           "notNull": false,
           "autoincrement": false
         },
-        "push_quotes": {
-          "name": "push_quotes",
-          "type": "boolean",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "quote_extrafields": {
-          "name": "quote_extrafields",
-          "type": "json",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "updated_by": {
           "name": "updated_by",
           "type": "char(36)",
@@ -13694,6 +13690,246 @@
           "value": "REGEXP_LIKE(`crm_consumptions`.`fingerprint`, '^[0-9a-f]{64}$', 'c')"
         }
       }
+    },
+    "client_bell_settings": {
+      "name": "client_bell_settings",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(uuid())"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'01999f00-0000-7000-8000-000000000001'"
+        },
+        "hidden_events": {
+          "name": "hidden_events",
+          "type": "json",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(JSON_ARRAY())"
+        },
+        "window_days": {
+          "name": "window_days",
+          "type": "int",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 30
+        },
+        "updated_by": {
+          "name": "updated_by",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "datetime(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3)"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "datetime(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {
+        "client_bell_settings_tenant_key": {
+          "name": "client_bell_settings_tenant_key",
+          "columns": [
+            "tenant_id"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "client_bell_settings_tenant_id_tenants_id_fk": {
+          "name": "client_bell_settings_tenant_id_tenants_id_fk",
+          "tableFrom": "client_bell_settings",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "client_bell_settings_updated_by_staff_members_id_fk": {
+          "name": "client_bell_settings_updated_by_staff_members_id_fk",
+          "tableFrom": "client_bell_settings",
+          "tableTo": "staff_members",
+          "columnsFrom": [
+            "updated_by"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "client_bell_settings_id": {
+          "name": "client_bell_settings_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {
+        "client_bell_settings_window_days": {
+          "name": "client_bell_settings_window_days",
+          "value": "`client_bell_settings`.`window_days` between 1 and 90"
+        },
+        "client_bell_settings_hidden_array": {
+          "name": "client_bell_settings_hidden_array",
+          "value": "json_type(`client_bell_settings`.`hidden_events`) = 'ARRAY'"
+        }
+      }
+    },
+    "client_notification_reads": {
+      "name": "client_notification_reads",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(uuid())"
+        },
+        "tenant_id": {
+          "name": "tenant_id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'01999f00-0000-7000-8000-000000000001'"
+        },
+        "client_id": {
+          "name": "client_id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "client_member_id": {
+          "name": "client_member_id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "delivery_id": {
+          "name": "delivery_id",
+          "type": "char(36)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "read_at": {
+          "name": "read_at",
+          "type": "datetime(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "CURRENT_TIMESTAMP(3)"
+        }
+      },
+      "indexes": {
+        "client_notification_reads_member_key": {
+          "name": "client_notification_reads_member_key",
+          "columns": [
+            "tenant_id",
+            "client_member_id",
+            "delivery_id"
+          ],
+          "isUnique": true
+        },
+        "client_notification_reads_client_idx": {
+          "name": "client_notification_reads_client_idx",
+          "columns": [
+            "tenant_id",
+            "client_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "client_notification_reads_tenant_id_tenants_id_fk": {
+          "name": "client_notification_reads_tenant_id_tenants_id_fk",
+          "tableFrom": "client_notification_reads",
+          "tableTo": "tenants",
+          "columnsFrom": [
+            "tenant_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "client_notification_reads_member_fk": {
+          "name": "client_notification_reads_member_fk",
+          "tableFrom": "client_notification_reads",
+          "tableTo": "client_members",
+          "columnsFrom": [
+            "tenant_id",
+            "client_id",
+            "client_member_id"
+          ],
+          "columnsTo": [
+            "tenant_id",
+            "client_id",
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "client_notification_reads_delivery_fk": {
+          "name": "client_notification_reads_delivery_fk",
+          "tableFrom": "client_notification_reads",
+          "tableTo": "notification_deliveries",
+          "columnsFrom": [
+            "delivery_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "client_notification_reads_id": {
+          "name": "client_notification_reads_id",
+          "columns": [
+            "id"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
     }
   },
   "views": {},

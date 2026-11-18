@@ -199,3 +199,47 @@ export const DB_OPTION_REFUSED = 'CA018'
  * suppression.
  */
 export const DB_CONSUMPTION_REFUSED = 'CA019'
+
+/**
+ * Cloche de l'espace client refusée par la base (ADR 077,
+ * `74-cloche-client.sql`) : nouveauté marquée lue pour une autre entreprise
+ * que celle de l'accès, lecture réécrite ou effacée depuis l'espace client,
+ * réglage de la cloche supprimé.
+ */
+export const DB_CLIENT_BELL_REFUSED = 'CA023'
+
+/**
+ * Formulaire de demande refusé par la base (ADR 074, `23-questionnaires.sql`) :
+ * questions qui n'ont pas la forme attendue, options qui ne sont pas des codes
+ * de services, réponses figées d'un devis réécrites hors brouillon.
+ */
+export const DB_QUESTIONNAIRE_REFUSED = 'CA020'
+
+/**
+ * Pièce justificative refusée par la base (ADR 075, `34-pieces.sql`) : pièce
+ * du même type déjà reçue ou validée, passage d'état impossible, fichier
+ * réécrit, suppression, liste des pièces écrite depuis l'espace client.
+ */
+export const DB_CLIENT_DOCUMENT_REFUSED = 'CA021'
+
+/**
+ * Courrier côté équipe refusé par la base (ADR 079, `64-courrier-equipe.sql`) :
+ * contenu déposé sur un pli retiré ou pour une demande close, contenu validé
+ * remis « à valider », dépôt remplacé validé, validation sans le geste
+ * qu'elle publie (pli ouvert, numérisation demandée faite).
+ */
+export const DB_MAIL_TEAM_REFUSED = 'CA025'
+
+/**
+ * Courrier côté client refusé par la base (ADR 078, `62-courrier-client.sql`) :
+ * réglage de catégorie déplacé vers une autre personne ou une autre catégorie,
+ * adresse du carnet déplacée vers une autre entreprise.
+ */
+export const DB_CLIENT_MAIL_REFUSED = 'CA024'
+
+/**
+ * Modification ou annulation d'une réservation par son client refusée
+ * (ADR 076, `24-formules-et-modifications.sql`) : annulée, commencée, délai du
+ * centre passé, ou matériel en option à déplacer avec elle.
+ */
+export const DB_CLIENT_CHANGE_REFUSED = 'CA022'

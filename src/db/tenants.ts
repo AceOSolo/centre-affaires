@@ -57,6 +57,21 @@ export const DEFAULT_LATE_PAYMENT_PENALTY_TEXT =
 export const DEFAULT_EARLY_PAYMENT_DISCOUNT_TEXT = 'Pas d’escompte pour paiement anticipé.'
 
 /**
+ * Logo des courriels (ADR 080), tel que `tenants.email_logo` le garde : le
+ * fichier est dans le stockage objet, ses dimensions servent aux attributs
+ * `width` et `height` que certaines messageries exigent.
+ */
+export type EmailLogo = {
+  id: string
+  /** Clé dans le stockage objet. */
+  key: string
+  contentType: 'image/png' | 'image/jpeg' | 'image/svg+xml'
+  byteSize: number
+  width: number
+  height: number
+}
+
+/**
  * Centre unique tant que le produit est mono-centre. Cet identifiant est aussi
  * écrit en dur dans la migration 0002 (création de la ligne) et dans la
  * fonction `tenant_id_default()` : les trois doivent rester synchronisés.
@@ -84,6 +99,20 @@ export const tenants = mysqlTable('tenants', {
     .$type<Partial<Record<string, number>>>()
     .notNull()
     .default(sql`(JSON_OBJECT())`),
+  /**
+   * Formules de location des bureaux (ADR 076) : une demande en ligne à la
+   * semaine couvre au plus tant de semaines, une demande au mois tant de mois.
+   * Au-delà, le client passe par l'accueil.
+   */
+  bookingMaxWeeks: int('booking_max_weeks').notNull().default(4),
+  bookingMaxMonths: int('booking_max_months').notNull().default(12),
+  /**
+   * Modification et annulation par le client depuis son espace (ADR 076) :
+   * possibles jusqu'à tant de jours avant le début de la réservation, à l'heure
+   * du centre (0 : jusqu'au début). Vérifié aussi par la base
+   * (`booking_client_change_deadline`, `24-formules-et-modifications.sql`).
+   */
+  bookingChangeDays: int('booking_change_days').notNull().default(7),
 
   /*
    * Identité publique du centre.
@@ -130,6 +159,18 @@ export const tenants = mysqlTable('tenants', {
     .$type<{ label: string; url: string }[]>()
     .notNull()
     .default(sql`(JSON_ARRAY())`),
+  /**
+   * Logo déposé pour l'en-tête des courriels (ADR 080), rangé dans le
+   * stockage européen et servi par `/medias/centre/logo/…`. Nul : les
+   * courriels prennent le logo du site (`logo_path`).
+   */
+  emailLogo: json('email_logo').$type<EmailLogo | null>(),
+  /**
+   * Lignes de la signature des courriels, sous le nom du centre (ADR 080).
+   * Nulle : adresse, téléphone, adresse électronique et site du centre, lus
+   * dans les colonnes ci-dessus.
+   */
+  emailSignature: varchar('email_signature', { length: 600 }),
 
   /*
    * Durées de conservation du courrier (RGPD, ADR 015), en mois. Par centre :
@@ -146,6 +187,14 @@ export const tenants = mysqlTable('tenants', {
    * se facturent, en plus de l'ouverture.
    */
   mailOpeningIncludedPages: int('mail_opening_included_pages').notNull().default(0),
+  /**
+   * Expéditeurs proposés à la saisie du courrier, dans l'ordre voulu par le
+   * centre (ADR 079) : ajoutés, renommés, retirés, ordonnés depuis Réglages.
+   * Nulle tant que le centre n'y a pas touché : la liste de départ du code
+   * (`STARTING_SENDERS`) et les expéditeurs les plus saisis au centre sont
+   * proposés, comme avant (ADR 058).
+   */
+  mailSuggestedSenders: json('mail_suggested_senders').$type<string[]>(),
   /**
    * Coordonnées des demandeurs de la page publique (ADR 005, ADR 020), en mois
    * comptés depuis la fin du créneau demandé — ou son annulation, si elle est
@@ -176,6 +225,18 @@ export const tenants = mysqlTable('tenants', {
   inspectionPhotoRetentionMonths: int('inspection_photo_retention_months').notNull().default(36),
   /** Journal des consultations des photos d'états des lieux. */
   inspectionAccessLogRetentionMonths: int('inspection_access_log_retention_months')
+    .notNull()
+    .default(12),
+  /*
+   * Pièces justificatives de la domiciliation (ADR 075), en mois. Le fichier
+   * part, la ligne reste.
+   */
+  /** Pièces reçues ou validées, comptées depuis la fin de la relation (`client_last_activity_on`). */
+  clientDocumentRetentionMonths: int('client_document_retention_months').notNull().default(60),
+  /** Pièces refusées, comptées depuis le refus : elles ne servent plus. */
+  refusedClientDocumentRetentionMonths: int('refused_client_document_retention_months').notNull().default(3),
+  /** Journal des consultations des pièces. */
+  clientDocumentAccessLogRetentionMonths: int('client_document_access_log_retention_months')
     .notNull()
     .default(12),
 
@@ -257,12 +318,21 @@ export const tenants = mysqlTable('tenants', {
 }, (table) => [
   check('tenants_booking_delays_valid', sql`${table.bookingLeadHours} >= 0 and ${table.bookingHorizonDays} between 1 and 365 and ${table.bookingLeadHours} < ${table.bookingHorizonDays} * 24`),
   check(
+    'tenants_booking_formulas_valid',
+    sql`${table.bookingMaxWeeks} between 1 and 52 and ${table.bookingMaxMonths} between 1 and 24 and ${table.bookingChangeDays} between 0 and 90`,
+  ),
+  check(
     'tenants_mail_retention_valid',
     sql`${table.mailScanRetentionMonths} between 1 and 120 and ${table.mailAccessLogRetentionMonths} between 1 and 120`,
   ),
   check(
     'tenants_mail_included_pages_valid',
     sql`${table.mailOpeningIncludedPages} between 0 and 1000`,
+  ),
+  // Une liste de 200 expéditeurs au plus (ADR 079) ; nulle : celle du code.
+  check(
+    'tenants_mail_suggested_senders_valid',
+    sql`${table.mailSuggestedSenders} is null or (json_type(${table.mailSuggestedSenders}) = 'ARRAY' and json_length(${table.mailSuggestedSenders}) <= 200)`,
   ),
   check(
     'tenants_public_request_retention_valid',
@@ -279,6 +349,10 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_inspection_retention_valid',
     sql`${table.inspectionPhotoRetentionMonths} between 1 and 120 and ${table.inspectionAccessLogRetentionMonths} between 1 and 120`,
+  ),
+  check(
+    'tenants_client_document_retention_valid',
+    sql`${table.clientDocumentRetentionMonths} between 1 and 120 and ${table.refusedClientDocumentRetentionMonths} between 1 and 120 and ${table.clientDocumentAccessLogRetentionMonths} between 1 and 120`,
   ),
   check('tenants_siren_format', sql`${table.siren} is null or REGEXP_LIKE(${table.siren}, '^[0-9]{9}$', 'c')`),
   check(
@@ -317,6 +391,16 @@ export const tenants = mysqlTable('tenants', {
   check(
     'tenants_accounting_journals_valid',
     sql`REGEXP_LIKE(${table.accountingSalesJournal}, '^[0-9A-Z]{1,8}$', 'c') and REGEXP_LIKE(${table.accountingBankJournal}, '^[0-9A-Z]{1,8}$', 'c')`,
+  ),
+  // Courriels (ADR 080) : une signature vide s'écrit nulle (signature
+  // automatique), le logo est un objet.
+  check(
+    'tenants_email_signature_valid',
+    sql`${table.emailSignature} is null or trim(${table.emailSignature}) <> ''`,
+  ),
+  check(
+    'tenants_email_logo_valid',
+    sql`${table.emailLogo} is null or json_type(${table.emailLogo}) = 'OBJECT'`,
   ),
 ])
 

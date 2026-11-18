@@ -92,6 +92,14 @@ export const proposals = mysqlTable(
      * (`parseAnswers`) : `{ participants: 8, usage: 'reunion' }`.
      */
     answers: json('answers').$type<Record<string, string | number | boolean | string[]>>().notNull(),
+    /**
+     * Les réponses en clair, figées à l'envoi avec les libellés lus par le
+     * demandeur (ADR 074) : `[{ name, label, value }]`. Le centre peut changer
+     * ses questions, un devis ancien reste lisible. Nul pour un devis antérieur,
+     * relu avec les questions du code d'alors (`answersForDisplay`). Ne change
+     * qu'en brouillon (`23-questionnaires.sql`, `CA020`).
+     */
+    describedAnswers: json('described_answers').$type<{ name: string; label: string; value: string }[]>(),
     /** Message libre du demandeur. */
     message: text('message'),
     /** Note de l'accueil, transmise à Dolibarr avec le devis. */

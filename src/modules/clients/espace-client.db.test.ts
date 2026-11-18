@@ -174,7 +174,13 @@ describe('espace client : une entreprise ne voit pas une autre', { skip: raisonD
 
     // Les siennes passent, sous la même portée.
     assert.equal(await requestOpening(ids[DURAND].mail, durand), true)
-    assert.equal(await cancelRequestForAccounts(ids[DURAND].booking, durand), true)
+    // Créneau à moins de sept jours : délai du centre ramené à zéro (ADR 076).
+    await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 0`))
+    try {
+      assert.equal(await cancelRequestForAccounts(ids[DURAND].booking, durand), true)
+    } finally {
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+    }
   })
 
   it('une écriture sans filtre sous la portée d’un client échoue, sans rien modifier chez l’autre', async () => {

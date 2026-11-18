@@ -142,6 +142,25 @@ export async function readObjectBytes(key: string): Promise<Uint8Array> {
   return result.Body.transformToByteArray()
 }
 
+/**
+ * Objet lu en flux, entier ou sur une plage d'octets (`bytes=0-`) : les
+ * vidéos des annonces (ADR 073), que Safari ne lit que par plages. Réservé
+ * aux fichiers publics, non chiffrés — un document chiffré se lit en entier
+ * (`readObjectBytes`).
+ */
+export async function readObjectStream(
+  key: string,
+  range?: string,
+): Promise<{ body: ReadableStream; contentLength?: number; contentRange?: string }> {
+  const result = await s3().send(new GetObjectCommand({ Bucket: bucket(), Key: key, Range: range }))
+  if (!result.Body) throw new Error(`Objet vide : ${key}`)
+  return {
+    body: result.Body.transformToWebStream(),
+    contentLength: result.ContentLength,
+    contentRange: result.ContentRange,
+  }
+}
+
 export async function deleteObject(key: string): Promise<void> {
   await s3().send(new DeleteObjectCommand({ Bucket: bucket(), Key: key }))
 }

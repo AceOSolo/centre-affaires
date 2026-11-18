@@ -14,7 +14,13 @@ import { formatCents, resolveRate } from '../../../../modules/facturation/tarifs
 import { listBookingsBetween } from '../../../../modules/reservations/queries.ts'
 import { occupiesResource } from '../../../../modules/reservations/availability.ts'
 import { freeMinutes, freeRanges } from '../../../../modules/reservations/slots.ts'
+import {
+  listingMediaAlt,
+  listingMediaUrl,
+  parseListingMedia,
+} from '../../../../modules/ressources/annonces-medias.ts'
 import { findPublishedListing } from '../../../../modules/ressources/annonces-queries.ts'
+import { GalerieAnnonce } from '../../../../modules/ressources/galerie-annonce.tsx'
 import { describeAttributes, resourceTypeLabels } from '../../../../modules/ressources/labels.ts'
 import { loadOpeningContext } from '../../../../modules/ressources/ouverture-queries.ts'
 import { openingWindows } from '../../../../modules/ressources/ouverture.ts'
@@ -83,6 +89,13 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
     : []
 
   const details = describeAttributes(listing.resource.attributes ?? {})
+  const medias = parseListingMedia(listing.media)
+  const galerie = medias.map((media, index) => ({
+    id: media.id,
+    kind: media.kind,
+    src: listingMediaUrl(listing.id, media),
+    alt: listingMediaAlt(media, listing.headline, index, medias.length),
+  }))
 
   return (
     <div className="mx-auto flex w-full max-w-4xl flex-col gap-8 px-5 py-10 sm:px-8">
@@ -102,6 +115,8 @@ export default async function AnnoncePage({ params }: { params: Promise<{ slug: 
         </div>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight">{listing.headline}</h1>
       </div>
+
+      {galerie.length > 0 && <GalerieAnnonce items={galerie} title={listing.headline} />}
 
       {listing.description && (
         <p className="max-w-2xl whitespace-pre-line text-muted-foreground">

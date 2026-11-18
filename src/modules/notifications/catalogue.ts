@@ -360,6 +360,63 @@ export const eventVariables: Record<NotificationEvent, readonly TemplateVariable
       example: 'https://centre.exemple/auth/connexion',
       optional: true,
     },
+    // Recette du 17/11 (ADR 075) : l'accusé part aussi au demandeur connecté
+    // à son espace, et dit les pièces à préparer pour une domiciliation.
+    {
+      name: 'espace',
+      label: 'Lien vers l’espace client, quand la demande y est déjà rattachée (demandeur connecté)',
+      example: 'https://centre.exemple/compte/pieces',
+      optional: true,
+    },
+    {
+      name: 'pieces',
+      label: 'Pièces justificatives à préparer, pour une domiciliation (liste réglée dans Réglages)',
+      example: 'pièce d’identité du dirigeant, extrait Kbis et justificatif de domicile du dirigeant',
+      optional: true,
+    },
+  ],
+  // Pièces justificatives de la domiciliation (ADR 075).
+  client_document_received: [
+    centre,
+    client,
+    { name: 'piece', label: 'Pièce déposée', example: 'Extrait Kbis' },
+    { ...demandeur, label: 'Personne qui a déposé la pièce' },
+    lienCentre('la fiche du client, rubrique « Pièces justificatives »'),
+  ],
+  client_document_refused: [
+    centre,
+    client,
+    { name: 'piece', label: 'Pièce refusée', example: 'Extrait Kbis' },
+    { ...motif, optional: false, label: 'Motif du refus saisi par l’équipe', example: 'L’extrait date de plus de trois mois.' },
+    lienEspace('la page « Pièces justificatives » de l’espace client'),
+  ],
+  // Modification et annulation par le client depuis son espace (ADR 076).
+  booking_changed_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    { ...creneau, label: 'Nouveau jour et nouveaux horaires, à l’heure du centre' },
+    {
+      name: 'ancien',
+      label: 'Jour et horaires d’avant la modification',
+      example: 'lundi 5 octobre 2026, de 09:00 à 11:00',
+    },
+    { ...montantReservation, label: 'Nouveau montant annoncé au client' },
+    lienCentre('la file des demandes'),
+  ],
+  booking_cancelled_by_client: [
+    centre,
+    client,
+    demandeur,
+    ressource,
+    creneau,
+    {
+      name: 'etat',
+      label: 'Ce qui est annulé : la demande en attente ou la réservation confirmée',
+      example: 'la réservation confirmée',
+    },
+    lienCentre('la fiche de la réservation'),
   ],
 }
 
@@ -574,10 +631,46 @@ export const defaultTemplates: Record<NotificationEvent, DefaultTemplate> = {
       'Bonjour,\n\nNous avons bien reçu votre demande : {{demande}}.' +
       '\nRéférence : {{numero}}' +
       '\n\nL’équipe de {{centre}} l’étudie et revient vers vous rapidement.' +
+      '\n\nPour votre domiciliation, préparez ces pièces justificatives : {{pieces}}. Vous les déposerez dans votre espace client, en PDF ou en photo.' +
+      '\n\nVotre espace client : {{espace}}' +
       '\n\nPour la suivre en ligne, créez votre espace : choisissez votre mot de passe en ouvrant ce lien, valable une fois, jusqu’au {{echeance}}. Votre identifiant sera votre adresse, {{adresse}}.' +
       '\n{{lien}}' +
       '\n\nVous avez déjà un compte chez {{centre}} : l’équipe vous répond par courriel. Pour vos prochaines demandes, connectez-vous d’abord à votre espace, elles y apparaîtront : {{connexion}}' +
       '\n\nSi vous n’êtes pas à l’origine de cette demande, ignorez ce message ou prévenez {{centre}}.' +
+      signature,
+  },
+  client_document_received: {
+    subject: 'Pièce déposée — {{piece}}, {{client}}',
+    body:
+      '{{demandeur}} a déposé pour {{client}} : {{piece}}.' +
+      '\n\nVérifier la pièce, puis la valider ou la refuser : {{lien}}' +
+      '\n\nPar confidentialité, ce message ne contient pas le document.' +
+      signature,
+  },
+  client_document_refused: {
+    subject: 'Pièce à déposer de nouveau — {{piece}}',
+    body:
+      'Bonjour,\n\nLa pièce « {{piece}} » déposée pour {{client}} n’a pas pu être validée.' +
+      '\n\nMotif : {{motif}}' +
+      '\n\nDéposez-en une nouvelle depuis votre espace client : {{lien}}' +
+      sansDocument +
+      signature,
+  },
+  booking_changed_by_client: {
+    subject: 'Réservation modifiée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a modifié sa réservation de {{ressource}} depuis son espace client.' +
+      '\n\nAvant : {{ancien}}' +
+      '\nDésormais : {{creneau}}' +
+      '\nMontant annoncé : {{montant}}' +
+      '\n\nLa réservation attend de nouveau votre validation : {{lien}}' +
+      signature,
+  },
+  booking_cancelled_by_client: {
+    subject: 'Réservation annulée par le client — {{ressource}}, {{creneau}}',
+    body:
+      '{{demandeur}} ({{client}}) a annulé depuis son espace client {{etat}} de {{ressource}} le {{creneau}}.' +
+      '\n\nLe créneau est libéré. Voir la réservation : {{lien}}' +
       signature,
   },
 }
@@ -607,6 +700,10 @@ export const notificationEventLabels: Record<NotificationEvent, string> = {
   client_broadcast: 'Message du centre aux clients',
   staff_invited: 'Invitation dans l’équipe',
   request_received: 'Demande du site bien reçue',
+  client_document_received: 'Pièce justificative déposée',
+  client_document_refused: 'Pièce justificative refusée',
+  booking_changed_by_client: 'Réservation modifiée par le client',
+  booking_cancelled_by_client: 'Réservation annulée par le client',
 }
 
 /** Quand le message part, et à qui : l'aide de l'écran des modèles. */
@@ -641,7 +738,15 @@ export const notificationEventDescriptions: Record<NotificationEvent, string> = 
   staff_invited:
     'Quand la direction ou un exploitant ajoute une personne à l’équipe, ou renvoie son invitation : le lien pour choisir son mot de passe et entrer dans le back-office.',
   request_received:
-    'Quand un visiteur dépose une demande sur la page publique (salle, bureau, camion, matériel, domiciliation) : l’accusé de réception, et le lien pour créer son espace et y retrouver sa demande.',
+    'Quand une demande est déposée sur la page publique (salle, bureau, camion, matériel, domiciliation), demandeur connecté ou non : l’accusé de réception, le lien pour créer son espace ou y retrouver sa demande, et les pièces à préparer pour une domiciliation.',
+  client_document_received:
+    'Quand un client dépose une pièce justificative de sa domiciliation depuis son espace : à l’accueil, pour la vérifier.',
+  client_document_refused:
+    'Quand l’équipe refuse une pièce justificative : au client, avec le motif, pour qu’il en dépose une autre.',
+  booking_changed_by_client:
+    'Quand un client change les dates, les heures ou la formule d’une demande ou d’une réservation depuis son espace : elle repasse en attente de validation.',
+  booking_cancelled_by_client:
+    'Quand un client annule une demande ou une réservation depuis son espace, dans le délai réglé par le centre.',
 }
 
 export const notificationAudienceLabels: Record<NotificationAudience, string> = {
@@ -692,4 +797,5 @@ export const notificationRelatedTypeLabels: Record<NotificationRelatedType, stri
   proposal: 'Devis',
   client_broadcast: 'Message aux clients',
   staff_member: 'Membre de l’équipe',
+  client_document: 'Pièce justificative',
 }

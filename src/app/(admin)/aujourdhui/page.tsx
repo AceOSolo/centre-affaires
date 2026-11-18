@@ -12,6 +12,7 @@ import {
 import { can } from '../../../lib/auth/permissions.ts'
 import { requireAnyPermission } from '../../../lib/auth/staff.ts'
 import { formatDateTime, formatLongDate, formatTime, toIsoDate, todayIsoDate } from '../../../lib/dates.ts'
+import { avecRetour } from '../../../lib/retour.ts'
 import { currentTenant } from '../../../lib/tenant.ts'
 import { listClients } from '../../../modules/clients/queries.ts'
 import { countPendingMailRequests } from '../../../modules/courrier/demandes-queries.ts'
@@ -180,7 +181,7 @@ export default async function AujourdhuiPage() {
                         {booking.moment === 'termine' && <span className="ml-2 text-xs">Terminée</span>}
                       </td>
                       <td className="whitespace-nowrap px-4 py-2.5">
-                        <Link href={`/reservations/${booking.id}`} className="font-medium text-primary underline-offset-2 hover:underline">
+                        <Link href={avecRetour(`/reservations/${booking.id}`, '/aujourdhui')} className="font-medium text-primary underline-offset-2 hover:underline">
                           {booking.resource.name}
                         </Link>
                       </td>

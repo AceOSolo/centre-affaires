@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { FlashNotice } from '../../../../../components/ui/flash-notice.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { formatDateTime } from '../../../../../lib/dates.ts'
@@ -52,9 +53,7 @@ export default async function TemplatePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/etats-des-lieux/modeles" className="text-sm text-muted-foreground hover:underline">
-          ← Modèles d’état des lieux
-        </Link>
+        <LienRetour href="/etats-des-lieux/modeles" label="Modèles d’état des lieux" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">
           Modèle — {resourceTypeLabels[resourceType]}
         </h1>

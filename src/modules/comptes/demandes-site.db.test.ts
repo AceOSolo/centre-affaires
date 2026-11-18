@@ -245,9 +245,49 @@ describe('demande du site : accusé de réception et espace du demandeur', { ski
     assert.equal((await lire("select count(*) as n from auth_verifications where identifier like 'reset-password:%'"))[0].n, 0)
   })
 
-  it('ne dit rien pour une demande faite depuis un espace client : la personne la voit déjà', async () => {
+  // Recette du 17/11 (ADR 075) : « aucun courriel » après une demande faite
+  // connecté à son espace. L'accusé part désormais toujours.
+  it('envoie l’accusé à un demandeur connecté à son espace, avec le lien de l’espace et sans compte à créer', async () => {
     await demandeDeSalle(RESA_CLIENT, camille, 3, { clientId: DURAND })
-    assert.equal(await sendRequestReceived({ bookingId: RESA_CLIENT }, options()), null)
-    assert.equal(envoyes.length, 0)
+    const issue = await sendRequestReceived({ bookingId: RESA_CLIENT }, options())
+    assert.equal(issue?.status, 'sent')
+    assert.deepEqual(envoyes[0].to, [camille])
+    assert.match(envoyes[0].text, /Nous avons bien reçu votre demande : Salle Horizon, /)
+    assert.match(envoyes[0].text, /Votre espace client : http:\/\/localhost:3000\/compte\/reservations/)
+    assert.equal(lienRecu(), undefined)
+    assert.doesNotMatch(envoyes[0].text, /créez votre espace|Vous avez déjà un compte/)
+    // Ni compte créé, ni lien préparé : la demande est déjà dans l'espace.
+    assert.equal((await lire('select count(*) as n from auth_users where email = ?', [camille]))[0].n, 0)
+    const [journal] = await lire('select audience, client_id, related_type from notification_deliveries')
+    assert.deepEqual(journal, { audience: 'person', client_id: DURAND, related_type: 'booking' })
+  })
+
+  it('dit au demandeur d’une domiciliation les pièces à préparer, selon la situation de sa société', async () => {
+    // Visiteur non connecté, société en création : statuts, pas de Kbis.
+    const enCreation = await domiciliation(camille)
+    await sendRequestReceived({ proposalId: enCreation.id }, options())
+    assert.match(
+      envoyes[0].text,
+      /préparez ces pièces justificatives : pièce d’identité du dirigeant, projet de statuts et justificatif de domicile du dirigeant\. Vous les déposerez dans votre espace client/,
+    )
+    assert.ok(lienRecu(), 'le lien pour créer son espace')
+
+    // Connecté, société immatriculée : le Kbis, et le lien des pièces de son espace.
+    const immatriculee = await asTenant((tx) =>
+      createProposalInTransaction(tx, {
+        product: 'domiciliation',
+        channel: 'client',
+        clientId: DURAND,
+        requesterName: 'Camille Rousseau',
+        requesterEmail: camille,
+        requesterCompany: 'Atelier Durand',
+        answers: { situation: 'immatriculee', raisonSociale: 'Atelier Durand' },
+        lines: [],
+      }),
+    )
+    const issue = await sendRequestReceived({ proposalId: immatriculee.id }, options())
+    assert.equal(issue?.status, 'sent')
+    assert.match(envoyes[1].text, /: pièce d’identité du dirigeant, extrait Kbis et justificatif de domicile du dirigeant\./)
+    assert.match(envoyes[1].text, /Votre espace client : http:\/\/localhost:3000\/compte\/pieces/)
   })
 })

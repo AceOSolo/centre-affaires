@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../lib/dates.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
@@ -50,9 +50,7 @@ export default async function ServicePage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/services" className="text-sm text-muted-foreground hover:underline">
-          ← Services
-        </Link>
+        <LienRetour href="/services" label="Services" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{service.name}</h1>
           <span

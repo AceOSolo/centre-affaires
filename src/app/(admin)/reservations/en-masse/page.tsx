@@ -1,4 +1,4 @@
-import Link from 'next/link'
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../lib/dates.ts'
@@ -13,7 +13,7 @@ export default async function BulkBookingPage({ searchParams }: { searchParams: 
   const [timeZone, resources, params] = await Promise.all([currentTimeZone(), listBookableResources(), searchParams])
   return <div className="mx-auto flex max-w-3xl flex-col gap-6">
     <div>
-      <Link href="/reservations" className="text-sm text-muted-foreground hover:underline">← Planning</Link>
+      <LienRetour href="/reservations" label="Planning" />
       <h1 className="mt-2 text-2xl font-semibold tracking-tight">Réservations en masse</h1>
       <p className="mt-2 text-sm text-muted-foreground">Réservez des créneaux réguliers ou bloquez des indisponibilités récurrentes sur une période. Chaque occurrence reste modifiable depuis le planning.</p>
     </div>

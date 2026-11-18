@@ -12,6 +12,7 @@ import {
   DuplicateResourceCodeError,
   archiveResource,
   createResource,
+  ensureListingForResource,
   findResource,
   updateClientBookingMode,
   updateResource,
@@ -102,9 +103,11 @@ export async function createResourceAction(
   }
 
   // Hors du `try` : `redirect` interrompt l'exécution en levant, un `catch`
-  // l'avalerait et la page resterait sur le formulaire.
+  // l'avalerait et la page resterait sur le formulaire. Les photos et vidéos
+  // s'ajoutent sur la fiche (ADR 082) : on arrive à leur bloc, avec la
+  // confirmation de la création (recette du 17/11).
   revalidatePath('/ressources')
-  redirect(`/ressources/${id}`)
+  redirect(`/ressources/${id}?creee=1#medias`)
 }
 
 /**
@@ -184,4 +187,30 @@ export async function updateClientBookingModeAction(
   revalidatePath(`/ressources/${id}`)
   revalidatePath('/compte/reservations', 'layout')
   return { ok: `Réglage enregistré : ${clientBookingModeLabels[mode].toLocaleLowerCase('fr-FR')}.` }
+}
+
+/** Réponse du bouton « Ajouter des photos et vidéos » de la fiche, annoncée au lecteur d'écran. */
+export type ResourceMediaState = { error?: string } | null
+
+/**
+ * Prépare les photos et vidéos d'une ressource depuis sa fiche (ADR 082) :
+ * crée au besoin l'annonce en brouillon qui les porte (ADR 073). La fiche se
+ * redessine alors avec le bloc d'ajout ; rien n'est publié.
+ */
+export async function prepareResourceMediaAction(
+  _previous: ResourceMediaState,
+  formData: FormData,
+): Promise<ResourceMediaState> {
+  await requirePermission('ressources.gerer')
+  const id = text(formData, 'id')
+  const listing = isUuid(id) ? await ensureListingForResource(id) : undefined
+  if (!listing) {
+    return {
+      error:
+        'Impossible de préparer les photos : la ressource a été archivée, ou son annonce retirée. Rechargez la page.',
+    }
+  }
+  revalidatePath(`/ressources/${id}`)
+  revalidatePath('/ressources/annonces')
+  return null
 }

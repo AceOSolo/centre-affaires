@@ -1,6 +1,7 @@
 import Link from 'next/link'
 
 import { requirePermission } from '../../../lib/auth/staff.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { clientStatusLabels, clientStatusStyles, formatSiret } from '../../../modules/clients/labels.ts'
 import { searchClients } from '../../../modules/clients/recherche.ts'
 import { clientStatuses, type ClientStatus } from '../../../modules/clients/schema.ts'
@@ -14,6 +15,8 @@ export default async function ClientsPage({
 }) {
   await requirePermission('clients.gerer')
   const { statut, origine, q } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/clients', { statut, origine, q })
   const status = clientStatuses.includes(statut as ClientStatus)
     ? (statut as ClientStatus)
     : undefined
@@ -149,7 +152,7 @@ export default async function ClientsPage({
                 <tr key={client.id}>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/clients/${client.id}`}
+                      href={avecRetour(`/clients/${client.id}`, retour)}
                       className="font-medium underline-offset-2 hover:underline"
                     >
                       {client.name}

@@ -25,6 +25,9 @@ const defauts: RetentionDurations = {
   notificationLogRetentionMonths: 12,
   inspectionPhotoRetentionMonths: 36,
   inspectionAccessLogRetentionMonths: 12,
+  clientDocumentRetentionMonths: 60,
+  refusedClientDocumentRetentionMonths: 3,
+  clientDocumentAccessLogRetentionMonths: 12,
 }
 
 const saisie = (valeurs: Partial<Record<keyof RetentionDurations, string>> = {}) => ({
@@ -44,7 +47,7 @@ describe('durées de conservation du centre (R29)', () => {
     }
   })
 
-  it('lit les neuf durées en mois', () => {
+  it('lit les douze durées en mois', () => {
     assert.deepEqual(parseRetentionDurations(saisie({ clientRetentionMonths: ' 72 ' })), {
       ok: true,
       update: { ...defauts, clientRetentionMonths: 72 },

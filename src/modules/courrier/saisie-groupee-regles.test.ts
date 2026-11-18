@@ -3,12 +3,15 @@ import { describe, it } from 'node:test'
 
 import { uuidv7 } from '../../lib/uuid.ts'
 import {
+  DEFAULT_ENTRY_KIND,
+  entryCards,
   entryFieldName,
   groupEntry,
   inEntryOrder,
   orderedIds,
   parseMailEntry,
 } from './saisie-groupee-regles.ts'
+import type { MailKind } from './schema.ts'
 
 /**
  * Saisie groupée du courrier (ADR 058) : une photo = un pli. Chaque pli de
@@ -130,5 +133,34 @@ describe('identifiants des plis d’un envoi', () => {
   it('trient ce que le générateur rend dans le désordre', () => {
     const tirages = ['0192-c', '0192-a', '0192-b']
     assert.deepEqual(orderedIds(3, () => tirages.shift() as string), ['0192-a', '0192-b', '0192-c'])
+  })
+})
+
+describe('écran de saisie en un seul temps (ADR 079)', () => {
+  const pli = (clientId: string, kind: MailKind = DEFAULT_ENTRY_KIND) => ({ clientId, kind })
+
+  it('une photo est une lettre tant qu’on ne corrige pas son type', () => {
+    assert.equal(DEFAULT_ENTRY_KIND, 'lettre')
+  })
+
+  it('une carte par entreprise, dans l’ordre de la saisie, puis celle qu’on vient de choisir', () => {
+    const plis = [pli('acme'), pli('beta', 'colis'), pli('acme')]
+    const cartes = entryCards(plis, 'gamma')
+    assert.deepEqual(
+      cartes.map((carte) => [carte.clientId, carte.items.length, carte.phrase]),
+      [
+        ['acme', 2, '2 lettres'],
+        ['beta', 1, '1 colis'],
+        ['gamma', 0, ''],
+      ],
+    )
+    // L'ordre des cartes est celui de l'enregistrement.
+    assert.deepEqual(cartes.flatMap((carte) => carte.items), inEntryOrder(plis))
+  })
+
+  it('une entreprise choisie qui a déjà des plis n’a pas deux cartes ; quittée sans pli, elle n’en laisse pas', () => {
+    assert.equal(entryCards([pli('acme')], 'acme').length, 1)
+    assert.deepEqual(entryCards([pli('acme')], null).map((carte) => carte.clientId), ['acme'])
+    assert.deepEqual(entryCards([], null), [])
   })
 })

@@ -372,7 +372,13 @@ describe('matériel en option d’une salle, de la base à l’écriture', { ski
 
       // Le matériel ne s'annule pas seul depuis l'espace client : il suit la salle.
       assert.equal(await cancelRequestForAccounts(option.id, durand), false)
-      assert.equal(await cancelRequestForAccounts(created.id, durand), true)
+      // Le lundi tombe à 7–13 jours selon le jour du test : délai ramené à zéro (ADR 076).
+      await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 0`))
+      try {
+        assert.equal(await cancelRequestForAccounts(created.id, durand), true)
+      } finally {
+        await asTenant((tx) => tx.execute(sql`update tenants set booking_change_days = 7`))
+      }
       assert.equal((await ligne(option.id)).status, 'cancelled')
     })
   })

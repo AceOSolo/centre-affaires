@@ -135,6 +135,8 @@ describe('route de conservation', { skip: raisonDeSaut }, () => {
       staffNotifications: 0,
       inspectionPhotos: 0,
       inspectionPhotoViews: 0,
+      clientDocuments: 0,
+      clientDocumentViews: 0,
       failed: [],
     })
 
@@ -268,6 +270,8 @@ describe('route de conservation', { skip: raisonDeSaut }, () => {
     assert.deepEqual(bilan.anonymizedMembers, { accesses: 0, staff: 0 })
     assert.equal(bilan.inspectionPhotoViews, 0)
     assert.equal(bilan.inspectionPhotos, 0)
+    assert.equal(bilan.clientDocumentViews, 0)
+    assert.equal(bilan.clientDocuments, 0)
     // La numérisation reste à reprendre : sa ligne n'est pas marquée.
     const [scan] = await lire('select deleted_at from mail_scans where id = ?', [scanId])
     assert.equal(scan.deleted_at, null)

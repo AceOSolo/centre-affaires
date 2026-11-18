@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { AnnonceForm } from '../../../../../modules/ressources/annonce-form.tsx'
 import { listAllListings } from '../../../../../modules/ressources/annonces-queries.ts'
@@ -16,12 +15,7 @@ export default async function NewAnnoncePage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href="/ressources/annonces"
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Annonces
-        </Link>
+        <LienRetour href="/ressources/annonces" label="Annonces" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouvelle annonce</h1>
       </div>
       {sansAnnonce.length === 0 ? (

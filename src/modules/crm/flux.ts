@@ -13,11 +13,12 @@
 
 /**
  * Identifiants techniques, en anglais comme les autres valeurs de la base.
- * L'ordre est celui de l'écran. Les trois derniers sont la seconde tranche de
- * la passerelle (ADR 046 § 5, ADR 066) : coupés tant que la direction ne les
- * ouvre pas à l'écran, une fois le connecteur du CRM prêt.
+ * L'ordre est celui de l'écran. Tiers, contrats et consommations sont la
+ * seconde tranche de la passerelle (ADR 046 § 5, ADR 066), les factures le
+ * lot 8 de la recette du 17/11 (ADR 081) : coupés tant que la direction ne
+ * les ouvre pas à l'écran, une fois le connecteur du CRM prêt.
  */
-export const crmFlows = ['quotes', 'products', 'third_parties', 'contracts', 'consumptions'] as const
+export const crmFlows = ['quotes', 'products', 'third_parties', 'contracts', 'consumptions', 'invoices'] as const
 export type CrmFlowId = (typeof crmFlows)[number]
 
 /** Sens des données : du site vers le CRM, ou du CRM vers le site. */
@@ -70,6 +71,13 @@ export const crmFlowDefinitions: Record<CrmFlowId, CrmFlowDefinition> = {
     description:
       'Ce que le centre a fait pour ses clients, que le CRM facture : réservations sans devis (salles, bureaux, camion, matériel…), ouvertures, numérisations, réexpéditions et pages en plus du courrier. Le site ne facture rien.',
     direction: 'to_crm',
+    enabledByDefault: false,
+  },
+  invoices: {
+    label: 'Factures',
+    description:
+      'Les factures et avoirs émis par le CRM, que l’espace client montre à chaque entreprise : numéro, date, montant, état (à payer, payée) et lien vers le PDF. Le site ne facture rien.',
+    direction: 'from_crm',
     enabledByDefault: false,
   },
 }

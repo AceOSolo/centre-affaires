@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { CheckIcon } from '../../../../components/ui/icons.tsx'
 import { currentTimeZone } from '../../../../lib/tenant.ts'
 import { isUuid } from '../../../../lib/uuid.ts'
@@ -56,6 +57,8 @@ import { formatCentreDay } from '../../../../modules/rgpd/affichage.ts'
 import { crmOriginOf } from '../../../../modules/crm/liens.ts'
 import { CrmOriginRow } from '../../../../modules/crm/origine-crm.tsx'
 import { ClientRetentionSection } from '../../../../modules/rgpd/client-section.tsx'
+import { clientHasDocumentSpace } from '../../../../modules/clients/pieces-queries.ts'
+import { ClientDocumentsSection } from '../../../../modules/clients/pieces-section.tsx'
 
 export const metadata = { title: 'Client' }
 
@@ -89,7 +92,7 @@ export default async function ClientPage({
   const client = await findClient(id)
   if (!client) notFound()
 
-  const [contracts, members, contacts, history, timeZone, clientProposals, crmOrigin] = await Promise.all([
+  const [contracts, members, contacts, history, timeZone, clientProposals, crmOrigin, showsDocuments] = await Promise.all([
     listContracts({ clientId: client.id }),
     listClientMembers(client.id),
     listClientContacts(client.id),
@@ -99,6 +102,8 @@ export default async function ClientPage({
     can(staff.role, 'demandes.traiter') ? listProposals({ clientId: client.id, limit: 20 }) : null,
     // Fiche tenue par le CRM (ADR 066).
     crmOriginOf('client', client.id),
+    // Pièces justificatives de la domiciliation (ADR 075).
+    can(staff.role, 'pieces.valider') ? clientHasDocumentSpace(client.id) : false,
   ])
   // État de chaque accès : actif, ou invité et ce qu'est devenue l'invitation (ADR 059).
   const invitations = await latestInvitations(members.filter((member) => !member.authUserId).map((member) => member.id))
@@ -109,9 +114,7 @@ export default async function ClientPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/clients" className="text-sm text-muted-foreground hover:underline">
-          ← Clients
-        </Link>
+        <LienRetour href="/clients" label="Clients" />
         <div className="mt-2 flex flex-wrap items-center gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">{client.name}</h1>
           <span
@@ -338,6 +341,15 @@ export default async function ClientPage({
           </>
         )}
       </section>
+
+      {showsDocuments && (
+        <ClientDocumentsSection
+          clientId={client.id}
+          timeZone={timeZone}
+          canReview={can(staff.role, 'pieces.valider')}
+          canConfigure={can(staff.role, 'centre.configurer')}
+        />
+      )}
 
       {clientProposals && (
         <section aria-labelledby="devis-titre" className="flex flex-col gap-3">
@@ -587,7 +599,11 @@ export default async function ClientPage({
                   return (
                     <tr key={member.id} className="align-top">
                       <td className="px-4 py-3">{member.email}</td>
-                      <td className="px-4 py-3 text-muted-foreground">{member.fullName ?? '—'}</td>
+                      <td className="px-4 py-3 text-muted-foreground">
+                        {member.fullName ?? '—'}
+                        {/* Saisi par la personne dans « Mon compte » (ADR 077). */}
+                        {member.phone && <span className="block tabular">{member.phone}</span>}
+                      </td>
                       <td className="px-4 py-3">
                         {/* Libellé et couleur : l'état ne se lit pas qu'à la teinte. */}
                         <span

@@ -19,9 +19,14 @@ import { mailKindLabels } from './labels.ts'
 import { preparePhoto, type PhotoPage } from './photos-field.tsx'
 import type { MailRecipient } from './saisie-groupee.ts'
 import { registerMailEntryAction, type MailEntryFormState } from './saisie-groupee-actions.ts'
-import { entryFieldName, groupEntry, MAX_ENTRY_PHOTOS_BYTES, MAX_PER_ENTRY } from './saisie-groupee-regles.ts'
+import {
+  DEFAULT_ENTRY_KIND,
+  entryCards,
+  entryFieldName,
+  MAX_ENTRY_PHOTOS_BYTES,
+  MAX_PER_ENTRY,
+} from './saisie-groupee-regles.ts'
 import { mailKinds, type MailKind } from './schema.ts'
-import { mailKindsPhrase } from './tournees-regles.ts'
 
 /** Un pli de la saisie, tant qu'il n'est pas enregistré. */
 type Draft = {
@@ -39,10 +44,17 @@ const MAX_RESULTS = 6
 const fieldClass =
   'rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 aria-[invalid=true]:border-destructive sm:text-sm'
 // Cibles de 44 px : l'écran sert au téléphone et à la tablette, pendant le tri.
-const choiceClass =
-  'flex min-h-11 cursor-pointer items-center gap-2 rounded-md border border-border bg-white px-3 py-2 text-sm hover:bg-muted has-[:checked]:border-primary has-[:checked]:bg-accent/10 has-[:checked]:font-medium has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring'
-const actionClass =
-  'relative inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border border-border bg-white px-4 py-2 text-sm font-medium text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring disabled:cursor-not-allowed disabled:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50'
+const actionBase =
+  'relative inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-md border px-4 py-2 text-sm font-medium focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring disabled:cursor-not-allowed disabled:opacity-50 has-[:disabled]:cursor-not-allowed has-[:disabled]:opacity-50'
+const actionClass = `${actionBase} border-border bg-white text-foreground hover:bg-muted`
+// Couleurs à part, jamais ajoutées par-dessus celles d'`actionClass` : avec
+// deux `bg-*` sur un même élément, c'est l'ordre de la feuille de style qui
+// gagne, et le bouton sortait blanc sur blanc (recette du 17/11). Blanc sur
+// `--primary` : contraste ≈ 9,7:1.
+const cameraClass = `${actionBase} border-primary bg-primary text-primary-foreground hover:bg-primary-hover`
+// Type d'un pli : quatre puces, une touche pour corriger.
+const kindClass =
+  'inline-flex min-h-11 cursor-pointer items-center gap-1.5 rounded-md border border-border bg-white px-2.5 text-xs font-medium hover:bg-muted has-[:checked]:border-primary has-[:checked]:bg-accent/10 has-[:checked]:text-primary has-[:focus-visible]:outline-2 has-[:focus-visible]:outline-offset-2 has-[:focus-visible]:outline-ring sm:min-h-9'
 
 const fold = (value: string) =>
   value
@@ -52,21 +64,18 @@ const fold = (value: string) =>
 
 const plural = (count: number, word: string, many = `${word}s`) => `${count} ${count > 1 ? many : word}`
 
-/** « 2 lettres », « 1 colis » : un seul type. */
-const kindPhrase = (kind: MailKind, count: number) =>
-  mailKindsPhrase({ ...(Object.fromEntries(mailKinds.map((k) => [k, 0])) as Record<MailKind, number>), [kind]: count })
-
 /**
- * Saisie groupée du courrier (ADR 058) : **une photo = un pli**, sans double
- * saisie. Entreprise, type, puis les photos des enveloppes — chacune crée un
- * pli de ce type pour cette entreprise —, et ainsi de suite pour la suivante.
- * Le récapitulatif dit « ACME : 3 lettres et 1 colis », permet de retirer un
- * pli et de préciser son expéditeur ; tout part en un seul envoi.
+ * Saisie groupée du courrier (ADR 058, simplifiée par l'ADR 079) : **un seul
+ * écran**, sans étape. On cherche l'entreprise ; sur téléphone ou tablette,
+ * « Ajouter un courrier » sur sa ligne la choisit et ouvre l'appareil d'un même
+ * geste. **Une photo = un pli**, en lettre par défaut : le type et
+ * l'expéditeur se corrigent pli par pli, sur sa carte, si besoin. Puis
+ * l'entreprise suivante, et « Enregistrer » une fois pour tout.
  *
  * Les photos sont compressées dans le navigateur (`preparePhoto`, ADR 055)
  * et gardées ici jusqu'à l'envoi : un envoi refusé ne perd rien. Au clavier :
  * le nom ou le numéro de boîte, `Entrée` choisit la première entreprise et
- * passe au type, `Tab` mène aux photos, `Ctrl`+`Entrée` enregistre tout.
+ * mène à ses boutons de photo, `Ctrl`+`Entrée` enregistre tout.
  */
 export function MailEntryForm({
   recipients,
@@ -82,7 +91,6 @@ export function MailEntryForm({
   const [receivedAt, setReceivedAt] = useState(defaultReceivedAt)
   const [query, setQuery] = useState('')
   const [clientId, setClientId] = useState<string | null>(null)
-  const [kind, setKind] = useState<MailKind>('lettre')
   const [drafts, setDrafts] = useState<Draft[]>([])
   const [preparing, setPreparing] = useState(0)
   const [status, setStatus] = useState('')
@@ -90,7 +98,6 @@ export function MailEntryForm({
   const [dragging, setDragging] = useState(false)
 
   const searchRef = useRef<HTMLInputElement>(null)
-  const recapRef = useRef<HTMLHeadingElement>(null)
   const lastKey = useRef(0)
   const draftsRef = useRef(drafts)
   useEffect(() => {
@@ -106,20 +113,18 @@ export function MailEntryForm({
 
   const names = useMemo(() => new Map(recipients.map((r) => [r.id, r.name])), [recipients])
   const nameOf = (id: string) => names.get(id) ?? 'Entreprise archivée'
-  const selected = recipients.find((r) => r.id === clientId)
 
   const matches = useMemo(() => {
     const terms = fold(query).split(/\s+/).filter(Boolean)
+    if (terms.length === 0) return []
     return recipients.filter((r) => {
       const haystack = fold(`${r.name} ${r.mailbox ?? ''}`)
       return terms.every((term) => haystack.includes(term))
     })
   }, [query, recipients])
   const shown = matches.slice(0, MAX_RESULTS)
-  // L'entreprise choisie reste visible, même hors de la recherche en cours.
-  const options = selected && !shown.some((r) => r.id === selected.id) ? [selected, ...shown] : shown
 
-  const groups = groupEntry(drafts)
+  const cards = entryCards(drafts, clientId)
   const total = drafts.length
   const photoCount = drafts.filter((draft) => draft.photo).length
   const photoBytes = drafts.reduce((sum, draft) => sum + (draft.photo?.file.size ?? 0), 0)
@@ -129,34 +134,27 @@ export function MailEntryForm({
   const errors = state?.fieldErrors ?? {}
 
   const nextKey = () => (lastKey.current += 1)
+  const focusCard = (id: string) =>
+    requestAnimationFrame(() => document.getElementById(`carte-${id}`)?.focus())
 
-  function choose(id: string) {
+  /** Choisit l'entreprise : sa carte devient celle où vont les photos. */
+  function choose(id: string, { focus = true } = {}) {
     setClientId(id)
-    setStatus(`Entreprise choisie : ${nameOf(id)}.`)
+    setQuery('')
+    setStatus(`Entreprise choisie : ${nameOf(id)}. Chaque photo sera un pli pour elle.`)
+    if (focus) focusCard(id)
   }
-
-  const focusKind = () => requestAnimationFrame(() => document.getElementById(`type-${kind}`)?.focus())
 
   function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
     if (event.key !== 'Enter' || event.ctrlKey || event.metaKey) return
-    // Entrée ne soumet pas : elle choisit la première entreprise et passe au type.
+    // Entrée ne soumet pas : elle choisit la première entreprise.
     event.preventDefault()
     const first = matches[0]
-    if (!first) return
-    choose(first.id)
-    setQuery('')
-    focusKind()
+    if (first) choose(first.id)
   }
 
-  function nextCompany() {
-    setQuery('')
-    searchRef.current?.focus()
-  }
-
-  async function addPhotos(files: File[]) {
-    if (!clientId || files.length === 0) return
-    // Pour l'entreprise et le type choisis à cet instant, même s'ils changent pendant la préparation.
-    const target = { clientId, kind }
+  async function addPhotos(target: string, files: File[]) {
+    if (files.length === 0) return
     setFailures([])
     setPreparing(files.length)
     const refused: string[] = []
@@ -167,9 +165,9 @@ export function MailEntryForm({
       const result = await preparePhoto(file, `enveloppe-${key}.jpg`)
       setPreparing(files.length - index - 1)
       if (result.page) {
-        const draft: Draft = { key, ...target, sender: '', photo: result.page }
+        const draft: Draft = { key, clientId: target, kind: DEFAULT_ENTRY_KIND, sender: '', photo: result.page }
         added += 1
-        // Chaque pli paraît au récapitulatif dès que sa photo est prête.
+        // Chaque pli paraît sur la carte dès que sa photo est prête.
         setDrafts((current) => [...current, draft])
       } else {
         refused.push(result.failure)
@@ -179,44 +177,43 @@ export function MailEntryForm({
     setStatus(
       added === 0
         ? 'Aucune photo n’a pu être préparée.'
-        : `Ajouté pour ${nameOf(target.clientId)} : ${kindPhrase(target.kind, added)}, une photo par pli.`,
+        : `${nameOf(target)} : ${plural(added, 'pli ajouté', 'plis ajoutés')}, en lettre. Corrigez le type sur la carte si besoin.`,
     )
   }
 
-  function addWithoutPhoto() {
-    if (!clientId) return
-    setDrafts((current) => [...current, { key: nextKey(), clientId, kind, sender: '', photo: null }])
-    setStatus(`Ajouté pour ${nameOf(clientId)} : ${kindPhrase(kind, 1)}, sans photo.`)
+  function addWithoutPhoto(target: string) {
+    setDrafts((current) => [...current, { key: nextKey(), clientId: target, kind: DEFAULT_ENTRY_KIND, sender: '', photo: null }])
+    setStatus(`${nameOf(target)} : un pli sans photo ajouté, en lettre.`)
   }
 
-  /** Retire des plis du récapitulatif : un seul, ou tous ceux d'une entreprise. */
-  function remove(removed: Draft[], message: string) {
+  /** Retire des plis : un seul, ou tous ceux d'une entreprise. */
+  function remove(removed: Draft[], message: string, focusOn: string) {
     const keys = new Set(removed.map((draft) => draft.key))
     for (const draft of removed) if (draft.photo?.preview) URL.revokeObjectURL(draft.photo.preview)
     setDrafts((current) => current.filter((other) => !keys.has(other.key)))
     setStatus(message)
-    // Le bouton disparaît avec son pli : le focus revient au récapitulatif.
-    recapRef.current?.focus()
+    // Le bouton disparaît avec son pli : le focus revient à la carte, ou à la recherche.
+    requestAnimationFrame(() => (document.getElementById(focusOn) ?? searchRef.current)?.focus())
   }
 
-  function changeSender(key: number, sender: string) {
-    setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, sender } : draft)))
-  }
+  const update = (key: number, change: Partial<Pick<Draft, 'kind' | 'sender'>>) =>
+    setDrafts((current) => current.map((draft) => (draft.key === key ? { ...draft, ...change } : draft)))
 
-  function onDrop(event: DragEvent<HTMLElement>) {
+  function onDrop(event: DragEvent<HTMLElement>, target: string) {
     event.preventDefault()
     setDragging(false)
-    if (!clientId || preparing > 0) return
-    void addPhotos([...event.dataTransfer.files].filter((file) => file.type.startsWith('image/')))
+    if (preparing > 0) return
+    setClientId(target)
+    void addPhotos(target, [...event.dataTransfer.files].filter((file) => file.type.startsWith('image/')))
   }
 
   function submit() {
     if (blocked) return
-    // Dans l'ordre du récapitulatif : c'est celui de l'enregistrement, donc du
-    // rang de chaque pli dans sa journée (ADR 057).
+    // Dans l'ordre des cartes : c'est celui de l'enregistrement, donc du rang
+    // de chaque pli dans sa journée (ADR 057).
     const data = new FormData()
     data.set('receivedAt', receivedAt)
-    for (const draft of groups.flatMap((group) => group.items)) {
+    for (const draft of cards.flatMap((card) => card.items)) {
       data.append(entryFieldName(draft.key, 'client'), draft.clientId)
       data.append(entryFieldName(draft.key, 'kind'), draft.kind)
       data.append(entryFieldName(draft.key, 'sender'), draft.sender)
@@ -234,13 +231,13 @@ export function MailEntryForm({
 
   // Libellés du résumé d'erreurs : chaque pli par son entreprise et son rang.
   const labels: Record<string, string> = { receivedAt: 'Reçu le' }
-  for (const group of groups) {
-    group.items.forEach((draft, index) => {
-      const subject = `${nameOf(group.clientId)} — pli ${index + 1} (${mailKindLabels[draft.kind].toLowerCase()})`
+  for (const card of cards) {
+    card.items.forEach((draft, index) => {
+      const subject = `${nameOf(card.clientId)} — pli ${index + 1}`
       labels[entryFieldName(draft.key, 'sender')] = `${subject}, expéditeur`
       labels[entryFieldName(draft.key, 'photo')] = `${subject}, photo`
       labels[entryFieldName(draft.key, 'client')] = subject
-      labels[entryFieldName(draft.key, 'kind')] = subject
+      labels[entryFieldName(draft.key, 'kind')] = `${subject}, type`
     })
   }
 
@@ -249,25 +246,80 @@ export function MailEntryForm({
     : preparing > 0
       ? 'Préparation des photos…'
       : total <= 1
-        ? 'Enregistrer le pli dans la tournée'
-        : `Enregistrer les ${total} plis dans la tournée`
+        ? 'Enregistrer le pli'
+        : `Enregistrer les ${total} plis`
+
+  /** Boutons de photo : l'appareil (téléphone, tablette), des fichiers, ou un pli sans photo. */
+  const photoButtons = (target: string, compact = false) => {
+    const name = nameOf(target)
+    const pick = (capture: boolean) => (
+      <input
+        type="file"
+        accept="image/*"
+        multiple={!capture}
+        capture={capture ? 'environment' : undefined}
+        disabled={preparing > 0}
+        className="sr-only"
+        onClick={() => setClientId(target)}
+        onChange={(event) => {
+          const picked = [...(event.currentTarget.files ?? [])]
+          // Vidé aussitôt : la même photo peut être reprise.
+          event.currentTarget.value = ''
+          setClientId(target)
+          setQuery('')
+          void addPhotos(target, picked)
+        }}
+      />
+    )
+    return (
+      <div className="flex flex-wrap gap-2">
+        {/* Téléphone ou tablette : l'appareil photo s'ouvre directement, un pli après l'autre. */}
+        <label className={`${cameraClass} hidden pointer-coarse:inline-flex`}>
+          <CameraIcon size={20} />
+          Ajouter un courrier
+          <span className="sr-only"> pour {name}</span>
+          {pick(true)}
+        </label>
+        {!compact && (
+          <>
+            <label className={actionClass}>
+              {preparing > 0 ? 'Préparation…' : 'Choisir des photos'}
+              <span className="sr-only"> pour {name}</span>
+              {pick(false)}
+            </label>
+            <button
+              type="button"
+              onClick={() => addWithoutPhoto(target)}
+              // Pendant la préparation, un pli sans photo s'intercalerait entre les photos.
+              disabled={preparing > 0}
+              className={actionClass}
+            >
+              + Pli sans photo<span className="sr-only"> pour {name}</span>
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     // Pas de bouton d'envoi : `Entrée` dans un champ (un expéditeur choisi dans
     // la liste, l'heure) n'enregistre jamais toute la saisie par mégarde. On
     // enregistre par le bouton, ou par `Ctrl`+`Entrée`.
-    <form onSubmit={(event) => event.preventDefault()} onKeyDown={onFormKeyDown} className="flex flex-col gap-6">
+    <form onSubmit={(event) => event.preventDefault()} onKeyDown={onFormKeyDown} className="flex max-w-3xl flex-col gap-5">
       <ErrorSummary errors={state?.fieldErrors} labels={labels} message={state?.error} />
+      <p className="text-xs text-muted-foreground">Les champs marqués * sont obligatoires.</p>
 
       <div className="flex flex-wrap items-end gap-x-4 gap-y-1">
         <div>
           <label htmlFor="receivedAt" className="block text-sm font-medium text-foreground">
-            Reçu le
+            Reçu le<span aria-hidden="true"> *</span>
           </label>
           <input
             id="receivedAt"
             type="datetime-local"
             required
+            aria-required
             value={receivedAt}
             onChange={(event) => setReceivedAt(event.target.value)}
             aria-invalid={errors.receivedAt ? true : undefined}
@@ -285,305 +337,237 @@ export function MailEntryForm({
         )}
       </div>
 
-      {/* `grid-cols-1` et `min-w-0` : un nom d'entreprise long ne fait pas défiler la page de côté. */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2 lg:items-start">
-        <div className="flex min-w-0 flex-col gap-6">
-          {/* 1. Entreprise */}
-          <fieldset className="flex min-w-0 flex-col gap-2">
-            <legend className="text-base font-semibold tracking-tight">1. Entreprise</legend>
-            <label htmlFor="recherche" className="text-sm font-medium text-foreground">
-              Rechercher : nom ou numéro de boîte
-            </label>
-            <input
-              ref={searchRef}
-              id="recherche"
-              type="search"
-              autoFocus
-              autoComplete="off"
-              enterKeyHint="go"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={onSearchKeyDown}
-              aria-describedby="recherche-aide"
-              aria-controls="entreprises"
-              className={`${fieldClass} w-full`}
-            />
-            <p id="recherche-aide" className="text-xs text-muted-foreground">
-              <kbd>Entrée</kbd> choisit la première entreprise de la liste. Les domiciliés d’abord.
-            </p>
-            <div id="entreprises" role="radiogroup" aria-label="Entreprise du pli" className="flex flex-col gap-2">
-              {options.map((recipient) => (
-                <label key={recipient.id} className={choiceClass}>
-                  <input
-                    type="radio"
-                    name="entreprise"
-                    value={recipient.id}
-                    checked={recipient.id === clientId}
-                    onChange={() => choose(recipient.id)}
-                    className="size-4 shrink-0 accent-primary"
-                  />
-                  <span className="min-w-0 flex-1 truncate">{recipient.name}</span>
-                  {recipient.mailbox && (
-                    <span className="shrink-0 text-xs text-muted-foreground tabular">{recipient.mailbox}</span>
-                  )}
-                  {recipient.domiciled && (
-                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                      Domicilié
-                    </span>
-                  )}
-                </label>
-              ))}
-            </div>
-            <p className="text-xs text-muted-foreground" aria-live="polite">
-              {matches.length === 0
-                ? `Aucune entreprise ne correspond à « ${query} ». Vérifiez l’orthographe, ou cherchez par numéro de boîte.`
-                : matches.length > MAX_RESULTS
-                  ? `${plural(matches.length - MAX_RESULTS, 'autre entreprise')} : précisez la recherche.`
-                  : ''}
-            </p>
-          </fieldset>
-
-          {/* 2. Type */}
-          <fieldset className="flex min-w-0 flex-col gap-2">
-            <legend className="text-base font-semibold tracking-tight">2. Type de pli</legend>
-            {/* Quatre de front sur tablette ; deux sur deux dans la colonne de l'ordinateur. */}
-            <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-2">
-              {mailKinds.map((option) => {
-                const Icon = mailKindIcons[option]
-                return (
-                  <label key={option} className={choiceClass}>
-                    <input
-                      id={`type-${option}`}
-                      type="radio"
-                      name="type"
-                      value={option}
-                      checked={kind === option}
-                      onChange={() => setKind(option)}
-                      className="sr-only"
-                    />
-                    <Icon size={20} className="shrink-0 text-primary" />
-                    {mailKindLabels[option]}
-                  </label>
-                )
-              })}
-            </div>
-          </fieldset>
-
-          {/* 3. Photos */}
-          <fieldset
-            className={`flex min-w-0 flex-col gap-3 rounded-lg border border-dashed px-4 py-3 transition-colors duration-150 ease-out ${dragging ? 'border-accent bg-accent/5' : 'border-border'}`}
-            onDragOver={(event) => {
-              if (!clientId) return
-              event.preventDefault()
-              setDragging(true)
-            }}
-            onDragLeave={() => setDragging(false)}
-            onDrop={onDrop}
-          >
-            <legend className="px-1 text-base font-semibold tracking-tight">3. Photos des enveloppes</legend>
-            <p id="photos-aide" className="text-sm text-muted-foreground">
-              {selected ? (
-                <>
-                  Pour <span className="font-medium text-foreground">{selected.name}</span>,{' '}
-                  {mailKindLabels[kind].toLowerCase()} : <strong className="font-medium text-foreground">chaque photo est un pli</strong>.
-                  Plusieurs photos d’un coup, ou déposez-les ici.
-                </>
-              ) : (
-                'Choisissez d’abord l’entreprise (étape 1) : chaque photo sera un pli pour elle.'
-              )}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {/* Téléphone ou tablette : l'appareil photo s'ouvre directement, un pli après l'autre. */}
-              <label className={`${actionClass} hidden pointer-coarse:inline-flex`}>
-                <CameraIcon size={20} />
-                {drafts.some((draft) => draft.clientId === clientId && draft.kind === kind && draft.photo)
-                  ? 'Photographier le pli suivant'
-                  : 'Prendre une photo'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  disabled={!clientId || preparing > 0}
-                  aria-describedby="photos-aide"
-                  className="sr-only"
-                  onChange={(event) => {
-                    const picked = [...(event.currentTarget.files ?? [])]
-                    // Vidé aussitôt : la même photo peut être reprise.
-                    event.currentTarget.value = ''
-                    void addPhotos(picked)
-                  }}
-                />
-              </label>
-              <label className={actionClass}>
-                {preparing > 0 ? 'Préparation…' : 'Choisir des photos'}
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  disabled={!clientId || preparing > 0}
-                  aria-describedby="photos-aide"
-                  className="sr-only"
-                  onChange={(event) => {
-                    const picked = [...(event.currentTarget.files ?? [])]
-                    event.currentTarget.value = ''
-                    void addPhotos(picked)
-                  }}
-                />
-              </label>
+      {/* L'entreprise : chercher, puis photographier depuis sa ligne. */}
+      <div className="flex min-w-0 flex-col gap-2">
+        <label htmlFor="recherche" className="text-sm font-medium text-foreground">
+          Entreprise : nom ou numéro de boîte
+        </label>
+        <input
+          ref={searchRef}
+          id="recherche"
+          type="search"
+          autoFocus
+          autoComplete="off"
+          enterKeyHint="go"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          onKeyDown={onSearchKeyDown}
+          aria-describedby="recherche-aide"
+          aria-controls="entreprises"
+          className={`${fieldClass} w-full`}
+        />
+        <p id="recherche-aide" className="text-xs text-muted-foreground">
+          <kbd>Entrée</kbd> choisit la première entreprise. Les domiciliés d’abord.
+        </p>
+        <ul id="entreprises" aria-label="Entreprises trouvées" className="flex flex-col gap-2">
+          {shown.map((recipient) => (
+            <li
+              key={recipient.id}
+              className="flex min-w-0 flex-wrap items-center gap-2 rounded-md border border-border bg-white px-3 py-1.5"
+            >
               <button
                 type="button"
-                onClick={addWithoutPhoto}
-                // Pendant la préparation, un pli sans photo s'intercalerait entre les photos.
-                disabled={!clientId || preparing > 0}
-                aria-describedby="sans-photo-aide"
-                className={actionClass}
+                onClick={() => choose(recipient.id)}
+                className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-sm text-left text-sm hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:min-h-9"
               >
-                + Pli sans photo
+                <span className="min-w-0 flex-1 truncate font-medium">{recipient.name}</span>
+                {recipient.mailbox && (
+                  <span className="shrink-0 text-xs text-muted-foreground tabular">{recipient.mailbox}</span>
+                )}
+                {recipient.domiciled && (
+                  <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">Domicilié</span>
+                )}
               </button>
-            </div>
-            <p id="sans-photo-aide" className="text-xs text-muted-foreground">
-              Sans photo : appareil absent, enveloppe abîmée. La photo s’ajoute ensuite depuis la tournée.
-            </p>
-            {failures.length > 0 && (
-              <ul role="alert" className="list-disc pl-5 text-xs text-destructive">
-                {failures.map((failure, index) => (
-                  <li key={`${index}-${failure}`}>{failure}</li>
-                ))}
-              </ul>
-            )}
-            {selected && (
-              <button
-                type="button"
-                onClick={nextCompany}
-                className="self-start text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring min-h-11"
-              >
-                Entreprise suivante
-              </button>
-            )}
-          </fieldset>
-          <p aria-live="polite" className="-mt-3 min-h-5 text-sm text-foreground">
-            {status}
-          </p>
-        </div>
+              {/* Un geste : l'entreprise est choisie et l'appareil s'ouvre. */}
+              {photoButtons(recipient.id, true)}
+            </li>
+          ))}
+        </ul>
+        <p className="text-xs text-muted-foreground" aria-live="polite">
+          {query.trim() === ''
+            ? ''
+            : matches.length === 0
+              ? `Aucune entreprise ne correspond à « ${query} ». Vérifiez l’orthographe, ou cherchez par numéro de boîte.`
+              : matches.length > MAX_RESULTS
+                ? `${plural(matches.length - MAX_RESULTS, 'autre entreprise')} : précisez la recherche.`
+                : ''}
+        </p>
+      </div>
 
-        {/* 4. Récapitulatif */}
-        <section aria-labelledby="recapitulatif" className="flex min-w-0 flex-col gap-3">
-          <h2
-            id="recapitulatif"
-            ref={recapRef}
-            tabIndex={-1}
-            className="text-base font-semibold tracking-tight focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-          >
-            4. Récapitulatif
-          </h2>
-          {groups.length === 0 ? (
-            <p className="rounded-lg border border-dashed border-border bg-white px-4 py-6 text-sm text-muted-foreground">
-              Aucun pli pour l’instant. Choisissez une entreprise et un type, puis prenez ou déposez les photos
-              des enveloppes : chaque photo devient un pli.
-            </p>
-          ) : (
-            groups.map((group) => {
-              const name = nameOf(group.clientId)
-              const listId = senderListId(group.clientId)
-              return (
-                <div key={group.clientId} className="rounded-lg border border-border bg-white">
-                  <div className="flex flex-wrap items-center justify-between gap-x-3 border-b border-border px-4 py-1">
-                    <h3 className="py-1 text-sm font-semibold">
-                      {name} : <span className="font-normal tabular">{group.phrase}</span>
-                    </h3>
-                    {group.items.length > 1 && (
+      <p aria-live="polite" className="min-h-5 text-sm text-foreground">
+        {status}
+      </p>
+      {failures.length > 0 && (
+        <ul role="alert" className="list-disc pl-5 text-xs text-destructive">
+          {failures.map((failure, index) => (
+            <li key={`${index}-${failure}`}>{failure}</li>
+          ))}
+        </ul>
+      )}
+
+      {/* Les plis, entreprise par entreprise, dans l'ordre de la saisie. */}
+      {cards.length === 0 ? (
+        <p className="rounded-lg border border-dashed border-border bg-white px-4 py-6 text-sm text-muted-foreground">
+          Aucun pli pour l’instant. Cherchez une entreprise, puis photographiez ses enveloppes : chaque photo devient
+          un pli, en lettre par défaut.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-4" aria-label="Plis saisis">
+          {cards.map((card) => {
+            const name = nameOf(card.clientId)
+            const listId = senderListId(card.clientId)
+            const active = card.clientId === clientId
+            return (
+              <li key={card.clientId}>
+                <section
+                  id={`carte-${card.clientId}`}
+                  tabIndex={-1}
+                  aria-label={`${name} : ${card.phrase || 'aucun pli'}`}
+                  className={`flex flex-col rounded-lg border bg-white transition-colors duration-150 ease-out focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+                    active ? (dragging ? 'border-accent bg-accent/5' : 'border-primary') : 'border-border'
+                  }`}
+                  onDragOver={(event) => {
+                    event.preventDefault()
+                    setDragging(true)
+                  }}
+                  onDragLeave={() => setDragging(false)}
+                  onDrop={(event) => onDrop(event, card.clientId)}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-border px-4 py-2">
+                    <h2 className="min-w-0 text-sm font-semibold">
+                      <span className="break-words">{name}</span>
+                      {card.phrase && <span className="font-normal tabular"> : {card.phrase}</span>}
+                    </h2>
+                    {card.items.length > 1 && (
                       <button
                         type="button"
                         onClick={() =>
-                          remove(group.items, `Les ${group.items.length} plis de ${name} sont retirés du récapitulatif.`)
+                          remove(card.items, `Les ${card.items.length} plis de ${name} sont retirés.`, 'recherche')
                         }
-                        className="min-h-11 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                        className="min-h-11 rounded-md px-2 text-xs font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:min-h-8"
                       >
-                        Retirer les {group.items.length} plis
-                        <span className="sr-only"> de {name}</span>
+                        Retirer les {card.items.length} plis<span className="sr-only"> de {name}</span>
                       </button>
                     )}
                   </div>
-                  <SenderDatalist id={listId} senders={suggestionsFor(suggestions, group.clientId)} />
-                  <ul className="divide-y divide-border">
-                    {group.items.map((draft, index) => {
-                      const subject = `pli ${index + 1} (${mailKindLabels[draft.kind].toLowerCase()}) — ${name}`
-                      const senderField = entryFieldName(draft.key, 'sender')
-                      const photoField = entryFieldName(draft.key, 'photo')
-                      const itemErrors = [
-                        errors[photoField],
-                        errors[entryFieldName(draft.key, 'client')],
-                        errors[entryFieldName(draft.key, 'kind')],
-                      ].filter(Boolean)
-                      return (
-                        // Cible des liens du résumé d'erreurs pour la photo d'un pli : focalisable, focus visible.
-                        <li
-                          key={draft.key}
-                          id={photoField}
-                          tabIndex={-1}
-                          className="flex gap-3 px-4 py-3 focus:outline-2 focus:-outline-offset-2 focus:outline-ring"
-                        >
-                          {draft.photo?.preview ? (
-                            // eslint-disable-next-line @next/next/no-img-element -- aperçu local du navigateur, avant tout envoi
-                            <img
-                              src={draft.photo.preview}
-                              alt={`Enveloppe du ${subject}`}
-                              className="h-16 w-12 shrink-0 rounded-sm border border-border bg-muted object-cover"
-                            />
-                          ) : (
-                            <span className="flex h-16 w-12 shrink-0 items-center justify-center rounded-sm bg-muted px-1 text-center text-[11px] leading-tight text-muted-foreground">
-                              Sans photo
-                            </span>
-                          )}
-                          <div className="flex min-w-0 flex-1 flex-col gap-1">
-                            <div className="flex items-center justify-between gap-2">
-                              <p className="text-sm font-medium">
-                                Pli {index + 1} · {mailKindLabels[draft.kind]}
-                              </p>
-                              <button
-                                type="button"
-                                onClick={() => remove([draft], `Le ${subject} est retiré du récapitulatif.`)}
-                                aria-label={`Retirer le ${subject}`}
-                                className="min-h-11 shrink-0 rounded-md px-3 text-sm font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                              >
-                                Retirer
-                              </button>
-                            </div>
-                            <label htmlFor={senderField} className="text-xs font-medium text-foreground">
-                              Expéditeur <span className="font-normal text-muted-foreground">(facultatif)</span>
-                            </label>
-                            <input
-                              id={senderField}
-                              list={listId}
-                              value={draft.sender}
-                              onChange={(event) => changeSender(draft.key, event.target.value)}
-                              autoComplete="off"
-                              maxLength={MAX_SENDER_LENGTH}
-                              aria-invalid={errors[senderField] ? true : undefined}
-                              aria-describedby={errors[senderField] ? `${senderField}-error` : undefined}
-                              className={`${fieldClass} w-full`}
-                            />
-                            {errors[senderField] && (
-                              <p id={`${senderField}-error`} className="text-xs text-destructive">
-                                {errors[senderField]}
-                              </p>
+                  <SenderDatalist id={listId} senders={suggestionsFor(suggestions, card.clientId)} />
+                  {card.items.length === 0 ? (
+                    <p className="px-4 py-3 text-sm text-muted-foreground">
+                      Photographiez ou déposez les enveloppes : une photo, un pli.
+                    </p>
+                  ) : (
+                    <ol className="divide-y divide-border">
+                      {card.items.map((draft, index) => {
+                        const subject = `pli ${index + 1} de ${name}`
+                        const senderField = entryFieldName(draft.key, 'sender')
+                        const photoField = entryFieldName(draft.key, 'photo')
+                        const kindField = entryFieldName(draft.key, 'kind')
+                        const itemErrors = [errors[photoField], errors[entryFieldName(draft.key, 'client')], errors[kindField]].filter(Boolean)
+                        return (
+                          // Cible des liens du résumé d'erreurs pour la photo d'un pli : focalisable, focus visible.
+                          <li
+                            key={draft.key}
+                            id={photoField}
+                            tabIndex={-1}
+                            className="flex gap-3 px-4 py-3 focus:outline-2 focus:-outline-offset-2 focus:outline-ring"
+                          >
+                            {draft.photo?.preview ? (
+                              // eslint-disable-next-line @next/next/no-img-element -- aperçu local du navigateur, avant tout envoi
+                              <img
+                                src={draft.photo.preview}
+                                alt={`Enveloppe du ${subject}`}
+                                className="h-20 w-14 shrink-0 rounded-sm border border-border bg-muted object-cover"
+                              />
+                            ) : (
+                              <span className="flex h-20 w-14 shrink-0 items-center justify-center rounded-sm bg-muted px-1 text-center text-[11px] leading-tight text-muted-foreground">
+                                Sans photo
+                              </span>
                             )}
-                            {itemErrors.map((error) => (
-                              <p key={error} className="text-xs text-destructive">
-                                {error}
-                              </p>
-                            ))}
-                          </div>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                </div>
-              )
-            })
-          )}
-        </section>
-      </div>
+                            <div className="flex min-w-0 flex-1 flex-col gap-2">
+                              <div className="flex items-center justify-between gap-2">
+                                <p className="text-sm font-medium">Pli {index + 1}</p>
+                                <button
+                                  type="button"
+                                  onClick={() => remove([draft], `Le ${subject} est retiré.`, `carte-${card.clientId}`)}
+                                  aria-label={`Retirer le ${subject}`}
+                                  className="min-h-11 shrink-0 rounded-md px-3 text-sm font-medium text-destructive hover:bg-destructive/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring sm:min-h-8"
+                                >
+                                  Retirer
+                                </button>
+                              </div>
+                              <fieldset id={kindField} className="flex min-w-0 flex-col gap-1">
+                                <legend className="text-xs font-medium text-foreground">Type</legend>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {mailKinds.map((option) => {
+                                    const Icon = mailKindIcons[option]
+                                    return (
+                                      <label key={option} className={kindClass}>
+                                        <input
+                                          type="radio"
+                                          name={`type-${draft.key}`}
+                                          value={option}
+                                          checked={draft.kind === option}
+                                          onChange={() => update(draft.key, { kind: option })}
+                                          className="sr-only"
+                                        />
+                                        <Icon size={16} className="shrink-0" />
+                                        {mailKindLabels[option]}
+                                      </label>
+                                    )
+                                  })}
+                                </div>
+                              </fieldset>
+                              <div className="flex min-w-0 flex-col gap-1">
+                                <label htmlFor={senderField} className="text-xs font-medium text-foreground">
+                                  Expéditeur <span className="font-normal text-muted-foreground">(facultatif)</span>
+                                </label>
+                                <input
+                                  id={senderField}
+                                  list={listId}
+                                  value={draft.sender}
+                                  onChange={(event) => update(draft.key, { sender: event.target.value })}
+                                  autoComplete="off"
+                                  maxLength={MAX_SENDER_LENGTH}
+                                  aria-invalid={errors[senderField] ? true : undefined}
+                                  aria-describedby={errors[senderField] ? `${senderField}-error` : undefined}
+                                  className={`${fieldClass} w-full`}
+                                />
+                                {errors[senderField] && (
+                                  <p id={`${senderField}-error`} className="text-xs text-destructive">
+                                    {errors[senderField]}
+                                  </p>
+                                )}
+                              </div>
+                              {itemErrors.map((error) => (
+                                <p key={error} className="text-xs text-destructive">
+                                  {error}
+                                </p>
+                              ))}
+                            </div>
+                          </li>
+                        )
+                      })}
+                    </ol>
+                  )}
+                  <div className="flex flex-col gap-2 border-t border-border px-4 py-3">
+                    {active ? (
+                      photoButtons(card.clientId)
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => choose(card.clientId)}
+                        className={`${actionClass} self-start`}
+                      >
+                        Ajouter des plis<span className="sr-only"> pour {name}</span>
+                      </button>
+                    )}
+                  </div>
+                </section>
+              </li>
+            )
+          })}
+        </ul>
+      )}
 
       {/* Toujours à portée, au pouce comme au clavier. */}
       <div className="sticky bottom-0 z-20 -mx-1 flex flex-col gap-2 rounded-lg border border-border bg-white px-4 py-3 shadow-sm">
@@ -598,7 +582,7 @@ export function MailEntryForm({
           <p className="text-sm tabular">
             {total === 0
               ? 'Aucun pli saisi.'
-              : `${plural(total, 'pli', 'plis')} pour ${plural(groups.length, 'entreprise')}, ${
+              : `${plural(total, 'pli', 'plis')} pour ${plural(cards.filter((card) => card.items.length > 0).length, 'entreprise')}, ${
                   total === 1
                     ? photoCount === 1
                       ? 'avec photo'

@@ -6,6 +6,8 @@ import type { InvitationLink } from '../../lib/auth/invitation.ts'
 import { appUrl } from '../../lib/courriel.ts'
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
+import { documentKindsForAnswers } from '../clients/pieces-queries.ts'
+import { describeKinds } from '../clients/pieces-regles.ts'
 import { proposals } from '../facturation/schema-devis.ts'
 import { bookings } from '../reservations/schema.ts'
 import { resources } from '../ressources/schema.ts'
@@ -107,12 +109,19 @@ export type Requester = { email: string; name: string | null; company: string | 
 export type RequesterAccount = { kind: 'invite'; link: InvitationLink } | { kind: 'existing' }
 
 /**
- * Accusé de réception d'une demande déposée sur la page publique par un
- * visiteur (ADR 068), à l'adresse qu'il a donnée. Seulement pour une demande
- * sans entreprise : une personne connectée à son espace y voit déjà la sienne.
+ * Accusé de réception d'une demande déposée sur la page publique (ADR 068),
+ * à l'adresse que le demandeur a donnée — **toujours**, qu'il soit connecté à
+ * son espace ou non (recette du 17/11, ADR 075). Avant, une demande rattachée
+ * à une entreprise (demandeur connecté, membre de l'équipe compris s'il a son
+ * espace client) ne valait rien au demandeur : c'était le « pas de courriel »
+ * de la recette.
  *
- * `prepareAccount` décide de la suite et prépare le lien au besoin ; sans
- * elle, ou si elle échoue, l'accusé part seul.
+ * - demande sans entreprise : `prepareAccount` décide de la suite et prépare
+ *   le lien au besoin ; sans elle, ou si elle échoue, l'accusé part seul ;
+ * - demande rattachée à une entreprise : le lien de son espace (`espace`),
+ *   sans création de compte ;
+ * - domiciliation : les pièces justificatives à préparer (`pieces`), selon la
+ *   situation de la société et la liste du centre.
  */
 export function notifyRequestReceived(
   request: SiteRequestRef,
@@ -143,7 +152,7 @@ export function notifyRequestReceived(
             .from(bookings)
             .innerJoin(resources, eq(resources.id, bookings.resourceId))
             .where(and(eq(bookings.tenantId, tenantId), eq(bookings.id, request.bookingId)))
-          if (!row || row.kind !== 'booking' || row.status === 'cancelled' || row.clientId) return undefined
+          if (!row || row.kind !== 'booking' || row.status === 'cancelled') return undefined
           if (!row.email || row.anonymizedAt) return undefined
           const [proposal] = await tx
             .select({ number: proposals.number, company: proposals.requesterCompany })
@@ -152,9 +161,12 @@ export function notifyRequestReceived(
             .limit(1)
           return {
             related: { type: 'booking' as const, id: row.id },
+            clientId: row.clientId,
             requester: { email: row.email, name: row.name, company: proposal?.company ?? null },
             demande: `${row.resourceName}, ${formatSlot(row.startsAt, row.endsAt, timeZone)}`,
             numero: proposal?.number ?? null,
+            espace: '/compte/reservations',
+            pieces: null,
             timeZone,
           }
         }
@@ -168,15 +180,21 @@ export function notifyRequestReceived(
             email: proposals.requesterEmail,
             name: proposals.requesterName,
             company: proposals.requesterCompany,
+            answers: proposals.answers,
           })
           .from(proposals)
           .where(and(eq(proposals.tenantId, tenantId), eq(proposals.id, request.proposalId)))
-        if (!row || row.status === 'cancelled' || row.clientId || !row.email) return undefined
+        if (!row || row.status === 'cancelled' || !row.email) return undefined
+        const domiciliation = row.product === 'domiciliation'
         return {
           related: { type: 'proposal' as const, id: row.id },
+          clientId: row.clientId,
           requester: { email: row.email, name: row.name, company: row.company },
-          demande: row.product === 'domiciliation' && row.company ? `domiciliation de ${row.company}` : 'domiciliation',
+          demande: domiciliation && row.company ? `domiciliation de ${row.company}` : 'domiciliation',
           numero: row.number,
+          espace: domiciliation ? '/compte/pieces' : '/compte',
+          // Les pièces à préparer, selon la situation de la société (ADR 075).
+          pieces: domiciliation ? describeKinds(await documentKindsForAnswers(tx, row.answers)) || null : null,
           timeZone,
         }
       },
@@ -184,11 +202,14 @@ export function notifyRequestReceived(
     )
     if (!loaded) return null
 
-    const account = await options.prepareAccount?.(loaded.requester)
+    // Rattachée à une entreprise, la demande est déjà dans son espace : ni
+    // compte à créer, ni lien d'invitation, le lien de l'espace.
+    const account = loaded.clientId ? undefined : await options.prepareAccount?.(loaded.requester)
     const link = account?.kind === 'invite' ? account.link : undefined
     return notify(
       {
         event: 'request_received',
+        clientId: loaded.clientId,
         related: loaded.related,
         recipients: { addresses: [{ email: loaded.requester.email }] },
         values: {
@@ -200,6 +221,8 @@ export function notifyRequestReceived(
           // Le lien de connexion ne sert qu'à qui a déjà un compte : sinon,
           // il mènerait à une page où l'on ne peut plus en créer.
           connexion: account?.kind === 'existing' ? appUrl('/auth/connexion') : null,
+          espace: loaded.clientId ? appUrl(loaded.espace) : null,
+          pieces: loaded.pieces,
         },
       },
       options,

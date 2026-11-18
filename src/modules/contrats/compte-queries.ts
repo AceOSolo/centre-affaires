@@ -1,5 +1,6 @@
 import { and, asc, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm'
 
+import { currentTenantId } from '../../lib/tenant.ts'
 import { isUuid } from '../../lib/uuid.ts'
 import { inClientSpace, type ClientAccount } from '../clients/comptes.ts'
 import type { ResourceType } from '../ressources/schema.ts'
@@ -288,4 +289,101 @@ export async function findContractDocumentForAccounts(
   )
   if (!row) return undefined
   return { ...row, snapshot: readContractSnapshot(row.snapshot) ?? null }
+}
+
+/* ------------------------------------------------------------------------ */
+/* Frais fixes, pour « Mes dépenses » (ADR 081)                              */
+/* ------------------------------------------------------------------------ */
+
+export type ClientContractFees = {
+  contractId: string
+  clientId: string
+  reference: string
+  contractType: ContractType
+  billingPeriod: BillingPeriod
+  currency: string
+  startsOn: string
+  /** Dernier jour : le plus proche du terme et de la résiliation ; nul : sans terme. */
+  lastDay: string | null
+  /** Versions de prix HT par période (`contract_price_versions`, avenants signés compris). */
+  prices: { startsOn: string; endsOn: string | null; amountCents: number }[]
+}
+
+/**
+ * Contrats des entreprises du compte qui ont couru entre `fromDay` et
+ * `toDay` (jours du centre, bornes comprises), avec leurs versions de prix :
+ * les frais fixes de « Mes dépenses » (ADR 081). Comme ailleurs dans
+ * l'espace : jamais un brouillon ni un contrat archivé, et chaque requête
+ * filtre elle-même sur le centre et les entreprises du compte.
+ */
+export async function listContractFeesForAccounts(
+  accounts: readonly ClientAccount[],
+  fromDay: string,
+  toDay: string,
+): Promise<ClientContractFees[]> {
+  if (accounts.length === 0) return []
+  const tenantId = currentTenantId()
+  const ids = sql.join(
+    accounts.map((account) => sql`${account.clientId}`),
+    sql`, `,
+  )
+
+  return inClientSpace(accounts, async (tx) => {
+    const [heads] = (await tx.execute(sql`
+      select id, client_id, reference, contract_type, billing_period, currency,
+             cast(starts_on as char) as starts_on, cast(last_day as char) as last_day
+        from (select k.id, k.client_id, k.reference, k.contract_type, k.billing_period, k.currency, k.starts_on,
+                     case when k.ends_on is null then k.terminated_on
+                          when k.terminated_on is null then k.ends_on
+                          else least(k.ends_on, k.terminated_on) end as last_day
+                from contracts as k
+               where k.tenant_id = ${tenantId}
+                 and k.client_id in (${ids})
+                 and k.status in ('active', 'terminated')
+                 and k.deleted_at is null) as c
+       where c.starts_on <= cast(${toDay} as date)
+         and (c.last_day is null or c.last_day >= cast(${fromDay} as date))
+       order by c.starts_on, c.reference`)) as unknown as [
+      {
+        id: string
+        client_id: string
+        reference: string
+        contract_type: ContractType
+        billing_period: BillingPeriod
+        currency: string
+        starts_on: string
+        last_day: string | null
+      }[],
+    ]
+    if (heads.length === 0) return []
+    const contractIds = sql.join(
+      heads.map((head) => sql`${head.id}`),
+      sql`, `,
+    )
+    const [versions] = (await tx.execute(sql`
+      select v.contract_id, cast(v.starts_on as char) as starts_on, cast(v.ends_on as char) as ends_on, v.amount_cents
+        from contract_price_versions as v
+       where v.tenant_id = ${tenantId} and v.contract_id in (${contractIds})
+       order by v.starts_on`)) as unknown as [
+      { contract_id: string; starts_on: string; ends_on: string | null; amount_cents: number }[],
+    ]
+
+    return heads.map((head) => ({
+      contractId: head.id,
+      clientId: head.client_id,
+      reference: head.reference,
+      contractType: head.contract_type,
+      billingPeriod: head.billing_period,
+      currency: head.currency,
+      startsOn: head.starts_on,
+      lastDay: head.last_day,
+      prices: versions
+        .filter((version) => version.contract_id === head.id)
+        .map((version) => ({
+          startsOn: version.starts_on,
+          endsOn: version.ends_on,
+          amountCents: Number(version.amount_cents),
+        })),
+    }))
+  })
 }

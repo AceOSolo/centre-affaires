@@ -4,7 +4,9 @@
 **Statut** : accepté — lot 1 de la recette du 04/11/2026
 (`docs/recette/2026-11-04.md`) ; complète les ADR 037 (demandes de
 courrier), 048 (« Demandes », boîte de réception unique), 050
-(« Aujourd'hui ») et 055 (photos du courrier) ; sans migration ni dépendance
+(« Aujourd'hui ») et 055 (photos du courrier) ; sans migration ni dépendance ;
+**amendé par l'ADR 079** (« Prendre en charge » devient « Valider », qui mène
+à un écran de traitement par demande)
 
 ## Contexte
 

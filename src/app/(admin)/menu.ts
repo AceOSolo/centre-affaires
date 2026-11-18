@@ -1,6 +1,6 @@
 import type { Permission } from '../../lib/auth/permissions.ts'
 import { demandesPermissions, todayPermissions, type InboxShelf } from './aujourdhui/journee.ts'
-import { reglagesPermissions, reglagesSections } from './reglages/sections.ts'
+import { reglagesLinks, reglagesPermissions } from './reglages/sections.ts'
 
 /**
  * Le menu du back-office (ADR 053), sans rendu : `nav.tsx` l'affiche,
@@ -34,6 +34,9 @@ export type MenuEntry = {
 // produit et comptée, « Tous les services » ses « Autres demandes » (offres
 // groupées, devis sans ressource) ; la cloche de l'en-tête en dit le total
 // (ADR 070). Pas de « Demandes » générale au menu : la cloche y mène.
+// Une seule entrée « Réglages », tout en bas (ADR 082 amendé le 17/11) : la
+// page est rangée par service (`reglages/sections.ts`), le menu ne la répète
+// pas dans chaque rayon.
 // Chaque entrée porte le droit de sa page (ADR 019) : la navigation ne montre
 // que ce que le rôle permet. La page revérifie de son côté.
 export type MenuGroup = { label: string; entries: MenuEntry[] }
@@ -149,8 +152,10 @@ export const menuGroups: MenuGroup[] = [
       {
         href: '/reglages',
         label: 'Réglages',
+        // La page entière, rangée par service ; elle s'allume sur chacun des
+        // écrans qu'elle réunit (tarifs, équipe…).
         permission: reglagesPermissions,
-        also: reglagesSections.flatMap((section) => section.links.map((link) => link.href)),
+        also: reglagesLinks.map((link) => link.href),
       },
     ],
   },

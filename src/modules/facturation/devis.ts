@@ -32,6 +32,12 @@ import {
 export const bookableUnits = ['hour', 'half_day', 'day', 'week'] as const satisfies readonly RateUnit[]
 export type BookableUnit = (typeof bookableUnits)[number]
 
+/**
+ * Unité imposée par la formule de location choisie (ADR 076) : celles de la
+ * durée, et le mois d'une location longue — compté en mois du calendrier.
+ */
+export type QuotableUnit = BookableUnit | 'month'
+
 /** Remise accordée sur un devis : un pourcentage ou un montant, jamais les deux (ADR 023). */
 export type QuoteDiscount =
   | { kind: 'percent'; basisPoints: number }
@@ -70,11 +76,17 @@ export type BookingQuoteInput = {
   plans: readonly { plan: QuotePlan; source: QuotePlanSource }[]
   rules: QuoteRules
   discount?: QuoteDiscount | null
+  /**
+   * Unité imposée par la formule de location choisie (ADR 076) : seule celle-ci
+   * chiffre le créneau, même si une autre coûterait moins. Absente : la moins
+   * chère des unités de durée, comme avant.
+   */
+  unit?: QuotableUnit
 }
 
 /** Une manière de chiffrer le créneau : une unité de la grille et sa quantité. */
 export type QuoteOption = {
-  unit: BookableUnit
+  unit: QuotableUnit
   quantity: number
   unitPriceCents: number
   /** Quantité × prix unitaire, avant remise. */
@@ -242,6 +254,28 @@ export function spansSeveralDays(startsAt: Date, endsAt: Date, timeZone: string)
   return toIsoDate(new Date(endsAt.getTime() - 1), timeZone) !== toIsoDate(startsAt, timeZone)
 }
 
+/**
+ * Mois du calendrier entamés par une location (ADR 076) : du jour du début au
+ * dernier jour occupé, en jours du centre. Du 16 novembre au 15 décembre : un
+ * mois ; jusqu'au 16 décembre : deux. Jamais moins d'un.
+ */
+export function monthQuantity(startsAt: Date, endsAt: Date, timeZone: string): number {
+  const first = toIsoDate(startsAt, timeZone)
+  const last = toIsoDate(new Date(endsAt.getTime() - 1), timeZone)
+  const [year, month, day] = first.split('-').map(Number)
+  let months = 1
+  // Le mois suivant commence au même quantième, ramené au dernier jour du mois.
+  for (;;) {
+    const index = year * 12 + (month - 1) + months
+    const targetYear = Math.floor(index / 12)
+    const targetMonth = index - targetYear * 12
+    const lastDay = new Date(Date.UTC(targetYear, targetMonth + 1, 0)).getUTCDate()
+    const next = new Date(Date.UTC(targetYear, targetMonth, Math.min(day, lastDay))).toISOString().slice(0, 10)
+    if (next > last) return months
+    months += 1
+  }
+}
+
 /** Une remise saisie est-elle lisible ? Pourcentage de 0 à 100 %, montant positif. */
 function validDiscount(discount: QuoteDiscount): boolean {
   if (discount.kind === 'percent') {
@@ -275,6 +309,11 @@ function validDiscount(discount: QuoteDiscount): boolean {
  *    dès que les journées la dépassent.
  * 4. **Le montant** : quantité × prix, moins la remise, arrondi une seule fois
  *    (`lineNetAmountCents`, jumeau de la base) ; TVA au taux du centre.
+ *
+ * Une **formule de location** choisie (ADR 076) impose son unité (`unit`) :
+ * seule elle chiffre ; au mois, la quantité est le nombre de mois du
+ * calendrier entamés (`monthQuantity`). Sans prix à cette unité, le créneau
+ * n'est pas chiffré (`aucun-tarif`) : « tarif communiqué par l'accueil ».
  */
 export function quoteBooking(input: BookingQuoteInput): QuoteOutcome {
   const durationMinutes = bookingDurationMinutes(input.startsAt, input.endsAt, input.timeZone)
@@ -284,9 +323,11 @@ export function quoteBooking(input: BookingQuoteInput): QuoteOutcome {
   const day = toIsoDate(input.startsAt, input.timeZone)
   const valid = input.plans.filter(({ plan }) => isRatePlanValidOn(plan, day))
   if (valid.length === 0) return { ok: false, reason: 'aucune-grille' }
-  const units: readonly BookableUnit[] = spansSeveralDays(input.startsAt, input.endsAt, input.timeZone)
-    ? multiDayUnits
-    : bookableUnits
+  const units: readonly QuotableUnit[] = input.unit
+    ? [input.unit]
+    : spansSeveralDays(input.startsAt, input.endsAt, input.timeZone)
+      ? multiDayUnits
+      : bookableUnits
 
   for (const { plan, source } of valid) {
     const options = units.flatMap((unit) => {
@@ -297,7 +338,10 @@ export function quoteBooking(input: BookingQuoteInput): QuoteOutcome {
         on: day,
       })
       if (!item) return []
-      const quantity = billableQuantity(unit, durationMinutes, input.rules)
+      const quantity =
+        unit === 'month'
+          ? monthQuantity(input.startsAt, input.endsAt, input.timeZone)
+          : billableQuantity(unit, durationMinutes, input.rules)
       return [{ unit, quantity, unitPriceCents: item.amountCents, grossCents: quantity * item.amountCents, itemId: item.id }]
     })
     if (options.length === 0) continue

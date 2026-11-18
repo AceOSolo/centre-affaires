@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../lib/uuid.ts'
 import { ContractLinesForm } from '../../../../../modules/contrats/contract-lines-form.tsx'
@@ -25,9 +26,7 @@ export default async function ContractLinesPage({ params }: { params: Promise<{ 
   if (!contract) notFound()
 
   const back = (
-    <Link href={`/contrats/${id}`} className="text-sm text-muted-foreground hover:underline">
-      ← Contrat {contract.reference}
-    </Link>
+    <LienRetour href={`/contrats/${id}`} label={<>Contrat {contract.reference}</>} />
   )
 
   if (contract.status !== 'draft' || contract.deletedAt !== null) {

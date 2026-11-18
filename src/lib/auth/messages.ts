@@ -79,7 +79,7 @@ const PAR_CODE: Record<string, MessageAuth> = {
   BANNED_USER: { message: 'Ce compte est suspendu. Pour en savoir plus, contactez l’équipe du centre.' },
   PREUVE_HUMAINE: {
     message:
-      'La vérification anti-robot n’a pas abouti ou a expiré. Attendez que la case « Je ne suis pas un robot » se coche, puis réessayez.',
+      'La vérification anti-robot n’a pas abouti ou a expiré : elle recommence d’elle-même. Réessayez dès qu’elle indique « Vérification anti-robot réussie ».',
   },
 }
 

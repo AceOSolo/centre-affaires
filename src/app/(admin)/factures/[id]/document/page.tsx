@@ -1,6 +1,6 @@
-import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { currentTenant } from '../../../../../lib/tenant.ts'
 import { isUuid } from '../../../../../lib/uuid.ts'
@@ -52,9 +52,7 @@ export default async function InvoiceDocumentPage({ params }: { params: Promise<
       <style>{printStyles}</style>
 
       <div className="no-print flex flex-wrap items-center justify-between gap-3">
-        <Link href={`/factures/${invoice.id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Retour à la fiche
-        </Link>
+        <LienRetour href={`/factures/${invoice.id}`} label="Retour à la fiche" />
         <PrintButton label="Imprimer ou enregistrer en PDF" />
       </div>
 

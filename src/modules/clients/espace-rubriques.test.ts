@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import { clientSections, isActiveSection } from './espace-rubriques.ts'
+import { clientSections, isActiveSection, sectionBadge, type SpaceSignals } from './espace-rubriques.ts'
 
-const nothing = { domiciliated: false, invoices: 0, contracts: 0, inspections: 0 }
+const nothing: SpaceSignals = { domiciliated: false, invoices: 0, contracts: 0, inspections: 0 }
 const labels = (signals: typeof nothing) => clientSections(signals).map((section) => section.label)
 
 describe('rubriques de l’espace client', () => {
@@ -11,8 +11,12 @@ describe('rubriques de l’espace client', () => {
     assert.deepEqual(labels(nothing), ['Accueil', 'Réservations'])
   })
 
-  it('le courrier apparaît pour une entreprise domiciliée', () => {
-    assert.deepEqual(labels({ ...nothing, domiciliated: true }), ['Accueil', 'Réservations', 'Courrier'])
+  it('le courrier apparaît pour une entreprise domiciliée, avec ses dépenses (ADR 081)', () => {
+    assert.deepEqual(labels({ ...nothing, domiciliated: true }), ['Accueil', 'Réservations', 'Courrier', 'Factures'])
+  })
+
+  it('un contrat donne des frais fixes : la rubrique des dépenses et factures apparaît (ADR 081)', () => {
+    assert.deepEqual(labels({ ...nothing, contracts: 1 }), ['Accueil', 'Réservations', 'Factures', 'Contrats'])
   })
 
   it('chaque rubrique apparaît dès qu’elle a un document à montrer, dans l’ordre d’usage', () => {
@@ -26,8 +30,34 @@ describe('rubriques de l’espace client', () => {
     ])
   })
 
+  it('les pièces justificatives apparaissent pour une demande de domiciliation (ADR 075)', () => {
+    assert.deepEqual(labels({ ...nothing, documents: true }), ['Accueil', 'Réservations', 'Pièces justificatives'])
+  })
+
   it('une facture sans contrat montre les factures seules', () => {
     assert.deepEqual(labels({ ...nothing, invoices: 1 }), ['Accueil', 'Réservations', 'Factures'])
+  })
+})
+
+describe('pastille du courrier (ADR 077)', () => {
+  it('porte le nombre de plis non lus sur la seule rubrique « Courrier »', () => {
+    const sections = clientSections({ domiciliated: true, invoices: 1, contracts: 0, inspections: 0, unreadMail: 3 })
+    assert.deepEqual(
+      sections.map((section) => [section.label, section.unread]),
+      [
+        ['Accueil', undefined],
+        ['Réservations', undefined],
+        ['Courrier', 3],
+        ['Factures', undefined],
+      ],
+    )
+  })
+
+  it('ne dit rien à zéro, « 99+ » au-delà de 99', () => {
+    assert.equal(sectionBadge(undefined), null)
+    assert.equal(sectionBadge(0), null)
+    assert.equal(sectionBadge(7), '7')
+    assert.equal(sectionBadge(150), '99+')
   })
 })
 

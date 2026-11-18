@@ -1,5 +1,4 @@
-import Link from 'next/link'
-
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { ClientForm } from '../../../../modules/clients/client-form.tsx'
 
@@ -10,9 +9,7 @@ export default async function NewClientPage() {
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href="/clients" className="text-sm text-muted-foreground hover:underline">
-          ← Clients
-        </Link>
+        <LienRetour href="/clients" label="Clients" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouveau client</h1>
       </div>
       <ClientForm />

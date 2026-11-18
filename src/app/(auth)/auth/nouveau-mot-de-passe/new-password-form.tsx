@@ -5,8 +5,10 @@ import { useEffect, useRef, useState } from 'react'
 import Link from 'next/link'
 
 import { ErrorSummary } from '../../../../components/ui/error-summary.tsx'
+import { RequiredMark, RequiredNote } from '../../../../components/ui/obligatoire.tsx'
 import { authClient } from '../../../../lib/auth/client.ts'
 import { MOT_DE_PASSE_MIN, messageRefusAuth, serveurInjoignable } from '../../../../lib/auth/messages.ts'
+import { SignOutButton } from '../../sign-out-button.tsx'
 
 const fieldClass =
   'w-full rounded-sm border border-border bg-background px-3 py-2.5 text-base outline-none transition-colors focus:border-primary focus:ring-2 focus:ring-primary/30 aria-[invalid=true]:border-destructive'
@@ -33,10 +35,17 @@ export function NewPasswordForm({
   token,
   equipe,
   invitation = false,
+  deconnecterApres = false,
 }: {
   token: string
   equipe: boolean
   invitation?: boolean
+  /**
+   * Une autre personne est connectée sur ce navigateur (ADR 077) : une fois
+   * le mot de passe choisi, « Se connecter » passe par la déconnexion — la
+   * page de connexion renverrait sinon vers l'espace du compte connecté.
+   */
+  deconnecterApres?: boolean
 }) {
   const [envoi, setEnvoi] = useState(false)
   const [echec, setEchec] = useState<Echec | null>(null)
@@ -121,7 +130,17 @@ export function NewPasswordForm({
         )}
       </div>
 
-      {change ? (
+      {change && deconnecterApres ? (
+        <div className="flex flex-col gap-2">
+          <p className="text-sm text-muted-foreground">
+            Déconnectez-vous du compte ouvert sur ce navigateur, puis connectez-vous avec ce nouveau mot de passe.
+          </p>
+          <SignOutButton
+            redirectTo={connexion}
+            className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 font-medium text-primary-foreground transition-colors hover:bg-primary-hover disabled:opacity-60"
+          />
+        </div>
+      ) : change ? (
         <Link
           href={connexion}
           className="inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-4 font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
@@ -136,10 +155,12 @@ export function NewPasswordForm({
             labels={{ password: 'Nouveau mot de passe', confirmation: 'Confirmation' }}
             message={echec?.message}
           />
+          <RequiredNote />
 
           <div>
             <label className={labelClass} htmlFor="password">
               Nouveau mot de passe
+              <RequiredMark />
             </label>
             <input
               id="password"
@@ -165,6 +186,7 @@ export function NewPasswordForm({
           <div>
             <label className={labelClass} htmlFor="confirmation">
               Confirmation
+              <RequiredMark />
             </label>
             <input
               id="confirmation"

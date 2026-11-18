@@ -33,8 +33,7 @@ import {
 } from './demandes-regles.ts'
 import { isCustomCategoryId } from './categories-perso-regles.ts'
 import type { MailClassification } from './classement-regles.ts'
-import type { ScanFile } from './fichiers.ts'
-import { discard, scanRows, store, type StoredScan } from './queries.ts'
+import { scanRows, type StoredScan } from './queries.ts'
 import {
   mailItemMemberStates,
   mailItems,
@@ -172,18 +171,20 @@ const pendingRequests = () =>
      where r.tenant_id = ${mailItems.tenantId} and r.mail_item_id = ${mailItems.id}
        and r.status in ${pending})`
 
+// Un contenu à valider (ADR 079) n'existe pas encore pour le client : aucune
+// lecture de l'espace client ne le rend, ni son compte, ni son lien.
 const latestScan = (side: 'envelope' | 'content', column: 'id' | 'content_type') =>
   sql<string | null>`(
     select s.${sql.raw(column)} from mail_scans as s
      where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
-       and s.side = ${side} and s.deleted_at is null
+       and s.side = ${side} and s.deleted_at is null and s.pending_validation = 0
      order by s.created_at desc limit 1)`
 
 const contentScanCount = () =>
   sql<number>`(
     select count(*) from mail_scans as s
      where s.tenant_id = ${mailItems.tenantId} and s.mail_item_id = ${mailItems.id}
-       and s.side = 'content' and s.deleted_at is null)`
+       and s.side = 'content' and s.deleted_at is null and s.pending_validation = 0)`
 
 const splitPending = (value: string | null): ClientMailCard['pendingRequests'] =>
   value
@@ -252,6 +253,7 @@ function cardSelection() {
     ...cardColumns,
     stateReadAt: mailItemMemberStates.readAt,
     stateHandledAt: mailItemMemberStates.handledAt,
+    stateIgnoredAt: mailItemMemberStates.ignoredAt,
     stateCategory: mailItemMemberStates.category,
     stateCustomCategoryId: mailItemMemberStates.customCategoryId,
     stateTags: mailItemMemberStates.tags,
@@ -269,6 +271,7 @@ type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'conten
   contentScanCount: number
   stateReadAt: Date | null
   stateHandledAt: Date | null
+  stateIgnoredAt: Date | null
   stateCategory: MailCategory | null
   stateCustomCategoryId: string | null
   stateTags: string[] | null
@@ -277,6 +280,7 @@ type CardRow = Omit<ClientMailCard, 'pendingRequests' | 'pendingKinds' | 'conten
 const toCard = ({
   stateReadAt,
   stateHandledAt,
+  stateIgnoredAt,
   stateCategory,
   stateCustomCategoryId,
   stateTags,
@@ -291,6 +295,7 @@ const toCard = ({
     classification: {
       readAt: stateReadAt,
       handledAt: stateHandledAt,
+      ignoredAt: stateIgnoredAt,
       category: stateCategory,
       customCategoryId: stateCustomCategoryId,
       tags: Array.isArray(stateTags) ? stateTags : [],
@@ -314,7 +319,16 @@ function mailFilterWhere(
     'non-lus': sql`not ${classified(sql`s.read_at is not null`)}`,
     'a-traiter': sql`not ${classified(sql`s.handled_at is not null`)}`,
     traites: classified(sql`s.handled_at is not null`),
+    ignores: classified(sql`s.ignored_at is not null`),
   } as const
+  // Un pli ignoré quitte toutes les vues, sauf « Ignorés » (ADR 078).
+  const ignoredOut =
+    filters.followUp === 'ignores' ? undefined : sql`not ${classified(sql`s.ignored_at is not null`)}`
+  // Expéditeur : contient le texte saisi, sans égard à la casse (collation
+  // de la base) ; jokers de LIKE neutralisés.
+  const sender = filters.sender
+    ? sql`${mailItems.sender} like ${`%${filters.sender.replace(/[\\%_]/g, (character) => `\\${character}`)}%`}`
+    : undefined
   // Une catégorie de départ par sa clé, une catégorie personnelle par son
   // identifiant (ADR 060) ; « non classé » : ni l'une ni l'autre.
   const category =
@@ -346,8 +360,10 @@ function mailFilterWhere(
     filters.to ? lt(mailItems.receivedAt, dayRangeUtc(filters.to, timeZone).endsAt) : undefined,
     filters.state ? state[filters.state] : undefined,
     filters.followUp ? followUp[filters.followUp] : undefined,
+    ignoredOut,
     category,
     filters.tag ? classified(sql`json_contains(s.tags, json_array(${filters.tag}))`) : undefined,
+    sender,
   )
 }
 
@@ -430,7 +446,7 @@ export async function findMailForAccounts(
         pageCount: mailScans.pageCount,
       })
       .from(mailScans)
-      .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt)))
+      .where(and(eq(mailScans.mailItemId, id), isNull(mailScans.deletedAt), eq(mailScans.pendingValidation, false)))
       .orderBy(asc(mailScans.side), asc(mailScans.createdAt))
     const requests = await selectRequests(
       tx,
@@ -519,7 +535,7 @@ function requestSelection(staff: boolean) {
     contentScanId: sql<string | null>`(
       select s.id from mail_scans as s
        where s.tenant_id = ${mailRequests.tenantId} and s.mail_request_id = ${mailRequests.id}
-         and s.deleted_at is null
+         and s.deleted_at is null and s.pending_validation = 0
        order by s.created_at desc limit 1)`,
     mailItemId: mailRequests.mailItemId,
     mailKind: mailItems.kind,
@@ -1321,28 +1337,10 @@ export function updateForwardShipping(id: string, shipping: ForwardShipping) {
 }
 
 /**
- * Numérisation seule faite : le contenu est déposé (chiffré, ADR 020), puis
- * rattaché à la demande, qui passe faite. Un échec de l'écriture efface le
- * fichier déposé.
- */
-export async function completeScanRequest(
-  id: string,
-  staffMemberId: string,
-  content: ScanFile,
-): Promise<{ id: string; mailItemId: string }> {
-  if (!isUuid(id)) throw new MailRequestError('Demande introuvable.', 'moved')
-  const stored = await store(currentTenantId(), { content })
-  try {
-    return await recordScanRequestDone(id, staffMemberId, stored)
-  } catch (error) {
-    await discard(stored)
-    throw error
-  }
-}
-
-/**
- * Écriture d'une numérisation demandée, une fois le contenu déposé : séparée
- * du dépôt pour s'éprouver contre la base sans stockage réel.
+ * Numérisation demandée écrite d'un coup, contenu et demande faite, sans
+ * l'étape de validation de l'écran (ADR 079, `depots.ts`) : sert aux jeux
+ * d'essai du relevé, de la facturation et des consommations. L'écran, lui,
+ * dépose puis valide.
  */
 export function recordScanRequestDone(id: string, staffMemberId: string, stored: StoredScan[]) {
   return transition(id, async (tx) => {

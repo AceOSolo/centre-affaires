@@ -1,5 +1,6 @@
 import Link from 'next/link'
 
+import { LienRetour } from '../../../../components/ui/lien-retour.tsx'
 import { can } from '../../../../lib/auth/permissions.ts'
 import { requirePermission } from '../../../../lib/auth/staff.ts'
 import { addDaysToIsoDate, todayIsoDate } from '../../../../lib/dates.ts'
@@ -94,12 +95,7 @@ export default async function NewBookingPage({
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={`/reservations?date=${defaultDate}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← Planning
-        </Link>
+        <LienRetour href={`/reservations?date=${defaultDate}`} label="Planning" />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Nouvelle réservation</h1>
       </div>
 

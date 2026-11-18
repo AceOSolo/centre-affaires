@@ -7,14 +7,15 @@ import { shortExternalText, type CrmConnector, type CrmTestOutcome } from './con
  * et le connecteur écrit par le développeur Dolibarr vient la chercher ; les
  * produits arrivent par le module Webhook. Tiers et contrats, le connecteur
  * les envoie ; consommations, il vient les chercher et en accuse réception
- * (ADR 066). Le site n'appelle Dolibarr que pour le test de connexion et,
+ * (ADR 066) ; factures émises, il les envoie (ADR 081). Le site n'appelle
+ * Dolibarr que pour le test de connexion et,
  * si le centre l'a voulu, pour y créer ses devis (ADR 073, `dolibarr-api.ts`).
  */
 
 export const dolibarrConnector: CrmConnector = {
   id: 'dolibarr',
   label: 'Dolibarr',
-  flows: ['quotes', 'products', 'third_parties', 'contracts', 'consumptions'],
+  flows: ['quotes', 'products', 'third_parties', 'contracts', 'consumptions', 'invoices'],
   routes: {
     quotes: [
       'GET /api/dolibarr/devis',
@@ -26,6 +27,8 @@ export const dolibarrConnector: CrmConnector = {
     third_parties: ['POST /api/dolibarr/tiers', 'GET /api/dolibarr/tiers'],
     contracts: ['POST /api/dolibarr/contrats', 'GET /api/dolibarr/contrats'],
     consumptions: ['GET /api/dolibarr/consommations', 'POST /api/dolibarr/consommations/{id}/transmis'],
+    // Factures émises, montrées dans l'espace client (ADR 081).
+    invoices: ['POST /api/dolibarr/factures'],
   },
   notice: 'docs/integrations/dolibarr.md',
   legacyTokenEnv: 'DOLIBARR_API_TOKEN',

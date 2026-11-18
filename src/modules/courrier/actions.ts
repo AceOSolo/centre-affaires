@@ -11,20 +11,19 @@ import { currentTimeZone } from '../../lib/tenant.ts'
 import { DB_MAIL_REFUSED, dbErrorCode } from '../../db/errors.ts'
 import { canonicalSender, readSender } from './expediteurs.ts'
 import { findKnownSenders, updateMailSender } from './expediteurs-queries.ts'
-import { readScan, readScans, type ScanFile } from './fichiers.ts'
-import { notifyMailBatchClosed, notifyMailScanned } from './notifications.ts'
+import { readScan, readScans } from './fichiers.ts'
+import { notifyMailBatchClosed } from './notifications.ts'
 import { readPageCount, withPageCount } from './pages.ts'
 import {
   addEnvelope,
   correctScanPageCount,
   MailStateError,
-  openMail,
   PagesLockedError,
   registerMail,
   withdrawMail,
 } from './queries.ts'
 import { mailKinds, type MailKind } from './schema.ts'
-import { closeOpenBatch, MailBatchClosedError, MailBatchOpenedError } from './tournees.ts'
+import { closeOpenBatch, MailBatchClosedError, MailBatchOpenedError, MailDayReportedError } from './tournees.ts'
 import { expectedBatch } from './tournees-regles.ts'
 
 /**
@@ -130,38 +129,6 @@ export async function registerMailAction(
   redirect(`/courrier/nouveau?enregistre=${id}`)
 }
 
-export async function openMailAction(
-  _previous: MailFormState,
-  formData: FormData,
-): Promise<MailFormState> {
-  const { member } = await requirePermission('courrier.gerer')
-  const id = text(formData, 'id')
-  if (!id) return { error: 'Courrier introuvable.' }
-  // Le nombre de pages saisi est rendu après un échec ; le fichier, lui, se
-  // joint de nouveau.
-  const values = { contentPages: text(formData, 'contentPages') }
-
-  const read = await readScans(formData.getAll('content'))
-  if (read.error) return { fieldErrors: { content: read.error }, values }
-  if (!read.scan) {
-    return { fieldErrors: { content: 'Joignez la numérisation du contenu.' }, values }
-  }
-  const content = withPageCount(formData, 'content', read.scan)
-  if (content.error || !content.scan) return { fieldErrors: { contentPages: content.error ?? '' }, values }
-
-  try {
-    await openMail(id, member.id, content.scan satisfies ScanFile)
-  } catch (error) {
-    if (error instanceof MailStateError) return { error: error.message, values }
-    return { ...storageFailure(error), values }
-  }
-
-  after(() => notifyMailScanned(id))
-  revalidatePath('/courrier')
-  revalidatePath(`/courrier/${id}`)
-  redirect(`/courrier/${id}`)
-}
-
 /**
  * Photo de l'enveloppe ajoutée après l'enregistrement (ADR 055) : un pli
  * compté en saisie groupée, ou enregistré sans photo. Une seule par pli ; le
@@ -255,7 +222,11 @@ export async function closeMailBatchAction(
   try {
     batchId = await closeOpenBatch(member.id, expected)
   } catch (error) {
-    if (error instanceof MailBatchClosedError || error instanceof MailBatchOpenedError) {
+    if (
+      error instanceof MailBatchClosedError ||
+      error instanceof MailBatchOpenedError ||
+      error instanceof MailDayReportedError
+    ) {
       return { error: error.message }
     }
     throw error

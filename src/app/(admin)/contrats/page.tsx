@@ -13,6 +13,7 @@ import { listContracts } from '../../../modules/contrats/queries.ts'
 import { listCurrentTerms } from '../../../modules/contrats/versions.ts'
 import { todayIsoDate } from '../../../lib/dates.ts'
 import { currentTimeZone } from '../../../lib/tenant.ts'
+import { adresseCourante, avecRetour } from '../../../lib/retour.ts'
 import { contractStatuses, type ContractStatus } from '../../../modules/contrats/schema.ts'
 import { formatCents } from '../../../modules/facturation/tarifs.ts'
 
@@ -25,6 +26,8 @@ export default async function ContractsPage({
 }) {
   const { member } = await requirePermission('contrats.consulter')
   const { statut, archives } = await searchParams
+  // Les fiches ouvertes d'ici y ramènent, filtres compris (recette du 17/11).
+  const retour = adresseCourante('/contrats', { statut, archives })
   const status = contractStatuses.includes(statut as ContractStatus)
     ? (statut as ContractStatus)
     : undefined
@@ -168,7 +171,7 @@ export default async function ContractsPage({
                 <tr key={contract.id}>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/contrats/${contract.id}`}
+                      href={avecRetour(`/contrats/${contract.id}`, retour)}
                       className="tabular underline-offset-2 hover:underline"
                     >
                       {contract.reference}
@@ -176,7 +179,7 @@ export default async function ContractsPage({
                   </td>
                   <td className="px-4 py-3">
                     <Link
-                      href={`/clients/${contract.clientId}`}
+                      href={avecRetour(`/clients/${contract.clientId}`, retour)}
                       className="underline-offset-2 hover:underline"
                     >
                       {contract.client.name}

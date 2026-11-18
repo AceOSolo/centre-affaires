@@ -6,21 +6,36 @@ import { useActionState, useEffect, useRef, useState, type FormEvent, type React
 import { ErrorSummary } from '../../components/ui/error-summary.tsx'
 import { PreuveHumaine, preuveEnCours, preuvePrete } from '../../components/ui/preuve-humaine.tsx'
 import { BuildingIcon, CarIcon, CheckIcon, TvIcon } from '../../components/ui/icons.tsx'
-import { addDaysToIsoDate, formatLongDate, formatTime } from '../../lib/dates.ts'
+import { addDaysToIsoDate, formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
 import { QuoteSummary } from '../facturation/devis-resume.tsx'
 import { rateUnitSuffixes } from '../facturation/labels.ts'
 import type { ProposalStatus } from '../facturation/schema-devis.ts'
 import { formatCents, type RateCandidate } from '../facturation/tarifs.ts'
+import { formulasOf, rentalFormulaLabels } from '../ressources/formules.ts'
 import { resourceTypePluralLabels } from '../ressources/labels.ts'
 import type { Resource, ResourceType } from '../ressources/schema.ts'
 import { ChampPiege, chipClass, fieldClass, focusClass, primaryClass, RecapBlock, showStep, StepActions, StepHeader } from './etapes-demande.tsx'
-import { formatDays } from './durees.ts'
-import { periodDuration, periodEndDates, periodEnds, periodLabel, periodRejection, spansSeveralDays } from './periode.ts'
+import { emptyChoice, evaluateChoice, type PeriodChoice } from './formules-periode.ts'
+import { periodDuration, periodLabel, spansSeveralDays } from './periode.ts'
+import { choiceFormValues, PeriodFields, shortDay } from './periode-fields.tsx'
 import { loadPublicDayAction, loadPublicQuoteAction, requestBookingAction, type PublicDayAvailability, type PublicFormState, type PublicQuote } from './public-actions.ts'
-import { availableStarts, periodSelection, publicSelection } from './public-selection.ts'
-import { errorsByField, QuestionnaireFields, questionnaireErrorLabels } from './questionnaire-fields.tsx'
-import { ANSWER_FIELD_PREFIX, describeAnswers, parseAnswers, type Answers } from './questionnaires.ts'
-import { contactRejections, MIN_REQUEST_MINUTES, rejectionMessages } from './requests.ts'
+import { availableStarts } from './public-selection.ts'
+import { FieldLabel, RequiredNote } from '../../components/ui/obligatoire.tsx'
+import { QuestionnaireFields } from './questionnaire-fields.tsx'
+import {
+  ANSWER_FIELD_PREFIX,
+  describeAnswers,
+  errorsByField,
+  formForResourceType,
+  parseAnswers,
+  questionnaireErrorLabels,
+  type Answers,
+  type Formulaire,
+  type Questionnaire,
+} from './questionnaires.ts'
+import { contactRejections, rejectionMessages } from './requests.ts'
+import { joinName, nameErrors, NAME_PART_MAX } from '../clients/prenom-nom.ts'
+import type { KnownContact } from './coordonnees-connues.ts'
 import { requestPolicyMessage, type RequestPolicy } from './request-policy.ts'
 
 /** Produits réservés sur un créneau du calendrier (ADR 043), le matériel loué seul compris (ADR 062). */
@@ -33,8 +48,6 @@ const wording = {
     pick: 'Choisissez un espace pour continuer.',
     closed: 'Le centre est fermé ce jour-là.',
     titlePlaceholder: 'Réunion d’équipe, formation…',
-    /** Ce que veut dire une période de plusieurs jours (ADR 061). */
-    nights: 'sur plusieurs jours, l’espace vous est réservé nuits comprises',
     Icon: BuildingIcon,
   },
   vehicule: {
@@ -42,7 +55,6 @@ const wording = {
     pick: 'Choisissez un véhicule pour continuer.',
     closed: 'Le véhicule n’est pas disponible ce jour-là.',
     titlePlaceholder: 'Déménagement, livraison…',
-    nights: 'sur plusieurs jours, vous gardez le véhicule nuits comprises',
     Icon: CarIcon,
   },
   materiel: {
@@ -50,7 +62,6 @@ const wording = {
     pick: 'Choisissez un appareil pour continuer.',
     closed: 'L’appareil n’est pas disponible ce jour-là.',
     titlePlaceholder: 'Salon, présentation, événement…',
-    nights: 'sur plusieurs jours, vous gardez l’appareil nuits comprises',
     Icon: TvIcon,
   },
 } as const
@@ -74,8 +85,10 @@ function fromServerStep(step: number | undefined): Step | undefined {
   return step <= 2 ? 1 : step === 3 ? QUESTIONS_STEP : CONTACT_STEP
 }
 
+/** Prénom et nom toujours séparés (ADR 084). */
 const contactFields = [
-  { key: 'name', label: 'Nom et prénom', type: 'text', autoComplete: 'name', required: true },
+  { key: 'firstName', label: 'Prénom', type: 'text', autoComplete: 'given-name', required: true },
+  { key: 'lastName', label: 'Nom', type: 'text', autoComplete: 'family-name', required: true },
   { key: 'email', label: 'Adresse e-mail', type: 'email', autoComplete: 'email', required: true },
   { key: 'phone', label: 'Téléphone', type: 'tel', autoComplete: 'tel', required: true },
   { key: 'company', label: 'Société', type: 'text', autoComplete: 'organization', required: false },
@@ -85,16 +98,24 @@ type ContactKey = (typeof contactFields)[number]['key']
 const contactId = (key: string) => `booking-${key}`
 const contactLabels = Object.fromEntries(contactFields.map((field) => [contactId(field.key), field.label]))
 
+/** Les mêmes règles que le serveur (`requestBookingAction`), avant l'envoi. */
+function contactErrorsOf(contact: Record<ContactKey, string>): Record<string, string> {
+  const errors: Record<string, string> = Object.fromEntries(Object.entries(nameErrors(contact)).map(([field, message]) => [contactId(field), message]))
+  for (const [field, rejection] of Object.entries(contactRejections({ name: joinName(contact) || '-', email: contact.email, phone: contact.phone }))) {
+    if (rejection) errors[contactId(field)] = rejectionMessages[rejection]
+  }
+  if (!contact.title.trim()) errors[contactId('title')] = rejectionMessages['objet-manquant']
+  return errors
+}
+
 /** Jours proposés d'un geste avant de passer par le calendrier. */
 const QUICK_DAYS = 6
 /** Le jour d'une date murale, lu sans fuseau : midi UTC ne change jamais de date. */
 const weekdayFormat = new Intl.DateTimeFormat('fr-FR', { weekday: 'short', timeZone: 'UTC' })
 const dayFormat = new Intl.DateTimeFormat('fr-FR', { day: 'numeric', month: 'short', timeZone: 'UTC' })
-/** « mer. 4 nov. » : un jour de fin, dans la liste et dans le résumé. */
-const shortDay = (isoDate: string) => {
-  const at = new Date(`${isoDate}T12:00:00Z`)
-  return `${weekdayFormat.format(at)} ${dayFormat.format(at)}`
-}
+
+/** Première formule réglée sur la ressource, ou le formulaire libre (ADR 076). */
+const firstFormula = (resource: PublicBookingResource | undefined) => (resource ? formulasOf(resource)[0] : undefined) ?? 'libre'
 
 /** Erreurs rangées par nom de champ (`q.participants`) ramenées au nom de la question. */
 function byQuestion(fieldErrors: Record<string, string> | undefined): Record<string, string> {
@@ -105,10 +126,14 @@ export type PublicBookingResource = Pick<Resource, 'id' | 'name' | 'resourceType
   rates: Pick<RateCandidate, 'unit' | 'amountCents'>[]
 }
 
-export function PublicBookingForm({ product, resources, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
+export function PublicBookingForm({ product, resources, questionnaires, knownContact, timeZone, currency, policy, defaultResourceId, defaultType, defaultDate, minDate, maxDate, defaultStartTime = '', defaultEndTime = '', onClose, onSent }: {
   product: SlotProduct
   /** Ressources du seul produit choisi. */
   resources: PublicBookingResource[]
+  /** Questionnaires du centre : celui de la salle, celui du bureau… (ADR 074). */
+  questionnaires: Record<Formulaire, Questionnaire>
+  /** Coordonnées de la personne connectée à son espace, modifiables (ADR 084). */
+  knownContact?: KnownContact
   timeZone: string
   currency: string
   policy: RequestPolicy
@@ -134,11 +159,23 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const [resourceId, setResourceId] = useState(preselected?.id ?? (ofType.length === 1 ? ofType[0].id : ''))
   const [step, setStep] = useState<Step>(1)
   const [date, setDate] = useState(defaultDate)
-  const [startTime, setStartTime] = useState(defaultStartTime)
-  // Jour de la fin : le jour même, sauf demande sur plusieurs jours (ADR 061).
-  const [endDate, setEndDate] = useState(defaultDate)
-  const [endTime, setEndTime] = useState(defaultEndTime)
-  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>({ name: '', email: '', phone: '', company: '', title: '', notes: '' })
+  // La formule et ce qu'elle a choisi (ADR 076) : le jour du départ est libre,
+  // il ne suit pas l'arrivée. Un créneau cliqué sur la page publique pré-remplit
+  // les heures du formulaire libre ou à l'heure.
+  const [choice, setChoice] = useState<PeriodChoice>(() => {
+    const formula = firstFormula(preselected ?? (ofType.length === 1 ? ofType[0] : undefined))
+    const empty = emptyChoice(formula, defaultDate)
+    return formula === 'libre' || formula === 'heure' ? { ...empty, startTime: defaultStartTime, endTime: defaultEndTime } : empty
+  })
+  const [contact, setContact] = useState<Record<ContactKey | 'notes', string>>(() => ({
+    firstName: knownContact?.firstName ?? '',
+    lastName: knownContact?.lastName ?? '',
+    email: knownContact?.email ?? '',
+    phone: knownContact?.phone ?? '',
+    company: knownContact?.company ?? '',
+    title: '',
+    notes: '',
+  }))
   // Réponses validées au passage de l'étape « Votre besoin ». Les questions sont
   // des champs non contrôlés, que React réinitialise après chaque envoi : elles
   // repartent de ces valeurs par défaut, un échec ne fait rien retaper.
@@ -161,30 +198,44 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   const free = ready?.free ?? []
   // Jours d'affilée permis pour ce produit : 1, et le formulaire reste celui d'une journée.
   const maxDays = ready?.maxDays ?? 1
-  const selection = periodSelection(date, startTime, endDate, endTime, timeZone)
   const latestStart = ready?.latestStart
   const starts = availableStarts(free, loaded?.now ?? new Date(0), latestStart)
-  const start = startTime ? publicSelection(date, startTime, '23:59', timeZone)?.startsAt : undefined
-  const endDates = start && ready ? periodEndDates(start, ready.period, timeZone, maxDays) : []
-  const ends = start && ready ? periodEnds(start, endDate, ready.period, timeZone, maxDays) : []
-  // Les règles du serveur (`periodRejection`), avant l'envoi : il les revérifie.
+  // La formule et sa période (ADR 076) : les règles du serveur, qui les revérifie.
+  const formulas = resource ? formulasOf(resource) : []
+  const evaluation = ready
+    ? evaluateChoice(
+        choice,
+        { date, timeZone, availability: ready.period, earliest: ready.earliest, maxDays, limits: ready.limits },
+        formulas,
+      )
+    : undefined
+  const selection = evaluation?.range
+  const typedStart = choice.formula === 'libre' || choice.formula === 'heure' || choice.formula === 'demi_journee'
   const validSlot = Boolean(
-    selection && ready &&
-    starts.some((at) => at.getTime() === selection.startsAt.getTime()) &&
-    !periodRejection(selection, ready.period, timeZone, maxDays),
+    selection && ready && !evaluation?.rejection &&
+    (typedStart
+      ? starts.some((at) => at.getTime() === selection.startsAt.getTime())
+      : selection.startsAt.getTime() <= ready.latestStart.getTime()),
   )
+  const formValues = choiceFormValues(choice, evaluation, date, timeZone)
   const multiDay = Boolean(selection && spansSeveralDays(selection, timeZone))
-  const slotText = multiDay ? `${shortDay(date)} ${startTime} → ${shortDay(endDate)} ${endTime}` : `${startTime} – ${endTime}`
+  const slotText = selection
+    ? multiDay
+      ? `${shortDay(date)} ${formatTime(selection.startsAt, timeZone)} → ${shortDay(toIsoDate(selection.endsAt, timeZone))} ${formatTime(selection.endsAt, timeZone)}`
+      : `${formatTime(selection.startsAt, timeZone)} – ${formatTime(selection.endsAt, timeZone)}`
+    : ''
   const duration = selection ? periodDuration(selection, timeZone) : ''
   const serverError = showServerError && state.status === 'error' ? state : undefined
   const serverStep = fromServerStep(serverError?.step)
   // Les erreurs par champ ont leur propre résumé : pas de double annonce.
   const error = localError || (serverError && !serverError.fieldErrors ? serverError.message : '')
   // Montant du créneau choisi (R11), demandé au moteur de devis du serveur : le même qui le figera sur la demande.
-  const quoteKey = validSlot ? `${resourceId}/${date}/${startTime}/${endDate}/${endTime}` : ''
+  const quoteKey = validSlot ? `${resourceId}/${date}/${JSON.stringify(formValues)}` : ''
   const [quoteLoaded, setQuoteLoaded] = useState<{ key: string; result: PublicQuote }>()
   const quote = quoteKey && quoteLoaded?.key === quoteKey ? quoteLoaded.result : undefined
-  const describedAnswers = describeAnswers(product, answers)
+  // Les questions du service de l'espace choisi : une salle a les siennes, un bureau les siennes (ADR 074).
+  const questionnaire = questionnaires[(type && formForResourceType(type)) || (product === 'espace' ? 'salle' : product)]
+  const describedAnswers = describeAnswers(questionnaire, answers)
   const quickDays = Array.from({ length: QUICK_DAYS }, (_, index) => addDaysToIsoDate(minDate, index)).filter((day) => day <= maxDate)
 
   // Réponses refusées par le serveur : retour à l'étape concernée, erreurs en ligne et en résumé.
@@ -210,15 +261,16 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     return () => { cancelled = true }
   }, [resourceId, date, minDate, maxDate, availabilityKey])
 
+  const { startTime: quoteStart, endTime: quoteEnd, endDate: quoteEndDate, formula: quoteFormula } = formValues
   useEffect(() => {
     if (!quoteKey) return
     let cancelled = false
-    loadPublicQuoteAction(resourceId, date, startTime, endTime, endDate).then(
+    loadPublicQuoteAction(resourceId, date, quoteStart, quoteEnd, quoteEndDate, quoteFormula).then(
       (result) => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result }) },
       () => { if (!cancelled) setQuoteLoaded({ key: quoteKey, result: { status: 'unpriced', message: 'Le montant n’a pas pu être calculé. Notre équipe vous le précisera.' } }) },
     )
     return () => { cancelled = true }
-  }, [quoteKey, resourceId, date, startTime, endTime, endDate])
+  }, [quoteKey, resourceId, date, quoteStart, quoteEnd, quoteEndDate, quoteFormula])
 
   // À l'ouverture, le focus va au titre : le bouton qui a choisi le produit
   // vient de disparaître, le lecteur d'écran annonce où l'on arrive.
@@ -237,10 +289,9 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     showStep(headingRef)
   }
 
-  function resetSlot() {
-    setStartTime('')
-    setEndDate(date)
-    setEndTime('')
+  /** Un autre espace : sa première formule, rien de choisi. */
+  function resetSlot(next: PublicBookingResource | undefined) {
+    setChoice(emptyChoice(firstFormula(next), date))
     setLocalError('')
     setShowServerError(false)
   }
@@ -249,18 +300,20 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     setType(next)
     const candidates = resources.filter((item) => item.resourceType === next)
     setResourceId(candidates.length === 1 ? candidates[0].id : '')
-    resetSlot()
+    resetSlot(candidates.length === 1 ? candidates[0] : undefined)
   }
 
   function chooseResource(id: string) {
     setResourceId(id)
-    resetSlot()
+    resetSlot(resources.find((item) => item.id === id))
   }
 
+  /** Un autre jour d'arrivée : les heures sont à rechoisir ; le jour du départ reste, s'il suit encore. */
   function changeDate(value: string) {
     setDate(value)
-    resetSlot()
-    setEndDate(value)
+    setChoice((current) => ({ ...current, startTime: '', endTime: '', endDate: current.endDate >= value ? current.endDate : value }))
+    setLocalError('')
+    setShowServerError(false)
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -276,15 +329,14 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
     if (step === QUESTIONS_STEP) {
       event.preventDefault()
       // Les mêmes règles que le serveur (`parseAnswers`), avant de passer à la suite.
-      const parsed = parseAnswers(product, new FormData(event.currentTarget))
+      const parsed = parseAnswers(questionnaire, new FormData(event.currentTarget))
       if (Object.keys(parsed.errors).length > 0) { setQuestionErrors(errorsByField(parsed.errors)); return }
       setQuestionErrors(undefined)
       setAnswers(parsed.answers)
       goTo(CONTACT_STEP)
       return
     }
-    const rejections: Record<string, string> = Object.fromEntries(Object.entries(contactRejections(contact)).map(([field, rejection]) => [contactId(field), rejectionMessages[rejection]]))
-    if (!contact.title.trim()) rejections[contactId('title')] = rejectionMessages['objet-manquant']
+    const rejections = contactErrorsOf(contact)
     if (Object.keys(rejections).length > 0) { event.preventDefault(); setContactErrors(rejections); return }
     setContactErrors(undefined)
     if (!preuvePrete(event.currentTarget)) { event.preventDefault(); setLocalError(preuveEnCours); return }
@@ -302,7 +354,8 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
   return (
     <form action={formAction} onSubmit={handleSubmit} noValidate className="flex min-h-full flex-col">
       <div className="flex-1 px-5 pb-8 pt-5 sm:px-8">
-        <StepHeader step={step} titles={titles} headingRef={headingRef} description={step === QUESTIONS_STEP ? 'Quelques questions pour préparer un devis juste. Celles sans mention « facultatif » sont obligatoires.' : undefined} />
+        <StepHeader step={step} titles={titles} headingRef={headingRef} description={step === QUESTIONS_STEP ? 'Quelques questions pour préparer un devis juste.' : undefined} />
+        {step !== 1 && <RequiredNote className="mt-2" />}
 
         {error && (
           <div ref={errorRef} tabIndex={-1} role="alert" className="mt-5 rounded-sm border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive outline-none focus:ring-2 focus:ring-destructive/30">
@@ -310,15 +363,14 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
             {serverStep && serverStep !== step && <button type="button" className={`mt-2 min-h-11 underline ${focusClass}`} onClick={() => { if (serverStep === 1) setRevision((value) => value + 1); goTo(serverStep) }}>Revenir à l’étape « {titles[serverStep - 1]} »</button>}
           </div>
         )}
-        {step === QUESTIONS_STEP && questionErrors && <div className="mt-5"><ErrorSummary errors={questionErrors} labels={questionnaireErrorLabels(product)} /></div>}
+        {step === QUESTIONS_STEP && questionErrors && <div className="mt-5"><ErrorSummary errors={questionErrors} labels={questionnaireErrorLabels(questionnaire)} /></div>}
         {step === CONTACT_STEP && contactErrors && <div className="mt-5"><ErrorSummary errors={contactErrors} labels={contactLabels} /></div>}
 
         <input type="hidden" name="product" value={product} />
         <input type="hidden" name="resourceId" value={resourceId} />
         <input type="hidden" name="date" value={date} />
-        <input type="hidden" name="startTime" value={startTime} />
-        <input type="hidden" name="endDate" value={endDate} />
-        <input type="hidden" name="endTime" value={endTime} />
+        {/* La formule et sa période (ADR 076), présentes à toutes les étapes. */}
+        {Object.entries(formValues).map(([name, value]) => <input key={name} type="hidden" name={name} value={value} />)}
         <input type="hidden" name="paymentMethod" value="quote" />
         <ChampPiege />
         {Object.entries(contact).map(([key, value]) => <input key={key} type="hidden" name={key} value={value} />)}
@@ -382,39 +434,28 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
                 <div className="rounded-md border border-border p-4 text-sm"><p>{availability.message}</p><button type="button" onClick={() => setRevision((value) => value + 1)} className={`mt-2 min-h-11 text-primary underline ${focusClass}`}>Réessayer</button></div>
               ) : !starts.length ? (
                 <div className="min-h-24 rounded-md border border-dashed border-border bg-muted p-5"><p className="font-medium text-primary">{availability.closed ? words.closed : 'Plus de créneau libre ce jour-là.'}</p>{date < maxDate && <button type="button" onClick={() => changeDate(addDaysToIsoDate(date, 1))} className={`mt-2 min-h-11 text-sm font-medium text-primary underline ${focusClass}`}>Voir le jour suivant</button>}</div>
-              ) : <div className={`grid gap-4 ${maxDays > 1 ? 'sm:grid-cols-3' : 'sm:grid-cols-2'}`}>
-                <div>
-                  <label htmlFor="booking-start" className="block text-sm font-medium">Arrivée</label>
-                  <select id="booking-start" value={startTime} onChange={(event) => { setStartTime(event.target.value); setEndDate(date); setEndTime(''); setLocalError('') }} className={`${fieldClass} mt-2`}>
-                    <option value="">Choisir une heure</option>
-                    {starts.map((at) => <option key={at.toISOString()} value={formatTime(at, timeZone)}>{formatTime(at, timeZone)}</option>)}
-                  </select>
-                </div>
-                {/* Plusieurs jours d'affilée (ADR 061) : le jour du départ, puis son heure. */}
-                {maxDays > 1 && (
-                  <div>
-                    <label htmlFor="booking-end-date" className="block text-sm font-medium">Jour du départ</label>
-                    <select id="booking-end-date" value={endDate} disabled={!startTime} onChange={(event) => { setEndDate(event.target.value); setEndTime(''); setLocalError('') }} className={`${fieldClass} mt-2 disabled:bg-muted disabled:text-muted-foreground`}>
-                      {(endDates.length > 0 ? endDates : [date]).map((day) => <option key={day} value={day}>{day === date ? 'Le même jour' : shortDay(day)}</option>)}
-                    </select>
-                  </div>
-                )}
-                <div>
-                  <label htmlFor="booking-end" className="block text-sm font-medium">{maxDays > 1 ? 'Heure du départ' : 'Départ'}</label>
-                  <select id="booking-end" value={endTime} disabled={!startTime} onChange={(event) => { setEndTime(event.target.value); setLocalError('') }} className={`${fieldClass} mt-2 disabled:bg-muted disabled:text-muted-foreground`}>
-                    <option value="">{startTime ? 'Choisir une heure' : 'Choisissez d’abord l’arrivée'}</option>
-                    {ends.map((at) => <option key={at.toISOString()} value={formatTime(at, timeZone)}>{formatTime(at, timeZone)} · {start ? periodDuration({ startsAt: start, endsAt: at }, timeZone) : ''}</option>)}
-                  </select>
-                </div>
-                <p className="text-xs text-muted-foreground sm:col-span-full">
-                  {maxDays > 1
-                    ? `Seuls les horaires libres sont proposés, jusqu’à ${formatDays(maxDays)} d’affilée : ${words.nights}.`
-                    : `Seuls les horaires libres sont proposés, ${MIN_REQUEST_MINUTES} minutes au moins.`}{' '}
-                  {requestPolicyMessage(policy)}
-                </p>
+              ) : <div className="flex flex-col gap-3">
+                {/* Formule, jours et heures (ADR 076) : le jour du départ est libre, et
+                    les heures d'ouverture des jours choisis remplacent les « nuits comprises ». */}
+                <PeriodFields
+                  idPrefix="booking"
+                  date={date}
+                  timeZone={timeZone}
+                  availability={availability.period}
+                  starts={starts}
+                  maxDays={maxDays}
+                  limits={availability.limits}
+                  formulas={formulas}
+                  choice={choice}
+                  evaluation={evaluation}
+                  onChange={(next) => { setChoice(next); setLocalError('') }}
+                  fieldClass={fieldClass}
+                  labelClass="block text-sm font-medium"
+                />
+                <p className="text-xs text-muted-foreground">Seuls les horaires libres sont proposés. {requestPolicyMessage(policy)}</p>
               </div>}
             </div>
-            {!!startTime && !!endTime && availability?.status === 'ready' && !validSlot && <p role="alert" className="mt-3 text-sm text-destructive">Ces horaires ne sont plus disponibles. Choisissez un autre créneau.</p>}
+            {typedStart && !!choice.startTime && !!choice.endTime && availability?.status === 'ready' && selection && !evaluation?.rejection && !validSlot && <p role="alert" className="mt-3 text-sm text-destructive">Ces horaires ne sont plus disponibles. Choisissez un autre créneau.</p>}
           </div>}
 
           {validSlot && <div className="rounded-lg bg-muted p-5">
@@ -425,18 +466,19 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
 
         {/* Toujours montées : des champs non contrôlés démontés ne partiraient pas avec la demande. */}
         <div hidden={step !== QUESTIONS_STEP} className="mt-6">
-          <QuestionnaireFields key={JSON.stringify(answers)} product={product} defaults={answers} errors={byQuestion(questionErrors)} />
+          <QuestionnaireFields key={`${questionnaire.form}/${JSON.stringify(answers)}`} questionnaire={questionnaire} defaults={answers} errors={byQuestion(questionErrors)} />
         </div>
 
         {step === CONTACT_STEP && <div className="mt-6 space-y-6">
           <RecapBlock title="Votre créneau" onEdit={() => goTo(1)} pending={pending}>
             <p className="font-semibold text-primary">{resource?.name}</p>
+            {choice.formula !== 'libre' && <p className="mt-0.5 text-muted-foreground">{rentalFormulaLabels[choice.formula]}</p>}
             {multiDay && selection ? (
               <p className="mt-1 first-letter:uppercase">{periodLabel(selection, timeZone)} · {duration}</p>
             ) : (
               <>
                 <p className="mt-1 first-letter:uppercase">{formatLongDate(date, timeZone)}</p>
-                <p className="mt-0.5 tabular">{startTime} – {endTime} · {duration}</p>
+                <p className="mt-0.5 tabular">{slotText} · {duration}</p>
               </>
             )}
             <div className="mt-3 border-t border-border pt-3"><QuoteAmount quote={quote} live={false} /></div>
@@ -455,14 +497,14 @@ export function PublicBookingForm({ product, resources, timeZone, currency, poli
               const fieldError = contactErrors?.[id]
               return (
                 <div key={field.key}>
-                  <label htmlFor={id} className="block text-sm font-medium">{field.label}{!field.required && <span className="font-normal text-muted-foreground"> (facultatif)</span>}</label>
-                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} maxLength={field.key === 'phone' ? 40 : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
-                  {fieldError && <p id={`${id}-error`} className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
+                  <FieldLabel htmlFor={id} required={field.required} className="block text-sm font-medium">{field.label}</FieldLabel>
+                  <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} aria-required={field.required || undefined} maxLength={field.key === 'phone' ? 40 : field.key === 'firstName' || field.key === 'lastName' ? NAME_PART_MAX : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
+                  {fieldError && <p id={`${id}-error`} role="alert" className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
                 </div>
               )
             })}
             <div className="sm:col-span-2">
-              <label htmlFor="booking-notes" className="block text-sm font-medium">Précisions <span className="font-normal text-muted-foreground">(facultatif)</span></label>
+              <label htmlFor="booking-notes" className="block text-sm font-medium">Précisions</label>
               <textarea id="booking-notes" rows={3} maxLength={2000} value={contact.notes} onChange={(event) => setContact({ ...contact, notes: event.target.value })} className={`${fieldClass} mt-2`} />
             </div>
           </div>

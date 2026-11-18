@@ -1,0 +1,4 @@
+ALTER TABLE `tenants` ADD `mail_suggested_senders` json;--> statement-breakpoint
+ALTER TABLE `mail_scans` ADD `pending_validation` boolean DEFAULT false NOT NULL;--> statement-breakpoint
+ALTER TABLE `tenants` ADD CONSTRAINT `tenants_mail_suggested_senders_valid` CHECK (`tenants`.`mail_suggested_senders` is null or (json_type(`tenants`.`mail_suggested_senders`) = 'ARRAY' and json_length(`tenants`.`mail_suggested_senders`) <= 200));--> statement-breakpoint
+ALTER TABLE `mail_scans` ADD CONSTRAINT `mail_scans_pending_content_only` CHECK (`mail_scans`.`pending_validation` = false or `mail_scans`.`side` = 'content');

@@ -17,6 +17,11 @@ export const MAX_TAG_LENGTH = 30
 export type MailClassification = {
   readAt: Date | null
   handledAt: Date | null
+  /**
+   * Ignoré (ADR 078) : hors de la liste à traiter et de ses compteurs, sans
+   * action demandée ; retrouvé par le filtre « Ignorés ». Réversible.
+   */
+  ignoredAt: Date | null
   category: MailCategory | null
   customCategoryId: string | null
   tags: string[]
@@ -25,6 +30,7 @@ export type MailClassification = {
 export const emptyClassification: MailClassification = {
   readAt: null,
   handledAt: null,
+  ignoredAt: null,
   category: null,
   customCategoryId: null,
   tags: [],
@@ -63,6 +69,9 @@ export type ClassificationChange =
   | { type: 'unread' }
   | { type: 'handled' }
   | { type: 'unhandled' }
+  /** Ignorer un pli, ou le rendre à la liste (ADR 078). */
+  | { type: 'ignore' }
+  | { type: 'unignore' }
   | { type: 'category'; category: MailCategory | null }
   /** Une catégorie personnelle de la personne (ADR 060). */
   | { type: 'customCategory'; id: string }
@@ -89,6 +98,12 @@ export function applyClassification(
       return { ...current, readAt: current.readAt ?? now, handledAt: current.handledAt ?? now }
     case 'unhandled':
       return { ...current, handledAt: null }
+    // Ignorer ne touche ni la lecture, ni le suivi, ni le rangement : rendu à
+    // la liste, le pli retrouve son état d'avant.
+    case 'ignore':
+      return { ...current, ignoredAt: current.ignoredAt ?? now }
+    case 'unignore':
+      return { ...current, ignoredAt: null }
     case 'category':
       return { ...current, category: change.category, customCategoryId: null }
     case 'customCategory':
@@ -123,6 +138,10 @@ export function readClassificationChange(
       return { change: { type: 'handled' } }
     case 'a-traiter':
       return { change: { type: 'unhandled' } }
+    case 'ignorer':
+      return { change: { type: 'ignore' } }
+    case 'ne-plus-ignorer':
+      return { change: { type: 'unignore' } }
     case 'classer': {
       if (value === 'non-classe') return { change: { type: 'category', category: null } }
       if (isCustomCategoryId(value)) return { change: { type: 'customCategory', id: value } }
@@ -158,6 +177,10 @@ export function classificationDoneMessage(action: string, count: number): string
       return `${subject} marqué${agreed} comme traité${agreed}.`
     case 'a-traiter':
       return `${subject} remis à traiter.`
+    case 'ignorer':
+      return `${subject} ignoré${agreed} : ${count > 1 ? 'ils quittent' : 'il quitte'} la liste. ${count > 1 ? 'Retrouvez-les' : 'Retrouvez-le'} dans « Ignorés ».`
+    case 'ne-plus-ignorer':
+      return `${subject} ${count > 1 ? 'reviennent' : 'revient'} dans la liste.`
     case 'classer':
       return `${subject} classé${agreed}.`
     case 'etiqueter':
@@ -171,14 +194,19 @@ export function classificationDoneMessage(action: string, count: number): string
 /* Rubriques de la boîte aux lettres                                          */
 /* -------------------------------------------------------------------------- */
 
-/** Suivi d'un pli par la personne, tel qu'elle le filtre. */
-export const followUpFilters = ['non-lus', 'a-traiter', 'traites'] as const
+/**
+ * Suivi d'un pli par la personne, tel qu'elle le filtre. « Ignorés » est la
+ * seule rubrique qui montre les plis ignorés ; toutes les autres les écartent
+ * (ADR 078).
+ */
+export const followUpFilters = ['non-lus', 'a-traiter', 'traites', 'ignores'] as const
 export type FollowUpFilter = (typeof followUpFilters)[number]
 
 export const followUpLabels: Record<FollowUpFilter, string> = {
   'non-lus': 'Non lus',
   'a-traiter': 'À traiter',
   traites: 'Traités',
+  ignores: 'Ignorés',
 }
 
 /**

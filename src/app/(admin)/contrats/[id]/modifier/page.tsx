@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { isUuid } from '../../../../../lib/uuid.ts'
 import { findClient, listClients } from '../../../../../modules/clients/queries.ts'
@@ -32,9 +33,7 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
   if (!editable) {
     return (
       <div className="flex flex-col gap-6">
-        <Link href={`/contrats/${id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Contrat {contract.reference}
-        </Link>
+        <LienRetour href={`/contrats/${id}`} label={<>Contrat {contract.reference}</>} />
         <h1 className="text-2xl font-semibold tracking-tight">Modifier le brouillon</h1>
         <p className="rounded-lg border border-dashed border-border bg-white px-6 py-12 text-center text-sm text-muted-foreground">
           {contract.deletedAt
@@ -80,9 +79,7 @@ export default async function EditContractPage({ params }: { params: Promise<{ i
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link href={`/contrats/${id}`} className="text-sm text-muted-foreground hover:underline">
-          ← Contrat {contract.reference}
-        </Link>
+        <LienRetour href={`/contrats/${id}`} label={<>Contrat {contract.reference}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modifier le brouillon</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {contract.reference} — {contract.client.name}

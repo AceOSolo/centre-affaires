@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../../lib/auth/staff.ts'
 import { todayIsoDate } from '../../../../../../lib/dates.ts'
 import { currentTimeZone } from '../../../../../../lib/tenant.ts'
@@ -41,9 +42,7 @@ export default async function NewAmendmentPage({
   if (!contract) notFound()
 
   const back = (
-    <Link href={`/contrats/${id}`} className="text-sm text-muted-foreground hover:underline">
-      ← Contrat {contract.reference}
-    </Link>
+    <LienRetour href={`/contrats/${id}`} label={<>Contrat {contract.reference}</>} />
   )
 
   if (contract.status !== 'active' || contract.deletedAt !== null) {

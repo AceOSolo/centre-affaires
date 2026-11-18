@@ -124,6 +124,69 @@
     {
       "idx": 17,
       "version": "5",
+      "when": 1794918162341,
+      "tag": "0017_cloche_client_et_mon_compte",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "5",
+      "when": 1794919862291,
+      "tag": "0018_formulaires_de_demande",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "5",
+      "when": 1794920331331,
+      "tag": "0019_pieces_justificatives",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "5",
+      "when": 1794920833014,
+      "tag": "0020_courrier_equipe",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "5",
+      "when": 1794921218301,
+      "tag": "0021_courrier_client",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "5",
+      "when": 1794921968499,
+      "tag": "0022_courriels-logo-signature",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "5",
+      "when": 1794922625282,
+      "tag": "0023_formules_et_modifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "5",
+      "when": 1794928488296,
+      "tag": "0024_factures_et_depenses",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "5",
+      "when": 1794929267716,
+      "tag": "0025_prenom_nom_des_acces",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "5",
       "when": 1794911748854,
       "tag": "0017_envoi_devis_crm",
       "breakpoints": true

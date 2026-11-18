@@ -1,5 +1,5 @@
 import { formatLongDate, formatTime, toIsoDate } from '../../lib/dates.ts'
-import { describeAnswers, questionnaires, type Answers } from '../reservations/questionnaires.ts'
+import { answersForDisplay, DOMICILIATION_KEYS, requestProducts, type Answers, type DescribedAnswer } from '../reservations/questionnaires.ts'
 import { productOf, type ProductKey } from '../ressources/produits.ts'
 import type { ResourceType } from '../ressources/schema.ts'
 import { lineNetAmountCents, vatAmountCents } from './montants.ts'
@@ -147,7 +147,7 @@ export function lineFromBooking(booking: BookingForLine, timeZone: string): Line
  * chiffré ; sinon il attend l'accueil (ADR 043, *à valider*).
  */
 export function validatesOnCreation(product: ProposalProduct, lineCount: number): boolean {
-  return questionnaires[product].autoValidate && lineCount > 0
+  return requestProducts[product].autoValidate && lineCount > 0
 }
 
 /**
@@ -280,6 +280,8 @@ export type ProposalForDolibarr = {
   requesterPhone: string | null
   requesterCompany: string | null
   answers: Answers
+  /** Réponses en clair figées à l'envoi (ADR 074) ; nulles pour un devis antérieur. */
+  describedAnswers: readonly DescribedAnswer[] | null
   message: string | null
   staffNote: string | null
   client: {
@@ -297,6 +299,13 @@ export type ProposalForDolibarr = {
   } | null
   booking: { id: string; startsAt: Date; endsAt: Date; resourceName: string } | null
   lines: (LineDraft & { position: number; amountCents: number; productRefs?: string[] })[]
+}
+
+/** Le SIRET (ou, avant l'ADR 074, le SIREN) saisi par un prospect. */
+function prospectSiret(answers: Answers): string | null {
+  const siret = answers[DOMICILIATION_KEYS.siret]
+  if (typeof siret === 'string') return siret
+  return typeof answers.siren === 'string' ? answers.siren : null
 }
 
 /** Centimes en décimal à deux chiffres, point décimal : `12345` → `"123.45"`. */
@@ -351,7 +360,8 @@ export function toDolibarrProposal(proposal: ProposalForDolibarr): DolibarrPropo
       : {
           clientId: null,
           nom: proposal.requesterCompany || proposal.requesterName || 'Prospect',
-          siret: typeof proposal.answers.siren === 'string' ? proposal.answers.siren : null,
+          // Le SIRET depuis la recette du 17/11 (ADR 074), le SIREN avant.
+          siret: prospectSiret(proposal.answers),
           numeroTva: null,
           email: proposal.requesterEmail,
           telephone: proposal.requesterPhone,
@@ -366,7 +376,7 @@ export function toDolibarrProposal(proposal: ProposalForDolibarr): DolibarrPropo
           ressource: proposal.booking.resourceName,
         }
       : null,
-    reponses: describeAnswers(proposal.product, proposal.answers).map(({ label, value }) => ({ libelle: label, valeur: value })),
+    reponses: answersForDisplay(proposal).map(({ label, value }) => ({ libelle: label, valeur: value })),
     reponsesBrutes: proposal.answers,
     message: proposal.message,
     noteAccueil: proposal.staffNote,

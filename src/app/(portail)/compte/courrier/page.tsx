@@ -1,8 +1,9 @@
 import Link from 'next/link'
 
 import { FlashNotice } from '../../../../components/ui/flash-notice.tsx'
-import { ArrowRightIcon, CheckIcon, ClockIcon, MailIcon, MailOpenIcon } from '../../../../components/ui/icons.tsx'
+import { ArrowRightIcon, CheckIcon, ClockIcon, MailIcon, MailOpenIcon, MapPinIcon } from '../../../../components/ui/icons.tsx'
 import { formatDateTime } from '../../../../lib/dates.ts'
+import { withReturn } from '../../../../lib/redirection.ts'
 import { currentTenant } from '../../../../lib/tenant.ts'
 import { requireClientAccount } from '../../../../modules/clients/session.ts'
 import {
@@ -19,6 +20,7 @@ import {
   clientMailStates,
   type ClientMailFilters,
   clientRequestOptions,
+  MAX_SENDER_FILTER_LENGTH,
   openingAnnouncementText,
   pageCount,
   pendingRequestStatuses,
@@ -26,8 +28,8 @@ import {
 } from '../../../../modules/courrier/demandes-regles.ts'
 import { EnvelopeThumbnail } from '../../../../modules/courrier/enveloppe.tsx'
 import { mailKindIcons, SendIcon } from '../../../../modules/courrier/icones.tsx'
+import { ArchiveIcon, ChevronDownIcon, FilterIcon } from '../../../../modules/courrier/icones-client.tsx'
 import {
-  mailCategoryLabels,
   mailKindLabels,
   mailRequestKindLabels,
   mailRequestStatusClientLabels,
@@ -35,17 +37,23 @@ import {
   mailStatusStyles,
 } from '../../../../modules/courrier/labels.ts'
 import { MailboxRequest } from '../../../../modules/courrier/mailbox-request.tsx'
-import { mailFolderCounts, type MailFolderCounts } from '../../../../modules/courrier/classement.ts'
-import { SELECTION_FORM_ID, SelectionBar } from '../../../../modules/courrier/classement-forms.tsx'
+import { listMailSenders, mailFolderCounts, type MailFolderCounts } from '../../../../modules/courrier/classement.ts'
+import { MailCardClassify, MailCardReadToggle, MailIgnoreButton } from '../../../../modules/courrier/classement-carte.tsx'
+import { SelectionBar, type CategoryOption } from '../../../../modules/courrier/classement-forms.tsx'
+import { quickButtonClass, SELECTION_FORM_ID } from '../../../../modules/courrier/classement-ui.ts'
 import {
   classificationDoneMessage,
   followUpFilters,
   followUpLabels,
   type CategoryFilter,
 } from '../../../../modules/courrier/classement-regles.ts'
-import { mailCategories } from '../../../../modules/courrier/categories.ts'
-import { categoryName } from '../../../../modules/courrier/categories-perso-regles.ts'
-import { mailKinds, type MailStatus } from '../../../../modules/courrier/schema.ts'
+import { loadCategoryLists } from '../../../../modules/courrier/categories-reglages.ts'
+import {
+  categoryLabel,
+  classifiableCategories,
+  type CategoryEntry,
+} from '../../../../modules/courrier/categories-reglages-regles.ts'
+import { mailKinds, type MailCategory, type MailStatus } from '../../../../modules/courrier/schema.ts'
 
 export const metadata = { title: 'Ma boîte aux lettres' }
 
@@ -55,16 +63,30 @@ const statusIcons: Record<MailStatus, typeof MailIcon> = {
   opened: MailOpenIcon,
 }
 
+/** En-tête d'un bloc repliable : cible de 44 px, chevron qui dit l'état. */
+const foldSummaryClass =
+  'flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-lg px-4 text-sm font-medium text-primary [&::-webkit-details-marker]:hidden'
+const foldChevronClass = 'shrink-0 transition-transform duration-150 ease-out group-open:rotate-180 motion-reduce:transition-none'
+
 const fieldClass =
   'mt-1 block min-h-11 w-full rounded-sm border border-border bg-white px-3 py-2 text-base outline-none focus:border-accent focus:ring-2 focus:ring-accent/40 sm:text-sm'
 
+/** Une catégorie de la liste, en option de formulaire ; le nom porte l'entreprise si le compte en a plusieurs. */
+const toOption = (entry: CategoryEntry, company?: string): CategoryOption => ({
+  id: entry.key,
+  name: company ? `${entry.name} (${company})` : entry.name,
+})
+
 /**
- * Boîte aux lettres de l'entreprise domiciliée (R21).
+ * Boîte aux lettres de l'entreprise domiciliée (R21, ADR 044, ADR 078).
  *
  * Mobile d'abord : on la consulte au téléphone, entre deux rendez-vous. Une
- * carte par pli, avec la vignette de l'enveloppe et le type de pli ; les
- * actions en pleine largeur, à 44 px. Tout l'historique reste accessible,
- * filtré par type, période et état, page par page.
+ * carte par pli, avec la vignette de l'enveloppe et le type de pli. Sur chaque
+ * carte, sans ouvrir la fiche : la catégorie, « Marquer comme lu » et
+ * « Ignorer », au même rang ; les demandes au centre (ouverture,
+ * numérisation, envoi) dans un menu compact, l'action complète sur la fiche.
+ * Filtres combinables, gardés dans l'adresse : période, suivi, catégorie,
+ * type, état, expéditeur.
  */
 export default async function BoiteAuxLettresPage({
   searchParams,
@@ -76,10 +98,12 @@ export default async function BoiteAuxLettresPage({
   const { page, ...filters } = readClientMailFilters(await searchParams)
   const tenant = await currentTenant()
   const timeZone = tenant.timezone
-  const [mail, pending, folders] = await Promise.all([
+  const [mail, pending, folders, lists, senders] = await Promise.all([
     searchMailForAccounts(accounts, filters, { number: page, size: CLIENT_MAIL_PAGE_SIZE }, timeZone),
     listRequestsForAccounts(accounts, { statuses: pendingRequestStatuses }, { number: 1, size: 1 }),
     mailFolderCounts(accounts),
+    loadCategoryLists(accounts),
+    listMailSenders(accounts),
   ])
   // Prix d'une ouverture, annoncé sur chaque pli qui peut en recevoir la
   // demande : la même source que la fiche du pli (ADR 037, 044).
@@ -95,11 +119,37 @@ export default async function BoiteAuxLettresPage({
   const done = typeof params.classe === 'string' ? /^([a-z-]+)-(\d+)$/.exec(params.classe) : null
   const retention = tenant.mailScanRetentionMonths
   const several = accounts.length > 1
-  const clientNames = new Map(accounts.map((account) => [account.clientId, account.clientName]))
   const pages = pageCount(mail.total, CLIENT_MAIL_PAGE_SIZE)
+  // L'adresse de cette vue, filtres et page compris : les pages ouvertes
+  // d'ici y ramènent par leur lien « ← … » (`?retour=`).
+  const listQuery = clientMailQuery(filters, page)
+  const here = listQuery ? `/compte/courrier${listQuery}` : null
   const filtered = Boolean(
-    filters.kind || filters.from || filters.to || filters.state || filters.category || filters.followUp || filters.tag,
+    filters.kind ||
+      filters.from ||
+      filters.to ||
+      filters.state ||
+      filters.category ||
+      filters.followUp ||
+      filters.tag ||
+      filters.sender,
   )
+
+  // Les catégories proposées, sous les noms et dans l'ordre de la personne
+  // (ADR 078) : la liste de sa première entreprise ; les siennes, de chaque
+  // entreprise, le nom de l'entreprise en plus quand le compte en a plusieurs.
+  const firstList = lists.get(accounts[0]?.clientId ?? '') ?? []
+  const ownEntries = accounts.flatMap((account) =>
+    (lists.get(account.clientId) ?? [])
+      .filter((entry) => entry.kind === 'perso')
+      .map((entry) => ({ entry, company: several ? account.clientName : undefined })),
+  )
+  const proposedOptions = classifiableCategories(firstList.filter((entry) => entry.kind === 'proposee')).map((entry) =>
+    toOption(entry),
+  )
+  const customOptions = ownEntries
+    .filter(({ entry }) => !entry.hidden)
+    .map(({ entry, company }) => toOption(entry, company))
 
   return (
     <div className="flex flex-col gap-6">
@@ -108,28 +158,39 @@ export default async function BoiteAuxLettresPage({
           Ma boîte aux lettres
         </h1>
         <p className="mt-2 max-w-prose text-muted-foreground">
-          Le courrier reçu au centre à votre nom. Pour chaque pli, demandez son ouverture et sa
-          numérisation, une nouvelle numérisation, ou sa réexpédition.
+          Le courrier reçu au centre à votre nom. Rangez-le, marquez-le comme lu ou ignorez-le ; pour
+          chaque pli, demandez son ouverture, une numérisation ou son envoi.
         </p>
         {/* Transparence RGPD : la personne sait combien de temps ses documents restent. */}
         <p className="mt-1 max-w-prose text-sm text-muted-foreground">
           Les numérisations sont conservées {retention} mois, puis effacées. Téléchargez celles
           que vous souhaitez garder.
         </p>
-        <p className="mt-3">
-          <Link
-            href="/compte/courrier/demandes"
-            className="inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-2 hover:underline"
-          >
-            Suivre mes demandes
-            {pending.total > 0 && (
-              <span className="rounded-full bg-accent/15 px-2 py-0.5 text-sm tabular">
-                {pending.total} en cours
-              </span>
-            )}
-            <ArrowRightIcon size={20} />
-          </Link>
-        </p>
+        <ul className="mt-3 flex flex-col gap-1 sm:flex-row sm:flex-wrap sm:gap-x-6">
+          <li>
+            <Link
+              href={withReturn('/compte/courrier/demandes', here)}
+              className="inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-2 hover:underline"
+            >
+              Suivre mes demandes
+              {pending.total > 0 && (
+                <span className="rounded-full bg-accent/15 px-2 py-0.5 text-sm tabular">
+                  {pending.total} en cours
+                </span>
+              )}
+              <ArrowRightIcon size={20} />
+            </Link>
+          </li>
+          <li>
+            <Link
+              href={withReturn('/compte/courrier/adresses', here)}
+              className="inline-flex min-h-11 items-center gap-2 font-medium text-primary underline-offset-2 hover:underline"
+            >
+              <MapPinIcon size={20} />
+              Mes adresses
+            </Link>
+          </li>
+        </ul>
       </div>
 
       {done && (
@@ -137,10 +198,83 @@ export default async function BoiteAuxLettresPage({
       )}
 
       <div className="grid gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-      <MailFolders folders={folders} filters={filters} clientNames={several ? clientNames : undefined} />
+      {/* Sur ordinateur, les rubriques restent sous la main au défilement,
+          sous l'en-tête collant du site ; au téléphone, elles restent en tête. */}
+      <div className="lg:sticky lg:top-24 lg:max-h-[calc(100dvh-7rem)] lg:self-start lg:overflow-y-auto lg:overscroll-contain">
+      <MailFolders
+        here={here}
+        folders={folders}
+        filters={filters}
+        entries={[
+          ...firstList,
+          ...ownEntries.filter(({ entry }) => !firstList.includes(entry)).map(({ entry }) => entry),
+        ]}
+        companyOf={several ? new Map(ownEntries.map(({ entry, company }) => [entry.key, company ?? ''])) : undefined}
+      />
+      </div>
       <div className="flex min-w-0 flex-col gap-6">
-      {/* Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
-      <form className="grid max-w-3xl gap-3 rounded-lg border border-border bg-muted p-4 sm:grid-cols-2 lg:grid-cols-4" aria-label="Filtrer le courrier">
+      {/* Replié par défaut, ouvert quand un filtre est actif (recette du 17/11).
+          Formulaire GET : les filtres restent dans l'URL, la page se partage et se recharge. */}
+      <details open={filtered} className="group max-w-3xl rounded-lg border border-border bg-muted">
+        <summary className={foldSummaryClass}>
+          <span className="inline-flex items-center gap-2">
+            <FilterIcon size={20} />
+            Filtrer le courrier
+            {filtered && <span className="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">filtres actifs</span>}
+          </span>
+          <ChevronDownIcon size={20} className={foldChevronClass} />
+        </summary>
+      <form className="grid gap-3 border-t border-border p-4 sm:grid-cols-2 lg:grid-cols-3" aria-label="Filtrer le courrier">
+        <div>
+          <label htmlFor="du" className="block text-sm font-medium">
+            Reçu à partir du
+          </label>
+          <input id="du" name="du" type="date" defaultValue={filters.from ?? ''} className={`${fieldClass} tabular`} />
+        </div>
+        <div>
+          <label htmlFor="au" className="block text-sm font-medium">
+            Jusqu’au
+          </label>
+          <input id="au" name="au" type="date" defaultValue={filters.to ?? ''} className={`${fieldClass} tabular`} />
+        </div>
+        <div>
+          <label htmlFor="suivi" className="block text-sm font-medium">
+            Suivi
+          </label>
+          <select id="suivi" name="suivi" defaultValue={filters.followUp ?? ''} className={fieldClass}>
+            <option value="">Tous, sauf ignorés</option>
+            {followUpFilters.map((followUp) => (
+              <option key={followUp} value={followUp}>
+                {followUpLabels[followUp]}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label htmlFor="categorie-filtre" className="block text-sm font-medium">
+            Catégorie
+          </label>
+          <select id="categorie-filtre" name="categorie" defaultValue={filters.category ?? ''} className={fieldClass}>
+            <option value="">Toutes</option>
+            {firstList
+              .filter((entry) => entry.kind === 'proposee')
+              .map((entry) => (
+                <option key={entry.key} value={entry.key}>
+                  {entry.name}
+                </option>
+              ))}
+            {ownEntries.length > 0 && (
+              <optgroup label="Mes catégories">
+                {ownEntries.map(({ entry, company }) => (
+                  <option key={entry.key} value={entry.key}>
+                    {company ? `${entry.name} (${company})` : entry.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            <option value="non-classe">Non classé</option>
+          </select>
+        </div>
         <div>
           <label htmlFor="type" className="block text-sm font-medium">
             Type de pli
@@ -167,23 +301,32 @@ export default async function BoiteAuxLettresPage({
             ))}
           </select>
         </div>
-        <div>
-          <label htmlFor="du" className="block text-sm font-medium">
-            Reçu à partir du
+        <div className="sm:col-span-2 lg:col-span-3">
+          <label htmlFor="expediteur" className="block text-sm font-medium">
+            Expéditeur
           </label>
-          <input id="du" name="du" type="date" defaultValue={filters.from ?? ''} className={`${fieldClass} tabular`} />
+          <input
+            id="expediteur"
+            name="expediteur"
+            list="expediteurs-connus"
+            maxLength={MAX_SENDER_FILTER_LENGTH}
+            autoComplete="off"
+            defaultValue={filters.sender ?? ''}
+            aria-describedby="expediteur-aide"
+            className={fieldClass}
+          />
+          <datalist id="expediteurs-connus">
+            {senders.map((sender) => (
+              <option key={sender} value={sender} />
+            ))}
+          </datalist>
+          <p id="expediteur-aide" className="mt-1 text-sm text-muted-foreground">
+            Tout ou partie du nom : « impots » trouve « impots.gouv ».
+          </p>
         </div>
-        <div>
-          <label htmlFor="au" className="block text-sm font-medium">
-            Jusqu’au
-          </label>
-          <input id="au" name="au" type="date" defaultValue={filters.to ?? ''} className={`${fieldClass} tabular`} />
-        </div>
-        {/* Les rubriques choisies à gauche restent quand on filtre. */}
-        {filters.category && <input type="hidden" name="categorie" value={filters.category} />}
-        {filters.followUp && <input type="hidden" name="suivi" value={filters.followUp} />}
+        {/* L'étiquette choisie à gauche reste quand on filtre. */}
         {filters.tag && <input type="hidden" name="etiquette" value={filters.tag} />}
-        <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-center lg:col-span-4">
+        <div className="flex flex-col gap-2 sm:col-span-2 sm:flex-row sm:items-center lg:col-span-3">
           <button
             type="submit"
             className="press inline-flex min-h-11 items-center justify-center rounded-md bg-primary px-5 text-sm font-medium text-primary-foreground hover:bg-primary-hover"
@@ -200,44 +343,78 @@ export default async function BoiteAuxLettresPage({
           )}
         </div>
       </form>
+      </details>
 
       <p className="text-sm text-muted-foreground" aria-live="polite">
         {mail.total === 0
           ? 'Aucun pli.'
           : `${mail.total} pli${mail.total > 1 ? 's' : ''}${filtered ? ' correspondant aux filtres' : ''}${pages > 1 ? ` — page ${Math.min(page, pages)} sur ${pages}` : ''}.`}
+        {!filters.followUp && folders.ignored > 0 && (
+          <>
+            {' '}
+            <Link
+              href={`/compte/courrier${clientMailQuery({ ...filters, followUp: 'ignores' })}`}
+              className="underline underline-offset-2 hover:text-primary"
+            >
+              {folders.ignored} ignoré{folders.ignored > 1 ? 's' : ''}, hors de cette liste
+            </Link>
+            .
+          </>
+        )}
       </p>
 
       {mail.rows.length === 0 ? (
         <div className="max-w-3xl rounded-lg border border-dashed border-border px-6 py-12 text-center">
           <MailIcon size={24} className="mx-auto text-muted-foreground" />
           <p className="mt-3 text-muted-foreground">
-            {filtered
-              ? 'Aucun pli ne correspond à ces filtres. Élargissez la période ou effacez les filtres.'
-              : 'Aucun courrier pour l’instant. Chaque pli reçu au centre à votre nom apparaîtra ici.'}
+            {filters.followUp === 'ignores'
+              ? 'Aucun courrier ignoré. « Ignorer », sur un courrier, le retire de la liste sans rien demander au centre.'
+              : filtered
+                ? 'Aucun pli ne correspond à ces filtres. Élargissez la période ou effacez les filtres.'
+                : 'Aucun courrier pour l’instant. Chaque pli reçu au centre à votre nom apparaîtra ici.'}
           </p>
         </div>
       ) : (
         <>
-          <SelectionBar
-            returnQuery={clientMailQuery(filters, page)}
-            knownTags={folders.tags.map((entry) => entry.tag)}
-            customCategories={folders.custom.map((entry) => ({
-              id: entry.id,
-              name: several ? `${entry.name} (${clientNames.get(entry.clientId) ?? ''})` : entry.name,
-            }))}
-          />
+          {/* Les gestes groupés, repliés par défaut : on coche d'abord, on agit ensuite. */}
+          <details className="group max-w-3xl rounded-lg border border-border bg-white">
+            <summary className={foldSummaryClass}>
+              <span>Actions sur les courriers cochés</span>
+              <ChevronDownIcon size={20} className={foldChevronClass} />
+            </summary>
+            <div className="border-t border-border">
+              {/* Le cadre est celui du bloc repliable. */}
+              <SelectionBar
+                returnQuery={listQuery}
+                knownTags={folders.tags.map((entry) => entry.tag)}
+                proposedCategories={proposedOptions}
+                customCategories={customOptions}
+                showingIgnored={filters.followUp === 'ignores'}
+              />
+            </div>
+          </details>
           <ul className="flex max-w-3xl flex-col gap-4">
-            {mail.rows.map((item) => (
-              <li key={item.id}>
-                <MailCard
-                  item={item}
-                  timeZone={timeZone}
-                  showClient={several}
-                  openingAnnouncement={openingAnnouncement(item.clientId)}
-                  category={categoryName(item.classification, folders.custom)}
-                />
-              </li>
-            ))}
+            {mail.rows.map((item) => {
+              const list = lists.get(item.clientId) ?? []
+              const current = item.classification.customCategoryId ?? item.classification.category ?? ''
+              const classifiable = classifiableCategories(list, current)
+              return (
+                <li key={item.id}>
+                  <MailCard
+                    item={item}
+                    timeZone={timeZone}
+                    showClient={several}
+                    openingAnnouncement={openingAnnouncement(item.clientId)}
+                    category={categoryLabel(item.classification, list)}
+                    current={current}
+                    proposed={classifiable.filter((entry) => entry.kind === 'proposee').map((entry) => toOption(entry))}
+                    custom={classifiable.filter((entry) => entry.kind === 'perso').map((entry) => toOption(entry))}
+                    returnQuery={listQuery}
+                    here={here}
+                  />
+                </li>
+              )
+            })}
           </ul>
         </>
       )}
@@ -277,27 +454,49 @@ export default async function BoiteAuxLettresPage({
 
 /**
  * Rubriques de la boîte aux lettres (ADR 044), comme dans un espace bancaire :
- * le suivi (non lus, à traiter, traités), les catégories et les étiquettes de
- * la personne, chacune avec son nombre de plis. Liens simples : la rubrique
- * est dans l'URL, la page se partage et se recharge.
+ * le suivi (non lus, à traiter, traités, ignorés), les catégories — sous les
+ * noms et dans l'ordre de la personne (ADR 078) — et les étiquettes, chacune
+ * avec son nombre de plis. Liens simples : la rubrique est dans l'URL, avec
+ * les autres filtres, la page se partage et se recharge.
  */
 function MailFolders({
+  here,
   folders,
   filters,
-  clientNames,
+  entries,
+  companyOf,
 }: {
+  /** Adresse de la vue en cours, pour le retour de « Gérer mes catégories ». */
+  here: string | null
   folders: MailFolderCounts
   filters: ClientMailFilters
+  /** La liste de la personne : catégories proposées et les siennes, dans son ordre. */
+  entries: readonly CategoryEntry[]
   /** Plusieurs entreprises : chaque catégorie personnelle dit la sienne. */
-  clientNames?: Map<string, string>
+  companyOf?: Map<string, string>
 }) {
-  const base = { kind: filters.kind, from: filters.from, to: filters.to, state: filters.state }
+  const base = { kind: filters.kind, from: filters.from, to: filters.to, state: filters.state, sender: filters.sender }
   const link = (next: ClientMailFilters) => `/compte/courrier${clientMailQuery({ ...base, ...next })}`
   const all = !filters.category && !filters.followUp && !filters.tag
-  const followUpCount = { 'non-lus': folders.unread, 'a-traiter': folders.toHandle, traites: folders.handled }
-  const categories = [...mailCategories, 'non-classe' as const].filter(
-    (category) => folders.byCategory[category].total > 0 || filters.category === category,
-  )
+  const followUpCount = {
+    'non-lus': folders.unread,
+    'a-traiter': folders.toHandle,
+    traites: folders.handled,
+    ignores: folders.ignored,
+  }
+  const customCounts = new Map(folders.custom.map((entry) => [entry.id, entry]))
+  const countOf = (entry: CategoryEntry) =>
+    entry.kind === 'perso'
+      ? (customCounts.get(entry.key) ?? { total: 0, unread: 0 })
+      : folders.byCategory[entry.key as MailCategory]
+  // Une catégorie proposée n'apparaît que si elle range des plis ; une
+  // catégorie à soi, toujours, sauf masquée et vide (ADR 060, ADR 078).
+  const shown = entries.filter((entry) => {
+    const count = countOf(entry)?.total ?? 0
+    if (filters.category === entry.key || count > 0) return true
+    return entry.kind === 'perso' && !entry.hidden
+  })
+  const unclassified = folders.byCategory['non-classe']
 
   return (
     <nav aria-label="Rubriques du courrier" className="flex flex-col gap-4 text-sm">
@@ -314,47 +513,38 @@ function MailFolders({
         ))}
       </FolderGroup>
       <FolderGroup title="Catégories">
-        {categories.length === 0 && folders.custom.length === 0 ? (
-          <li className="px-3 text-muted-foreground">Rangez vos courriers : cochez-les, puis « Classer ».</li>
+        {shown.length === 0 && unclassified.total === 0 ? (
+          <li className="px-3 text-muted-foreground">Rangez vos courriers : choisissez leur catégorie dans la liste.</li>
         ) : (
           <>
-            {categories
-              .filter((category) => category !== 'non-classe')
-              .map((category) => (
+            {shown.map((entry) => {
+              const count = countOf(entry) ?? { total: 0, unread: 0 }
+              const company = companyOf?.get(entry.key)
+              return (
                 <FolderLink
-                  key={category}
-                  href={link({ category, followUp: filters.followUp })}
-                  active={filters.category === category}
-                  label={mailCategoryLabels[category]}
-                  count={folders.byCategory[category].total}
-                  unread={folders.byCategory[category].unread}
+                  key={entry.key}
+                  href={link({ category: entry.key as CategoryFilter, followUp: filters.followUp })}
+                  active={filters.category === entry.key}
+                  label={company ? `${entry.name} (${company})` : entry.name}
+                  count={count.total}
+                  unread={count.unread}
                 />
-              ))}
-            {/* Les catégories de la personne (ADR 060), toujours montrées : elle les a créées. */}
-            {folders.custom.map((entry) => (
-              <FolderLink
-                key={entry.id}
-                href={link({ category: entry.id as CategoryFilter, followUp: filters.followUp })}
-                active={filters.category === entry.id}
-                label={clientNames ? `${entry.name} (${clientNames.get(entry.clientId) ?? ''})` : entry.name}
-                count={entry.total}
-                unread={entry.unread}
-              />
-            ))}
-            {categories.includes('non-classe') && (
+              )
+            })}
+            {(unclassified.total > 0 || filters.category === 'non-classe') && (
               <FolderLink
                 href={link({ category: 'non-classe', followUp: filters.followUp })}
                 active={filters.category === 'non-classe'}
                 label="Non classé"
-                count={folders.byCategory['non-classe'].total}
-                unread={folders.byCategory['non-classe'].unread}
+                count={unclassified.total}
+                unread={unclassified.unread}
               />
             )}
           </>
         )}
         <li>
           <Link
-            href="/compte/courrier/categories"
+            href={withReturn('/compte/courrier/categories', here)}
             className="flex min-h-11 items-center gap-2 rounded-md px-3 font-medium text-primary underline-offset-2 hover:underline"
           >
             Gérer mes catégories
@@ -425,13 +615,25 @@ function MailCard({
   showClient,
   openingAnnouncement,
   category,
+  current,
+  proposed,
+  custom,
+  returnQuery,
+  here,
 }: {
   item: ClientMailCard
   timeZone: string
   showClient: boolean
   openingAnnouncement: string
-  /** Nom de la catégorie du pli, de départ ou personnelle ; nul : non classé. */
+  /** Nom de la catégorie du pli, sous le nom que la personne lui donne ; nul : non classé. */
   category: string | null
+  /** Catégorie du pli, telle que la liste la choisit. */
+  current: string
+  proposed: CategoryOption[]
+  custom: CategoryOption[]
+  returnQuery: string
+  /** Adresse de la liste, filtres et page compris : la fiche du pli y ramène. */
+  here: string | null
 }) {
   const StatusIcon = statusIcons[item.status]
   const KindIcon = mailKindIcons[item.kind]
@@ -440,7 +642,10 @@ function MailCard({
   const otherPending = item.pendingRequests.filter((request) => request.kind !== 'open_and_scan')
   const opening = options.open_and_scan || pendingOpening?.status === 'requested'
   const unread = item.classification.readAt === null
+  const ignored = item.classification.ignoredAt !== null
   const sender = item.sender ?? 'Expéditeur non précisé'
+  const pliLabel = `pli de ${sender} reçu le ${formatDateTime(item.receivedAt, timeZone)}`
+  const hasRequests = opening || options.scan || options.forward
 
   return (
     <article aria-labelledby={`pli-${item.id}`} className="flex flex-col gap-3 rounded-lg border border-border bg-white p-4 sm:p-5">
@@ -457,7 +662,7 @@ function MailCard({
           Sélectionner
         </label>
         <div className="flex flex-wrap items-center gap-2 text-xs">
-          {/* Lu et traité se lisent au libellé et à l'icône, pas à la seule couleur. */}
+          {/* Lu, traité et ignoré se lisent au libellé et à l'icône, pas à la seule couleur. */}
           {unread && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-2.5 py-1 font-semibold text-primary">
               <MailIcon size={16} />
@@ -468,6 +673,12 @@ function MailCard({
             <span className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 font-medium">
               <CheckIcon size={16} className="text-primary" />
               Traité
+            </span>
+          )}
+          {ignored && (
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 font-medium text-foreground">
+              <ArchiveIcon size={16} />
+              Ignoré
             </span>
           )}
         </div>
@@ -499,7 +710,7 @@ function MailCard({
                 son expéditeur. Cible de 44 px, les marges négatives gardent la
                 hauteur de la ligne. */}
             <Link
-              href={`/compte/courrier/${item.id}`}
+              href={withReturn(`/compte/courrier/${item.id}`, here)}
               className="relative -my-2.5 flex min-h-11 items-center underline-offset-2 hover:underline"
             >
               <span className="truncate">{sender}</span>
@@ -543,40 +754,71 @@ function MailCard({
 
       {item.note && <p className="whitespace-pre-line rounded-md bg-muted px-3 py-2 text-sm">{item.note}</p>}
 
-      {(item.contentScanId || opening || options.forward) && (
+      <div className="flex flex-col gap-3 border-t border-border pt-3">
+        <MailCardClassify
+          mailItemId={item.id}
+          clientId={item.clientId}
+          current={current}
+          proposed={proposed}
+          custom={custom}
+          pliLabel={pliLabel}
+        />
+        {/* Gestes au même rang : aucun ne prend le pas sur « Marquer comme lu ». */}
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-start">
           {item.contentScanId && (
-            <a
-              href={`/compte/scans/${item.contentScanId}`}
-              className="press inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary-hover"
-            >
+            <a href={`/compte/scans/${item.contentScanId}`} className={`${quickButtonClass} min-h-11 w-full sm:w-auto`}>
               <MailOpenIcon size={20} />
               Lire le courrier
             </a>
           )}
-          {/* Une seule position pour les deux modes : le composant survit au
-              passage de l'un à l'autre, et son message de confirmation reste
-              annoncé. */}
-          {opening && (
-            <MailboxRequest
-              mailItemId={item.id}
-              mode={options.open_and_scan ? 'request' : 'cancel'}
-              announcement={openingAnnouncement}
-            />
-          )}
-          {/* L'envoi demande une adresse : la fiche du pli s'ouvre sur son formulaire. */}
-          {options.forward && (
-            <Link
-              href={`/compte/courrier/${item.id}?demande=envoi#reexpedition`}
-              aria-label={`Demander l’envoi — pli de ${sender} reçu le ${formatDateTime(item.receivedAt, timeZone)}`}
-              className="inline-flex min-h-11 items-center justify-center gap-2 rounded-md border border-border px-5 py-2.5 text-sm font-medium text-primary transition-colors hover:bg-muted"
-            >
-              <SendIcon size={20} />
-              Demander l’envoi
-            </Link>
-          )}
+          <MailCardReadToggle mailItemId={item.id} unread={unread} pliLabel={pliLabel} />
+          <MailIgnoreButton mailItemId={item.id} ignored={ignored} pliLabel={pliLabel} returnQuery={returnQuery} />
         </div>
-      )}
+        {/* Les demandes au centre, repliées : un menu par pli, l'action complète sur la fiche. */}
+        {hasRequests && (
+          <details className="group rounded-md border border-border">
+            <summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 px-3 text-sm font-medium text-primary [&::-webkit-details-marker]:hidden">
+              <span>
+                Demander au centre<span className="sr-only"> — {pliLabel}</span>
+              </span>
+              <ChevronDownIcon size={20} className="transition-transform duration-150 ease-out group-open:rotate-180 motion-reduce:transition-none" />
+            </summary>
+            <div className="flex flex-col gap-3 border-t border-border p-3">
+              {/* Une seule position pour les deux modes : le composant survit au
+                  passage de l'un à l'autre, et son message de confirmation reste
+                  annoncé. */}
+              {opening && (
+                <div className="flex flex-col gap-1">
+                  <p className="text-sm font-medium">Ouverture et numérisation</p>
+                  <MailboxRequest
+                    mailItemId={item.id}
+                    mode={options.open_and_scan ? 'request' : 'cancel'}
+                    announcement={openingAnnouncement}
+                  />
+                </div>
+              )}
+              {options.scan && (
+                <Link
+                  href={withReturn(`/compte/courrier/${item.id}?demande=numerisation#numerisation`, here)}
+                  className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
+                >
+                  Demander une nouvelle numérisation…
+                </Link>
+              )}
+              {/* L'envoi demande une adresse : la fiche du pli s'ouvre sur son formulaire. */}
+              {options.forward && (
+                <Link
+                  href={withReturn(`/compte/courrier/${item.id}?demande=envoi#reexpedition`, here)}
+                  className="inline-flex min-h-11 items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline"
+                >
+                  <SendIcon size={20} />
+                  Demander l’envoi…
+                </Link>
+              )}
+            </div>
+          </details>
+        )}
+      </div>
     </article>
   )
 }

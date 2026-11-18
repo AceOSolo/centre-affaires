@@ -98,7 +98,7 @@ export type InboxItem = {
   summary: string
   /** Entreprise, ou demandeur de la page publique ; « Visiteur du site » à défaut. */
   who: string
-  /** « Prise en charge » : quelqu'un s'en occupe, ce n'est pas encore fait. */
+  /** « Validée » : le centre l'a acceptée, ce n'est pas encore fait (ADR 079). */
   state: string | null
   /** Arrivée de la demande, ISO 8601, pour `<time dateTime>`. */
   createdAt: string

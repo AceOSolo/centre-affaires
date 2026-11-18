@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
+import { LienRetour } from '../../../../../components/ui/lien-retour.tsx'
 import { requirePermission } from '../../../../../lib/auth/staff.ts'
 import { resourceTypeLabels } from '../../../../../modules/ressources/labels.ts'
 import { findResource } from '../../../../../modules/ressources/queries.ts'
@@ -24,12 +25,7 @@ export default async function EditResourcePage({ params }: { params: Promise<{ i
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <Link
-          href={`/ressources/${resource.id}`}
-          className="text-sm text-muted-foreground hover:underline"
-        >
-          ← {resource.name}
-        </Link>
+        <LienRetour href={`/ressources/${resource.id}`} label={<>{resource.name}</>} />
         <h1 className="mt-2 text-2xl font-semibold tracking-tight">Modifier la ressource</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           {resource.code} · {resourceTypeLabels[resource.resourceType]}

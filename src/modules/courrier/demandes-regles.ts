@@ -318,7 +318,7 @@ export function pageCount(total: number, pageSize: number): number {
 }
 
 /**
- * Bilan d'une prise en charge groupée, lu dans l'URL de retour
+ * Bilan d'une validation groupée (« Valider la sélection », ADR 079), lu dans l'URL de retour
  * (`?prises=2&ignorees=1&echecs=1`) : la confirmation, et à part ce qui n'a
  * pas pu se faire (ADR 057). `undefined` sans bilan dans l'adresse.
  */
@@ -334,14 +334,14 @@ export function groupStartNotice(params: SearchParams): { done: string; failure?
   const plural = (n: number, word: string) => `${word}${n > 1 ? 's' : ''}`
   const done =
     (started === 0
-      ? 'Aucune demande prise en charge.'
-      : `${started} ${plural(started, 'demande')} ${plural(started, 'prise')} en charge.`) +
+      ? 'Aucune demande validée.'
+      : `${started} ${plural(started, 'demande')} ${plural(started, 'validée')}.`) +
     (skipped > 0
-      ? ` ${skipped} ${plural(skipped, 'ignorée')} : déjà ${plural(skipped, 'prise')} en charge, ${plural(skipped, 'faite')} ou ${plural(skipped, 'annulée')} entre-temps.`
+      ? ` ${skipped} ${plural(skipped, 'ignorée')} : déjà ${plural(skipped, 'validée')}, ${plural(skipped, 'faite')} ou ${plural(skipped, 'annulée')} entre-temps.`
       : '')
   const failure =
     failed > 0
-      ? `${failed} ${plural(failed, 'demande')} n’${failed > 1 ? 'ont' : 'a'} pas pu être ${plural(failed, 'prise')} en charge : le serveur a rencontré une erreur, rien n’a été modifié pour ${failed > 1 ? 'elles' : 'elle'}. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.`
+      ? `${failed} ${plural(failed, 'demande')} n’${failed > 1 ? 'ont' : 'a'} pas pu être ${plural(failed, 'validée')} : le serveur a rencontré une erreur, rien n’a été modifié pour ${failed > 1 ? 'elles' : 'elle'}. Réessayez ; si cela se reproduit, prévenez la personne qui administre l’application.`
       : undefined
   return { done, failure }
 }
@@ -374,12 +374,24 @@ export type ClientMailFilters = {
   category?: CategoryFilter
   followUp?: FollowUpFilter
   tag?: string
+  /** Expéditeur : le pli dont l'expéditeur contient ce texte (ADR 078). */
+  sender?: string
+}
+
+/** 100 caractères au plus : un nom d'expéditeur, pas un texte. */
+export const MAX_SENDER_FILTER_LENGTH = 100
+
+/** Expéditeur filtré, lu dans l'URL : espaces resserrés, ignoré s'il est vide ou trop long. */
+export function readSenderFilter(value: string | undefined): string | undefined {
+  const sender = (value ?? '').replace(/\s+/g, ' ').trim()
+  return sender && sender.length <= MAX_SENDER_FILTER_LENGTH ? sender : undefined
 }
 
 /**
  * Filtres de la boîte aux lettres, lus dans l'URL : type de pli, période de
- * réception, état. Une valeur illisible est ignorée, pas refusée ; une période
- * à l'envers est remise dans l'ordre.
+ * réception, état, suivi, catégorie, étiquette, expéditeur — combinables
+ * (ADR 078). Une valeur illisible est ignorée, pas refusée ; une période à
+ * l'envers est remise dans l'ordre.
  */
 export function readClientMailFilters(params: SearchParams): ClientMailFilters & { page: number } {
   const kind = first(params.type)
@@ -387,6 +399,7 @@ export function readClientMailFilters(params: SearchParams): ClientMailFilters &
   const category = readCategoryFilter(first(params.categorie))
   const followUp = readFollowUpFilter(first(params.suivi))
   const tag = readTagFilter(first(params.etiquette))
+  const sender = readSenderFilter(first(params.expediteur))
   let from = first(params.du)
   let to = first(params.au)
   if (!isCalendarDate(from)) from = undefined
@@ -401,6 +414,7 @@ export function readClientMailFilters(params: SearchParams): ClientMailFilters &
     ...(category ? { category } : {}),
     ...(followUp ? { followUp } : {}),
     ...(tag ? { tag } : {}),
+    ...(sender ? { sender } : {}),
     page: readPage(params.page),
   }
 }
@@ -415,6 +429,7 @@ export function clientMailQuery(filters: ClientMailFilters, page = 1): string {
   if (filters.category) query.set('categorie', filters.category)
   if (filters.followUp) query.set('suivi', filters.followUp)
   if (filters.tag) query.set('etiquette', filters.tag)
+  if (filters.sender) query.set('expediteur', filters.sender)
   if (page > 1) query.set('page', String(page))
   const text = query.toString()
   return text ? `?${text}` : ''
@@ -434,8 +449,8 @@ export type RequestStateFilter = keyof typeof requestStateFilters
 
 export const requestStateFilterLabels: Record<RequestStateFilter, string> = {
   'a-traiter': 'À traiter',
-  demandee: 'Pas encore prises en charge',
-  'en-cours': 'En cours',
+  demandee: 'Pas encore validées',
+  'en-cours': 'Validées',
   faite: 'Faites',
   refusee: 'Refusées',
   annulee: 'Annulées',
