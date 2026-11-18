@@ -499,7 +499,7 @@ export function PublicBookingForm({ product, resources, questionnaires, knownCon
                 <div key={field.key}>
                   <FieldLabel htmlFor={id} required={field.required} className="block text-sm font-medium">{field.label}</FieldLabel>
                   <input id={id} type={field.type} autoComplete={field.autoComplete} required={field.required} aria-required={field.required || undefined} maxLength={field.key === 'phone' ? 40 : field.key === 'firstName' || field.key === 'lastName' ? NAME_PART_MAX : 200} placeholder={field.key === 'title' ? words.titlePlaceholder : undefined} aria-invalid={fieldError ? true : undefined} aria-describedby={fieldError ? `${id}-error` : undefined} value={contact[field.key]} onChange={(event) => setContact({ ...contact, [field.key]: event.target.value })} className={`${fieldClass} mt-2`} />
-                  {fieldError && <p id={`${id}-error`} className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
+                  {fieldError && <p id={`${id}-error`} role="alert" className="mt-1.5 text-sm text-destructive">{fieldError}</p>}
                 </div>
               )
             })}
