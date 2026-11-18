@@ -42,6 +42,7 @@ function proposal(overrides: Partial<ProposalForDolibarr> = {}) {
     requesterPhone: '0601020304',
     requesterCompany: 'Martin Conseil',
     answers: { participants: 8, usage: 'Atelier' },
+    describedAnswers: null,
     message: 'Besoin d’un vidéoprojecteur',
     staffNote: null,
     client: null,
