@@ -3,7 +3,7 @@ import { dolibarrClient, DolibarrApiError } from '../crm/dolibarr-api.ts'
 import { crmOriginOf } from '../crm/liens.ts'
 import { crmOutboundCredentials, crmQuotePushSettings, recordCrmExchange } from '../crm/queries.ts'
 import { currentTenant, currentTenantId } from '../../lib/tenant.ts'
-import { sendProposalToDolibarr, type QuoteSite } from './devis-dolibarr.ts'
+import { sendProposalToDolibarr, splitExtrafieldSettings, type QuoteSite } from './devis-dolibarr.ts'
 import { markProposalSent, listProposalsForDolibarr } from './propositions-queries.ts'
 import { toDolibarrProposal } from './propositions.ts'
 
@@ -72,6 +72,7 @@ async function pushOnce(request: CrmRequest): Promise<PushReport> {
   const tenant = await currentTenant()
   const site: QuoteSite = { timeZone: tenant.timezone, city: tenant.city, postalCode: tenant.postalCode }
   const client = dolibarrClient({ baseUrl: credentials.baseUrl, key: credentials.key, request })
+  const extrafields = splitExtrafieldSettings(settings.quoteExtrafields)
 
   const proposals = (await listProposalsForDolibarr({ status: 'ready', limit: BATCH_SIZE })).map(toDolibarrProposal)
   const report: PushReport = { sent: 0, failed: 0 }
@@ -82,7 +83,9 @@ async function pushOnce(request: CrmRequest): Promise<PushReport> {
       const linked = proposal.tiers.clientId ? await crmOriginOf('client', proposal.tiers.clientId) : undefined
       const sent = await sendProposalToDolibarr(client, proposal, {
         site,
-        extrafields: settings.quoteExtrafields,
+        extrafields: extrafields.proposal,
+        contactExtrafields: extrafields.contact,
+        thirdpartyExtrafields: extrafields.thirdparty,
         linkedThirdpartyId: linked && !linked.removedAt ? linked.externalId : null,
       })
       const marked = await markProposalSent(proposal.id, { id: sent.dolibarrId, ref: sent.dolibarrRef })

@@ -455,14 +455,41 @@ export function CrmFlowsForm({
 /* Envoi des devis au CRM (ADR 073)                                         */
 /* ------------------------------------------------------------------------ */
 
+type ExtrafieldTexts = { proposal: string; contact: string; thirdparty: string }
+
+/** Les trois objets créés dans le CRM, chacun avec ses champs complémentaires obligatoires. */
+const extrafieldBlocks = [
+  {
+    key: 'proposal',
+    name: 'quoteExtrafields',
+    label: 'Champs complémentaires des devis',
+    help: 'Les champs « options_… » de vos devis Dolibarr que le site ne peut pas deviner, avec leur valeur. Ils s’ajoutent à ceux que le site remplit seul (dates de la demande, lieu, période souhaitée, nombre de participants, détail de la demande) et l’emportent sur eux.',
+  },
+  {
+    key: 'thirdparty',
+    name: 'thirdpartyExtrafields',
+    label: 'Champs complémentaires des tiers',
+    help: 'Les champs obligatoires de vos tiers Dolibarr, pour un tiers que le site crée.',
+  },
+  {
+    key: 'contact',
+    name: 'contactExtrafields',
+    label: 'Champs complémentaires des contacts',
+    help: 'Les champs obligatoires de vos contacts Dolibarr, pour un contact que le site crée.',
+  },
+] as const
+
 export function CrmQuotePushForm({
   enabled,
   extrafields,
+  defaults,
   ready,
 }: {
   enabled: boolean
-  /** Champs complémentaires réglés, en JSON mis en forme. */
-  extrafields: string
+  /** Champs complémentaires réglés pour chaque objet, en JSON mis en forme (vide : rien de réglé). */
+  extrafields: ExtrafieldTexts
+  /** Ce que le site envoie pour un objet dont le champ est vide. */
+  defaults: ExtrafieldTexts
   /** L'adresse et la clé du CRM sont réglées : sans elles, l'envoi ne peut pas être voulu. */
   ready: boolean
 }) {
@@ -473,7 +500,12 @@ export function CrmQuotePushForm({
       <form action={formAction} className="flex flex-col gap-4" noValidate>
         <ErrorSummary
           errors={errors as Record<string, string> | undefined}
-          labels={{ pushQuotes: 'Envoi des devis', quoteExtrafields: 'Champs complémentaires' }}
+          labels={{
+            pushQuotes: 'Envoi des devis',
+            quoteExtrafields: 'Champs complémentaires des devis',
+            thirdpartyExtrafields: 'Champs complémentaires des tiers',
+            contactExtrafields: 'Champs complémentaires des contacts',
+          }}
         />
         <div className="flex gap-3">
           <label htmlFor="pushQuotes" className="inline-flex size-8 shrink-0 cursor-pointer items-center justify-center">
@@ -503,32 +535,34 @@ export function CrmQuotePushForm({
             )}
           </div>
         </div>
-        <div className="max-w-xl">
-          <label className={labelClass} htmlFor="quoteExtrafields">
-            Champs complémentaires des devis <span className="font-normal text-muted-foreground">(JSON, facultatif)</span>
-          </label>
-          <textarea
-            id="quoteExtrafields"
-            name="quoteExtrafields"
-            rows={6}
-            spellCheck={false}
-            defaultValue={state?.values?.quoteExtrafields ?? extrafields}
-            aria-invalid={errors?.quoteExtrafields ? true : undefined}
-            aria-describedby={['quoteExtrafields-aide', errors?.quoteExtrafields ? 'quoteExtrafields-erreur' : ''].filter(Boolean).join(' ')}
-            className={`${fieldClass} mt-1`}
-          />
-          <p id="quoteExtrafields-aide" className={helpClass}>
-            Les champs « options_… » de vos devis Dolibarr que le site ne peut pas deviner, avec leur valeur,
-            par exemple {'{ "options_typage_devis": 1, "options_origine_dde": "centre" }'}. Ils s’ajoutent à
-            ceux que le site remplit seul (dates de la demande, lieu, période souhaitée, nombre de
-            participants, détail de la demande) et l’emportent sur eux.
-          </p>
-          {errors?.quoteExtrafields && (
-            <p id="quoteExtrafields-erreur" role="alert" className="mt-1 text-xs text-destructive">
-              {errors.quoteExtrafields}
-            </p>
-          )}
-        </div>
+        {extrafieldBlocks.map((block) => {
+          const error = errors?.[block.name]
+          return (
+            <div key={block.name} className="max-w-xl">
+              <label className={labelClass} htmlFor={block.name}>
+                {block.label} <span className="font-normal text-muted-foreground">(JSON, facultatif)</span>
+              </label>
+              <textarea
+                id={block.name}
+                name={block.name}
+                rows={5}
+                spellCheck={false}
+                defaultValue={state?.values?.[block.name] ?? extrafields[block.key]}
+                aria-invalid={error ? true : undefined}
+                aria-describedby={[`${block.name}-aide`, error ? `${block.name}-erreur` : ''].filter(Boolean).join(' ')}
+                className={`${fieldClass} mt-1`}
+              />
+              <p id={`${block.name}-aide`} className={helpClass}>
+                {block.help} Laissé vide, le site envoie : <span className="whitespace-pre-wrap break-words">{defaults[block.key].replace(/\s+/g, ' ')}</span>
+              </p>
+              {error && (
+                <p id={`${block.name}-erreur`} role="alert" className="mt-1 text-xs text-destructive">
+                  {error}
+                </p>
+              )}
+            </div>
+          )
+        })}
         <div>
           <button type="submit" disabled={pending} className={primaryButton}>
             {pending ? 'Enregistrement…' : 'Enregistrer l’envoi des devis'}

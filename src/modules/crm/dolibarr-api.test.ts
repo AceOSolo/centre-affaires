@@ -125,6 +125,15 @@ describe('client Dolibarr', () => {
     })
   })
 
+  it('reprend aussi des détails en objet ou dans debug, et renvoie au journal de Dolibarr quand il ne dit rien', async () => {
+    const withObject = scripted({
+      '/contacts': { status: 500, body: { error: { code: 500, message: 'Error creating contact', details: { 0: 'ErrorFieldRequired origine_contact' } } } },
+    })
+    await assert.rejects(withObject.client.createContact({}), /Error creating contact : ErrorFieldRequired origine_contact\.$/)
+    const silent = scripted({ '/contacts': { status: 500, body: { error: { code: 500, message: 'Error creating contact', details: [''] } } } })
+    await assert.rejects(silent.client.createContact({}), /Error creating contact\. Dolibarr ne dit pas pourquoi : la raison est dans son journal/)
+  })
+
   it('une clé refusée est dite en toutes lettres', async () => {
     const { client } = scripted({ '/proposals': { status: 401, body: { error: { code: 401 } } } })
     await assert.rejects(client.createProposal({}), /Dolibarr refuse la clé \(401\)/)

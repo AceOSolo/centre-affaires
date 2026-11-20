@@ -13,12 +13,20 @@ import {
   CrmTokenPanel,
   type CrmFlowOption,
 } from '../../../../modules/crm/connexion-crm-forms.tsx'
+import {
+  DEFAULT_EXTRAFIELD_SETTINGS,
+  readExtrafieldSettings,
+  type QuoteExtrafields,
+} from '../../../../modules/facturation/devis-dolibarr.ts'
 import { crmFlowDefinitions, crmFlowDirectionLabels, crmFlows } from '../../../../modules/crm/flux.ts'
 import { CrmExchangesTable } from '../../../../modules/crm/journal-echanges.tsx'
 import { consumptionCounts } from '../../../../modules/crm/consommations-queries.ts'
 import { crmConnectionView, crmQuotePushSettings, listCrmExchanges } from '../../../../modules/crm/queries.ts'
 
 export const metadata = { title: 'Connexion au CRM' }
+
+/** Un jeu de champs en JSON mis en forme ; vide quand rien n'est réglé. */
+const toJson = (fields: QuoteExtrafields) => (Object.keys(fields).length > 0 ? JSON.stringify(fields, null, 2) : '')
 
 /**
  * « Connexion au CRM » (ADR 065) : le CRM du centre, le jeton qu'il présente
@@ -35,6 +43,7 @@ export default async function ConnexionCrmPage() {
     consumptionCounts(),
     crmQuotePushSettings(),
   ])
+  const quoteSettings = readExtrafieldSettings(quotePush?.quoteExtrafields ?? {})
   const connector = crmConnectors[view.connector]
   const serverTokenSet = Boolean(connector.legacyTokenEnv && process.env[connector.legacyTokenEnv])
 
@@ -158,11 +167,16 @@ export default async function ConnexionCrmPage() {
         </div>
         <CrmQuotePushForm
           enabled={quotePush?.enabled ?? false}
-          extrafields={
-            quotePush && Object.keys(quotePush.quoteExtrafields).length > 0
-              ? JSON.stringify(quotePush.quoteExtrafields, null, 2)
-              : ''
-          }
+          extrafields={{
+            proposal: toJson(quoteSettings.proposal),
+            contact: toJson(quoteSettings.contact),
+            thirdparty: toJson(quoteSettings.thirdparty),
+          }}
+          defaults={{
+            proposal: toJson(DEFAULT_EXTRAFIELD_SETTINGS.proposal),
+            contact: toJson(DEFAULT_EXTRAFIELD_SETTINGS.contact),
+            thirdparty: toJson(DEFAULT_EXTRAFIELD_SETTINGS.thirdparty),
+          }}
           ready={Boolean(view.baseUrl && view.hasKey)}
         />
       </section>

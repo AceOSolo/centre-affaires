@@ -18,6 +18,7 @@ import {
 import { instant, primaryKeyId, timestamps } from '../../db/columns.ts'
 import { staffMembers } from '../../db/staff.ts'
 import { tenantId } from '../../db/tenants.ts'
+import type { StoredExtrafields } from '../facturation/devis-dolibarr.ts'
 import { crmConnectorIds } from './connecteurs.ts'
 import { crmFlows, defaultEnabledFlows, type CrmFlowId } from './flux.ts'
 
@@ -81,7 +82,7 @@ export const crmConnections = mysqlTable(
      * Champs complémentaires des devis (`options_*` de Dolibarr), propres au
      * CRM du centre : `{ "options_typage_devis": 1 }`. Recopiés tels quels.
      */
-    quoteExtrafields: json('quote_extrafields').$type<Record<string, string | number | boolean | null>>(),
+    quoteExtrafields: json('quote_extrafields').$type<StoredExtrafields>(),
     updatedBy: char('updated_by', { length: 36 }).references(() => staffMembers.id, { onDelete: 'restrict' }),
     ...timestamps(),
   },

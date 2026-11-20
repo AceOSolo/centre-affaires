@@ -174,13 +174,29 @@ function failureMessage(what: string, status: number, body: unknown): string {
       : typeof body === 'string'
         ? body
         : undefined
-  // Dolibarr range la vraie raison (« Field … is mandatory ») dans `error.details`, et ne
-  // laisse dans `message` qu'un « Error creating … » sans explication.
-  const details = (body as { error?: { details?: unknown } } | null)?.error?.details
-  const reasons = (Array.isArray(details) ? details : typeof details === 'string' ? [details] : [])
-    .filter((reason): reason is string => typeof reason === 'string' && reason.trim() !== '')
-    .join(' ; ')
+  // Dolibarr ne laisse dans `message` qu'un « Error creating … » : la vraie raison
+  // (« Field … is mandatory ») est dans `error.details`, ou ailleurs selon la version.
+  const reasons = extraReasons(body).join(' ; ')
   const text = [typeof message === 'string' ? message.trim() : '', reasons].filter(Boolean).join(' : ')
+  const hint =
+    status >= 500 && !reasons ? ' Dolibarr ne dit pas pourquoi : la raison est dans son journal (documents/dolibarr.log).' : ''
   const detail = text ? ` — ${shortExternalText(text, 300)}` : ''
-  return `${what} : réponse ${status} de Dolibarr${detail}.`
+  return `${what} : réponse ${status} de Dolibarr${detail}.${hint}`
+}
+
+/** Les textes que Dolibarr joint à une erreur en plus de son message : `error.details` et `debug.details`. */
+function extraReasons(body: unknown): string[] {
+  if (!body || typeof body !== 'object') return []
+  const { error, debug } = body as { error?: { details?: unknown }; debug?: { details?: unknown } }
+  const texts: string[] = []
+  const collect = (value: unknown, depth = 0): void => {
+    if (typeof value === 'string') {
+      if (value.trim()) texts.push(value.trim())
+    } else if (depth < 3 && value && typeof value === 'object') {
+      for (const item of Object.values(value)) collect(item, depth + 1)
+    }
+  }
+  collect(error?.details)
+  collect(debug?.details)
+  return [...new Set(texts)]
 }

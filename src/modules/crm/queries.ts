@@ -6,6 +6,7 @@ import { staffMembers } from '../../db/staff.ts'
 import { openSecret, sealSecret } from '../../lib/chiffrement.ts'
 import { currentTenantId } from '../../lib/tenant.ts'
 import type { CrmAccessStore, CrmCredential, CrmInboundSettings } from './acces.ts'
+import type { StoredExtrafields } from '../facturation/devis-dolibarr.ts'
 import type { CrmConnectorId } from './connecteurs.ts'
 import { readEnabledFlows, type CrmFlowId } from './flux.ts'
 import { crmConnections, crmExchanges, type CrmExchangeDirection } from './schema.ts'
@@ -357,7 +358,7 @@ export type CrmQuotePushSettings = {
   enabled: boolean
   /** Le flux « Devis » est ouvert (sinon le centre a coupé tout échange de devis). */
   flowEnabled: boolean
-  quoteExtrafields: Record<string, string | number | boolean | null>
+  quoteExtrafields: StoredExtrafields
 }
 
 /** Le réglage d'envoi des devis, avec ce qu'il faut pour décider s'il part. */
@@ -386,7 +387,7 @@ export async function crmQuotePushSettings(): Promise<CrmQuotePushSettings | und
 
 /** Active ou coupe l'envoi des devis, et règle les champs complémentaires. */
 export async function saveCrmQuotePush(
-  input: { enabled: boolean; quoteExtrafields: Record<string, string | number | boolean | null> },
+  input: { enabled: boolean; quoteExtrafields: StoredExtrafields },
   staffMemberId: string,
 ): Promise<void> {
   await upsertConnection(staffMemberId, {

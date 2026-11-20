@@ -22,16 +22,45 @@ export const QUOTE_VALIDITY_DAYS = 90
 export type ExtrafieldValue = string | number | boolean | null
 export type QuoteExtrafields = Record<string, ExtrafieldValue>
 
+/**
+ * Le réglage tel qu'il est enregistré : les champs du devis à plat, et deux
+ * rubriques facultatives, `contact` et `tiers`, pour les champs obligatoires
+ * que le Dolibarr du centre impose aussi à la création d'un contact ou d'un tiers.
+ */
+export type StoredExtrafields = Record<string, ExtrafieldValue | QuoteExtrafields>
+
+/** Les trois jeux de champs, une fois le réglage séparé. */
+export type ExtrafieldSettings = { proposal: QuoteExtrafields; contact: QuoteExtrafields; thirdparty: QuoteExtrafields }
+
+/**
+ * Ce que le site envoie quand la direction n'a rien réglé pour un des trois
+ * objets : les codes du Dolibarr de ce centre (listes « mode », « typage devis »,
+ * « origine du contact »…). Ils sont propres à son Dolibarr : un second centre
+ * remplira ses champs à l'écran, et un champ rempli remplace entièrement le
+ * défaut de son objet (ADR 073).
+ */
+export const DEFAULT_EXTRAFIELD_SETTINGS: ExtrafieldSettings = {
+  proposal: {
+    options_typage_devis: '1',
+    options_mode: '3',
+    options_origine_dde: "Site du centre d'affaires",
+    options_demande_date_planning: '1',
+  },
+  contact: { options_origine_contact: '60' },
+  thirdparty: { options_potential: '4', options_invoiceable: '4', options_ori_contact: '60' },
+}
+
 const MAX_EXTRAFIELDS = 40
 const MAX_EXTRAFIELD_TEXT = 1000
 const EXTRAFIELD_KEY = /^options_[a-z0-9_]{1,60}$/
 
 /**
- * Les champs complémentaires que la direction règle pour son Dolibarr : un
- * objet JSON `{ "options_origine_dde": "centre", "options_typage_devis": 1 }`.
+ * Les champs complémentaires que la direction règle pour son Dolibarr, pour un
+ * des trois objets : un objet JSON
+ * `{ "options_origine_dde": "centre", "options_typage_devis": 1 }`.
  * Ce sont des codes de ses listes (« qui indique le statut », « mode »…) :
- * le site ne peut pas les deviner, il les recopie. Ils l'emportent sur ceux
- * que le site calcule (`defaultExtrafields`).
+ * le site ne peut pas les deviner, il les recopie. Pour le devis, ils l'emportent
+ * sur ceux que le site calcule (`defaultExtrafields`).
  */
 export function parseQuoteExtrafields(text: string): { ok: true; value: QuoteExtrafields } | { ok: false; message: string } {
   const trimmed = text.trim()
@@ -59,6 +88,39 @@ export function parseQuoteExtrafields(text: string): { ok: true; value: QuoteExt
     value[key] = field as ExtrafieldValue
   }
   return { ok: true, value }
+}
+
+/** Assemble les trois réglages de l'écran pour l'enregistrement : le devis à plat, puis `contact` et `tiers` s'ils sont remplis. */
+export function joinExtrafieldSettings(settings: ExtrafieldSettings): StoredExtrafields {
+  return {
+    ...settings.proposal,
+    ...(Object.keys(settings.contact).length > 0 ? { contact: settings.contact } : {}),
+    ...(Object.keys(settings.thirdparty).length > 0 ? { tiers: settings.thirdparty } : {}),
+  }
+}
+
+/** Sépare le réglage enregistré en champs de devis, de contact et de tiers, sans les défauts. */
+export function readExtrafieldSettings(stored: StoredExtrafields): ExtrafieldSettings {
+  const proposal: QuoteExtrafields = {}
+  for (const [key, field] of Object.entries(stored)) {
+    if (key !== 'contact' && key !== 'tiers') proposal[key] = field as ExtrafieldValue
+  }
+  const section = (name: 'contact' | 'tiers'): QuoteExtrafields => {
+    const value = stored[name]
+    return value && typeof value === 'object' ? value : {}
+  }
+  return { proposal, contact: section('contact'), thirdparty: section('tiers') }
+}
+
+/** Ce qui part vraiment : le réglage de chaque objet, ou son défaut quand il n'a rien réglé. */
+export function splitExtrafieldSettings(stored: StoredExtrafields): ExtrafieldSettings {
+  const set = readExtrafieldSettings(stored)
+  const orDefault = (value: QuoteExtrafields, fallback: QuoteExtrafields) => (Object.keys(value).length > 0 ? value : fallback)
+  return {
+    proposal: orDefault(set.proposal, DEFAULT_EXTRAFIELD_SETTINGS.proposal),
+    contact: orDefault(set.contact, DEFAULT_EXTRAFIELD_SETTINGS.contact),
+    thirdparty: orDefault(set.thirdparty, DEFAULT_EXTRAFIELD_SETTINGS.thirdparty),
+  }
 }
 
 /** Ce que le site sait du centre pour remplir le devis. */
@@ -216,7 +278,7 @@ export function splitCompanyId(value: string | null): { siret: string | null; si
 }
 
 /** Le corps de `POST /thirdparties` : un prospect (`client` = 2), que l'accueil transformera en client à la signature. */
-export function buildThirdpartyBody(proposal: DolibarrProposal): Record<string, unknown> {
+export function buildThirdpartyBody(proposal: DolibarrProposal, extrafields: QuoteExtrafields = {}): Record<string, unknown> {
   const { tiers } = proposal
   const { siret, siren } = splitCompanyId(tiers.siret)
   const address = tiers.adresse
@@ -236,6 +298,7 @@ export function buildThirdpartyBody(proposal: DolibarrProposal): Record<string, 
     ...(siret ? { idprof2: siret } : {}),
     ...(siren ? { idprof1: siren } : {}),
     ...(tiers.numeroTva ? { tva_intra: tiers.numeroTva } : {}),
+    ...(Object.keys(extrafields).length > 0 ? { array_options: extrafields } : {}),
   }
 }
 
@@ -247,7 +310,11 @@ export function splitContactName(name: string): { firstname: string; lastname: s
 }
 
 /** Le corps de `POST /contacts`, ou `undefined` si le demandeur n'a laissé ni nom ni adresse. */
-export function buildContactBody(proposal: DolibarrProposal, socid: string): Record<string, unknown> | undefined {
+export function buildContactBody(
+  proposal: DolibarrProposal,
+  socid: string,
+  extrafields: QuoteExtrafields = {},
+): Record<string, unknown> | undefined {
   const { contact } = proposal
   const name = contact.nom?.trim() || contact.email?.trim()
   if (!name) return undefined
@@ -259,6 +326,7 @@ export function buildContactBody(proposal: DolibarrProposal, socid: string): Rec
     ...(contact.email ? { email: contact.email } : {}),
     ...(contact.telephone ? { phone_pro: contact.telephone } : {}),
     statut: '1',
+    ...(Object.keys(extrafields).length > 0 ? { array_options: extrafields } : {}),
   }
 }
 
@@ -276,7 +344,14 @@ export type SentProposal = {
 export async function sendProposalToDolibarr(
   client: DolibarrClient,
   proposal: DolibarrProposal,
-  options: { site: QuoteSite; extrafields: QuoteExtrafields; linkedThirdpartyId?: string | null },
+  options: {
+    site: QuoteSite
+    extrafields: QuoteExtrafields
+    /** Champs obligatoires du Dolibarr du centre pour un contact et pour un tiers créés par le site. */
+    contactExtrafields?: QuoteExtrafields
+    thirdpartyExtrafields?: QuoteExtrafields
+    linkedThirdpartyId?: string | null
+  },
 ): Promise<SentProposal> {
   // Un envoi interrompu après la création ne doit pas la doubler.
   const existing = await client.findProposalByClientRef(proposal.reference)
@@ -286,10 +361,10 @@ export async function sendProposalToDolibarr(
   const socid =
     options.linkedThirdpartyId ||
     (await client.findThirdparty({ siret, siren, email: proposal.tiers.email })) ||
-    (await client.createThirdparty(buildThirdpartyBody(proposal)))
+    (await client.createThirdparty(buildThirdpartyBody(proposal, options.thirdpartyExtrafields)))
 
   let contactId: string | null = null
-  const contactBody = buildContactBody(proposal, socid)
+  const contactBody = buildContactBody(proposal, socid, options.contactExtrafields)
   if (contactBody) {
     const email = proposal.contact.email
     contactId = (email ? await client.findContact(socid, email) : undefined) ?? (await client.createContact(contactBody))

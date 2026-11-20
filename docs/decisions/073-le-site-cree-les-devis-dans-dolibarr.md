@@ -101,6 +101,27 @@ des codes des listes de son Dolibarr : le site ne les devine pas, il les
 recopie, et ils l'emportent sur ceux qu'il calcule. Aucune valeur n'est livrée
 par défaut. **À valider** : la liste des champs obligatoires du centre.
 
+**Contact et tiers** (ajout du 20/11/2026) : le Dolibarr du centre rend certains
+champs complémentaires obligatoires aussi pour un contact (`origine_contact`) et
+un tiers (`potential`, `invoiceable`, `ori_contact`), faute de quoi la création
+répond 500 « Error creating … ». L'écran a donc trois champs JSON, devis, tiers et
+contacts, recopiés dans `array_options` de `POST /proposals`, `POST /thirdparties`
+et `POST /contacts`. Enregistrés dans la même colonne (`quote_extrafields`) : les
+champs du devis à plat, puis les rubriques `tiers` et `contact` si elles sont
+remplies. Pas de colonne en plus.
+
+**Valeurs par défaut** (amende « aucune valeur n'est livrée par défaut ») : à la
+demande de l'exploitant, un objet dont le champ est vide reçoit les codes de son
+Dolibarr (`DEFAULT_EXTRAFIELD_SETTINGS` : typage 1, mode 3, demande de date 1,
+origine du contact 60, potentiel et désaffectable 4). Un champ rempli remplace
+entièrement le défaut de son objet. Ces codes sont ceux d'un seul Dolibarr : un
+second centre devra remplir ses champs, et le défaut est à sortir du code (colonne
+par centre) avant d'ouvrir un second centre (décision 1).
+
+**Erreurs de Dolibarr** : le journal reprend ce que Dolibarr joint à son message
+(`error.details`, `debug.details`) ; quand il ne dit rien sur un 500, le journal
+renvoie à `documents/dolibarr.log` de Dolibarr.
+
 ### 5. Le prix du devis est envoyé, même pour un produit Dolibarr
 
 Le modèle d'origine laissait `subprice` à `null` pour que Dolibarr applique son

@@ -3,16 +3,20 @@ import { describe, it } from 'node:test'
 
 import type { DolibarrClient } from '../crm/dolibarr-api.ts'
 import {
+  DEFAULT_EXTRAFIELD_SETTINGS,
   QUOTE_VALIDITY_DAYS,
   buildContactBody,
   buildProposalBody,
   buildProposalLines,
   buildThirdpartyBody,
   defaultExtrafields,
+  joinExtrafieldSettings,
   parseQuoteExtrafields,
+  readExtrafieldSettings,
   sendProposalToDolibarr,
   splitCompanyId,
   splitContactName,
+  splitExtrafieldSettings,
   toDolibarrHtml,
 } from './devis-dolibarr.ts'
 import { toDolibarrProposal, type ProposalForDolibarr } from './propositions.ts'
@@ -247,6 +251,38 @@ describe('champs complémentaires réglés par la direction', () => {
       ok: true,
       value: { options_typage_devis: 1, options_origine_dde: 'centre', options_x: null, options_y: true },
     })
+  })
+
+  it('assemble les trois réglages pour l’enregistrement et les relit sans les défauts', () => {
+    const stored = joinExtrafieldSettings({
+      proposal: { options_mode: 3 },
+      contact: { options_origine_contact: 60 },
+      thirdparty: { options_potential: '4' },
+    })
+    assert.deepEqual(stored, { options_mode: 3, contact: { options_origine_contact: 60 }, tiers: { options_potential: '4' } })
+    assert.deepEqual(readExtrafieldSettings(stored), {
+      proposal: { options_mode: 3 },
+      contact: { options_origine_contact: 60 },
+      thirdparty: { options_potential: '4' },
+    })
+    assert.deepEqual(joinExtrafieldSettings({ proposal: {}, contact: {}, thirdparty: {} }), {})
+  })
+
+  it('un objet sans réglage reçoit les valeurs par défaut du centre, un objet réglé les remplace entièrement', () => {
+    assert.deepEqual(splitExtrafieldSettings({}), DEFAULT_EXTRAFIELD_SETTINGS)
+    assert.deepEqual(splitExtrafieldSettings({ options_mode: 1 }), {
+      proposal: { options_mode: 1 },
+      contact: DEFAULT_EXTRAFIELD_SETTINGS.contact,
+      thirdparty: DEFAULT_EXTRAFIELD_SETTINGS.thirdparty,
+    })
+    assert.deepEqual(splitExtrafieldSettings({ contact: { options_origine_contact: 12 } }).contact, { options_origine_contact: 12 })
+  })
+
+  it('les champs réglés pour un contact et un tiers partent dans array_options de leur création', () => {
+    assert.deepEqual(buildContactBody(proposal(), '9', { options_origine_contact: 60 })?.array_options, { options_origine_contact: 60 })
+    assert.equal('array_options' in (buildContactBody(proposal(), '9') ?? {}), false)
+    assert.deepEqual(buildThirdpartyBody(proposal(), { options_potential: '4' }).array_options, { options_potential: '4' })
+    assert.equal('array_options' in buildThirdpartyBody(proposal()), false)
   })
 
   it('refuse ce qui n’est pas un champ complémentaire', () => {

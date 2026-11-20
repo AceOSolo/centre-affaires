@@ -5,7 +5,7 @@ import { revalidatePath } from 'next/cache'
 import { parseKey } from '../../lib/chiffrement.ts'
 import { isCalendarDate, todayIsoDate } from '../../lib/dates.ts'
 import { requirePermission } from '../../lib/auth/staff.ts'
-import { parseQuoteExtrafields } from '../facturation/devis-dolibarr.ts'
+import { joinExtrafieldSettings, parseQuoteExtrafields } from '../facturation/devis-dolibarr.ts'
 import { currentTenantId, currentTimeZone } from '../../lib/tenant.ts'
 import { parseCrmBaseUrl } from './adresse.ts'
 import { crmConnectors } from './catalogue.ts'
@@ -38,9 +38,15 @@ export type CrmFormState = {
   ok?: string
   message?: string
   fieldErrors?: Partial<
-    Record<'connector' | 'baseUrl' | 'key' | 'flows' | 'consumptionsFrom' | 'pushQuotes' | 'quoteExtrafields', string>
+    Record<'connector' | 'baseUrl' | 'key' | 'flows' | 'consumptionsFrom' | 'pushQuotes' | 'quoteExtrafields' | 'contactExtrafields' | 'thirdpartyExtrafields', string>
   >
-  values?: { connector: string; baseUrl: string; quoteExtrafields?: string }
+  values?: {
+    connector: string
+    baseUrl: string
+    quoteExtrafields?: string
+    contactExtrafields?: string
+    thirdpartyExtrafields?: string
+  }
 } | null
 
 /** Clé du serveur présente et lisible : sans elle, aucun secret n'entre en base. */
@@ -165,10 +171,20 @@ export async function saveCrmFlowsAction(_previous: CrmFormState, formData: Form
 export async function saveCrmQuotePushAction(_previous: CrmFormState, formData: FormData): Promise<CrmFormState> {
   const { member } = await requirePermission('crm.gerer')
   const enabled = formData.get('pushQuotes') === 'on'
-  const text = String(formData.get('quoteExtrafields') ?? '')
-  const values = { connector: '', baseUrl: '', quoteExtrafields: text }
-  const parsed = parseQuoteExtrafields(text)
-  if (!parsed.ok) return { fieldErrors: { quoteExtrafields: parsed.message }, values }
+  const texts = {
+    quoteExtrafields: String(formData.get('quoteExtrafields') ?? ''),
+    contactExtrafields: String(formData.get('contactExtrafields') ?? ''),
+    thirdpartyExtrafields: String(formData.get('thirdpartyExtrafields') ?? ''),
+  }
+  const values = { connector: '', baseUrl: '', ...texts }
+  const proposal = parseQuoteExtrafields(texts.quoteExtrafields)
+  const contact = parseQuoteExtrafields(texts.contactExtrafields)
+  const thirdparty = parseQuoteExtrafields(texts.thirdpartyExtrafields)
+  const fieldErrors: NonNullable<CrmFormState>['fieldErrors'] = {}
+  if (!proposal.ok) fieldErrors.quoteExtrafields = proposal.message
+  if (!contact.ok) fieldErrors.contactExtrafields = contact.message
+  if (!thirdparty.ok) fieldErrors.thirdpartyExtrafields = thirdparty.message
+  if (!proposal.ok || !contact.ok || !thirdparty.ok) return { fieldErrors, values }
   const view = await crmConnectionView()
   if (enabled && (!view.baseUrl || !view.hasKey)) {
     return {
@@ -176,7 +192,10 @@ export async function saveCrmQuotePushAction(_previous: CrmFormState, formData: 
       values,
     }
   }
-  await saveCrmQuotePush({ enabled, quoteExtrafields: parsed.value }, member.id)
+  await saveCrmQuotePush(
+    { enabled, quoteExtrafields: joinExtrafieldSettings({ proposal: proposal.value, contact: contact.value, thirdparty: thirdparty.value }) },
+    member.id,
+  )
   revalidatePath(PAGE)
   return {
     ok: enabled
