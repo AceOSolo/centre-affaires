@@ -157,7 +157,7 @@ export function guardedHttp(options: { resolve?: Resolver; fetchImpl?: typeof fe
 /** Appel sortant complet : méthode, en-têtes, corps JSON. */
 export type CrmRequest = (input: {
   url: string
-  method: 'GET' | 'POST'
+  method: 'GET' | 'POST' | 'PUT'
   headers: Record<string, string>
   /** Corps JSON, sérialisé ici : `content-type` est posé en conséquence. */
   json?: unknown

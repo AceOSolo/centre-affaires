@@ -34,6 +34,10 @@ export type DolibarrClient = {
   /** Contact du tiers qui porte cette adresse. */
   findContact(thirdpartyId: string, email: string): Promise<string | undefined>
   createContact(body: Record<string, unknown>): Promise<string>
+  /** Contact sans tiers qui porte cette adresse (le plus ancien), `undefined` s'il n'y en a pas. */
+  findOrphanContact(email: string): Promise<string | undefined>
+  /** Rattache un contact sans tiers à ce tiers (`PUT /contacts/{id}`). */
+  attachContact(contactId: string, thirdpartyId: string): Promise<void>
   /** Identifiant du produit ou service de cette référence, `undefined` s'il n'existe pas. */
   findProductId(ref: string): Promise<string | undefined>
   /** Proposition déjà créée pour cette référence client : rend un envoi interrompu rejouable. */
@@ -58,7 +62,7 @@ export function dolibarrClient(options: { baseUrl: string; key: string; request:
   const { baseUrl, key, request } = options
   const headers = { DOLAPIKEY: key, accept: 'application/json' }
 
-  async function call(method: 'GET' | 'POST', path: string, json?: unknown): Promise<{ status: number; body: unknown }> {
+  async function call(method: 'GET' | 'POST' | 'PUT', path: string, json?: unknown): Promise<{ status: number; body: unknown }> {
     const response = await request({ url: `${baseUrl}${API}${path}`, method, headers, json })
     const raw = await response.text().catch(() => '')
     let body: unknown = raw
@@ -71,7 +75,7 @@ export function dolibarrClient(options: { baseUrl: string; key: string; request:
   }
 
   /** Réponse réussie, ou l'erreur que Dolibarr donne, lisible. `404` : rien trouvé, quand `emptyIs404`. */
-  async function ok(method: 'GET' | 'POST', path: string, what: string, json?: unknown, emptyIs404 = false) {
+  async function ok(method: 'GET' | 'POST' | 'PUT', path: string, what: string, json?: unknown, emptyIs404 = false) {
     const { status, body } = await call(method, path, json)
     if (status >= 200 && status < 300) return body
     if (status === 404 && emptyIs404) return null
@@ -114,6 +118,30 @@ export function dolibarrClient(options: { baseUrl: string; key: string; request:
     },
     async createContact(body) {
       return idFromCreation(await ok('POST', '/contacts', 'Création du contact', body), 'du contact')
+    },
+    async findOrphanContact(email) {
+      if (!FILTER_VALUE.test(email)) return undefined
+      // Le filtre « sans tiers » est fait ici : tous les contacts de cette adresse, puis le premier sans `socid`.
+      const body = await ok(
+        'GET',
+        `/contacts?sortfield=t.rowid&sortorder=ASC&limit=50&sqlfilters=${filtered([`t.email:=:'${email.toLowerCase()}'`])}`,
+        'Recherche du contact sans tiers',
+        undefined,
+        true,
+      )
+      if (!Array.isArray(body)) return undefined
+      const orphan = body.find((contact) => {
+        const thirdparty = (contact as { socid?: unknown; fk_soc?: unknown } | null)?.socid ?? (contact as { fk_soc?: unknown } | null)?.fk_soc
+        return thirdparty === null || thirdparty === undefined || thirdparty === '' || thirdparty === 0 || thirdparty === '0'
+      })
+      return orphan ? idOf(orphan) : undefined
+    },
+    async attachContact(contactId, thirdpartyId) {
+      await ok('PUT', `/contacts/${encodeURIComponent(contactId)}`, 'Rattachement du contact au tiers', {
+        socid: thirdpartyId,
+        // Les déclencheurs de Dolibarr lisent `fk_soc` : voir `buildContactBody`.
+        fk_soc: thirdpartyId,
+      })
     },
     async findProductId(ref) {
       const body = await ok('GET', `/products/ref/${encodeURIComponent(ref)}`, `Recherche du produit « ${ref} »`, undefined, true)
@@ -193,7 +221,7 @@ function failureMessage(what: string, status: number, body: unknown): string {
 /** Les textes que Dolibarr joint à une erreur en plus de son message : `error.details` et `debug.details`. */
 function extraReasons(body: unknown): string[] {
   if (!body || typeof body !== 'object') return []
-  const { error, debug } = body as { error?: { details?: unknown }; debug?: { details?: unknown } }
+  const { error, debug } = body as { error?: Record<string, unknown>; debug?: { details?: unknown } }
   const texts: string[] = []
   const collect = (value: unknown, depth = 0): void => {
     if (typeof value === 'string') {
@@ -202,7 +230,10 @@ function extraReasons(body: unknown): string[] {
       for (const item of Object.values(value)) collect(item, depth + 1)
     }
   }
-  collect(error?.details)
+  // Dolibarr 16 met la raison dans `error["0"]`, `error["1"]`… (liste à plat), d'autres versions dans `error.details`.
+  for (const [key, value] of Object.entries(error ?? {})) {
+    if (key !== 'code' && key !== 'message') collect(value)
+  }
   collect(debug?.details)
   return [...new Set(texts)]
 }

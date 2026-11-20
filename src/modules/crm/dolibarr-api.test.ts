@@ -144,6 +144,31 @@ describe('client Dolibarr', () => {
     })
   })
 
+  it('lit la raison que Dolibarr 16 range dans error["0"]', async () => {
+    const { client } = scripted({
+      '/proposals': { status: 500, body: { error: { 0: 'Date of proposal is required', code: 500, message: 'Internal Server Error: Error creating order' } } },
+    })
+    await assert.rejects(client.createProposal({}), /Error creating order : Date of proposal is required\.$/)
+  })
+
+  it('cherche un contact sans tiers parmi ceux de l’adresse, et le rattache par PUT', async () => {
+    const { seen, client } = scripted({
+      'GET https://crm.exemple.fr/api/index.php/contacts': {
+        status: 200,
+        body: [
+          { id: '59803', socid: '56838' },
+          { id: '84398', socid: null },
+          { id: '84432', socid: null },
+        ],
+      },
+      'PUT https://crm.exemple.fr/api/index.php/contacts/84398': { status: 200, body: { id: '84398' } },
+    })
+    assert.equal(await client.findOrphanContact('claire@exemple.fr'), '84398')
+    await client.attachContact('84398', '56990')
+    const put = seen.find((call) => call.method === 'PUT')!
+    assert.deepEqual(put.json, { socid: '56990', fk_soc: '56990' })
+  })
+
   it('une clé refusée est dite en toutes lettres', async () => {
     const { client } = scripted({ '/proposals': { status: 401, body: { error: { code: 401 } } } })
     await assert.rejects(client.createProposal({}), /Dolibarr refuse la clé \(401\)/)

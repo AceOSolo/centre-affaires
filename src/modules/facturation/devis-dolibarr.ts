@@ -1,5 +1,5 @@
 import { addDaysToIsoDate, formatCalendarDate, toIsoDate } from '../../lib/dates.ts'
-import type { DolibarrClient } from '../crm/dolibarr-api.ts'
+import { DolibarrApiError, type DolibarrClient } from '../crm/dolibarr-api.ts'
 import { centsToDecimal, type DolibarrProposal } from './propositions.ts'
 
 /**
@@ -246,6 +246,15 @@ export type ProposalBodyContext = {
   extrafields: QuoteExtrafields
 }
 
+/**
+ * Un jour « AAAA-MM-JJ » en horodatage Unix (secondes), à midi UTC : le jour reste
+ * le même quel que soit le fuseau du serveur Dolibarr (écart de moins de 12 h).
+ */
+export function dayTimestamp(day: string): number {
+  const [year, month, date] = day.split('-').map(Number)
+  return Math.floor(Date.UTC(year!, month! - 1, date!, 12) / 1000)
+}
+
 /** Le corps de `POST /proposals`. */
 export function buildProposalBody(proposal: DolibarrProposal, context: ProposalBodyContext): Record<string, unknown> {
   const day = toIsoDate(new Date(proposal.creeLe), context.site.timeZone)
@@ -254,12 +263,15 @@ export function buildProposalBody(proposal: DolibarrProposal, context: ProposalB
     ...(context.contactId ? { contactid: context.contactId } : {}),
     // Rend la création rejouable : on cherche d'abord cette référence (`dolibarr-api.ts`).
     ref_client: proposal.reference,
-    datec: day,
-    date: day,
-    date_creation: day,
-    datev: day,
-    date_validation: day,
-    fin_validite: addDaysToIsoDate(day, QUOTE_VALIDITY_DAYS),
+    // L'API de Dolibarr veut des horodatages Unix : un « 2026-11-20 » en texte est refusé
+    // (« Date of proposal is required »). `datep` est le nom que Propal::create lit.
+    datec: dayTimestamp(day),
+    date: dayTimestamp(day),
+    datep: dayTimestamp(day),
+    date_creation: dayTimestamp(day),
+    datev: dayTimestamp(day),
+    date_validation: dayTimestamp(day),
+    fin_validite: dayTimestamp(addDaysToIsoDate(day, QUOTE_VALIDITY_DAYS)),
     lines: buildProposalLines(proposal, context.productIds),
     array_options: { ...defaultExtrafields(proposal, context.site), ...context.extrafields },
   }
@@ -344,6 +356,44 @@ export type SentProposal = {
   warning: string | null
 }
 
+/**
+ * Le contact du devis, dans cet ordre : celui du tiers qui a déjà cette adresse ; un
+ * contact sans tiers qui l'a, rattaché au tiers ; sinon un contact créé. Un contact que
+ * Dolibarr refuse (déclencheur de doublon…) n'arrête pas le devis : il part sans contact,
+ * avec un avertissement. Seule une panne du CRM (`CrmCallError`) arrête l'envoi.
+ */
+async function contactFor(
+  client: DolibarrClient,
+  socid: string,
+  body: Record<string, unknown> | undefined,
+  email: string | null,
+): Promise<{ id: string | null; warning: string | null }> {
+  if (!body) return { id: null, warning: null }
+  const attempt = async (step: () => Promise<string | undefined>): Promise<{ id?: string; error?: string }> => {
+    try {
+      return { id: await step() }
+    } catch (error) {
+      if (!(error instanceof DolibarrApiError)) throw error
+      return { error: error.message }
+    }
+  }
+  if (email) {
+    const own = await attempt(() => client.findContact(socid, email))
+    if (own.id) return { id: own.id, warning: null }
+    const orphan = await attempt(() => client.findOrphanContact(email))
+    if (orphan.id) {
+      const attached = await attempt(async () => {
+        await client.attachContact(orphan.id!, socid)
+        return orphan.id
+      })
+      if (attached.id) return { id: attached.id, warning: null }
+    }
+  }
+  const created = await attempt(() => client.createContact(body))
+  if (created.id) return { id: created.id, warning: null }
+  return { id: null, warning: `Contact non créé : ${created.error ?? 'refusé par Dolibarr'}` }
+}
+
 export async function sendProposalToDolibarr(
   client: DolibarrClient,
   proposal: DolibarrProposal,
@@ -366,12 +416,8 @@ export async function sendProposalToDolibarr(
     (await client.findThirdparty({ siret, siren, email: proposal.tiers.email })) ||
     (await client.createThirdparty(buildThirdpartyBody(proposal, options.thirdpartyExtrafields)))
 
-  let contactId: string | null = null
-  const contactBody = buildContactBody(proposal, socid, options.contactExtrafields)
-  if (contactBody) {
-    const email = proposal.contact.email
-    contactId = (email ? await client.findContact(socid, email) : undefined) ?? (await client.createContact(contactBody))
-  }
+  const contact = await contactFor(client, socid, buildContactBody(proposal, socid, options.contactExtrafields), proposal.contact.email)
+  const contactId = contact.id
 
   // Chaque produit n'est cherché qu'une fois, même si plusieurs lignes le portent.
   const found = new Map<string, string | undefined>()
@@ -387,17 +433,22 @@ export async function sendProposalToDolibarr(
     }
   }
 
-  const dolibarrId = await client.createProposal(
-    buildProposalBody(proposal, { socid, contactId, productIds, site: options.site, extrafields: options.extrafields }),
-  )
+  const body = buildProposalBody(proposal, { socid, contactId, productIds, site: options.site, extrafields: options.extrafields })
+  if (contact.warning) {
+    // Sans contact dans Dolibarr, le demandeur reste lisible sur le devis.
+    const who = [proposal.contact.nom, proposal.contact.email, proposal.contact.telephone].filter(Boolean).join(', ')
+    body.note_private = [body.note_private, `Contact non créé dans Dolibarr — demandeur : ${who || 'inconnu'}.`].filter(Boolean).join('\n')
+  }
+  const dolibarrId = await client.createProposal(body)
 
-  let warning: string | null = null
+  let warning: string | null = contact.warning
   if (contactId) {
     try {
       await client.linkProposalContact(dolibarrId, contactId)
     } catch (error) {
       // La proposition existe : la refaire la doublerait. Le contact se rattache à la main.
-      warning = `Contact non rattaché : ${error instanceof Error ? error.message : 'erreur inconnue'}`
+      const linkWarning = `Contact non rattaché : ${error instanceof Error ? error.message : 'erreur inconnue'}`
+      warning = [warning, linkWarning].filter(Boolean).join(' ; ')
     }
   }
   const dolibarrRef = await client.proposalRef(dolibarrId).catch(() => null)

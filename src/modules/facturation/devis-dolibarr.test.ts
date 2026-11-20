@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import { describe, it } from 'node:test'
 
-import type { DolibarrClient } from '../crm/dolibarr-api.ts'
+import { CrmCallError } from '../crm/adresse.ts'
+import { DolibarrApiError, type DolibarrClient } from '../crm/dolibarr-api.ts'
 import {
   DEFAULT_EXTRAFIELD_SETTINGS,
   QUOTE_VALIDITY_DAYS,
@@ -9,6 +10,7 @@ import {
   buildProposalBody,
   buildProposalLines,
   buildThirdpartyBody,
+  dayTimestamp,
   defaultExtrafields,
   joinExtrafieldSettings,
   parseQuoteExtrafields,
@@ -80,14 +82,19 @@ function proposal(overrides: Partial<ProposalForDolibarr> = {}) {
 }
 
 describe('devis du site → proposition Dolibarr', () => {
+  it('rend un jour en horodatage Unix à midi UTC', () => {
+    assert.equal(dayTimestamp('2026-11-20'), 1795176000)
+  })
+
   it('pose les dates au jour de la demande, au fuseau du centre, et la fin de validité à 90 jours', () => {
     const body = buildProposalBody(proposal(), { socid: '1173', contactId: '55953', productIds: new Map(), site, extrafields: {} })
     // 23 h 30 UTC le 27/10 : le 28/10 à Paris.
-    for (const field of ['datec', 'date', 'date_creation', 'datev', 'date_validation']) {
-      assert.equal(body[field], '2026-10-28', field)
+    // Horodatages Unix à midi UTC : Dolibarr refuse une date en texte.
+    for (const field of ['datec', 'date', 'datep', 'date_creation', 'datev', 'date_validation']) {
+      assert.equal(body[field], Date.UTC(2026, 9, 28, 12) / 1000, field)
     }
     assert.equal(QUOTE_VALIDITY_DAYS, 90)
-    assert.equal(body.fin_validite, '2027-01-26')
+    assert.equal(body.fin_validite, Date.UTC(2027, 0, 26, 12) / 1000)
     assert.equal(body.socid, '1173')
     assert.equal(body.contactid, '55953')
     assert.equal(body.ref_client, 'DV-2026-0007')
@@ -309,6 +316,8 @@ function fakeClient(setup: Partial<DolibarrClient> = {}) {
     createThirdparty: log('createThirdparty', '1173'),
     findContact: log('findContact', undefined),
     createContact: log('createContact', '55953'),
+    findOrphanContact: log('findOrphan', undefined),
+    attachContact: log('attach', undefined),
     findProductId: log('findProduct', undefined),
     createProposal: log('createProposal', '412'),
     linkProposalContact: log('link', undefined),
@@ -320,6 +329,52 @@ function fakeClient(setup: Partial<DolibarrClient> = {}) {
 
 describe('envoi d’un devis à Dolibarr', () => {
   const options = { site, extrafields: {} }
+
+  it('rattache au tiers un contact sans tiers qui a la même adresse, au lieu d’en créer un', async () => {
+    const { client, calls } = fakeClient({
+      findOrphanContact: async () => '84398',
+      attachContact: async (contactId, thirdpartyId) => void calls.push(`attach ${contactId}→${thirdpartyId}`),
+    })
+    const sent = await sendProposalToDolibarr(client, proposal(), options)
+    assert.ok(calls.includes('attach 84398→1173'))
+    assert.equal(calls.some((call) => call.startsWith('createContact')), false)
+    assert.equal(sent.warning, null)
+  })
+
+  it('crée le contact quand ni le tiers ni la base n’en ont un', async () => {
+    const { client, calls } = fakeClient()
+    await sendProposalToDolibarr(client, proposal(), options)
+    assert.ok(calls.some((call) => call.startsWith('createContact')))
+    assert.equal(calls.some((call) => call.startsWith('attach')), false)
+  })
+
+  it('un contact que Dolibarr refuse n’arrête pas le devis : il part sans contact, avec le demandeur en note', async () => {
+    let body: Record<string, unknown> = {}
+    const { client, calls } = fakeClient({
+      createContact: async () => {
+        throw new DolibarrApiError('Création du contact : réponse 500 de Dolibarr — Error creating contact.', 500)
+      },
+      createProposal: async (sent) => {
+        body = sent
+        return '412'
+      },
+    })
+    const sent = await sendProposalToDolibarr(client, proposal(), options)
+    assert.equal(sent.dolibarrId, '412')
+    assert.match(sent.warning ?? '', /Contact non créé : Création du contact/)
+    assert.equal(body.contactid, undefined)
+    assert.match(String(body.note_private), /Contact non créé dans Dolibarr — demandeur : Claire Martin, claire@exemple\.fr/)
+    assert.equal(calls.includes('link'), false)
+  })
+
+  it('une panne du CRM arrête l’envoi, le devis reste prêt', async () => {
+    const { client } = fakeClient({
+      createContact: async () => {
+        throw new CrmCallError('CRM injoignable')
+      },
+    })
+    await assert.rejects(sendProposalToDolibarr(client, proposal(), options), CrmCallError)
+  })
 
   it('crée le tiers, le contact, retrouve le produit, crée la proposition et rattache le contact', async () => {
     const { client, calls } = fakeClient({
@@ -338,7 +393,7 @@ describe('envoi d’un devis à Dolibarr', () => {
     assert.deepEqual(sent, { dolibarrId: '412', dolibarrRef: '(PROV412)', reused: false, warning: null })
     assert.deepEqual(
       calls.map((call) => call.split(' ')[0]),
-      ['findProposal', 'findThirdparty', 'createThirdparty', 'findContact', 'createContact', 'createProposal', 'link', 'proposalRef'],
+      ['findProposal', 'findThirdparty', 'createThirdparty', 'findContact', 'findOrphan', 'createContact', 'createProposal', 'link', 'proposalRef'],
     )
   })
 
