@@ -233,6 +233,8 @@ describe('devis du site → proposition Dolibarr', () => {
     assert.deepEqual(splitContactName('Madonna'), { firstname: '', lastname: 'Madonna' })
     assert.deepEqual(buildContactBody(proposal(), '9'), {
       socid: '9',
+      // Des déclencheurs de Dolibarr lisent `fk_soc` et non `socid` (ils échouent sur une requête vide).
+      fk_soc: '9',
       lastname: 'Martin',
       firstname: 'Claire',
       email: 'claire@exemple.fr',

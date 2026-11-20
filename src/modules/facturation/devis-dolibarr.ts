@@ -321,6 +321,9 @@ export function buildContactBody(
   const { firstname, lastname } = contact.nom?.trim() ? splitContactName(contact.nom) : { firstname: '', lastname: name }
   return {
     socid,
+    // L'API ne remplit que `socid` ; les déclencheurs de contact du centre lisent `fk_soc`
+    // (ce que l'écran de Dolibarr remplit) et plantent sur une requête vide sans lui.
+    fk_soc: socid,
     lastname,
     ...(firstname ? { firstname } : {}),
     ...(contact.email ? { email: contact.email } : {}),
