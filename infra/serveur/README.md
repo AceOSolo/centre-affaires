@@ -258,6 +258,29 @@ cas d'échec, vérifier la ligne `X-Forwarded-For` du fichier nginx.
 facturation est tenue dans Dolibarr (ADR 046). Si elle y est encore, la
 supprimer (`sudo -u deploy crontab -e`) ; la route répond `410`.
 
+### Variante : pm2 au lieu de Docker
+
+Le build est en `output: "standalone"` : `npm run build` produit
+`.next/standalone/server.js`, **sans** `.next/static` ni `public`. Sans ces deux
+dossiers, la page s'affiche mais tous les fichiers JavaScript répondent 404 et
+le navigateur montre « This page couldn't load », **sans aucune erreur dans les
+logs**. Ordre d'une mise en ligne, depuis le dossier de l'application :
+
+```bash
+npm ci
+npm run build
+rm -rf .next/standalone/.next/static .next/standalone/public   # pas de reste d'un ancien build
+cp -r .next/static .next/standalone/.next/static   # indispensable avec standalone
+cp -r public .next/standalone/public               # idem
+npm run db:migrer                                  # avant le redémarrage (lit le .env)
+pm2 restart <nom-de-l-app> --update-env
+pm2 logs <nom-de-l-app> --lines 50
+```
+
+pm2 doit lancer `.next/standalone/server.js` (`pm2 start .next/standalone/server.js
+--name <nom>`), pas `npm start`, et avoir les variables du `.env` dans son
+environnement (`MAINTENANCE_TOKEN` comprise).
+
 ### Revenir à la version précédente
 
 Remettre dans le `.env` l'`IMAGE_TAG` de la version précédente, puis, sous le

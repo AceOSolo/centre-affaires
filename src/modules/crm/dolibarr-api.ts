@@ -174,6 +174,13 @@ function failureMessage(what: string, status: number, body: unknown): string {
       : typeof body === 'string'
         ? body
         : undefined
-  const detail = typeof message === 'string' && message.trim() ? ` — ${shortExternalText(message, 200)}` : ''
+  // Dolibarr range la vraie raison (« Field … is mandatory ») dans `error.details`, et ne
+  // laisse dans `message` qu'un « Error creating … » sans explication.
+  const details = (body as { error?: { details?: unknown } } | null)?.error?.details
+  const reasons = (Array.isArray(details) ? details : typeof details === 'string' ? [details] : [])
+    .filter((reason): reason is string => typeof reason === 'string' && reason.trim() !== '')
+    .join(' ; ')
+  const text = [typeof message === 'string' ? message.trim() : '', reasons].filter(Boolean).join(' : ')
+  const detail = text ? ` — ${shortExternalText(text, 300)}` : ''
   return `${what} : réponse ${status} de Dolibarr${detail}.`
 }

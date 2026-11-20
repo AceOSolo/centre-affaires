@@ -111,6 +111,20 @@ describe('client Dolibarr', () => {
     })
   })
 
+  it('ajoute au message de Dolibarr la raison rangée dans error.details', async () => {
+    const { client } = scripted({
+      '/proposals': {
+        status: 500,
+        body: { error: { code: 500, message: 'Internal Server Error: Error creating order', details: ['ErrorFieldRequired options_typage_devis'] } },
+      },
+    })
+    await assert.rejects(client.createProposal({}), (error: unknown) => {
+      assert.ok(error instanceof DolibarrApiError)
+      assert.match(error.message, /Error creating order : ErrorFieldRequired options_typage_devis\.$/)
+      return true
+    })
+  })
+
   it('une clé refusée est dite en toutes lettres', async () => {
     const { client } = scripted({ '/proposals': { status: 401, body: { error: { code: 401 } } } })
     await assert.rejects(client.createProposal({}), /Dolibarr refuse la clé \(401\)/)
