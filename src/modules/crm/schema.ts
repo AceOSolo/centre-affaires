@@ -121,8 +121,9 @@ export const crmCredentials = ['screen', 'server'] as const
  * dont le jeton désigne le centre, chaque test de connexion. Un appel au jeton
  * inconnu n'a pas de centre : il ne laisse qu'une ligne au journal du serveur.
  *
- * Ni corps, ni jeton, ni adresse IP : l'opération, son code, une phrase
- * (« 3 devis », ou le message d'erreur rendu au CRM). Purgé au-delà de
+ * Ni jeton ni adresse IP, et pas de corps : l'opération, son code, une phrase
+ * (« 3 devis », ou le message d'erreur rendu au CRM). Seule exception, un envoi
+ * de devis que le CRM refuse garde le JSON envoyé, pour le rejouer à la main (ADR 073). Purgé au-delà de
  * `CRM_EXCHANGE_RETENTION_DAYS` à chaque écriture (`queries.ts`).
  */
 export const crmExchanges = mysqlTable(
@@ -139,7 +140,9 @@ export const crmExchanges = mysqlTable(
     /** Code HTTP rendu (appel reçu) ou reçu (appel sortant) ; nul si le CRM n'a pas répondu. */
     statusCode: smallint('status_code'),
     ok: boolean('ok').notNull(),
-    message: varchar('message', { length: 500 }),
+    /** La phrase de l'échange ; pour un envoi refusé, elle finit par `
+JSON : ` et le corps envoyé (ADR 073). */
+    message: text('message'),
     credential: mysqlEnum('credential', crmCredentials),
     durationMs: int('duration_ms').notNull().default(0),
     createdAt: instant('created_at').notNull().default(sql`CURRENT_TIMESTAMP(3)`),

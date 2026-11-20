@@ -32,6 +32,9 @@ export type PushReport = {
 /** Devis envoyés à chaque passage, au plus : un passage tient dans la durée d'une tâche planifiée. */
 const BATCH_SIZE = 25
 
+/** Sépare, dans le message du journal, la phrase de l'échec et le JSON envoyé (affiché à part, `journal-echanges.tsx`). */
+export const JSON_MARK = '\nJSON : '
+
 let running = false
 let again = false
 
@@ -110,14 +113,20 @@ async function pushOnce(request: CrmRequest): Promise<PushReport> {
       report.failed += 1
       const known = error instanceof DolibarrApiError || error instanceof CrmCallError
       if (!known) console.error('Envoi du devis à Dolibarr :', error)
+      // L'appel refusé et le corps envoyé, pour le rejouer à la main dans l'explorateur de
+      // Dolibarr. Le corps porte les coordonnées du demandeur, jamais la clé d'API.
+      const refused = error instanceof DolibarrApiError ? error : null
+      const sent = refused && refused.sent !== undefined ? JSON.stringify(refused.sent) : null
       await recordCrmExchange(tenantId, {
         connector: 'dolibarr',
         direction: 'outbound',
         flow: 'quotes',
-        operation,
+        operation: refused?.endpoint ?? operation,
         statusCode: error instanceof DolibarrApiError ? error.status : null,
         ok: false,
-        message: known ? `Devis ${proposal.reference} : ${error.message}` : `Devis ${proposal.reference} : erreur du site.`,
+        message: known
+          ? `Devis ${proposal.reference} : ${error.message}${sent ? `${JSON_MARK}${sent}` : ''}`
+          : `Devis ${proposal.reference} : erreur du site.`,
         credential: null,
         durationMs: performance.now() - start,
       })

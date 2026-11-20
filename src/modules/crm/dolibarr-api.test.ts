@@ -131,7 +131,17 @@ describe('client Dolibarr', () => {
     })
     await assert.rejects(withObject.client.createContact({}), /Error creating contact : ErrorFieldRequired origine_contact\.$/)
     const silent = scripted({ '/contacts': { status: 500, body: { error: { code: 500, message: 'Error creating contact', details: [''] } } } })
-    await assert.rejects(silent.client.createContact({}), /Error creating contact\. Dolibarr ne dit pas pourquoi : la raison est dans son journal/)
+    await assert.rejects(silent.client.createContact({}), /Error creating contact\. Dolibarr ne dit pas pourquoi : voir son documents\/dolibarr\.log/)
+  })
+
+  it('garde le corps envoyé sur l’erreur, pour le déboguer à la main', async () => {
+    const { client } = scripted({ '/contacts': { status: 500, body: { error: { code: 500, message: 'Error creating contact' } } } })
+    await assert.rejects(client.createContact({ socid: '9', lastname: 'Martin' }), (error: unknown) => {
+      assert.ok(error instanceof DolibarrApiError)
+      assert.deepEqual(error.sent, { socid: '9', lastname: 'Martin' })
+      assert.equal(error.endpoint, 'POST /contacts')
+      return true
+    })
   })
 
   it('une clé refusée est dite en toutes lettres', async () => {

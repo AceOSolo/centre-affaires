@@ -86,7 +86,9 @@ export function CrmExchangesTable({
                     {exchange.statusCode ?? 'sans réponse'}
                   </span>
                 </td>
-                <td className="min-w-64 px-4 py-2 text-muted-foreground">{exchange.message ?? '—'}</td>
+                <td className="min-w-64 max-w-xl px-4 py-2 text-muted-foreground">
+                  <ExchangeMessage message={exchange.message} />
+                </td>
               </tr>
             ))}
           </tbody>
@@ -94,8 +96,30 @@ export function CrmExchangesTable({
       </div>
       <p className="text-xs text-muted-foreground">
         Les {exchanges.length} derniers échanges. Le journal garde {CRM_EXCHANGE_RETENTION_DAYS} jours, sans
-        jeton ni contenu échangé.
+        jeton ni contenu échangé, sauf le JSON d’un devis que le CRM a refusé, gardé pour le rejouer à la main.
       </p>
     </div>
+  )
+}
+
+/** Marque qui sépare la phrase d'un échec du JSON envoyé (`devis-dolibarr-envoi.ts`). */
+const JSON_MARK = '\nJSON : '
+
+/** La phrase de l'échange ; le JSON envoyé d'un devis refusé est replié dessous, à copier tel quel. */
+function ExchangeMessage({ message }: { message: string | null }) {
+  if (!message) return <>—</>
+  const at = message.indexOf(JSON_MARK)
+  if (at === -1) return <>{message}</>
+  const json = message.slice(at + JSON_MARK.length)
+  return (
+    <>
+      <span className="break-words">{message.slice(0, at)}</span>
+      <details className="mt-1">
+        <summary className="cursor-pointer text-xs font-medium text-foreground">JSON envoyé</summary>
+        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border p-2 text-xs select-all">
+          {json}
+        </pre>
+      </details>
+    </>
   )
 }

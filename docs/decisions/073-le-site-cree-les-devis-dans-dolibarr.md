@@ -119,8 +119,18 @@ second centre devra remplir ses champs, et le défaut est à sortir du code (col
 par centre) avant d'ouvrir un second centre (décision 1).
 
 **Erreurs de Dolibarr** : le journal reprend ce que Dolibarr joint à son message
-(`error.details`, `debug.details`) ; quand il ne dit rien sur un 500, le journal
-renvoie à `documents/dolibarr.log` de Dolibarr.
+(`error.details`, `debug.details`) ; quand il ne dit rien sur un 500, il renvoie à
+`documents/dolibarr.log` de Dolibarr. Pour rejouer l'appel à la main (explorateur
+de l'API de Dolibarr), un envoi refusé inscrit au journal **l'appel refusé**
+(colonne « opération », ex. `POST /contacts`) et **le JSON envoyé** (fin du
+message, replié à l'écran). Cela amende l'ADR 065 (« pas de corps au journal ») :
+le JSON porte les coordonnées du demandeur ; il n'est gardé que pour un envoi
+refusé, jamais pour un succès, et suit la purge du journal
+(`CRM_EXCHANGE_RETENTION_DAYS`). La clé d'API n'y est jamais (elle voyage en
+en-tête). La colonne `crm_exchanges.message` passe de 500 caractères à `text`
+(migration 0026, écrite à la main : le journal et les instantanés de drizzle-kit
+ne sont plus à jour dans ce dépôt — deux fichiers 0017 et 0018, `idx` 17 en double —,
+et `drizzle-kit generate` y rejoue des colonnes déjà créées).
 
 ### 5. Le prix du devis est envoyé, même pour un produit Dolibarr
 

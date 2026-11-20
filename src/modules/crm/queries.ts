@@ -76,6 +76,9 @@ export type CrmExchangeEntry = {
   durationMs: number
 }
 
+/** Un devis refusé garde son JSON entier dans le message : assez pour un devis de plusieurs lignes. */
+const MAX_EXCHANGE_MESSAGE = 16000
+
 const clip = (text: string | null, max: number) =>
   text === null ? null : text.length > max ? `${text.slice(0, max - 1)}…` : text
 
@@ -95,7 +98,7 @@ export async function recordCrmExchange(tenantId: string, entry: CrmExchangeEntr
         operation: clip(entry.operation, 120)!,
         statusCode: entry.statusCode,
         ok: entry.ok,
-        message: clip(entry.message, 500),
+        message: clip(entry.message, MAX_EXCHANGE_MESSAGE),
         credential: entry.credential,
         durationMs: Math.max(0, Math.round(entry.durationMs)),
       })

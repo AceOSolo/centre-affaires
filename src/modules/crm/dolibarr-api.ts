@@ -15,8 +15,14 @@ import { shortExternalText } from './connecteurs.ts'
 /** Échec d'un appel à Dolibarr, avec la phrase que le journal et l'écran affichent. */
 export class DolibarrApiError extends Error {
   readonly status: number | null
-  constructor(message: string, status: number | null = null) {
+  /** Le corps JSON que le site avait envoyé, pour le débogage à la main. */
+  readonly sent: unknown
+  /** L'appel refusé, sans l'adresse du CRM : « POST /contacts ». */
+  readonly endpoint: string | null
+  constructor(message: string, status: number | null = null, sent?: unknown, endpoint: string | null = null) {
     super(message)
+    this.sent = sent
+    this.endpoint = endpoint
     this.status = status
   }
 }
@@ -69,7 +75,7 @@ export function dolibarrClient(options: { baseUrl: string; key: string; request:
     const { status, body } = await call(method, path, json)
     if (status >= 200 && status < 300) return body
     if (status === 404 && emptyIs404) return null
-    throw new DolibarrApiError(failureMessage(what, status, body), status)
+    throw new DolibarrApiError(failureMessage(what, status, body), status, json, `${method} ${path}`)
   }
 
   const filtered = (conditions: string[]) => encodeURIComponent(conditions.map((condition) => `(${condition})`).join(' and '))
@@ -179,7 +185,7 @@ function failureMessage(what: string, status: number, body: unknown): string {
   const reasons = extraReasons(body).join(' ; ')
   const text = [typeof message === 'string' ? message.trim() : '', reasons].filter(Boolean).join(' : ')
   const hint =
-    status >= 500 && !reasons ? ' Dolibarr ne dit pas pourquoi : la raison est dans son journal (documents/dolibarr.log).' : ''
+    status >= 500 && !reasons ? ' Dolibarr ne dit pas pourquoi : voir son documents/dolibarr.log.' : ''
   const detail = text ? ` — ${shortExternalText(text, 300)}` : ''
   return `${what} : réponse ${status} de Dolibarr${detail}.${hint}`
 }
